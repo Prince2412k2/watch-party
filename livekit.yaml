@@ -1,0 +1,20 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+
+keys:
+  devkey: devsecret0000000000000000000000000
+
+logging:
+  level: info
+
+# TURN — uncomment and fill in for VPS deploy
+# turn:
+#   enabled: true
+#   domain: YOUR_PUBLIC_IP
+#   cert_file: ""
+#   key_file: ""
+#   udp_port: 3478
+#   tls_port: 5349
