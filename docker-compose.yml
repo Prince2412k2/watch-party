@@ -1,0 +1,47 @@
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: watchparty-jellyfin
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./jellyfin/config:/config
+      - ./media:/media
+    environment:
+      - JELLYFIN_PublishedServerUrl=http://localhost:8096
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: watchparty-livekit
+    restart: unless-stopped
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    command: --config /etc/livekit.yaml
+
+  # coturn — uncomment for VPS deploy
+  # coturn:
+  #   image: coturn/coturn:latest
+  #   container_name: watchparty-coturn
+  #   network_mode: host
+  #   volumes:
+  #     - ./coturn.conf:/etc/coturn/turnserver.conf
+
+  watchparty:
+    build: ./app
+    container_name: watchparty-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file: .env
+    depends_on:
+      - jellyfin
+      - livekit
+    volumes:
+      - ./app:/app
+      - /app/node_modules
+      - /app/client/node_modules
