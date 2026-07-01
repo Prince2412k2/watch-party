@@ -12,6 +12,7 @@
     "express-session": "^1.18.1",
     "livekit-server-sdk": "^2.8.0",
     "node-fetch": "^3.3.2",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "ws": "^8.21.0"
   }
 }
