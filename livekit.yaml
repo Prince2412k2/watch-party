@@ -3,6 +3,9 @@ rtc:
   tcp_port: 7881
   udp_port: 7882
   use_external_ip: false
+  # Advertise the Tailscale IP so remote clients can reach media (ICE).
+  # Without this, LiveKit hands out its Docker-internal 172.x IP.
+  node_ip: 100.120.248.69
 
 keys:
   devkey: devsecret0000000000000000000000000
