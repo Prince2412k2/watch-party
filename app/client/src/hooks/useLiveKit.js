@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Room, RoomEvent, Track } from 'livekit-client'
 
 export function useLiveKit({ partyId, enabled = true }) {
@@ -8,6 +8,17 @@ export function useLiveKit({ partyId, enabled = true }) {
   const [camOn, setCamOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
   const [error, setError] = useState(null)
+  const errorTimer = useRef(null)
+
+  // Surface a transient error banner that dismisses itself after ~4.5s so a
+  // one-off camera/mic hiccup doesn't leave a permanent bar over the movie.
+  // Passing null clears it (and any pending timer) immediately.
+  const flagError = useCallback((msg) => {
+    clearTimeout(errorTimer.current)
+    setError(msg ?? null)
+    if (msg) errorTimer.current = setTimeout(() => setError(null), 4500)
+  }, [])
+  useEffect(() => () => clearTimeout(errorTimer.current), [])
 
   useEffect(() => {
     if (!partyId || !enabled) return
@@ -57,7 +68,7 @@ export function useLiveKit({ partyId, enabled = true }) {
         await room.connect(url, token)
         refresh()
       } catch (err) {
-        if (!cancelled) setError(err.message)
+        if (!cancelled) flagError(err.message)
       }
     }
 
@@ -69,6 +80,18 @@ export function useLiveKit({ partyId, enabled = true }) {
     }
   }, [partyId, enabled])
 
+  // WebRTC audio processing applied to the PUBLISHED mic track. Echo
+  // cancellation is the backstop against the "mic picks up movie audio → echo"
+  // loop for anyone listening on speakers; noise suppression + auto gain keep
+  // levels clean. Passed as AudioCaptureOptions (getUserMedia constraints) so
+  // they're baked into the LocalAudioTrack LiveKit actually creates + publishes,
+  // not merely requested at some higher layer.
+  const MIC_CAPTURE = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  }
+
   function mediaError(kind, err) {
     // getUserMedia only works in a secure context (https or localhost).
     if (!window.isSecureContext) {
@@ -78,24 +101,24 @@ export function useLiveKit({ partyId, enabled = true }) {
   }
 
   async function enableCamera(on) {
-    if (!roomRef.current) return setError('Not connected to the room yet.')
+    if (!roomRef.current) return flagError('Not connected to the room yet.')
     try {
       await roomRef.current.localParticipant.setCameraEnabled(on)
       setCamOn(on)
-      setError(null)
+      flagError(null)
     } catch (err) {
-      setError(mediaError('Camera', err))
+      flagError(mediaError('Camera', err))
     }
   }
 
   async function enableMic(on) {
-    if (!roomRef.current) return setError('Not connected to the room yet.')
+    if (!roomRef.current) return flagError('Not connected to the room yet.')
     try {
-      await roomRef.current.localParticipant.setMicrophoneEnabled(on)
+      await roomRef.current.localParticipant.setMicrophoneEnabled(on, MIC_CAPTURE)
       setMicOn(on)
-      setError(null)
+      flagError(null)
     } catch (err) {
-      setError(mediaError('Microphone', err))
+      flagError(mediaError('Microphone', err))
     }
   }
 

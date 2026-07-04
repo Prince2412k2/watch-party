@@ -18,47 +18,190 @@ import { createServer } from 'http'
 import { Server } from 'socket.io'
 import cookieParser from 'cookie-parser'
 import session from 'express-session'
-import { login, me, logout } from './auth.js'
+import { existsSync } from 'fs'
+import { join } from 'path'
+import { createProxyMiddleware } from 'http-proxy-middleware'
+import { login, me, logout, testLogin, requireAuth } from './auth.js'
 import { registerLibraryRoutes } from './library.js'
 import { registerLiveKitRoutes } from './livekit.js'
+import { registerServarrRoutes } from './servarr/index.js'
 import {
   createSession, getSession, deleteSession,
   findSessionBySocket, findSessionForMember, findSessionByHost,
-  addToWaiting, approveGuest, rejectGuest, removeGuest,
-  transferHost, pushMessage, isHost, isMember, publicSession,
+  addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
+  transferHost, pushMessage, isHost, isMember, publicSession, allSessions,
 } from './session.js'
 import { getItems } from './jellyfin.js'
 
+// Fail fast: never run in production with a missing or default session secret.
+if (process.env.NODE_ENV === 'production' &&
+    (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === 'changeme')) {
+  console.error('FATAL: SESSION_SECRET must be set to a strong, non-default value in production')
+  process.exit(1)
+}
+
 const app = express()
+// Behind the Tailscale Funnel (a reverse proxy) — trust the first proxy hop so
+// req.ip and secure-cookie detection reflect the real client, not the proxy.
+app.set('trust proxy', 1)
 const httpServer = createServer(app)
+
+// Allowed browser origins. Same-origin (the server now serves the built client)
+// needs none of these, but keep dev (Vite) + the tailnet reachable, and let
+// deployments add their own public origin(s) via PUBLIC_ORIGIN (comma-separated).
+const EXTRA_ORIGINS = (process.env.PUBLIC_ORIGIN || '')
+  .split(',').map((s) => s.trim()).filter(Boolean)
+// The dev/tailnet origin is env-driven with a default so current local/tailnet
+// dev keeps working, but a deployment can override it (or set it empty).
+const DEV_TAILNET_ORIGIN = process.env.DEV_TAILNET_ORIGIN ?? 'https://dsk-4161.tail0a3558.ts.net'
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173', 'http://localhost:5174',
+  ...(DEV_TAILNET_ORIGIN ? [DEV_TAILNET_ORIGIN] : []),
+  ...EXTRA_ORIGINS,
+]
+
 const io = new Server(httpServer, {
-  cors: {
-    origin: [
-      'http://localhost:5173', 'http://localhost:5174',
-      'https://dsk-4161.tail0a3558.ts.net',
-    ],
-    credentials: true,
-  },
+  cors: { origin: ALLOWED_ORIGINS, credentials: true },
 })
 
 const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || 'changeme',
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax' },
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,          // 7 days
+    secure: process.env.NODE_ENV === 'production',
+  },
 })
 
-app.use(express.json())
+// ── Origin-relative reverse proxies (production parity with Vite's dev proxy) ──
+// The browser keeps everything same-origin: HLS manifests/segments and poster
+// images hit /jellyfin/* (server → JELLYFIN_URL), and LiveKit *signaling* can go
+// through /livekit (server → LIVEKIT_URL) so an HTTPS page isn't blocked by
+// mixed content. Media (UDP/ICE) still flows direct to livekit's node_ip.
+// Registered before the JSON body parser so streamed bodies pass through raw.
+const JELLYFIN_TARGET = process.env.JELLYFIN_URL || 'http://localhost:8096'
+const LIVEKIT_TARGET = (process.env.LIVEKIT_URL || 'ws://localhost:7880').replace(/^ws/, 'http')
+
+// Session must be available BEFORE the proxies so requireAuth can gate them —
+// these expose internal services and must never be reachable unauthenticated.
 app.use(cookieParser())
 app.use(sessionMiddleware)
 io.engine.use(sessionMiddleware)
 
+app.use('/jellyfin', requireAuth, createProxyMiddleware({
+  target: JELLYFIN_TARGET,
+  changeOrigin: true,
+  pathRewrite: { '^/jellyfin': '' },
+}))
+
+const livekitProxy = createProxyMiddleware({
+  target: LIVEKIT_TARGET,
+  changeOrigin: true,
+  ws: true,
+  pathRewrite: { '^/livekit': '' },
+})
+app.use('/livekit', requireAuth, livekitProxy)
+// Proxy the WebSocket upgrade for /livekit only. socket.io owns /socket.io
+// upgrades on the same server; the path filter keeps the two from colliding.
+httpServer.on('upgrade', (req, socket, head) => {
+  if (req.url && req.url.startsWith('/livekit')) livekitProxy.upgrade(req, socket, head)
+})
+
+app.use(express.json())
+
+// ── Login brute-force limiter (in-process, dependency-free) ────────────────
+// Keyed by client IP (req.ip is accurate now that trust proxy is set) + the
+// attempted username, plus a coarse global cap so a distributed spray can't
+// hammer the upstream Jellyfin. Windows reset lazily on next attempt.
+const LOGIN_WINDOW_MS = 5 * 60 * 1000
+const LOGIN_MAX_ATTEMPTS = 10          // per IP+username per window
+const LOGIN_GLOBAL_MAX = 300           // coarse cap across all keys per window
+const loginAttempts = new Map()        // key -> { count, resetAt }
+let loginGlobal = { count: 0, resetAt: Date.now() + LOGIN_WINDOW_MS }
+
+function loginRateLimit(req, res, next) {
+  const now = Date.now()
+
+  // Coarse global cap
+  if (now > loginGlobal.resetAt) loginGlobal = { count: 0, resetAt: now + LOGIN_WINDOW_MS }
+  if (loginGlobal.count >= LOGIN_GLOBAL_MAX) {
+    res.set('Retry-After', String(Math.ceil((loginGlobal.resetAt - now) / 1000)))
+    return res.status(429).json({ error: 'Too many login attempts, please try again later' })
+  }
+  loginGlobal.count++
+
+  const username = (req.body?.username || '').toString().toLowerCase().trim()
+  const key = `${req.ip}|${username}`
+  let entry = loginAttempts.get(key)
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + LOGIN_WINDOW_MS }
+    loginAttempts.set(key, entry)
+  }
+  if (entry.count >= LOGIN_MAX_ATTEMPTS) {
+    res.set('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)))
+    return res.status(429).json({ error: 'Too many login attempts, please try again later' })
+  }
+  entry.count++
+  next()
+}
+
+// Test/debug endpoints are hard-gated: they require BOTH a non-production
+// NODE_ENV and the explicit WP_TEST_MODE flag. In production they don't exist.
+const TEST_ENDPOINTS_ENABLED = process.env.NODE_ENV !== 'production' && process.env.WP_TEST_MODE === '1'
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
-app.post('/api/auth/login', login)
+app.post('/api/auth/login', loginRateLimit, login)
+if (TEST_ENDPOINTS_ENABLED) {
+  app.post('/api/auth/test-login', testLogin)   // absent unless test mode + non-prod
+}
 app.get('/api/auth/me', me)
 app.post('/api/auth/logout', logout)
 registerLibraryRoutes(app)
 registerLiveKitRoutes(app)
+registerServarrRoutes(app)
+
+// ── Dev-only observability (gated: 404 unless WP_TEST_MODE=1) ───────────────
+// Exposes session internals for the sync test harness. MUST stay off in prod.
+function debugMembers(sess) {
+  const members = [{ userId: sess.hostId, name: sess.hostName, isHost: true }]
+  for (const g of sess.guests) members.push({ userId: g.userId, name: g.name, isHost: false })
+  return members.map(m => ({ ...m, report: sess.reports?.get(m.userId) ?? null }))
+}
+function debugView(sess) {
+  return { id: sess.id, syncMode: sess.syncMode, schedule: sess.schedule, members: debugMembers(sess) }
+}
+if (TEST_ENDPOINTS_ENABLED) {
+  app.get('/api/debug/sessions', (_req, res) => {
+    res.json([...allSessions()].map(debugView))
+  })
+  app.get('/api/debug/session/:id', (req, res) => {
+    const sess = getSession(req.params.id)
+    if (!sess) return res.status(404).json({ error: 'not found' })
+    res.json(debugView(sess))
+  })
+}
+
+// ── Serve the built client (production) ────────────────────────────────────
+// In dev the client is a separate Vite server (npm run dev). In the container
+// we build client/dist and serve it here so ONE port serves the web UI, /api,
+// and Socket.io. Gated on SERVE_CLIENT so `npm run dev` on the host is unaffected.
+if (process.env.SERVE_CLIENT === '1') {
+  const clientDist = join(__dirname, '../client/dist')
+  if (existsSync(clientDist)) {
+    app.use(express.static(clientDist))
+    // SPA fallback — hand any non-API, non-socket, non-proxy path to index.html
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') ||
+          req.path.startsWith('/jellyfin') || req.path.startsWith('/livekit')) return next()
+      res.sendFile(join(clientDist, 'index.html'))
+    })
+  } else {
+    console.warn(`SERVE_CLIENT=1 but ${clientDist} is missing — run "npm run build" in client/`)
+  }
+}
 
 // ── Socket.io auth middleware ─────────────────────────────────────────────
 
@@ -75,12 +218,15 @@ io.on('connection', (socket) => {
   const { userId, name, token, deviceId } = socket.user
 
   // party:create ────────────────────────────────────────────────────────────
-  socket.on('party:create', async ({ mediaItemId } = {}, ack) => {
+  socket.on('party:create', async ({ mediaItemId = null } = {}, ack) => {
     try {
-      const data = await getItems(token, userId, { Ids: mediaItemId, Fields: 'MediaSources' })
-      const item = data.Items?.[0]
-      if (!item) return ack?.({ error: 'item not found' })
-      const mediaSourceId = item.MediaSources?.[0]?.Id ?? mediaItemId
+      // Room can start empty (lobby) — media is optional at creation.
+      let mediaSourceId = null
+      if (mediaItemId) {
+        const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
+        if (!src) return ack?.({ error: 'item not found' })
+        mediaSourceId = src
+      }
 
       const sess = createSession({
         hostId: userId, hostToken: token, hostDeviceId: deviceId, hostName: name,
@@ -115,6 +261,15 @@ io.on('connection', (socket) => {
       const guest = sess.guests.find(g => g.userId === userId)
       if (guest) guest.socketId = socket.id
       socket.join(partyId)
+      return ack?.({ status: 'joined', session: publicSession(sess) })
+    }
+
+    // Previously approved → re-enter freely (no re-approval needed unless kicked)
+    if (sess.approved.has(userId)) {
+      admitGuest(sess, { userId, name, socketId: socket.id, token, deviceId })
+      socket.join(partyId)
+      io.to(socket.id).emit('sync:schedule', sess.schedule)
+      io.to(sess.id).emit('user:joined', { userId, name })
       return ack?.({ status: 'joined', session: publicSession(sess) })
     }
 
@@ -158,8 +313,23 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ error: 'not host' })
     const g = removeGuest(sess, targetId)
     if (!g) return ack?.({ error: 'user not found' })
+    sess.approved.delete(targetId)   // revoke — kicked users must re-request
     io.to(g.socketId).emit('party:kicked', { userId: targetId })
     io.to(sess.id).emit('user:left', { userId: targetId, name: g.name })
+    ack?.({ ok: true })
+  })
+
+  // party:end — host's explicit "End Party" action. Unlike a host disconnect
+  // (handleHostDisconnect below), this is instant and final: no grace period,
+  // no promoting a guest to host. The session is torn down immediately and
+  // everyone still connected is told to leave.
+  socket.on('party:end', (_p, ack) => {
+    const sess = findSessionByHost(userId)
+    if (!sess) return ack?.({ error: 'not host' })
+    clearTimeout(sess.hostDisconnectTimer)
+    clearTimeout(sess._stallTimer)
+    socket.to(sess.id).emit('party:ended', {})
+    deleteSession(sess.id)
     ack?.({ ok: true })
   })
 
@@ -190,6 +360,61 @@ io.on('connection', (socket) => {
 
   const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl
 
+  // browse:navigate — the driver moved through the library; mirror to everyone
+  // else in the room (the driver already applied it optimistically).
+  socket.on('browse:navigate', ({ stack = [] } = {}) => {
+    const sess = findSessionForMember(userId)
+    if (!sess || !canDrive(sess)) return
+    sess.browse = { stack: Array.isArray(stack) ? stack.slice(0, 8) : [] }
+    socket.to(sess.id).emit('browse:state', sess.browse)
+  })
+
+  // browse:pointer — the driver's live scroll + cursor, mirrored to the room so
+  // guests see exactly where the host is looking. Ephemeral (never persisted):
+  // high-frequency, only meaningful in the moment. Relay-only, driver-gated.
+  socket.on('browse:pointer', ({ scroll, x, y } = {}) => {
+    const sess = findSessionForMember(userId)
+    if (!sess || !canDrive(sess)) return
+    socket.to(sess.id).emit('browse:pointer', { scroll, x, y })
+  })
+
+  // party:selectMedia — a title was chosen in the lobby → enter watching stage
+  socket.on('party:selectMedia', async ({ mediaItemId } = {}, ack) => {
+    const sess = findSessionForMember(userId)
+    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    try {
+      const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
+      if (!src) return ack?.({ error: 'item not found' })
+      sess.mediaItemId = mediaItemId
+      sess.mediaSourceId = src
+      sess.stage = 'watching'
+      // Autoplay from the top: the picker's click is a user gesture (host),
+      // and guests are muted so synced play() isn't blocked by autoplay policy.
+      sess.pos = 0
+      sess.stalled.clear()
+      clearTimeout(sess._stallTimer)
+      sess.intent.playing = true
+      startSegment(sess, Date.now())
+      io.to(sess.id).emit('party:state', publicSession(sess))
+      ack?.({ ok: true })
+    } catch (err) {
+      console.error('party:selectMedia', err.message)
+      ack?.({ error: err.message })
+    }
+  })
+
+  // party:backToLobby — stop the movie, return everyone to shared browsing
+  socket.on('party:backToLobby', (_p, ack) => {
+    const sess = findSessionForMember(userId)
+    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    sess.mediaItemId = null
+    sess.mediaSourceId = null
+    sess.stage = 'lobby'
+    resetTimeline(sess)
+    io.to(sess.id).emit('party:state', publicSession(sess))
+    ack?.({ ok: true })
+  })
+
   // sync:hello — client asks for the current timeline once it's listening
   // (avoids the race where a pushed schedule arrives before the guest mounts)
   socket.on('sync:hello', () => {
@@ -197,35 +422,80 @@ io.on('connection', (socket) => {
     if (sess) io.to(socket.id).emit('sync:schedule', sess.schedule)
   })
 
-  // The controller (host, or a collaborative guest) authors the timeline; it
-  // plays natively and never waits. Guests reconcile to the schedule locally.
-  // t0 is the controller's own server-synced timestamp, so guests align precisely.
+  // The controller authors intent (play/pause/seek). The effective schedule is
+  // intent gated by readiness — in dragging mode a stall freezes the group.
   socket.on('sync:play', ({ positionTicks = 0, t0 } = {}) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return
-    setSchedule(sess, { positionTicks, t0: t0 || Date.now(), rate: 1, paused: false, phase: 'playing' })
+    sess.intent.playing = true
+    sess.pos = positionTicks
+    startSegment(sess, t0 || Date.now())
   })
 
   socket.on('sync:pause', ({ positionTicks = 0 } = {}) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return
-    setSchedule(sess, { positionTicks, t0: 0, rate: 0, paused: true, phase: 'paused' })
+    sess.intent.playing = false
+    sess.pos = positionTicks
+    sess.effPlaying = false
+    setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'paused' })
   })
 
   socket.on('sync:seek', ({ positionTicks = 0, t0 } = {}) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return
-    const wasPlaying = sess.schedule.phase === 'playing'
-    setSchedule(sess, wasPlaying
-      ? { positionTicks, t0: t0 || Date.now(), rate: 1, paused: false, phase: 'playing' }
-      : { positionTicks, t0: 0, rate: 0, paused: true, phase: 'paused' })
+    sess.pos = positionTicks
+    // Preserve intent: scrubbing while paused must not start the room playing.
+    if (sess.intent.playing) {
+      startSegment(sess, t0 || Date.now())
+    } else {
+      sess.effPlaying = false
+      setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'paused' })
+    }
+  })
+
+  // sync:report — a member's live drift telemetry (debug/observability only)
+  socket.on('sync:report', ({ position, drift, rate } = {}) => {
+    const sess = findSessionForMember(userId)
+    if (!sess) return
+    sess.reports.set(userId, { position, drift, rate, at: Date.now() })
+  })
+
+  // sync:stall — a member's buffering state changed (drives dragging mode)
+  socket.on('sync:stall', ({ stalled = false } = {}) => {
+    const sess = findSessionForMember(userId)
+    if (!sess) return
+    if (stalled) sess.stalled.add(userId)
+    else sess.stalled.delete(userId)
+    reconcile(sess)
+  })
+
+  // party:setSyncMode — host switches hopping ↔ dragging
+  socket.on('party:setSyncMode', ({ mode } = {}, ack) => {
+    const sess = findSessionByHost(userId)
+    if (!sess) return ack?.({ error: 'not host' })
+    sess.syncMode = mode === 'dragging' ? 'dragging' : 'hopping'
+    if (sess.syncMode === 'hopping') sess.stalled.clear()
+    io.to(sess.id).emit('party:state', publicSession(sess))
+    reconcile(sess)
+    ack?.({ ok: true })
   })
 
   // chat:message ────────────────────────────────────────────────────────────
+  const CHAT_MAX_LEN = 2000
+  const CHAT_RATE_WINDOW_MS = 3000
+  const CHAT_RATE_MAX = 5
   socket.on('chat:message', ({ text } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !text?.trim()) return
-    const msg = { userId, name, text: text.trim(), timestamp: Date.now() }
+    // Light per-socket rate limit
+    const now = Date.now()
+    socket._chatTimes = (socket._chatTimes || []).filter(t => now - t < CHAT_RATE_WINDOW_MS)
+    if (socket._chatTimes.length >= CHAT_RATE_MAX) return ack?.({ error: 'rate limited' })
+    socket._chatTimes.push(now)
+    // Server-side length cap (truncate) so a client can't flood the room log
+    const clean = text.trim().slice(0, CHAT_MAX_LEN)
+    const msg = { userId, name, text: clean, timestamp: now }
     pushMessage(sess, msg)
     io.to(sess.id).emit('chat:message', msg)
     ack?.({ ok: true })
@@ -249,6 +519,8 @@ io.on('connection', (socket) => {
     } else {
       const g = removeGuest(sess, userId)
       if (g) io.to(sess.id).emit('user:left', { userId, name })
+      // A departing member must not keep the group frozen in dragging mode
+      if (sess.stalled.delete(userId)) reconcile(sess)
     }
   })
 })
@@ -257,9 +529,43 @@ io.on('connection', (socket) => {
 
 const TICKS_PER_MS = 10_000
 
+const STALL_MAX_MS = 30_000     // dragging: don't let one dead client freeze forever
+
 function setSchedule(sess, next) {
   sess.schedule = { ...next, version: (sess.schedule?.version ?? 0) + 1 }
   io.to(sess.id).emit('sync:schedule', sess.schedule)
+}
+
+// Resolve a media item's primary MediaSource id (used at create + select time)
+async function resolveMediaSource(token, userId, mediaItemId) {
+  const data = await getItems(token, userId, { Ids: mediaItemId, Fields: 'MediaSources' })
+  const item = data.Items?.[0]
+  if (!item) return null
+  return item.MediaSources?.[0]?.Id ?? mediaItemId
+}
+
+// Same, but under WP_TEST_MODE a fake Jellyfin token can't reach the real API,
+// so fall back to the given id (or a dummy) — the timeline engine only needs an
+// id to run; the harness never fetches real video. Only reachable in test mode.
+async function resolveMediaSourceSafe(token, userId, mediaItemId) {
+  try {
+    const src = await resolveMediaSource(token, userId, mediaItemId)
+    if (src) return src
+  } catch (err) {
+    if (process.env.WP_TEST_MODE !== '1') throw err
+  }
+  if (process.env.WP_TEST_MODE === '1') return mediaItemId || 'test-media'
+  return null
+}
+
+// Reset the shared timeline to a fresh, paused-at-start state (new title / lobby)
+function resetTimeline(sess) {
+  sess.intent.playing = false
+  sess.pos = 0
+  sess.effPlaying = false
+  sess.stalled.clear()
+  clearTimeout(sess._stallTimer)
+  setSchedule(sess, { positionTicks: 0, t0: 0, rate: 0, paused: true, phase: 'paused' })
 }
 
 function livePositionTicks(sess) {
@@ -268,13 +574,71 @@ function livePositionTicks(sess) {
   return Math.max(0, s.positionTicks + (Date.now() - s.t0) * TICKS_PER_MS)
 }
 
+function gated(sess) {
+  return sess.syncMode === 'dragging' && sess.stalled.size > 0
+}
+
+// Begin (or restart) a play segment from sess.pos, unless readiness gates it.
+function startSegment(sess, t0) {
+  if (gated(sess)) {
+    sess.effPlaying = false
+    setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'stalled' })
+    return
+  }
+  sess.effPlaying = true
+  sess.playT0 = t0
+  setSchedule(sess, { positionTicks: sess.pos, t0, rate: 1, paused: false, phase: 'playing' })
+}
+
+// Re-evaluate the effective schedule against intent + readiness (stall changes).
+function reconcile(sess) {
+  const g = gated(sess)
+  const shouldPlay = sess.intent.playing && !g
+
+  if (shouldPlay && !sess.effPlaying) {
+    startSegment(sess, Date.now())              // all clear → resume from frozen pos
+  } else if (!shouldPlay && sess.effPlaying) {
+    // freeze where we are (media didn't advance while we wait)
+    sess.pos = Math.max(0, sess.pos + (Date.now() - sess.playT0) * TICKS_PER_MS)
+    sess.effPlaying = false
+    setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: g ? 'stalled' : 'paused' })
+  } else if (!sess.effPlaying) {
+    // stay paused, but reflect whether it's a user-pause or a stall-freeze
+    const phase = g ? 'stalled' : (sess.intent.playing ? 'stalled' : 'paused')
+    if (sess.schedule.phase !== phase) {
+      setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase })
+    }
+  }
+
+  // Safety: if we've been frozen on a stall too long, force-resume (fall back to
+  // hopping for the laggard) so a dead client can't hold everyone hostage.
+  clearTimeout(sess._stallTimer)
+  if (g && sess.intent.playing) {
+    sess._stallTimer = setTimeout(() => {
+      sess.stalled.clear()
+      reconcile(sess)
+    }, STALL_MAX_MS)
+  }
+}
+
 // ── Host disconnect grace period ──────────────────────────────────────────
 
-const HOST_GRACE_MS = 30_000
+// 30s in production; a test harness may shorten it via WP_HOST_GRACE_MS to
+// exercise host-migration end-to-end without a 30s wait (test mode only).
+const HOST_GRACE_MS = (process.env.WP_TEST_MODE === '1' && Number(process.env.WP_HOST_GRACE_MS) > 0)
+  ? Number(process.env.WP_HOST_GRACE_MS)
+  : 30_000
 
 function handleHostDisconnect(sess) {
-  // Freeze the timeline where it currently is
-  setSchedule(sess, { positionTicks: livePositionTicks(sess), t0: 0, rate: 0, paused: true, phase: 'paused' })
+  // Freeze the timeline where it currently is, and normalize the derived state
+  // so a reconcile() during the grace window (e.g. a stall change) can't act on
+  // stale effPlaying/intent/playT0/pos values.
+  const frozenPos = livePositionTicks(sess)
+  sess.pos = frozenPos
+  sess.effPlaying = false
+  sess.intent.playing = false
+  sess.playT0 = 0
+  setSchedule(sess, { positionTicks: frozenPos, t0: 0, rate: 0, paused: true, phase: 'paused' })
   io.to(sess.id).emit('sync:host_gone')
 
   sess.hostDisconnectTimer = setTimeout(() => {
@@ -290,6 +654,16 @@ function handleHostDisconnect(sess) {
     io.to(sess.id).emit('host:changed', { hostId: next.userId })
   }, HOST_GRACE_MS)
 }
+
+// ── Process-level error handling ───────────────────────────────────────────
+// Log loudly but stay alive: a single rejected promise or a stray throw from a
+// socket handler must not take the whole watch party down.
+process.on('unhandledRejection', (reason) => {
+  console.error('unhandledRejection:', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException:', err)
+})
 
 const PORT = process.env.PORT || 3001
 httpServer.listen(PORT, () => console.log(`server listening on :${PORT}`))

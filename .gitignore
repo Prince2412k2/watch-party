@@ -1,9 +1,26 @@
 node_modules/
 .env
 .env.local
+# livekit.yaml holds the real LiveKit API key:secret — keep it out of git.
+# Commit livekit.yaml.example (placeholders) instead. NOTE: livekit.yaml was
+# already tracked in a prior commit, so to actually stop tracking the real
+# secret run once:  git rm --cached livekit.yaml
+livekit.yaml
 .claude/
 jellyfin/config/
 media/
 *.log
 dist/
 .DS_Store
+
+# servarr deploy (contains no real secrets, but ignored for hygiene)
+.env.servarr
+servarr-config/
+media-data/
+
+# VPN / WireGuard / OpenVPN configs — contain private keys, never commit
+*.conf
+*.ovpn
+wg-*.conf
+*.pem
+*.key
