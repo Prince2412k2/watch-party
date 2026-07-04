@@ -30,9 +30,13 @@ export function useLiveKit({ partyId, enabled = true }) {
       try {
         const res = await fetch(`/api/livekit/token?partyId=${partyId}`, { credentials: 'include' })
         if (!res.ok) throw new Error('Failed to get LiveKit token')
-        const { token, url } = await res.json()
+        const { token, url, iceServers } = await res.json()
 
-        room = new Room({ adaptiveStream: true, dynacast: true })
+        room = new Room({
+          adaptiveStream: true,
+          dynacast: true,
+          ...(iceServers ? { rtcConfig: { iceServers } } : {}),
+        })
         roomRef.current = room
 
         function refresh() {

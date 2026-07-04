@@ -1,0 +1,268 @@
+# PRODUCTION stack for watch.sniffkin.tech — a standalone compose file (not an
+# overlay on docker-compose.yml, to avoid list-merge ambiguity). Reads secrets
+# from ./secrets/ (gitignored) instead of the repo-root .env/.env.local used
+# for local dev.
+#
+# One-time setup:
+#   1. Point watch.sniffkin.tech's DNS A record at this VPS's public IPv4.
+#   2. Fill in the two YOUR_VPS_PUBLIC_IP placeholders:
+#        secrets/livekit.yaml  (rtc.node_ip)
+#        secrets/coturn.conf   (external-ip)
+#      Find it with: curl -4 ifconfig.me
+#   3. Open firewall ports: 80, 443 (Caddy), 7881/tcp + 7882/udp (LiveKit media),
+#      3478/udp + 5349/tcp (coturn), 6881 (qBittorrent, optional).
+#
+# Bring up:  docker compose -f docker-compose.prod.yml up -d --build
+# See secrets/README.md for the full walkthrough.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: watchparty-caddy
+    restart: unless-stopped
+    networks: [watchparty-net]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./secrets/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - watchparty
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: watchparty-jellyfin
+    restart: unless-stopped
+    networks: [watchparty-net]
+    ports:
+      # Admin UI only — loopback-bound, not internet-reachable. Playback for
+      # party members goes through Caddy -> app -> the authenticated
+      # /jellyfin proxy, not this port.
+      - "127.0.0.1:8096:8096"
+    volumes:
+      - ./jellyfin/config:/config
+      - ./media:/media
+      - ${MEDIA_ROOT:-./media-data}/media:/servarr-media:ro
+    environment:
+      - JELLYFIN_PublishedServerUrl=https://watch.sniffkin.tech/jellyfin
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: watchparty-livekit
+    restart: unless-stopped
+    networks: [watchparty-net]
+    ports:
+      - "7881:7881"
+      - "7882:7882/udp"
+    volumes:
+      - ./secrets/livekit.yaml:/etc/livekit.yaml:ro
+    command: --config /etc/livekit.yaml
+
+  # Static long-term-credential TURN relay for guests behind restrictive
+  # NATs/firewalls. Credentials are handed to the browser by
+  # /api/livekit/token (see app/server/livekit.js) using TURN_URL/USERNAME/
+  # PASSWORD from secrets/.env — must match secrets/coturn.conf's `user=` line.
+  coturn:
+    image: coturn/coturn:latest
+    container_name: watchparty-coturn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./secrets/coturn.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+
+  watchparty:
+    build: ./app
+    container_name: watchparty-app
+    restart: unless-stopped
+    networks: [watchparty-net]
+    ports:
+      # Not published to the internet — Caddy reaches this over the internal
+      # docker network by container name. Bound to loopback only, for local
+      # admin health checks over an SSH tunnel.
+      - "127.0.0.1:3001:3000"
+    env_file:
+      - ./secrets/.env
+      - ./secrets/.env.local
+    environment:
+      # ── Server → service: INTERNAL container names (never sent to browser) ──
+      - JELLYFIN_URL=http://jellyfin:8096
+      - LIVEKIT_URL=ws://livekit:7880
+      - SONARR_URL=http://sonarr:8989
+      - RADARR_URL=http://radarr:7878
+      - PROWLARR_URL=http://gluetun:9696
+      - BAZARR_URL=http://bazarr:6767
+      - QBITTORRENT_URL=http://qbittorrent:8080
+      - SERVE_CLIENT=1
+      - PORT=3000
+    depends_on:
+      jellyfin:
+        condition: service_started
+      livekit:
+        condition: service_started
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
+      prowlarr:
+        condition: service_healthy
+      gluetun:
+        condition: service_started
+      bazarr:
+        condition: service_healthy
+      qbittorrent:
+        condition: service_started
+
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: watchparty-gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks: [watchparty-net]
+    ports:
+      - "127.0.0.1:${PROWLARR_PORT:-9696}:9696"
+      - "127.0.0.1:8191:8191"
+    env_file:
+      - ./secrets/.env.local
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_PROTOCOL=tcp
+      - OPENVPN_ENDPOINT_PORT=443
+      - FREE_ONLY=on
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: watchparty-flaresolverr
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - LOG_LEVEL=info
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: watchparty-prowlarr
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/prowlarr:/config
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: watchparty-sonarr
+    restart: unless-stopped
+    networks: [watchparty-net]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/sonarr:/config
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "127.0.0.1:${SONARR_PORT:-8989}:8989"
+    depends_on:
+      - prowlarr
+      - qbittorrent
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8989/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: watchparty-radarr
+    restart: unless-stopped
+    networks: [watchparty-net]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/radarr:/config
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "127.0.0.1:${RADARR_PORT:-7878}:7878"
+    depends_on:
+      - prowlarr
+      - qbittorrent
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7878/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: watchparty-bazarr
+    restart: unless-stopped
+    networks: [watchparty-net]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/bazarr:/config
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "127.0.0.1:${BAZARR_PORT:-6767}:6767"
+    depends_on:
+      - sonarr
+      - radarr
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:6767/api/system/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: watchparty-qbittorrent
+    restart: unless-stopped
+    networks: [watchparty-net]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      - WEBUI_PORT=${QBITTORRENT_PORT:-8080}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/qbittorrent:/config
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "127.0.0.1:${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}"
+      - "${QBITTORRENT_BT_PORT:-6881}:6881"
+      - "${QBITTORRENT_BT_PORT:-6881}:6881/udp"
+
+networks:
+  watchparty-net:
+    name: watchparty-net
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
