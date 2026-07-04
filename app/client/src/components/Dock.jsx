@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import CameraTile from './CameraTile.jsx'
 
-export default function Dock({ localParticipant, participants, isHost, removedCameras, onRemove }) {
+export default function Dock({ localParticipant, participants, isHost, removedCameras, onRemove, hideSelf }) {
   const [hidden, setHidden] = useState(new Set())
 
   const localId = localParticipant?.identity
   const all = [
-    ...(localParticipant ? [{ ...localParticipant, isLocal: true }] : []),
+    // `hideSelf`: local render-only drop of our own tile (camera keeps publishing).
+    ...(localParticipant && !hideSelf ? [{ ...localParticipant, isLocal: true }] : []),
     ...participants.filter(p => p.identity !== localId && !removedCameras.has(p.identity)),
   ]
 

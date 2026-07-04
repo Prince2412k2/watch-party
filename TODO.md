@@ -87,3 +87,54 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [ ] Reverse proxy w/ WS upgrade headers (SyncPlay needs this)
 - [ ] HTTPS (cameras require secure context off-localhost)
 - **Verify:** two people on different networks watch in sync w/ cameras
+
+---
+
+# Active work (post-rebuild)
+
+> Note: the sync engine was rebuilt as a host-authority shared-timeline engine
+> (Phase 5 above is historical — no `syncplay.js`). Items below are the current
+> queue.
+
+## Phase 12 — HLS Sync Hardening
+Adopt the buffer-aware corrections (senior review). Same code path in
+`syncCore.js` / `useSyncPlay.js`. We are on HLS (expensive seeks), not
+direct-play, so bands must be forgiving.
+- [ ] **Buffer-aware hard-seek:** on a large correction, freeze the guest clock —
+      `pause() → currentTime = predicted → await 'seeked' → wait ~1s buffered →
+      re-read host live position once → play()`. Fixes the buffering chase loop
+      in hopping mode (guest stalls while host clock advances → re-seeks → chases).
+- [ ] **Widen the "seek in flight" guard:** `applyingRef` is only 150ms — too
+      short for a real HLS seek+buffer. Hold suppression until `seeked` + buffered
+      (single `isSeeking` flag shared with the buffer-aware routine).
+- [ ] **Explicit drag start/end:** host emits "scrubbing → hold" on drag-start and
+      one settled position on drag-end (today we only debounce 200ms).
+- [ ] **HLS-tuned thresholds:** make the hard-seek band + buffer wait more forgiving
+      for segment-fetch latency.
+- [ ] **Testability:** extend the harness `VirtualPlayer` to simulate buffering
+      stalls so the chase loop is regression-testable headlessly.
+- **Verify:** harness scenario with simulated stalls converges (no re-seek loop);
+      confirm live in a browser against Jellyfin.
+- **DECISION PENDING — audio model** (separate job): mic picks up movie audio →
+      echo. Pick auto-duck during playback / push-to-talk / AEC+headphones before
+      building the AV control UX. (Recommended: auto-duck + optional PTT.)
+
+## Phase 13 — Native media acquisition (Servarr, unified)
+Make the download stack feel like ONE native catalog — the user must never see
+that Radarr/Sonarr/Prowlarr/qBittorrent are separate services. Evolves the
+current admin-ish `/discover` page into a seamless browse+get experience.
+- [ ] **Unified Browse tab:** one catalog surface (Sen Player look) that searches
+      and lists movies + series with poster, description, rating, year, runtime,
+      genres — sourced from Radarr/Sonarr lookup behind the scenes.
+- [ ] **Seamless owned-vs-available:** blend with the existing Jellyfin library so
+      titles show as "in library / play" vs "available / download" in one view —
+      no separate "downloader" mental model.
+- [ ] **One-tap download:** a single "Download" action adds + monitors + triggers
+      indexer search + sends to qBittorrent, with sensible default quality
+      profile / root folder (no dialog friction for the common case).
+- [ ] **Live status inline:** a downloading title shows progress on its own card
+      and lands in the library when imported (build on Phase 5.3/5.4 monitor).
+- [ ] Hide all service branding/config from the UI; keys/URLs stay server-side.
+- **Verify:** search a movie not in the library → tap Download → it starts
+      downloading and shows progress, then appears as playable once imported —
+      without the user ever seeing "Radarr/Sonarr/qBittorrent".
