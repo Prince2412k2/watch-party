@@ -1,0 +1,197 @@
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #08080a;
+  --accent: #E4E8EE;              /* editorial steel — matches the library */
+  --accent-soft: rgba(228,232,238,.14);
+  --accent-glow: rgba(228,232,238,.28);
+  --on-accent: #0a0a0c;           /* dark text for use on the light steel accent */
+  --text: rgba(255,255,255,.95);
+  --text2: rgba(255,255,255,.58);
+  --text3: rgba(255,255,255,.32);
+  /* Solid dark surfaces — readable over video, no muddy glass */
+  --glass: #14161c;
+  --glass2: rgba(255,255,255,.04);
+  --stroke: rgba(255,255,255,.08);
+  --stroke2: rgba(255,255,255,.16);
+  --hi: transparent;
+  --blur: none;
+  --shadow: 0 4px 20px rgba(0,0,0,.5);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,.65);
+  --red: #FF453A;
+  --green: #30D158;
+  --r: 14px;
+  --r-lg: 22px;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Hanken Grotesk', 'Geist', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+input, button, textarea { font-family: inherit; }
+
+/* No stray focus ring from mouse clicks (the white rounded outline on the
+   video/skin); keyboard users still get a visible ring via :focus-visible. */
+:focus:not(:focus-visible) { outline: none; }
+video:focus { outline: none; }
+/* The vidstack skin draws a rounded focus outline on the player root (the
+   stray border in the corner). Suppress it there; controls keep their rings. */
+media-player, media-player:focus, media-player:focus-visible,
+[data-media-player], [data-media-player]:focus { outline: none !important; }
+
+/* Watch screen (bug 7): on phones the app's MobileBottomBar fully replaces the
+   player skin's own control bar (transport, settings, fullscreen) and carries a
+   read-only timeline row. Hide the skin's bottom control bar there so it can't
+   peek out under / overlap the app bar. Desktop keeps the skin scrubber so
+   controllers can still drag to seek. */
+.watch-skin--nobar .media-controls { display: none !important; }
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 99px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Animations ─────────────────────────────── */
+@keyframes spin  { to { transform: rotate(360deg); } }
+@keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.4; transform:scale(.85); } }
+@keyframes bar   { 0%,100% { transform:scaleY(.3); } 50% { transform:scaleY(1); } }
+@keyframes in    { from { opacity:0; transform:translateY(-8px) scale(.97); } to { opacity:1; transform:none; } }
+@keyframes up    { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes ring  { 0% { transform:scale(1); opacity:.5; } 100% { transform:scale(1.75); opacity:0; } }
+@keyframes sonar { 0% { transform:scale(.4); opacity:.8; } 100% { transform:scale(1.6); opacity:0; } }
+@keyframes shim  { to { background-position: 200% 0; } }
+@keyframes chatIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes edgeRipple { 0% { opacity: .6; transform: translateX(0) scaleX(1); } 100% { opacity: 0; transform: translateX(-14px) scaleX(1.4); } }
+@keyframes sheetIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
+/* Double-tap-to-seek feedback (Phase F): a brief ripple + ∓Ns label that pops in
+   then fades. JS unmounts the element after ~600ms; this only drives the visual. */
+@keyframes seekFx { 0% { opacity: 0; transform: scale(.86); } 16% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.05); } }
+
+/* ── Reduced motion (G6, prefers-reduced-motion) ───────────────────────────
+   Collapse decorative motion to a near-instant step so state stays visible but
+   nothing animates: sheet/scrim entrances (sheetIn/scrimIn), the notification
+   edge ripple (edgeRipple), menu/overflow pop-ins ("up"/"in"/"chatIn"), and the
+   looping decorative pulses (talking dot & downloading "pulse", "sonar"/"ring"
+   avatar rings, speaking "bar"s, "shim"mer) all fold to ~0ms. Duration is a hair
+   above 0 (not `animation: none`) so animationend still fires — the edge ripple
+   cleans itself up on that event. The double-tap seek label is essential
+   feedback, so it is exempted and simply held visible without motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .seek-fx { animation: none !important; opacity: 1 !important; }
+}
+
+/* Safe-area insets (require viewport-fit=cover, already set). Fall back to 0 on
+   browsers without env(). Used by the mobile watch-screen bars so controls clear
+   the notch / Dynamic Island / home-indicator in landscape. */
+:root {
+  --sa-t: env(safe-area-inset-top, 0px);
+  --sa-r: env(safe-area-inset-right, 0px);
+  --sa-b: env(safe-area-inset-bottom, 0px);
+  --sa-l: env(safe-area-inset-left, 0px);
+}
+
+/* ── Glass surface ──────────────────────────── */
+.glass {
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow), inset 0 1px 0 var(--hi);
+}
+
+/* ── Icon button base ───────────────────────── */
+.icon-btn {
+  display: grid; place-items: center;
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  border: none;
+  background: var(--glass);
+  color: var(--text2);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.icon-btn:hover { background: var(--glass2); color: var(--text); }
+.icon-btn.active { color: var(--accent); }
+
+/* ── Badge ──────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+}
+
+/* ── Speaking bars ──────────────────────────── */
+.speak-bars { display: flex; align-items: flex-end; gap: 2px; height: 12px; }
+.speak-bars span {
+  width: 2.5px; border-radius: 2px; background: var(--green);
+  transform-origin: bottom; animation: bar .6s ease-in-out infinite;
+  height: 100%;
+}
+.speak-bars span:nth-child(2) { animation-delay: .2s; }
+.speak-bars span:nth-child(3) { animation-delay: .4s; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MOBILE PRESENTATION LAYER  (additive — desktop is byte-identical)
+   Every rule below is either inside @media (pointer: coarse) or scoped to a
+   ".mobile-" or ".mob-" class that ONLY the phone tree renders. No rule above
+   this banner is touched, so desktop/tablet output is unchanged.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* §5 — phone-tuned touch defaults. Coarse-pointer gated so mouse users keep
+   the desktop feel. Kills the tap-highlight flash + 300ms delay, and forces
+   ≥16px on inputs so iOS never auto-zooms the field. */
+@media (pointer: coarse) {
+  * { -webkit-tap-highlight-color: transparent; }
+  input, textarea, select { font-size: 16px; }
+}
+
+/* App shell — fixed to the DYNAMIC viewport (100dvh) so the collapsing URL bar
+   never shifts layout. Anchored top/left/right (NOT `inset:0`, which would use
+   the layout viewport height) with an explicit dvh height. The shell itself
+   never scrolls; a single inner region does. */
+.mobile-shell {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  background: #0b0d10;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+/* The ONLY scroller: momentum + contained overscroll, no horizontal scroll. */
+.mobile-scroll {
+  position: relative;
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+/* Screen cross-fade on tab switches (keyed remount in MobileApp). */
+@keyframes tabIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.mobile-screen { animation: tabIn .24s cubic-bezier(.2,.8,.2,1) both; min-height: 100%; }
+
+/* Bottom-sheet rise (companion to the existing sheetIn/scrimIn keyframes). */
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+/* Touch has no hover — press feedback via :active, never :hover. */
+.mob-press { transition: transform .12s cubic-bezier(.2,.8,.2,1); }
+.mob-press:active { transform: scale(.97); }
+
+/* Rails scroll by swipe; hide their scrollbar (arrows are forbidden on phone). */
+.mob-rail { scrollbar-width: none; }
+.mob-rail::-webkit-scrollbar { display: none; }

@@ -1,0 +1,32 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+  # Advertise a reachable IP so remote clients can reach media (ICE).
+  # For a tailnet-only deploy this is your Tailscale 100.x IP; for a public
+  # VPS set use_external_ip:true (or node_ip to the public address) AND
+  # configure TURN below, or off-tailnet guests cannot publish/subscribe media.
+  node_ip: 100.x.x.x
+
+keys:
+  # LiveKit reads its API key:secret from this file. Generate strong random
+  # values and keep the REAL livekit.yaml out of git (it is gitignored):
+  #   KEY=$(openssl rand -hex 16); SECRET=$(openssl rand -hex 32)
+  #   echo "  $KEY: $SECRET"
+  # The key:secret pair here MUST match LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+  # in .env, or the server's signed room tokens will not validate.
+  CHANGE_ME_api_key: CHANGE_ME_api_secret
+
+logging:
+  level: info
+
+# TURN — required for guests who are NOT on your tailnet (public deploy).
+# Uncomment, point domain at your public IP/host, and provide TLS certs.
+# turn:
+#   enabled: true
+#   domain: YOUR_PUBLIC_IP
+#   cert_file: ""
+#   key_file: ""
+#   udp_port: 3478
+#   tls_port: 5349

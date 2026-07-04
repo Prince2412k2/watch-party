@@ -1,0 +1,164 @@
+# ⚠️  SUPERSEDED — do not run alongside the root docker-compose.yml.
+# These services are now defined in the root docker-compose.yml on the shared
+# `watchparty-net` network (single source of truth). This file is kept for
+# reference / standalone use only; running both for the same containers will
+# conflict. Use:  docker compose up -d --build
+#
+# Media-acquisition stack (Servarr + qBittorrent) — Phase 5.0
+#
+# Additive to the app's root docker-compose.yml. Brings up:
+#   Prowlarr (indexer manager), Sonarr (TV), Radarr (Movies),
+#   Bazarr (subtitles), qBittorrent (downloader).
+#
+# Bring up:
+#   docker compose -f docker-compose.servarr.yml --env-file .env.servarr up -d
+#
+# All host paths and ports are env-driven (see .env.servarr.example).
+# Nothing here is started automatically; see deploy/README-servarr.md.
+#
+# --- Path model (TRaSH-guides single /data mount) -------------------------
+# Every service that touches media (qBittorrent, Sonarr, Radarr) mounts ONE
+# host tree at /data so that downloads and the final library live on the SAME
+# filesystem. This lets Sonarr/Radarr hardlink (or atomic-move) completed
+# downloads into the library instead of copying — instant, no double disk use,
+# and seeding continues from the same inode.
+#
+#   ${MEDIA_ROOT}            -> /data              (single mount inside containers)
+#     /data/downloads        <- ${DOWNLOADS_SUBDIR} qBittorrent writes here
+#     /data/media/movies     <- Radarr root folder / Jellyfin "Movies" library
+#     /data/media/tv         <- Sonarr root folder / Jellyfin "Shows" library
+#
+# Jellyfin (in the root compose) currently mounts ./media:/media. To let
+# Jellyfin see imported content, point its library at the SAME host tree —
+# see deploy/README-servarr.md ("Wiring Jellyfin to the same media tree").
+
+services:
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: watchparty-prowlarr
+    restart: unless-stopped
+    networks: [servarr]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/prowlarr:/config
+    ports:
+      - "${PROWLARR_PORT:-9696}:9696"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9696/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: watchparty-sonarr
+    restart: unless-stopped
+    networks: [servarr]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/sonarr:/config
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "${SONARR_PORT:-8989}:8989"
+    depends_on:
+      - prowlarr
+      - qbittorrent
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8989/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: watchparty-radarr
+    restart: unless-stopped
+    networks: [servarr]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/radarr:/config
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "${RADARR_PORT:-7878}:7878"
+    depends_on:
+      - prowlarr
+      - qbittorrent
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7878/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: watchparty-bazarr
+    restart: unless-stopped
+    networks: [servarr]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/bazarr:/config
+      # Bazarr must see the SAME media paths as Sonarr/Radarr to find video
+      # files and write sidecar .srt subtitles next to them.
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "${BAZARR_PORT:-6767}:6767"
+    depends_on:
+      - sonarr
+      - radarr
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:6767/api/system/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: watchparty-qbittorrent
+    restart: unless-stopped
+    networks: [servarr]
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+      # WebUI port inside the container (keep in sync with the published port).
+      - WEBUI_PORT=${QBITTORRENT_PORT:-8080}
+    volumes:
+      - ${CONFIG_ROOT:-./servarr-config}/qbittorrent:/config
+      - ${MEDIA_ROOT:-./media-data}:/data
+    ports:
+      - "${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}"
+      # BitTorrent listen port (TCP+UDP) — forward this on your router/VPS
+      # for better peer connectivity. Not needed for LAN-only use.
+      - "${QBITTORRENT_BT_PORT:-6881}:6881"
+      - "${QBITTORRENT_BT_PORT:-6881}:6881/udp"
+
+networks:
+  # Internal network for the servarr services to reach each other by name
+  # (e.g. Prowlarr -> http://sonarr:8989, Sonarr -> http://qbittorrent:8080).
+  #
+  # To let the watchparty app OR Jellyfin talk to these services by container
+  # name, make this an external shared network instead (see README, section
+  # "Integrating with the app / Jellyfin compose"):
+  #
+  #   docker network create watchparty-net
+  # then set below:  external: true  and rename to watchparty-net in BOTH
+  # compose files.
+  servarr:
+    name: ${SERVARR_NETWORK:-watchparty-servarr}
+    driver: bridge
