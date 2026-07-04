@@ -234,7 +234,10 @@ services:
       - sonarr
       - radarr
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:6767/api/system/status"]
+      # /api/system/status requires an API key (401 without one), which
+      # falsely marked this container "unhealthy" forever and blocked
+      # `watchparty`'s condition: service_healthy dependency below.
+      test: ["CMD", "curl", "-fsS", "http://localhost:6767/"]
       interval: 30s
       timeout: 5s
       retries: 5
