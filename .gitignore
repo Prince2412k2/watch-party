@@ -24,3 +24,7 @@ media-data/
 wg-*.conf
 *.pem
 *.key
+
+# Production secrets for the VPS deploy (env files, livekit.yaml, coturn.conf,
+# Caddyfile) — never commit.
+secrets/

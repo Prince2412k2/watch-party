@@ -24,9 +24,17 @@ export function registerLiveKitRoutes(app) {
     // container address (LIVEKIT_URL=ws://livekit:7880 is server-side only).
     // LIVEKIT_PUBLIC_URL is either a published host address (ws://host:7880) or,
     // behind HTTPS, the app-origin signaling proxy (wss://<host>/livekit).
+    // Hand the browser a TURN relay fallback when one is configured (required
+    // for guests behind restrictive NATs/firewalls on a public deployment).
+    // Absent on local/tailnet setups where TURN_* is unset.
+    const iceServers = (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_PASSWORD)
+      ? [{ urls: process.env.TURN_URL, username: process.env.TURN_USERNAME, credential: process.env.TURN_PASSWORD }]
+      : undefined
+
     res.json({
       token: await token.toJwt(),
       url: process.env.LIVEKIT_PUBLIC_URL || process.env.LIVEKIT_URL || 'ws://localhost:7880',
+      iceServers,
     })
   })
 }
