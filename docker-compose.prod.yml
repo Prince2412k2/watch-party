@@ -58,6 +58,12 @@ services:
       - "7882:7882/udp"
     volumes:
       - ./secrets/livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      # livekit-server reads this natively (--node-ip / $NODE_IP) — the single
+      # source of truth is VPS_PUBLIC_IP in secrets/.env. Requires deploying
+      # with `docker compose --env-file secrets/.env -f docker-compose.prod.yml ...`
+      # (see secrets/README.md) so this ${...} actually resolves.
+      - NODE_IP=${VPS_PUBLIC_IP}
     command: --config /etc/livekit.yaml
 
   # Static long-term-credential TURN relay for guests behind restrictive
@@ -71,7 +77,9 @@ services:
     network_mode: host
     volumes:
       - ./secrets/coturn.conf:/etc/coturn/turnserver.conf:ro
-    command: ["-c", "/etc/coturn/turnserver.conf"]
+    # -X (external-ip) passed as a CLI flag rather than baked into
+    # coturn.conf — same VPS_PUBLIC_IP source as livekit's NODE_IP above.
+    command: ["-c", "/etc/coturn/turnserver.conf", "-X", "${VPS_PUBLIC_IP}"]
 
   watchparty:
     build: ./app

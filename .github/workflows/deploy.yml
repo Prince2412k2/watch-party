@@ -34,5 +34,8 @@ jobs:
               exit 1
             fi
 
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --build
+            # --env-file secrets/.env is required (not just env_file: in the
+            # compose file) so ${VPS_PUBLIC_IP} interpolates into livekit's
+            # NODE_IP and coturn's -X flag at compose parse time.
+            docker compose --env-file secrets/.env -f docker-compose.prod.yml pull
+            docker compose --env-file secrets/.env -f docker-compose.prod.yml up -d --build
