@@ -273,7 +273,11 @@ services:
       - sonarr
       - radarr
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:6767/api/system/status"]
+      # /api/system/status requires an API key (401 without one), which
+      # falsely marked this container "unhealthy" forever and blocked any
+      # service with `depends_on: condition: service_healthy` on it. Root `/`
+      # needs no auth and returns 200 once Bazarr is actually up.
+      test: ["CMD", "curl", "-fsS", "http://localhost:6767/"]
       interval: 30s
       timeout: 5s
       retries: 5
