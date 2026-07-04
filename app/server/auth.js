@@ -12,6 +12,10 @@ export async function login(req, res) {
 
   try {
     const data = await authenticate(username, password, deviceId)
+    // Regenerate the session before storing the authenticated identity so a
+    // pre-login session id can't be fixed onto the authenticated session.
+    await new Promise((resolve, reject) =>
+      req.session.regenerate((err) => (err ? reject(err) : resolve())))
     req.session.jellyfin = {
       accessToken: data.AccessToken,
       userId: data.User.Id,
@@ -26,6 +30,27 @@ export async function login(req, res) {
     console.error('login error', err.message)
     res.status(502).json({ error: 'Could not reach media server' })
   }
+}
+
+// Dev-only login that bypasses Jellyfin so the headless sync harness can
+// authenticate its socket without real credentials. 404 unless WP_TEST_MODE=1.
+export function testLogin(req, res) {
+  // Hard gate: never available in production, even if WP_TEST_MODE leaks in.
+  if (process.env.NODE_ENV === 'production' || process.env.WP_TEST_MODE !== '1') {
+    return res.status(404).end()
+  }
+  const name = (req.body?.name || '').trim() || 'tester'
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  const userId = `test-${slug || 'user'}-${randomUUID().slice(0, 8)}`
+  req.session.jellyfin = {
+    accessToken: 'test',
+    userId,
+    name,
+    isAdmin: false,
+    deviceId: `wp-test-${randomUUID().slice(0, 8)}`,
+  }
+  const { accessToken: _, deviceId: __, ...safe } = req.session.jellyfin
+  res.json(safe)
 }
 
 export function me(req, res) {

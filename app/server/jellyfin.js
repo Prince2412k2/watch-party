@@ -48,22 +48,81 @@ export function getItemChildren(token, userId, parentId) {
   return jfetch(`/Users/${userId}/Items?ParentId=${parentId}&Fields=MediaSources`, { token })
 }
 
-export function buildHlsUrl(itemId, token, { maxBitrate } = {}) {
+// User's library views (Movies, Shows, Anime, …) — the top-level collections
+export function getViews(token, userId) {
+  return jfetch(`/Users/${userId}/Views`, { token })
+}
+
+// Partially-watched items → "Continue Watching"
+export function getResumeItems(token, userId, limit = 12) {
+  const qs = new URLSearchParams({
+    Limit: String(limit),
+    MediaTypes: 'Video',
+    Recursive: 'true',
+    Fields: 'PrimaryImageAspectRatio,ProductionYear,UserData',
+    EnableImageTypes: 'Primary,Backdrop,Thumb',
+  })
+  return jfetch(`/Users/${userId}/Items/Resume?${qs}`, { token })
+}
+
+// Next episode to watch for in-progress series → "Next Up"
+export function getNextUp(token, userId, limit = 16) {
+  const qs = new URLSearchParams({
+    UserId: userId,
+    Limit: String(limit),
+    Fields: 'PrimaryImageAspectRatio,ProductionYear',
+    EnableImageTypes: 'Primary,Backdrop,Thumb',
+  })
+  return jfetch(`/Shows/NextUp?${qs}`, { token })
+}
+
+// Recently added, optionally scoped to one library
+export function getLatest(token, userId, parentId, limit = 20) {
+  const qs = new URLSearchParams({
+    Limit: String(limit),
+    Fields: 'ProductionYear',
+    EnableImageTypes: 'Primary',
+    IncludeItemTypes: 'Movie,Series',
+  })
+  if (parentId) qs.set('ParentId', parentId)
+  return jfetch(`/Users/${userId}/Items/Latest?${qs}`, { token })
+}
+
+// Full detail for the hero / item page
+export function getItemDetail(token, userId, itemId) {
+  const qs = new URLSearchParams({
+    Fields: 'Overview,Genres,People,Studios,Taglines,Tags,ProviderIds,ProductionYear,PremiereDate,CommunityRating,CriticRating,OfficialRating,RunTimeTicks,MediaSources,MediaStreams,Width,Height',
+  })
+  return jfetch(`/Users/${userId}/Items/${itemId}?${qs}`, { token })
+}
+
+export function buildHlsUrl(itemId, { maxBitrate, abr } = {}) {
   const params = {
     MediaSourceId: itemId,
-    api_key: token,
     VideoCodec: 'h264',
     AudioCodec: 'aac',
   }
-  if (maxBitrate) {
-    // Cap video bitrate (and resolution to match) so a slow guest can keep up
+  if (abr) {
+    // Adaptive (ABR) master: don't pin a single bitrate/resolution. Jellyfin's
+    // master.m3u8 then emits a multi-variant ladder (several #EXT-X-STREAM-INF
+    // renditions in one playlist) and hls.js picks the rung by bandwidth. We
+    // still request a large ceiling so the top rung is the source's full res.
+    // BreakOnNonKeyFrames lets each rendition switch at segment boundaries.
+    params.MaxStreamingBitrate = '20000000'
+    params.MaxWidth = '1920'
+    params.BreakOnNonKeyFrames = 'true'
+  } else if (maxBitrate) {
+    // Single-bitrate transcode (legacy Phase-1.1 src-swap path): cap video
+    // bitrate + resolution so a slow guest can keep up.
     params.VideoBitrate = String(maxBitrate)
     params.maxHeight = String(maxBitrate >= 3_000_000 ? 720 : maxBitrate >= 1_500_000 ? 480 : 360)
   }
   const qs = new URLSearchParams(params)
-  // Origin-relative so any client reaches Jellyfin via the app's /jellyfin proxy
-  // (an absolute localhost URL would resolve to the *client's* machine).
-  return `/jellyfin/Videos/${itemId}/master.m3u8?${qs}`
+  // Route through the app's authenticated HLS proxy (/api/library/hls/*). That
+  // route attaches the per-user Jellyfin api_key server-side and strips it from
+  // the returned playlists, so the raw token never reaches the browser. Nested
+  // playlist/segment URIs stay relative and resolve back through the same proxy.
+  return `/api/library/hls/Videos/${itemId}/master.m3u8?${qs}`
 }
 
 // All SyncPlay calls accept deviceId so Jellyfin associates them with the right session

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 
+const MONO = "'JetBrains Mono', ui-monospace, monospace"
+
 export default function Login({ onSuccess }) {
   const { login } = useAuth()
   const [username, setUsername] = useState('')
@@ -22,106 +24,66 @@ export default function Login({ onSuccess }) {
     }
   }
 
+  const field = {
+    width: '100%', padding: '14px 16px', borderRadius: 10,
+    border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.04)',
+    color: '#EDEFF2', fontSize: 15, outline: 'none', transition: 'border-color .15s, background .15s',
+  }
+
   return (
-    <div style={{
-      position: 'fixed', inset: 0, display: 'grid', placeItems: 'center',
-      background: 'var(--bg)',
-    }}>
-      {/* ambient glow */}
-      <div style={{
-        position: 'absolute', width: 600, height: 600, borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(10,132,255,.12) 0%, transparent 70%)',
-        top: '50%', left: '50%', transform: 'translate(-50%,-60%)',
-        pointerEvents: 'none',
-      }} />
+    <div style={{ position: 'fixed', inset: 0, display: 'grid', gridTemplateColumns: '1fr', placeItems: 'center', background: '#08080a', color: '#EDEFF2', overflow: 'hidden' }}>
+      {/* cinematic ground: subtle top glow + faint grain via layered gradients */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none',
+        background: 'radial-gradient(120% 80% at 50% -10%, rgba(90,96,110,.28), transparent 60%)' }} />
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', opacity: .5,
+        background: 'radial-gradient(60% 50% at 80% 110%, rgba(60,66,80,.25), transparent 60%)' }} />
 
-      <div style={{
-        position: 'relative', width: 400, maxWidth: '90vw',
-        padding: '40px 36px', borderRadius: 26,
-        background: 'var(--glass)',
-        backdropFilter: 'var(--blur)', WebkitBackdropFilter: 'var(--blur)',
-        border: '1px solid var(--stroke)',
-        boxShadow: 'var(--shadow-lg), inset 0 1px 0 var(--hi)',
-        animation: 'in .35s cubic-bezier(.2,0,.1,1)',
-      }}>
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 32 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 11,
-            background: 'var(--accent)',
-            display: 'grid', placeItems: 'center',
-            boxShadow: '0 4px 16px var(--accent-glow)',
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
-          </div>
-          <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em' }}>Watchparty</span>
+      <div style={{ position: 'relative', width: 380, maxWidth: '90vw', padding: '4px 8px', animation: 'up .5s ease both' }}>
+        {/* Wordmark */}
+        <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '.28em', textTransform: 'uppercase', color: 'rgba(255,255,255,.55)', marginBottom: 40 }}>
+          Watchparty
         </div>
 
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.03em', marginBottom: 4 }}>Sign in</div>
-          <div style={{ fontSize: 13.5, color: 'var(--text2)' }}>Use your Jellyfin credentials</div>
-        </div>
+        <h1 style={{ fontSize: 34, fontWeight: 800, letterSpacing: '-.035em', lineHeight: 1.05, marginBottom: 10 }}>
+          Welcome back
+        </h1>
+        <p style={{ fontSize: 14.5, color: 'rgba(255,255,255,.5)', marginBottom: 34 }}>
+          Sign in with your Jellyfin account
+        </p>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <input
-            type="text"
-            placeholder="Username"
-            value={username}
-            onChange={e => setUsername(e.target.value)}
-            disabled={submitting}
-            required
-            style={{
-              width: '100%', padding: '12px 14px', borderRadius: 13,
-              border: '1px solid var(--stroke)', background: 'var(--glass2)',
-              color: 'var(--text)', fontSize: 14.5, outline: 'none',
-              transition: 'border-color .15s',
-            }}
-            onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-            onBlur={e => e.target.style.borderColor = 'var(--stroke)'}
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            disabled={submitting}
-            style={{
-              width: '100%', padding: '12px 14px', borderRadius: 13,
-              border: '1px solid var(--stroke)', background: 'var(--glass2)',
-              color: 'var(--text)', fontSize: 14.5, outline: 'none',
-              transition: 'border-color .15s',
-            }}
-            onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-            onBlur={e => e.target.style.borderColor = 'var(--stroke)'}
-          />
+          <label style={{ display: 'block' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(255,255,255,.4)', marginBottom: 7 }}>Username</span>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)} disabled={submitting} required autoComplete="username" autoFocus
+              style={field}
+              onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,.4)'; e.target.style.background = 'rgba(255,255,255,.06)' }}
+              onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,.12)'; e.target.style.background = 'rgba(255,255,255,.04)' }} />
+          </label>
+
+          <label style={{ display: 'block' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(255,255,255,.4)', marginBottom: 7 }}>Password</span>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} disabled={submitting} autoComplete="current-password"
+              style={field}
+              onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,.4)'; e.target.style.background = 'rgba(255,255,255,.06)' }}
+              onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,.12)'; e.target.style.background = 'rgba(255,255,255,.04)' }} />
+          </label>
 
           {error && (
-            <div style={{
-              padding: '10px 13px', borderRadius: 11,
-              background: 'rgba(255,69,58,.12)', border: '1px solid rgba(255,69,58,.25)',
-              color: 'var(--red)', fontSize: 13.5,
-            }}>{error}</div>
+            <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(220,60,60,.12)', border: '1px solid rgba(220,60,60,.3)', color: 'rgb(240,170,170)', fontSize: 13.5 }}>
+              {error}
+            </div>
           )}
 
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{
-              marginTop: 4, width: '100%', padding: '13px',
-              borderRadius: 13, border: 'none',
-              background: submitting ? 'rgba(10,132,255,.5)' : 'var(--accent)',
-              color: '#fff', fontSize: 15, fontWeight: 600, cursor: submitting ? 'default' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              transition: 'background .15s',
-            }}
-          >
-            {submitting && (
-              <div style={{
-                width: 16, height: 16, borderRadius: '50%',
-                border: '2px solid rgba(255,255,255,.4)', borderTopColor: '#fff',
-                animation: 'spin .8s linear infinite',
-              }} />
-            )}
+          <button type="submit" disabled={submitting} style={{
+            marginTop: 12, width: '100%', padding: '14px', borderRadius: 10, border: 'none',
+            background: '#EDEFF2', color: '#0a0a0c', fontSize: 15, fontWeight: 700, letterSpacing: '.01em',
+            cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, transition: 'opacity .15s, transform .12s',
+          }}
+            onMouseDown={e => { if (!submitting) e.currentTarget.style.transform = 'scale(.985)' }}
+            onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+            onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+            {submitting && <span style={{ width: 15, height: 15, borderRadius: '50%', border: '2px solid rgba(10,10,12,.35)', borderTopColor: '#0a0a0c', animation: 'spin .8s linear infinite' }} />}
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>

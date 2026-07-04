@@ -2,14 +2,27 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json ./
+# Server deps
+COPY package.json package-lock.json* ./
 RUN npm install
 
-COPY client/package.json ./client/
+# Client deps
+COPY client/package.json client/package-lock.json* ./client/
 RUN cd client && npm install
 
+# Source
 COPY . .
+
+# Build the client into client/dist so the Express server can serve it.
+RUN cd client && npm run build
+
+# Production serve: one port serves the built UI, /api, Socket.io, and the
+# /jellyfin + /livekit reverse proxies. No source bind-mount at runtime — the
+# image's built client/dist is authoritative (see docker-compose.yml).
+ENV NODE_ENV=production
+ENV SERVE_CLIENT=1
+ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["npm", "run", "dev"]
+CMD ["npm", "start"]
