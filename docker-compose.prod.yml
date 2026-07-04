@@ -12,7 +12,15 @@
 #   3. Open firewall ports: 80, 443 (Caddy), 7881/tcp + 7882/udp (LiveKit media),
 #      3478/udp + 5349/tcp (coturn), 6881 (qBittorrent, optional).
 #
-# Bring up:  docker compose -f docker-compose.prod.yml up -d --build
+# ADMIN PORTS (Jellyfin 8096, Sonarr 8989, Radarr 7878, Bazarr 6767,
+# Prowlarr 9696, FlareSolverr 8191, the app itself 3001) are bound to
+# 0.0.0.0 for Tailscale access — by explicit choice, NOT firewalled by this
+# repo. They are also reachable on the VPS's public interface unless you
+# separately lock them down yourself (ufw/iptables, allow only tailscale0 +
+# loopback on these ports). This is intentionally your responsibility.
+#
+# Bring up:  ./deploy/up-prod.sh   (preferred — has pre-flight checks)
+#        or: docker compose --env-file secrets/.env -f docker-compose.prod.yml up -d --build
 # See secrets/README.md for the full walkthrough.
 
 services:
@@ -37,10 +45,12 @@ services:
     restart: unless-stopped
     networks: [watchparty-net]
     ports:
-      # Admin UI only — loopback-bound, not internet-reachable. Playback for
-      # party members goes through Caddy -> app -> the authenticated
+      # Admin UI — bound to 0.0.0.0 for Tailscale access. NOT firewalled by
+      # this repo: you are managing exposure yourself (ufw/iptables) since
+      # this also listens on the VPS's public interface. Playback for party
+      # members still goes through Caddy -> app -> the authenticated
       # /jellyfin proxy, not this port.
-      - "127.0.0.1:8096:8096"
+      - "0.0.0.0:8096:8096"
     volumes:
       - ./jellyfin/config:/config
       - ./media:/media
@@ -87,10 +97,11 @@ services:
     restart: unless-stopped
     networks: [watchparty-net]
     ports:
-      # Not published to the internet — Caddy reaches this over the internal
-      # docker network by container name. Bound to loopback only, for local
-      # admin health checks over an SSH tunnel.
-      - "127.0.0.1:3001:3000"
+      # Caddy reaches this over the internal docker network by container
+      # name, not via this port — this is only for direct/admin access
+      # (Tailscale or local health checks). Bound to 0.0.0.0: also reachable
+      # on the public interface unless you firewall it yourself.
+      - "0.0.0.0:3001:3000"
     env_file:
       - ./secrets/.env
       - ./secrets/.env.local
@@ -135,8 +146,8 @@ services:
       - net.ipv4.conf.all.src_valid_mark=1
     networks: [watchparty-net]
     ports:
-      - "127.0.0.1:${PROWLARR_PORT:-9696}:9696"
-      - "127.0.0.1:8191:8191"
+      - "0.0.0.0:${PROWLARR_PORT:-9696}:9696"
+      - "0.0.0.0:8191:8191"
     env_file:
       - ./secrets/.env.local
     environment:
@@ -189,7 +200,7 @@ services:
       - ${CONFIG_ROOT:-./servarr-config}/sonarr:/config
       - ${MEDIA_ROOT:-./media-data}:/data
     ports:
-      - "127.0.0.1:${SONARR_PORT:-8989}:8989"
+      - "0.0.0.0:${SONARR_PORT:-8989}:8989"
     depends_on:
       - prowlarr
       - qbittorrent
@@ -213,7 +224,7 @@ services:
       - ${CONFIG_ROOT:-./servarr-config}/radarr:/config
       - ${MEDIA_ROOT:-./media-data}:/data
     ports:
-      - "127.0.0.1:${RADARR_PORT:-7878}:7878"
+      - "0.0.0.0:${RADARR_PORT:-7878}:7878"
     depends_on:
       - prowlarr
       - qbittorrent
@@ -237,7 +248,7 @@ services:
       - ${CONFIG_ROOT:-./servarr-config}/bazarr:/config
       - ${MEDIA_ROOT:-./media-data}:/data
     ports:
-      - "127.0.0.1:${BAZARR_PORT:-6767}:6767"
+      - "0.0.0.0:${BAZARR_PORT:-6767}:6767"
     depends_on:
       - sonarr
       - radarr
@@ -265,7 +276,7 @@ services:
       - ${CONFIG_ROOT:-./servarr-config}/qbittorrent:/config
       - ${MEDIA_ROOT:-./media-data}:/data
     ports:
-      - "127.0.0.1:${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}"
+      - "0.0.0.0:${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}"
       - "${QBITTORRENT_BT_PORT:-6881}:6881"
       - "${QBITTORRENT_BT_PORT:-6881}:6881/udp"
 
