@@ -1,4 +1,3 @@
-
 name: Deploy
 
 on:
@@ -19,7 +18,21 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
           script: |
+            set -e
             cd /opt/watch-party
             git pull origin main
-            docker compose pull
-            docker compose up -d --build
+
+            # secrets/ is gitignored by design (real API keys/session secret/
+            # TURN creds) — `git pull` never puts it here. It must be seeded
+            # on this VPS once, out of band (scp/rsync), before the first
+            # deploy. Fail loudly and early instead of letting docker compose
+            # fail midway through an image pull, which is what was happening.
+            if [ ! -f secrets/.env ] || [ ! -f secrets/.env.local ]; then
+              echo "::error::secrets/.env or secrets/.env.local missing on the VPS." \
+                   "Copy them from your prod secrets/ directory (see secrets/README.md)" \
+                   "before the first deploy — they are intentionally never committed."
+              exit 1
+            fi
+
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --build
