@@ -314,6 +314,12 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
       // A buffer-aware hard seek is in flight — do not correct or nudge on top
       // of it (that stacking is exactly the chase loop we're killing).
       if (isSeekingRef.current) return
+      // A locally-authored play/pause/seek is in flight and hasn't round-tripped
+      // to the server yet — scheduleRef is still stale. Without this guard a
+      // controller's own pause gets raced by this loop, which still sees the
+      // old "playing" schedule and calls video.play() right back, so pause
+      // silently "doesn't stick" until the stale window happens to close.
+      if (applyingRef.current) return
 
       // Idempotently (re)start a hopping host's own video. decideSyncAction
       // returns null for a hopping host, so this loop is the only place that
