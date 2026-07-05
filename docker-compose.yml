@@ -63,6 +63,11 @@ services:
       # app is published on host 3001 -> container 3000. Change the left side to
       # "3000:3000" on a host where 3000 is free.
       - "3001:3000"
+    volumes:
+      # Persistent session store (file-based) so `--build` restarts don't log
+      # everyone out — express-session's default MemoryStore is wiped on every
+      # container recreate. See app/server/index.js's sessionStoreDir.
+      - ./data/sessions:/data/sessions
     env_file:
       # .env  = base (internal URLs, LiveKit keys, SESSION_SECRET)
       # .env.local = optional real secrets (servarr API keys, LiveKit keys).
@@ -76,9 +81,7 @@ services:
       - LIVEKIT_URL=ws://livekit:7880
       - SONARR_URL=http://sonarr:8989
       - RADARR_URL=http://radarr:7878
-      # Prowlarr shares gluetun's network namespace (VPN tunnel) — it has no
-      # network identity of its own, so it's reached via the gluetun hostname.
-      - PROWLARR_URL=http://gluetun:9696
+      - PROWLARR_URL=http://prowlarr:9696
       - BAZARR_URL=http://bazarr:6767
       - QBITTORRENT_URL=http://qbittorrent:8080
       # ── Browser → LiveKit: must be reachable from the user's machine. ───────
@@ -101,83 +104,10 @@ services:
         condition: service_healthy
       prowlarr:
         condition: service_healthy
-      gluetun:
-        condition: service_started
       bazarr:
         condition: service_healthy
       qbittorrent:
         condition: service_started
-
-  # ── VPN gateway for Prowlarr ────────────────────────────────────────────
-  # Many public indexer sites are ISP-blocked. Prowlarr's entire network stack
-  # routes through this ProtonVPN (WireGuard) tunnel via gluetun. Radarr,
-  # Sonarr, Bazarr, qBittorrent are unaffected — they don't need it (Radarr/
-  # Sonarr just call Prowlarr's API; qBittorrent's P2P exposure is a separate
-  # concern from indexer-site blocking).
-  #
-  # Get WIREGUARD_PRIVATE_KEY / WIREGUARD_ADDRESSES from
-  # https://account.protonvpn.com -> Downloads -> WireGuard configuration
-  # (generate one for "Router"/generic Linux) and put them in .env.local
-  # (gitignored) — NOT here. See deploy/README-servarr.md.
-  gluetun:
-    image: qmcgaw/gluetun:latest
-    container_name: watchparty-gluetun
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    # Required for WireGuard's split-tunnel routing to accept return traffic
-    # marked by its own routing table — without it the tunnel "connects"
-    # (handshake completes) but every request silently times out.
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    networks: [watchparty-net]
-    ports:
-      - "${PROWLARR_PORT:-9696}:9696"
-      - "8191:8191" # FlareSolverr (shares this netns) — for host-side testing
-    # env_file only injects vars into the CONTAINER's runtime env — it does
-    # NOT feed docker-compose.yml's own ${VAR} interpolation (that only reads
-    # a file literally named `.env`). So .env.local must use gluetun's own
-    # variable names directly (WIREGUARD_PRIVATE_KEY etc.), not a custom
-    # PROTON_* alias — no ${...} substitution happening here.
-    env_file:
-      - .env.local
-    environment:
-      - VPN_SERVICE_PROVIDER=protonvpn
-      # Switched from WireGuard to OpenVPN: WireGuard's UDP traffic showed
-      # every sign of ISP-level throttling on this network (handshake always
-      # completed — tiny packets — but real data transfer consistently failed
-      # regardless of exit server, MTU, or DNS mode). OpenVPN over TCP/443
-      # looks like ordinary HTTPS traffic and is far harder to selectively
-      # interfere with.
-      - VPN_TYPE=openvpn
-      - OPENVPN_PROTOCOL=tcp
-      - OPENVPN_ENDPOINT_PORT=443
-      # This Proton account is on the free tier (confirmed by the "SG-FREE"
-      # server name) — free credentials get AUTH_FAILED on paid-only servers,
-      # so server selection must be restricted to the free pool.
-      - FREE_ONLY=on
-      # OPENVPN_USER / OPENVPN_PASSWORD come from .env.local (see comment
-      # above — these are Proton's OpenVPN-specific credentials, found at
-      # account.proton.me/u/0/vpn/OpenVpn, NOT the WireGuard key/regular
-      # account password).
-
-  # ── Cloudflare-challenge solver for Prowlarr ────────────────────────────
-  # Some indexers (1337x etc.) sit behind Cloudflare's bot-challenge page,
-  # which no plain HTTP client can pass — regardless of VPN. FlareSolverr runs
-  # a headless browser to solve it on Prowlarr's behalf. Shares gluetun's
-  # network namespace (same as Prowlarr) so it egresses through the same VPN
-  # tunnel and is reachable at http://localhost:8191 from inside Prowlarr.
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: watchparty-flaresolverr
-    restart: unless-stopped
-    network_mode: "service:gluetun"
-    depends_on:
-      - gluetun
-    environment:
-      - LOG_LEVEL=info
 
   # ── Media-acquisition stack (Servarr + qBittorrent) ────────────────────────
   # All on watchparty-net so the app reaches them by name and they reach each
@@ -187,13 +117,9 @@ services:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: watchparty-prowlarr
     restart: unless-stopped
-    # Shares gluetun's network namespace entirely — all Prowlarr traffic
-    # (indexer requests) egresses through the VPN tunnel. No `networks:` or
-    # `ports:` here; both live on gluetun instead. Reachable at
-    # http://gluetun:9696 from other containers on watchparty-net.
-    network_mode: "service:gluetun"
-    depends_on:
-      - gluetun
+    networks: [watchparty-net]
+    ports:
+      - "${PROWLARR_PORT:-9696}:9696"
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
