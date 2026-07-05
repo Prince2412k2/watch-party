@@ -26,12 +26,15 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     messages: [],     // capped 200
     collaborativeControl: false,
     hostDisconnectTimer: null,
+    mediaGeneration: mediaItemId ? 1 : 0,
     // Shared playback timeline. position = positionTicks + rate*(now - t0).
-    schedule: { positionTicks: 0, t0: 0, rate: 0, paused: true, phase: 'paused', version: 0 },
+    schedule: { positionTicks: 0, t0: 0, rate: 0, paused: true, phase: 'paused', version: 0, mediaGeneration: mediaItemId ? 1 : 0 },
     // 'hopping' = host-authority, guests catch up, host never waits.
     // 'dragging' = group waits for the slowest; any stall freezes everyone.
     syncMode: 'hopping',
     stalled: new Set(),   // members currently buffering (dragging mode)
+    stallFallback: new Set(), // timed-out members temporarily treated as hopping
+    seenCommandIds: new Set(),
     intent: { playing: false },  // host's play/pause intent (independent of stalls)
     pos: 0,               // frozen media position (ticks) when not effectively playing
     playT0: 0,            // server ms when the current play segment started
@@ -139,10 +142,58 @@ export function isMember(session, userId) {
 export function publicSession(session) {
   const {
     hostToken, hostDisconnectTimer, approved,
-    stalled, intent, pos, playT0, effPlaying, _stallTimer, reports,
+    stalled, intent, pos, playT0, effPlaying, _stallTimer, reports, seenCommandIds,
     ...pub
   } = session
-  return pub
+  return { ...pub, stallFallback: [...session.stallFallback] }
+}
+
+export function validateSyncCommand(payload = {}) {
+  const positionTicks = payload.positionTicks ?? 0
+  if (!Number.isFinite(positionTicks) || positionTicks < 0) return { error: 'invalid positionTicks' }
+  if (payload.baseVersion !== undefined && (!Number.isSafeInteger(payload.baseVersion) || payload.baseVersion < 0)) {
+    return { error: 'invalid baseVersion' }
+  }
+  if (payload.commandId !== undefined &&
+      (typeof payload.commandId !== 'string' || payload.commandId.length < 1 || payload.commandId.length > 128)) {
+    return { error: 'invalid commandId' }
+  }
+  const value = { positionTicks }
+  if (payload.baseVersion !== undefined) value.baseVersion = payload.baseVersion
+  if (payload.commandId !== undefined) value.commandId = payload.commandId
+  return { value }
+}
+
+export function authorizeSyncCommand(session, command) {
+  if (command.baseVersion !== undefined && command.baseVersion !== session.schedule.version) {
+    return { error: 'stale schedule', version: session.schedule.version }
+  }
+  if (command.commandId && session.seenCommandIds.has(command.commandId)) return { error: 'duplicate command' }
+  if (command.commandId) {
+    session.seenCommandIds.add(command.commandId)
+    if (session.seenCommandIds.size > 512) session.seenCommandIds.delete(session.seenCommandIds.values().next().value)
+  }
+  return { ok: true }
+}
+
+export function beginMediaGeneration(session) {
+  session.mediaGeneration++
+  session.stalled.clear()
+  session.stallFallback.clear()
+  session.seenCommandIds.clear()
+  return session.mediaGeneration
+}
+
+export function applyStallReport(session, userId, { stalled = false, mediaGeneration } = {}) {
+  if (mediaGeneration !== undefined && mediaGeneration !== session.mediaGeneration) return false
+  if (!stalled) {
+    const changed = session.stalled.delete(userId) || session.stallFallback.delete(userId)
+    return changed
+  }
+  if (session.stallFallback.has(userId)) return false
+  const before = session.stalled.size
+  session.stalled.add(userId)
+  return session.stalled.size !== before
 }
 
 export function allSessions() {

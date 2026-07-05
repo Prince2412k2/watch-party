@@ -1,11 +1,12 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSocket } from './useSocket.js'
 import { useServerClock } from './useServerClock.js'
 import {
   decideSyncAction, predictPosition, TICKS, CONTROL_MS,
   BUFFER_AHEAD_SEC, PAUSED_BUFFER_AHEAD_SEC, SEEK_TIMEOUT_MS, BUFFER_TIMEOUT_MS,
+  HARD_SEEK_COOLDOWN_MS,
 } from '../sync/syncCore.js'
-import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad } from '../sync/bufferSeek.js'
+import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../sync/bufferSeek.js'
 
 const STRUGGLE_WINDOW_MS = 15_000
 const STRUGGLE_HARD_SEEKS = 3
@@ -22,15 +23,40 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
   const { socket } = useSocket()
   const { serverNow, clockReady } = useServerClock(socket)
 
-  const applyingRef = useRef(false)
-  const applyTimer = useRef(null)
+  // Reference-counted, not a boolean: catch-up, source swaps, camera-toggle
+  // guards, and ordinary corrections can overlap (e.g. a camera toggle guard
+  // spans a window during which a buffer-aware catch-up also starts). A plain
+  // boolean let one operation's release close the gate while another was still
+  // mid-flight. Every hold (holdApplying / markApplying) increments; every
+  // release (releaseApplying, or markApplying's own timeout) decrements — the
+  // gate is only truly open again once the count returns to 0. `!applyingRef
+  // .current` still reads correctly as "not applying" at 0 and "applying" at
+  // any positive count, so no caller (Player.jsx included) needs to change.
+  const applyingRef = useRef(0)
   const scheduleRef = useRef(null)
   const userSeekRef = useRef(false)
   const userSeekTimer = useRef(null)
   const hardSeeks = useRef([])
+  const lastHardSeekAt = useRef(0)
   const lastReport = useRef(0)
   const syncModeRef = useRef(syncMode)
   syncModeRef.current = syncMode
+  // Last schedule.version this hook has applied, and the media generation it
+  // was observed under. schedule.version is monotonic per party SESSION (never
+  // reset by a media change), so a stale/duplicate/out-of-order sync:schedule
+  // (replayed snapshot, reconnect race) can be detected and dropped by simply
+  // requiring strictly-increasing versions. The baseline resets whenever
+  // mediaGeneration changes, since that's the signal for "different media /
+  // effectively a new timeline", not a version rollback.
+  const lastAppliedVersionRef = useRef(-Infinity)
+  const lastMediaGenRef = useRef(undefined)
+  // Local (non-shared) playback phase for this player: 'ready' during normal
+  // operation, 'catchingUp' while bufferAwareSeek is chasing the live position
+  // (video.pause() is an implementation detail of that routine, not a user
+  // pause), 'buffering' while bufferAwarePausedSeek is loading the frozen
+  // frame. Consumers should render "waiting" overlays from this instead of
+  // media.paused, which can't tell a real pause from either of these.
+  const [localPhase, setLocalPhase] = useState('ready')
 
   // Phase 12: a buffer-aware hard seek is in flight for this guest. While set,
   // the control loop early-returns so it can't stack corrections on top of an
@@ -41,10 +67,13 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
 
   const canControl = isHost || collaborativeControl
 
+  // Self-releasing hold: bumps the count and schedules its own matching
+  // decrement 150ms later. Independent per call — concurrent markApplying (or
+  // markApplying overlapping a holdApplying) calls stack correctly instead of
+  // one's timer wiping out another's still-active hold.
   function markApplying() {
-    applyingRef.current = true
-    clearTimeout(applyTimer.current)
-    applyTimer.current = setTimeout(() => { applyingRef.current = false }, 150)
+    applyingRef.current += 1
+    setTimeout(() => { applyingRef.current = Math.max(0, applyingRef.current - 1) }, 150)
   }
 
   // Hold the authoring guard open indefinitely across an event window that the
@@ -52,14 +81,13 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
   // tier) swap, which fires a whole reload sequence (emptied → loadstart →
   // loadedmetadata → canplay) plus transient seeked/play/pause at position 0.
   // Every such event runs through the applyingRef check below, so while held no
-  // bogus sync:seek/sync:play(0) can leak. Must be paired with releaseApplying().
+  // bogus sync:seek/sync:play(0) can leak. Must be paired with exactly one
+  // releaseApplying() call.
   function holdApplying() {
-    applyingRef.current = true
-    clearTimeout(applyTimer.current)   // cancel any pending auto-release
+    applyingRef.current += 1
   }
   function releaseApplying() {
-    clearTimeout(applyTimer.current)
-    applyingRef.current = false
+    applyingRef.current = Math.max(0, applyingRef.current - 1)
   }
 
   function notifyUserSeeking() {
@@ -122,21 +150,33 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
     if (isSeekingRef.current) return
     isSeekingRef.current = true
     holdApplying()
+    setLocalPhase('catchingUp')
+    const originSchedule = scheduleRef.current
+    const originVersion = originSchedule?.version
+    const originSource = video.currentSrc || video.src || null
+    const stillCurrent = () => {
+      const current = scheduleRef.current
+      const sameSchedule = originVersion == null
+        ? current === originSchedule
+        : current?.version === originVersion
+      return mountedRef.current && playerRef.current === video && sameSchedule
+        && (video.currentSrc || video.src || null) === originSource
+    }
     try {
       if (!video.paused) video.pause()
-      const predicted = predictPosition(scheduleRef.current, serverNow())
+      const predicted = predictPosition(originSchedule, serverNow())
       video.currentTime = predicted
 
       await waitForSeeked(video, SEEK_TIMEOUT_MS)
-      if (!mountedRef.current || playerRef.current !== video) return
-      await waitForBuffer(video, video.currentTime, BUFFER_AHEAD_SEC, BUFFER_TIMEOUT_MS)
-      if (!mountedRef.current || playerRef.current !== video) return
+      if (!stillCurrent()) return
+      await waitForBuffer(video, predicted, BUFFER_AHEAD_SEC, BUFFER_TIMEOUT_MS)
+      if (!stillCurrent()) return
 
       // Re-read the live position ONCE now that seek+buffer has consumed some
       // wall time, and snap to it before resuming.
       if (clockReady()) {
-        const live = predictPosition(scheduleRef.current, serverNow())
-        if (live >= 0) video.currentTime = live
+        const live = predictPosition(originSchedule, serverNow())
+        if (live >= 0) video.currentTime = selectBufferedResumeTarget(video, predicted, live)
       }
       // The timeline may have been paused/seeked while we awaited — only resume
       // if it's still 'playing'. Reset playbackRate so we don't resume at a
@@ -148,6 +188,7 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
     } finally {
       isSeekingRef.current = false
       releaseApplying()
+      setLocalPhase('ready')
     }
   }
 
@@ -174,20 +215,37 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
     if (isSeekingRef.current) return
     isSeekingRef.current = true
     holdApplying()
+    setLocalPhase('buffering')
+    // Same operation-identity guard as bufferAwareSeek: if the schedule moves
+    // on (a play/seek/media-generation change) or the source swaps (quality
+    // change) while we're mid-await, this stale operation must not keep
+    // driving a video element / target that's no longer current.
+    const originSchedule = scheduleRef.current
+    const originVersion = originSchedule?.version
+    const originSource = video.currentSrc || video.src || null
+    const stillCurrent = () => {
+      const current = scheduleRef.current
+      const sameSchedule = originVersion == null
+        ? current === originSchedule
+        : current?.version === originVersion
+      return mountedRef.current && playerRef.current === video && sameSchedule
+        && (video.currentSrc || video.src || null) === originSource
+    }
     try {
       if (!video.paused) video.pause()
       video.playbackRate = 1
-      const target = scheduleRef.current.positionTicks / TICKS
+      const target = originSchedule.positionTicks / TICKS
       video.currentTime = target
       if (!isBuffered(video, target)) ensureHlsLoad(video, target)
 
       await waitForSeeked(video, SEEK_TIMEOUT_MS)
-      if (!mountedRef.current || playerRef.current !== video) return
+      if (!stillCurrent()) return
       await waitForBuffer(video, target, PAUSED_BUFFER_AHEAD_SEC, BUFFER_TIMEOUT_MS)
       // Intentionally NO play(): stay paused, just render the frozen frame.
     } finally {
       isSeekingRef.current = false
       releaseApplying()
+      setLocalPhase('ready')
     }
   }
 
@@ -204,6 +262,21 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
 
   useEffect(() => {
     function onSchedule(s) {
+      // Reset the version baseline on a media-generation change (new media
+      // selected, or back-to-lobby) — schedule.version keeps climbing across
+      // generations within one party session, it does not restart at 0.
+      const gen = s?.mediaGeneration
+      if (gen !== lastMediaGenRef.current) {
+        lastMediaGenRef.current = gen
+        lastAppliedVersionRef.current = -Infinity
+      }
+      // Drop a stale/duplicate schedule (replayed snapshot, reconnect race,
+      // out-of-order delivery on a future transport) — only ever move forward.
+      if (s?.version != null) {
+        if (s.version <= lastAppliedVersionRef.current) return
+        lastAppliedVersionRef.current = s.version
+      }
+
       scheduleRef.current = s
       userSeekRef.current = false
       clearTimeout(userSeekTimer.current)
@@ -257,6 +330,7 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
         isHost,
         mode,
         userSeeking: userSeekRef.current,
+        suppressHardSeek: Date.now() - lastHardSeekAt.current < HARD_SEEK_COOLDOWN_MS,
       })
       if (!intent) return
 
@@ -266,6 +340,7 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
       // paused-hold, resume — keeps the original synchronous path unchanged.
       if (intent.hardSeek && !isHost && mode === 'hopping') {
         recordHardSeek()
+        lastHardSeekAt.current = Date.now()
         bufferAwareSeek(video)
         return
       }
@@ -321,5 +396,8 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
   return {
     canControl, applyingRef, holdApplying, releaseApplying, notifyUserSeeking, reportStall,
     requestPlay, requestPause, requestSeek, TICKS_PER_SECOND: TICKS,
+    // 'ready' | 'catchingUp' | 'buffering' — local playback phase, distinct
+    // from shared intent. See the comment on the localPhase state above.
+    localPhase,
   }
 }
