@@ -58,6 +58,7 @@ status()  {
   local tag="$1"; shift; local color
   case "$tag" in
     created)          color=$C_OK ;;
+    updated)          color=$C_OK ;;
     "exists, skipped") color=$C_SKIP ;;
     warn)             color=$C_WARN ;;
     *)                color=$C_RST ;;
@@ -201,7 +202,26 @@ add_qbt_download_client() {
         [ .[] | select((.implementation // "" | ascii_downcase) == "qbittorrent")
               | .fields[]? | select(.name == "host") | (.value | tostring | ascii_downcase) ]
         | any(. == "qbittorrent")'; then
-    status "exists, skipped" "$label download client (qBittorrent) already configured"
+    # Already configured — still make sure remove-completed/remove-failed match
+    # what we want (an older run of this script, or a manual setup, may have
+    # left removeFailedDownloads on, which would delete torrents we still want
+    # visible for troubleshooting). Patch in place rather than skip silently.
+    local existing already_correct
+    existing="$(resp_get '[.[] | select((.implementation // "" | ascii_downcase) == "qbittorrent")][0]')"
+    already_correct="$(echo "$existing" | jq -r '(.removeCompletedDownloads == true) and (.removeFailedDownloads == false)')"
+    if [ -n "$existing" ] && [ "$existing" != "null" ] && [ "$already_correct" != "true" ]; then
+      local id want
+      id="$(echo "$existing" | jq -r '.id')"
+      want="$(echo "$existing" | jq '.removeCompletedDownloads = true | .removeFailedDownloads = false')"
+      _curl -X PUT -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+            --data "$want" "$base/api/v3/downloadclient/$id"
+      case "$HTTP_STATUS" in
+        200|202) status updated "$label download client: removeCompletedDownloads=true, removeFailedDownloads=false" ;;
+        *)       status warn "$label: failed to update remove-completed/failed flags (HTTP $HTTP_STATUS)" ;;
+      esac
+      return 0
+    fi
+    status "exists, skipped" "$label download client (qBittorrent) already configured correctly"
     return 0
   fi
 
@@ -214,7 +234,11 @@ add_qbt_download_client() {
       --arg catfield "$catfield" --arg catval "$catval" \
       '{
         name: "qBittorrent", enable: true, protocol: "torrent", priority: 1,
-        removeCompletedDownloads: true, removeFailedDownloads: true,
+        # Completed+imported torrents are pure clutter (media already lives in
+        # /data/media as a hardlink, see ensure_hardlink_import below), so drop
+        # them automatically. Failed downloads stay so they remain visible for
+        # troubleshooting instead of silently vanishing.
+        removeCompletedDownloads: true, removeFailedDownloads: false,
         implementation: "QBittorrent", implementationName: "qBittorrent",
         configContract: "QBittorrentSettings", tags: [],
         fields: [
@@ -273,6 +297,42 @@ ensure_root_folder() {
 header "2. Root folders"
 [ "$RADARR_UP" = 1 ] && ensure_root_folder "Radarr" "$RADARR_URL" "$RADARR_KEY" "/data/media/movies"
 [ "$SONARR_UP" = 1 ] && ensure_root_folder "Sonarr" "$SONARR_URL" "$SONARR_KEY" "/data/media/tv"
+
+# ===========================================================================
+# 2b. Import via hardlink, not copy
+# ===========================================================================
+# qBittorrent's save path (/data/downloads) and the *arr root folders
+# (/data/media/movies, /data/media/tv) are the SAME bind-mounted volume
+# (${MEDIA_ROOT}), so a hardlink is always possible — no duplicate bytes on
+# disk for a finished download. Without this, Radarr/Sonarr COPY the file
+# into /data/media on import and the original stays in /data/downloads,
+# doubling storage for every title until the torrent is later removed.
+#   $1 label  $2 base url  $3 api key
+ensure_hardlink_import() {
+  local label="$1" base="$2" key="$3" cfg id want
+
+  _curl -H "X-Api-Key: $key" "$base/api/v3/config/mediamanagement"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    status warn "$label: could not read media management config (HTTP $HTTP_STATUS)"; return 0
+  fi
+  cfg="$RESP"
+  if printf '%s' "$cfg" | jq -e '.copyUsingHardlinks == true' >/dev/null 2>&1; then
+    status "exists, skipped" "$label already imports via hardlink"
+    return 0
+  fi
+  id="$(printf '%s' "$cfg" | jq -r '.id')"
+  want="$(printf '%s' "$cfg" | jq '.copyUsingHardlinks = true')"
+  _curl -X PUT -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+        --data "$want" "$base/api/v3/config/mediamanagement/$id"
+  case "$HTTP_STATUS" in
+    200|202) status updated "$label: import now uses hardlinks instead of copy" ;;
+    *)       status warn "$label: failed to enable hardlink import (HTTP $HTTP_STATUS)" ;;
+  esac
+}
+
+header "2b. Import via hardlink, not copy"
+[ "$RADARR_UP" = 1 ] && ensure_hardlink_import "Radarr" "$RADARR_URL" "$RADARR_KEY"
+[ "$SONARR_UP" = 1 ] && ensure_hardlink_import "Sonarr" "$SONARR_URL" "$SONARR_KEY"
 
 # ===========================================================================
 # 3. Prowlarr applications (Radarr + Sonarr, fullSync)
