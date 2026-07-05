@@ -6,9 +6,8 @@
 #   1. Adds qBittorrent as a download client to Radarr and Sonarr.
 #   2. Ensures the Radarr (/data/media/movies) and Sonarr (/data/media/tv) root folders.
 #   3. Registers Radarr + Sonarr in Prowlarr as fullSync applications.
-#   4. Adds the FlareSolverr indexer proxy to Prowlarr (with its 'flaresolverr' tag).
-#   5. Confirms qBittorrent WebUI credentials and sets the default save path to /data/downloads.
-#   6. Connects Bazarr to Radarr + Sonarr for subtitles.
+#   4. Confirms qBittorrent WebUI credentials and sets the default save path to /data/downloads.
+#   5. Connects Bazarr to Radarr + Sonarr for subtitles.
 #
 # It deliberately does NOT add indexers — that is the one manual step (see the
 # closing message). Run it from anywhere:  ./deploy/connect-servarr.sh
@@ -30,7 +29,7 @@ cd "$REPO_ROOT"
 # Host-facing base URLs (script runs on the HOST; override via env if needed).
 # NOTE: the URLs the apps use to reach EACH OTHER are container-internal and
 # are hardcoded in the payloads below (qbittorrent:8080, radarr:7878,
-# sonarr:8989, gluetun:9696, localhost:8191) — those are correct on this stack.
+# sonarr:8989, prowlarr:9696) — those are correct on this stack.
 # ---------------------------------------------------------------------------
 RADARR_URL="${RADARR_URL:-http://localhost:7878}"
 SONARR_URL="${SONARR_URL:-http://localhost:8989}"
@@ -296,7 +295,7 @@ ensure_prowlarr_app() {
         configContract: ($name + "Settings"),
         syncLevel: "fullSync", enable: true, tags: [],
         fields: ([
-          {name:"prowlarrUrl", value:"http://gluetun:9696"},
+          {name:"prowlarrUrl", value:"http://prowlarr:9696"},
           {name:"baseUrl",     value:$base},
           {name:"apiKey",      value:$key}
         ] + $extra)
@@ -326,62 +325,9 @@ else
 fi
 
 # ===========================================================================
-# 4. FlareSolverr indexer proxy (tag prerequisite + proxy)
+# 4. qBittorrent WebUI creds + default save path /data/downloads
 # ===========================================================================
-header "4. FlareSolverr indexer proxy"
-if [ "$PROWLARR_UP" = 1 ]; then
-  # 4a. Ensure the 'flaresolverr' tag (a proxy only applies to indexers sharing its tag).
-  _curl -H "X-Api-Key: $PROWLARR_KEY" "$PROWLARR_URL/api/v1/tag"
-  FS_TAG_ID=""
-  [ "$HTTP_STATUS" = "200" ] && FS_TAG_ID="$(resp_get 'map(select((.label // "" | ascii_downcase) == "flaresolverr")) | .[0].id // empty')"
-  if [ -n "$FS_TAG_ID" ]; then
-    status "exists, skipped" "Prowlarr tag 'flaresolverr' already present (id $FS_TAG_ID)"
-  else
-    _curl -X POST -H "X-Api-Key: $PROWLARR_KEY" -H 'Content-Type: application/json' \
-          --data '{"label":"flaresolverr"}' "$PROWLARR_URL/api/v1/tag"
-    if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
-      FS_TAG_ID="$(resp_get '.id // empty')"
-      status created "Prowlarr tag 'flaresolverr' (id $FS_TAG_ID)"
-    else
-      status warn "Prowlarr: failed to create 'flaresolverr' tag (HTTP $HTTP_STATUS)"
-    fi
-  fi
-
-  # 4b. Ensure the FlareSolverr proxy. host MUST be http://localhost:8191/
-  #     (Prowlarr shares gluetun's netns and sees FlareSolverr on localhost).
-  _curl -H "X-Api-Key: $PROWLARR_KEY" "$PROWLARR_URL/api/v1/indexerProxy"
-  if [ "$HTTP_STATUS" != "200" ]; then
-    status warn "Prowlarr: could not read indexer proxies (HTTP $HTTP_STATUS)"
-  elif resp_has 'any(.[]; (.implementation // "") == "FlareSolverr")'; then
-    status "exists, skipped" "Prowlarr FlareSolverr indexer proxy already configured"
-  elif [ -z "$FS_TAG_ID" ]; then
-    status warn "Prowlarr: no 'flaresolverr' tag id — skipping proxy creation"
-  else
-    payload="$(jq -n --argjson tag "$FS_TAG_ID" '{
-        name:"FlareSolverr", implementation:"FlareSolverr", implementationName:"FlareSolverr",
-        configContract:"FlareSolverrSettings",
-        infoLink:"https://wiki.servarr.com/prowlarr/supported#flaresolverr",
-        tags:[$tag],
-        fields:[
-          {name:"host", value:"http://localhost:8191/"},
-          {name:"requestTimeout", value:60}
-        ]
-      }')"
-    _curl -X POST -H "X-Api-Key: $PROWLARR_KEY" -H 'Content-Type: application/json' \
-          --data "$payload" "$PROWLARR_URL/api/v1/indexerProxy"
-    case "$HTTP_STATUS" in
-      200|201) status created "Prowlarr FlareSolverr indexer proxy (host localhost:8191, tag id $FS_TAG_ID)" ;;
-      *)       status warn "Prowlarr: failed to add FlareSolverr proxy (HTTP $HTTP_STATUS): $(resp_get '(.[]?.errorMessage) // .message // empty' | head -n1)" ;;
-    esac
-  fi
-else
-  status warn "Prowlarr unreachable / no key — skipping FlareSolverr proxy"
-fi
-
-# ===========================================================================
-# 5. qBittorrent WebUI creds + default save path /data/downloads
-# ===========================================================================
-header "5. qBittorrent (credential check + save path)"
+header "4. qBittorrent (credential check + save path)"
 if [ "$QBIT_UP" != 1 ]; then
   status warn "qBittorrent unreachable — skipping"
 elif [ -z "$QBITTORRENT_USER" ] || [ -z "$QBITTORRENT_PASS" ]; then
@@ -428,9 +374,9 @@ else
 fi
 
 # ===========================================================================
-# 6. Bazarr -> Radarr + Sonarr
+# 5. Bazarr -> Radarr + Sonarr
 # ===========================================================================
-header "6. Bazarr subtitle provider links"
+header "5. Bazarr subtitle provider links"
 if [ "$BAZARR_UP" != 1 ]; then
   status warn "Bazarr unreachable / no key — skipping"
 elif [ -z "$RADARR_KEY" ] && [ -z "$SONARR_KEY" ]; then
@@ -511,9 +457,6 @@ cat <<'EOF'
   Add your indexers in Prowlarr:  Settings > Indexers > Add Indexer.
   Because Radarr and Sonarr are registered as fullSync applications, every
   indexer you add in Prowlarr AUTO-SYNCS to both — no per-app indexer setup.
-
-  For any Cloudflare-protected indexer, add the 'flaresolverr' tag to that
-  indexer so it routes through the FlareSolverr proxy this script configured.
 EOF
 
 if [ "$warn_count" -gt 0 ]; then

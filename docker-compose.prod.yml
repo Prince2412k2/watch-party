@@ -13,7 +13,7 @@
 #      3478/udp + 5349/tcp (coturn), 6881 (qBittorrent, optional).
 #
 # ADMIN PORTS (Jellyfin 8096, Sonarr 8989, Radarr 7878, Bazarr 6767,
-# Prowlarr 9696, FlareSolverr 8191, the app itself 3001) are bound to
+# Prowlarr 9696, the app itself 3001) are bound to
 # 0.0.0.0 for Tailscale access — by explicit choice, NOT firewalled by this
 # repo. They are also reachable on the VPS's public interface unless you
 # separately lock them down yourself (ufw/iptables, allow only tailscale0 +
@@ -102,6 +102,11 @@ services:
       # (Tailscale or local health checks). Bound to 0.0.0.0: also reachable
       # on the public interface unless you firewall it yourself.
       - "0.0.0.0:3001:3000"
+    volumes:
+      # Persistent session store so a redeploy (--build) doesn't log everyone
+      # out — express-session's default MemoryStore is wiped on every
+      # container recreate. See app/server/index.js's sessionStoreDir.
+      - ./data/sessions:/data/sessions
     env_file:
       - ./secrets/.env
       - ./secrets/.env.local
@@ -111,7 +116,7 @@ services:
       - LIVEKIT_URL=ws://livekit:7880
       - SONARR_URL=http://sonarr:8989
       - RADARR_URL=http://radarr:7878
-      - PROWLARR_URL=http://gluetun:9696
+      - PROWLARR_URL=http://prowlarr:9696
       - BAZARR_URL=http://bazarr:6767
       - QBITTORRENT_URL=http://qbittorrent:8080
       - SERVE_CLIENT=1
@@ -127,53 +132,18 @@ services:
         condition: service_healthy
       prowlarr:
         condition: service_healthy
-      gluetun:
-        condition: service_started
       bazarr:
         condition: service_healthy
       qbittorrent:
         condition: service_started
 
-  gluetun:
-    image: qmcgaw/gluetun:latest
-    container_name: watchparty-gluetun
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-    networks: [watchparty-net]
-    ports:
-      - "0.0.0.0:${PROWLARR_PORT:-9696}:9696"
-      - "0.0.0.0:8191:8191"
-    env_file:
-      - ./secrets/.env.local
-    environment:
-      - VPN_SERVICE_PROVIDER=protonvpn
-      - VPN_TYPE=openvpn
-      - OPENVPN_PROTOCOL=tcp
-      - OPENVPN_ENDPOINT_PORT=443
-      - FREE_ONLY=on
-
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: watchparty-flaresolverr
-    restart: unless-stopped
-    network_mode: "service:gluetun"
-    depends_on:
-      - gluetun
-    environment:
-      - LOG_LEVEL=info
-
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: watchparty-prowlarr
     restart: unless-stopped
-    network_mode: "service:gluetun"
-    depends_on:
-      - gluetun
+    networks: [watchparty-net]
+    ports:
+      - "0.0.0.0:${PROWLARR_PORT:-9696}:9696"
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
