@@ -18,7 +18,8 @@ import { createServer } from 'http'
 import { Server } from 'socket.io'
 import cookieParser from 'cookie-parser'
 import session from 'express-session'
-import { existsSync } from 'fs'
+import FileStoreFactory from 'session-file-store'
+import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 import { login, me, logout, testLogin, requireAuth } from './auth.js'
@@ -65,7 +66,26 @@ const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, credentials: true },
 })
 
+// Sessions persist to disk so a redeploy (container restart) doesn't silently
+// log everyone out — express-session's default MemoryStore is wiped on every
+// restart. SESSION_STORE_DIR should be a bind-mounted volume in production
+// (see docker-compose.yml) so it survives a container recreate, not just a
+// process restart. Test mode uses a private tmp dir per run so parallel
+// scratch-server tests never share or pollute session state.
+const FileStore = FileStoreFactory(session)
+const sessionStoreDir = process.env.SESSION_STORE_DIR
+  || (process.env.WP_TEST_MODE === '1'
+    ? join('/tmp', `wp-test-sessions-${process.pid}-${Date.now()}`)
+    : join(__dirname, '../../data/sessions'))
+mkdirSync(sessionStoreDir, { recursive: true })
+
 const sessionMiddleware = session({
+  store: new FileStore({
+    path: sessionStoreDir,
+    ttl: 7 * 24 * 60 * 60,                    // seconds — matches cookie maxAge below
+    reapInterval: 60 * 60,                    // purge expired session files hourly
+    logFn: () => {},                          // quiet — the store logs routine housekeeping otherwise
+  }),
   secret: process.env.SESSION_SECRET || 'changeme',
   resave: false,
   saveUninitialized: false,
