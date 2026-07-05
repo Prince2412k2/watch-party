@@ -114,9 +114,9 @@ export async function arrPing(service, timeoutMs = 4000) {
 // ── Radarr (movies, /api/v3) ──────────────────────────────────────────────────
 
 // A live interactive release search can be genuinely slow — Radarr queries every
-// indexer in real time, and some go through FlareSolverr (Cloudflare solving) —
-// so it needs a far longer ceiling than a normal API call. The grab hand-off is
-// quicker but still talks to the download client, so give it some room too.
+// indexer in real time — so it needs a far longer ceiling than a normal API
+// call. The grab hand-off is quicker but still talks to the download client,
+// so give it some room too.
 const RELEASE_SEARCH_TIMEOUT_MS = 45000
 const GRAB_TIMEOUT_MS = 30000
 

@@ -81,12 +81,10 @@ What it does (each step is existence-checked, so re-running is a safe no-op):
 2. Ensures the root folders `/data/media/movies` (Radarr) and `/data/media/tv`
    (Sonarr).
 3. Registers **Radarr + Sonarr** in **Prowlarr** as `fullSync` applications
-   (Prowlarr self-URL `http://gluetun:9696`), so indexers auto-propagate.
-4. Adds the **FlareSolverr** indexer proxy to Prowlarr (creates the
-   `flaresolverr` tag it needs) at `http://localhost:8191/`.
-5. Confirms the **qBittorrent** WebUI login matches `.env.local` and sets the
+   (Prowlarr self-URL `http://prowlarr:9696`), so indexers auto-propagate.
+4. Confirms the **qBittorrent** WebUI login matches `.env.local` and sets the
    default save path to `/data/downloads`.
-6. Connects **Bazarr** to Radarr + Sonarr for subtitles.
+5. Connects **Bazarr** to Radarr + Sonarr for subtitles.
 
 Properties:
 
@@ -104,9 +102,8 @@ Properties:
 **The only remaining manual step:** add your indexers in Prowlarr
 (**Settings -> Indexers -> Add Indexer**). Because Radarr and Sonarr are
 registered as `fullSync` apps, each indexer you add auto-syncs to both — no
-per-app indexer setup. For a Cloudflare-protected indexer, add the
-`flaresolverr` tag to it so it routes through the proxy the script configured.
-(On a brand-new Prowlarr you must also pick an auth method on first load.)
+per-app indexer setup. (On a brand-new Prowlarr you must also pick an auth
+method on first load.)
 
 The manual "First-run setup order" below remains as reference and as a fallback
 if the API is ever unreachable.
