@@ -1,6 +1,6 @@
 // Play/pause storms, late joiners, and mode switching mid-playback.
 
-import { spawnHost, spawnGuest, startSampler, sleep, check, worstDrift, positionSpread, makeFetchSchedule } from './_helpers.js'
+import { spawnHost, spawnGuest, startSampler, sleep, check, worstDrift, positionSpread, makeFetchSchedule, TICKS } from './_helpers.js'
 
 const GUESTS = [
   { name: 'g0', sendDelayMs: 0 },
@@ -133,5 +133,58 @@ export const modeSwitch = {
       check('no desync across mode switch (playing)', worst < 0.6, `worst=${worst.toFixed(3)}s`),
       check('paused positions equal after switch', spreadPaused < 0.5, `spread=${spreadPaused.toFixed(3)}s`),
     ] }
+  },
+}
+
+// Regression for HOOK finding #7: schedule.version is monotonic per party
+// session (never resets on media change) and the client must ignore any
+// received schedule whose version doesn't strictly advance — a replayed
+// snapshot, a reconnect race, or out-of-order delivery on a future transport
+// must never overwrite a fresher, already-applied schedule. Socket.IO
+// preserves order on one connection so the real server can't trigger this in
+// a normal run; this exercises the guard directly (HeadlessClient._applySchedule
+// is the exact function the real socket handler calls) against a live
+// schedule pulled from the real server, so the fixture is realistic even
+// though the delivery is injected rather than actually reordered on the wire.
+export const staleScheduleVersionRejected = {
+  name: 'stale-schedule-version-rejected',
+  async run({ SERVER }) {
+    const { host, partyId } = await spawnHost(SERVER)
+    const guest = await spawnGuest(SERVER, host, partyId, { name: 'g' })
+    host.play(0)
+    await sleep(1000)
+    const live = guest.schedule
+    const checks = []
+    checks.push(check('precondition: guest holds a real versioned schedule', live && live.version >= 0, `version=${live?.version}`))
+
+    // A lower-versioned duplicate (e.g. a replayed party:state snapshot) must
+    // be dropped — this pretends positionTicks jumped back to 0, which would
+    // be very visible if it were wrongly applied.
+    const dropsBefore = guest.staleSchedulesDropped
+    const stale = { ...live, version: live.version - 1, positionTicks: 0 }
+    guest._applySchedule(stale)
+    checks.push(check('lower-version schedule dropped', guest.staleSchedulesDropped === dropsBefore + 1 && guest.schedule === live, `schedule unchanged=${guest.schedule === live}`))
+
+    // An EQUAL-version duplicate (re-delivery of the same schedule) must also
+    // be dropped — the guard is "> last applied", not ">=".
+    const dup = { ...live, positionTicks: 0 }
+    guest._applySchedule(dup)
+    checks.push(check('equal-version (duplicate) schedule dropped', guest.schedule === live, `schedule unchanged=${guest.schedule === live}`))
+
+    // A genuinely newer schedule must still be accepted (the guard doesn't
+    // just wedge the client on the first schedule it ever saw).
+    const fresh = { ...live, version: live.version + 1, positionTicks: Math.round(999 * TICKS) }
+    guest._applySchedule(fresh)
+    checks.push(check('strictly newer schedule accepted', guest.schedule === fresh, `accepted=${guest.schedule === fresh}`))
+
+    // A media-generation change resets the version baseline to -Infinity, so
+    // an old-looking version under a NEW generation (new media selected /
+    // back-to-lobby) must still be accepted, not mistaken for staleness.
+    const newGen = { ...fresh, version: 0, mediaGeneration: (fresh.mediaGeneration || 0) + 1, positionTicks: 0 }
+    guest._applySchedule(newGen)
+    checks.push(check('version baseline resets on mediaGeneration change', guest.schedule === newGen, `accepted=${guest.schedule === newGen}`))
+
+    host.disconnect(); guest.disconnect()
+    return { checks }
   },
 }

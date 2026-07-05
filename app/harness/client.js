@@ -5,8 +5,8 @@
 // without a browser or real Jellyfin media.
 
 import { io } from 'socket.io-client'
-import { decideSyncAction, predictPosition, CONTROL_MS, TICKS, BUFFER_AHEAD_SEC, PAUSED_BUFFER_AHEAD_SEC, SEEK_TIMEOUT_MS, BUFFER_TIMEOUT_MS } from '../client/src/sync/syncCore.js'
-import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad } from '../client/src/sync/bufferSeek.js'
+import { decideSyncAction, predictPosition, CONTROL_MS, TICKS, BUFFER_AHEAD_SEC, PAUSED_BUFFER_AHEAD_SEC, SEEK_TIMEOUT_MS, BUFFER_TIMEOUT_MS, HARD_SEEK_COOLDOWN_MS } from '../client/src/sync/syncCore.js'
+import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../client/src/sync/bufferSeek.js'
 
 // ── VirtualPlayer: the minimal HTMLMediaElement surface the sync core uses ──
 // currentTime advances by playbackRate*dt while playing, on a timer.
@@ -207,8 +207,34 @@ export class HeadlessClient {
     // Phase 12: buffer-aware hard-seek state (mirrors useSyncPlay).
     this._seeking = false      // a buffer-aware seek is in flight → suppress the loop
     this.hardSeekCount = 0     // total hopping-guest hard seeks (chase-loop assertion)
+    this._lastHardSeekAt = 0
     this.pausedBufferEnsures = 0 // total paused buffer-ensures (paused-frame assertion)
     this._alive = true
+    // Mirrors useSyncPlay's lastAppliedVersionRef/lastMediaGenRef: reject a
+    // schedule whose version doesn't strictly advance (stale/duplicate/
+    // out-of-order delivery), resetting the baseline on a media-generation
+    // change. See _applySchedule.
+    this._lastAppliedVersion = -Infinity
+    this._lastMediaGen = undefined
+    this.staleSchedulesDropped = 0
+  }
+
+  // The single place a received (or, in a test, directly injected) schedule
+  // becomes `this.schedule` — mirrors useSyncPlay.js's onSchedule guard so the
+  // headless client exercises the exact same stale-schedule-rejection logic a
+  // browser guest does.
+  _applySchedule(s) {
+    const gen = s?.mediaGeneration
+    if (gen !== this._lastMediaGen) {
+      this._lastMediaGen = gen
+      this._lastAppliedVersion = -Infinity
+    }
+    if (s?.version != null) {
+      if (s.version <= this._lastAppliedVersion) { this.staleSchedulesDropped++; return }
+      this._lastAppliedVersion = s.version
+    }
+    this.schedule = s
+    this.userSeeking = false
   }
 
   _jitter() { return this.jitterMs > 0 ? Math.random() * this.jitterMs : 0 }
@@ -246,11 +272,10 @@ export class HeadlessClient {
         // must never be overwritten by an earlier, more-delayed one).
         if (d > 0) {
           const seq = ++this._schedSeq
-          setTimeout(() => { if (seq >= this._schedApplied) { this._schedApplied = seq; this.schedule = s; this.userSeeking = false } }, d)
+          setTimeout(() => { if (seq >= this._schedApplied) { this._schedApplied = seq; this._applySchedule(s) } }, d)
         } else {
           this._schedApplied = ++this._schedSeq
-          this.schedule = s
-          this.userSeeking = false
+          this._applySchedule(s)
         }
       }
       this.socket.on('sync:schedule', onSchedule)
@@ -294,21 +319,26 @@ export class HeadlessClient {
   async _bufferAwareSeek(v) {
     if (this._seeking) return
     this._seeking = true
+    const originSchedule = this.schedule
+    const originVersion = originSchedule?.version
+    const stillCurrent = () => this._alive && (originVersion == null
+      ? this.schedule === originSchedule
+      : this.schedule?.version === originVersion)
     try {
       if (!v.paused) v.pause()
-      const predicted = predictPosition(this.schedule, this.clock.serverNow())
+      const predicted = predictPosition(originSchedule, this.clock.serverNow())
       v.currentTime = predicted
 
       await waitForSeeked(v, SEEK_TIMEOUT_MS)
-      if (!this._alive) return
-      await waitForBuffer(v, v.currentTime, BUFFER_AHEAD_SEC, BUFFER_TIMEOUT_MS)
-      if (!this._alive) return
+      if (!stillCurrent()) return
+      await waitForBuffer(v, predicted, BUFFER_AHEAD_SEC, BUFFER_TIMEOUT_MS)
+      if (!stillCurrent()) return
 
       if (this.clock.clockReady()) {
-        const live = predictPosition(this.schedule, this.clock.serverNow())
-        if (live >= 0) v.currentTime = live
+        const live = predictPosition(originSchedule, this.clock.serverNow())
+        if (live >= 0) v.currentTime = selectBufferedResumeTarget(v, predicted, live)
       }
-      v.play()
+      if (this.schedule?.phase === 'playing') v.play()
     } finally {
       this._seeking = false
     }
@@ -323,15 +353,24 @@ export class HeadlessClient {
   async _bufferAwarePausedSeek(v) {
     if (this._seeking) return
     this._seeking = true
+    // Same operation-identity guard as _bufferAwareSeek (mirrors useSyncPlay's
+    // parity fix): if the schedule moves on — host resumes/seeks, or a media
+    // generation change — while this paused buffer-ensure is mid-await, it must
+    // not keep driving toward a target that's no longer current.
+    const originSchedule = this.schedule
+    const originVersion = originSchedule?.version
+    const stillCurrent = () => this._alive && (originVersion == null
+      ? this.schedule === originSchedule
+      : this.schedule?.version === originVersion)
     try {
       if (!v.paused) v.pause()
       v.playbackRate = 1
-      const target = this.schedule.positionTicks / TICKS
+      const target = originSchedule.positionTicks / TICKS
       v.currentTime = target
       if (!isBuffered(v, target)) ensureHlsLoad(v, target)
 
       await waitForSeeked(v, SEEK_TIMEOUT_MS)
-      if (!this._alive) return
+      if (!stillCurrent()) return
       await waitForBuffer(v, target, PAUSED_BUFFER_AHEAD_SEC, BUFFER_TIMEOUT_MS)
       // Intentionally NO play(): stay paused, now holding the frozen frame.
     } finally {
@@ -357,11 +396,13 @@ export class HeadlessClient {
         isHost: this.isHost,
         mode: this.syncMode,
         userSeeking: this.userSeeking,
+        suppressHardSeek: Date.now() - this._lastHardSeekAt < HARD_SEEK_COOLDOWN_MS,
       })
       if (!intent) return
       // Hopping-guest hard catch-up → buffer-aware routine (fire-and-forget).
       if (intent.hardSeek && !this.isHost && this.syncMode === 'hopping') {
         this.hardSeekCount++
+        this._lastHardSeekAt = Date.now()
         this._bufferAwareSeek(v)
         return
       }

@@ -9,13 +9,72 @@
 
 export const TICKS = 10_000_000          // Jellyfin ticks per second
 
+// ── Correction-loop tuning ──────────────────────────────────────────────────
+// These are fixed constants, not adaptive to network/media conditions (RTT
+// jitter, HLS segment duration, buffer health). That's a known simplification,
+// not an oversight — see the per-constant notes below for the reasoning behind
+// each value and what "tunable" would mean if this ever needs to react to
+// conditions instead of using one number for every guest:
+//
+//   CONTROL_MS           — how often the correction loop re-evaluates drift.
+//                           200ms is fast enough to feel responsive without
+//                           spamming currentTime/rate writes or drift telemetry.
+//   HARD_SEEK_SEC        — guest drift beyond this is treated as "lost sync",
+//                           not "running slightly hot/cold": a rate nudge would
+//                           take too long to close a gap this size, so we jump
+//                           straight to the buffer-aware hard-seek path instead.
+//                           1.0s is a guess at "clearly desynced" for typical
+//                           home-network jitter; a high-latency/high-jitter link
+//                           would benefit from widening this (fewer, bigger
+//                           corrections) but that requires a jitter estimate we
+//                           don't currently compute (see clock-quality gap).
+//   HOST_DRAG_SEEK_SEC   — a dragging host only obeys the shared timeline for
+//                           gross drift (e.g. it stalled and fell behind the
+//                           room), not routine jitter — hence a looser bound
+//                           than HARD_SEEK_SEC.
+//   SOFT_SEC             — below HARD_SEEK_SEC but above this, drift is closed
+//                           with a bounded rate nudge instead of a seek (seeks
+//                           are disruptive; nudges are not). 80ms is roughly
+//                           the smallest drift a viewer reliably perceives as
+//                           audio/video desync.
+//   RATE_GAIN / MAX_RATE_ADJ — how aggressively the nudge closes drift, and how
+//                           far playbackRate is allowed to move from 1.0 while
+//                           doing it. MAX_RATE_ADJ=0.08 (i.e. 0.92x–1.08x) is
+//                           chosen to stay under the point most viewers notice
+//                           a pitch/speed change; RATE_GAIN=0.12 sets how much
+//                           of the current error is corrected per tick.
+//   HOLD_TOLERANCE       — slack around the frozen position while paused so a
+//                           guest already sitting on the right frame doesn't
+//                           re-seek on every tick from float/measurement noise.
+//   HARD_SEEK_COOLDOWN_MS — see suppressHardSeek below: a debounce, not a
+//                           network-aware value, so it doesn't need tuning per
+//                           connection quality, only per "how long does one
+//                           hard-seek+buffer round trip take".
+//
+// None of this reacts to measured jitter, RTT, or HLS segment length today —
+// that would need the clock/quality signals described in the sync audit
+// (clock uncertainty, recent drift variance) to decide, live, where these
+// thresholds should sit per guest. Out of scope here; documenting the
+// reasoning so a future change knows what each constant is actually trading
+// off before moving it.
 export const CONTROL_MS = 200
 export const HARD_SEEK_SEC = 1.0         // guest drift beyond this → jump to live
 export const HOST_DRAG_SEEK_SEC = 2.0    // dragging host only corrects gross drift
-export const SOFT_SEC = 0.08             // drift beyond this → speed nudge
+export const SOFT_SEC = 0.08             // drift beyond this → speed nudge begins (enter threshold)
+// Exit threshold for the soft-correction nudge, deliberately lower than SOFT_SEC.
+// Without a separate exit point, drift hovering right around SOFT_SEC flips the
+// nudge on/off every CONTROL_MS tick (audible rate flutter). Once correcting,
+// stay correcting until drift falls under this tighter bound instead. See
+// `correctionState` on decideSyncAction.
+export const SOFT_EXIT_SEC = 0.04
 export const RATE_GAIN = 0.12
 export const MAX_RATE_ADJ = 0.08
 export const HOLD_TOLERANCE = 0.4
+// Debounce after a hard seek: suppresses re-triggering another hard seek for
+// this long so the buffer-aware catch-up (which takes real wall time) isn't
+// re-entered mid-flight from a stale drift reading. This is the hysteresis for
+// the HARD_SEEK_SEC boundary — see `suppressHardSeek` below.
+export const HARD_SEEK_COOLDOWN_MS = 2500
 
 // ── Phase 12: HLS buffer-aware hard-seek tuning ─────────────────────────────
 // On HLS every hard-seek is expensive: hls.js must fetch and demux fresh
@@ -77,6 +136,15 @@ export function predictPosition(s, serverNowMs) {
  * @param {boolean}  a.isHost
  * @param {string}   a.mode         'hopping' | 'dragging'
  * @param {boolean}  a.userSeeking  is the local user actively scrubbing
+ * @param {object}   [a.correctionState]  optional, caller-owned mutable object
+ *   (e.g. a ref persisted across ticks for this one guest/player) used only to
+ *   add hysteresis to the soft-correction band: `{ correcting: boolean }`.
+ *   When provided, once a nudge starts it keeps correcting until drift falls
+ *   under SOFT_EXIT_SEC rather than immediately stopping at SOFT_SEC, so drift
+ *   hovering near the boundary doesn't flip playbackRate on/off every tick.
+ *   Omitting it (the default) reproduces the original single-threshold
+ *   behavior exactly — this parameter is opt-in and changes nothing for a
+ *   caller that doesn't pass it.
  * @returns {object|null} intent, or null when the tick is a no-op:
  *   { seekTo?, rate?, play?, pause?, drift }
  *   - seekTo  : seconds to set currentTime to (a hard correction)
@@ -87,6 +155,7 @@ export function predictPosition(s, serverNowMs) {
  */
 export function decideSyncAction({
   schedule: s, serverNowMs, clockReady, currentTime, paused, isHost, mode, userSeeking,
+  suppressHardSeek = false, correctionState = null,
 }) {
   if (!s) return null
   // A hopping host plays natively and never runs the correction loop.
@@ -113,7 +182,13 @@ export function decideSyncAction({
   if (expected < 0) return null
 
   if (paused) {
-    return { seekTo: expected, rate: 1, play: true, drift: expected - currentTime }
+    const drift = expected - currentTime
+    const intent = { seekTo: expected, rate: 1, play: true, drift }
+    // A paused hopping guest is commonly a late joiner. Large initial drift
+    // needs the same buffered rendezvous as a playing guest's hard correction;
+    // seek+play directly into unbuffered HLS creates a stall/re-seek loop.
+    if (!isHost && mode === 'hopping' && Math.abs(drift) > HARD_SEEK_SEC) intent.hardSeek = true
+    return intent
   }
 
   const err = expected - currentTime
@@ -126,11 +201,23 @@ export function decideSyncAction({
     return intent
   }
 
-  if (ae > HARD_SEEK_SEC) {
+  if (ae > HARD_SEEK_SEC && !suppressHardSeek) {
+    if (correctionState) correctionState.correcting = false
     return { seekTo: expected, rate: 1, hardSeek: true, drift: err }
-  } else if (ae > SOFT_SEC) {
-    return { rate: 1 + clamp(err * RATE_GAIN, -MAX_RATE_ADJ, MAX_RATE_ADJ), drift: err }
-  } else {
-    return { rate: 1, drift: err }
   }
+
+  // Hysteresis around the soft-correction band (see correctionState doc above):
+  // once already nudging, require drift to fall under the lower SOFT_EXIT_SEC
+  // bound before stopping, instead of the higher SOFT_SEC enter bound. With no
+  // correctionState supplied, wasCorrecting is always false, so threshold is
+  // always SOFT_SEC — identical to the original single-threshold check.
+  const wasCorrecting = correctionState ? !!correctionState.correcting : false
+  const softThreshold = wasCorrecting ? SOFT_EXIT_SEC : SOFT_SEC
+  const shouldCorrect = ae > softThreshold
+  if (correctionState) correctionState.correcting = shouldCorrect
+
+  if (shouldCorrect) {
+    return { rate: 1 + clamp(err * RATE_GAIN, -MAX_RATE_ADJ, MAX_RATE_ADJ), drift: err }
+  }
+  return { rate: 1, drift: err }
 }

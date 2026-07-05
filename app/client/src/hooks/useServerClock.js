@@ -6,6 +6,10 @@ import { useCallback, useEffect, useRef } from 'react'
 export function useServerClock(socket) {
   const offsetRef = useRef(0)
   const readyRef = useRef(false)
+  // Quality metadata for the best sample currently backing offsetRef, so
+  // callers can optionally judge confidence instead of trusting a bare
+  // ready flag. Not required for existing consumers — see clockQuality().
+  const qualityRef = useRef({ rttMs: null, uncertaintyMs: null, sampledAt: null })
 
   useEffect(() => {
     if (!socket) return
@@ -24,6 +28,9 @@ export function useServerClock(socket) {
         const best = samples.reduce((a, b) => (b.rtt < a.rtt ? b : a))
         offsetRef.current = best.offset
         readyRef.current = true
+        // Rough uncertainty bound: half the best sample's RTT is the max
+        // one-way error the offset could carry (standard NTP assumption).
+        qualityRef.current = { rttMs: best.rtt, uncertaintyMs: best.rtt / 2, sampledAt: t4 }
       })
     }
 
@@ -36,5 +43,18 @@ export function useServerClock(socket) {
 
   const serverNow = useCallback(() => Date.now() + offsetRef.current, [])
   const clockReady = useCallback(() => readyRef.current, [])
-  return { serverNow, clockReady }
+  // Extended, opt-in status for callers that want more than a boolean.
+  // ageMs is measured fresh on each call (ms since the best sample was taken),
+  // not cached, so it stays accurate between samples.
+  const clockQuality = useCallback(() => {
+    const q = qualityRef.current
+    return {
+      offset: offsetRef.current,
+      rttMs: q.rttMs,
+      uncertaintyMs: q.uncertaintyMs,
+      ageMs: q.sampledAt == null ? null : Date.now() - q.sampledAt,
+      ready: readyRef.current,
+    }
+  }, [])
+  return { serverNow, clockReady, clockQuality }
 }

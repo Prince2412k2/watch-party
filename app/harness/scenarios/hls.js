@@ -113,3 +113,70 @@ export const pausedFrameBuffers = {
     ] }
   },
 }
+
+// Regression for audit finding #1 ("late joiners skip buffer-aware catch-up"):
+// a fresh guest's own <video> starts PAUSED (VirtualPlayer default) even though
+// the ROOM is actively playing well underway. Before the fix, decideSyncAction's
+// `if (paused)` branch (this is the "my player hasn't started yet" case, distinct
+// from `s.phase !== 'playing'` which is the whole ROOM being paused/stalled —
+// see hls-paused-frame-buffers above) returned a bare seek+play regardless of
+// drift, which on real HLS seeks straight into unbuffered media and stalls. It
+// must instead set `hardSeek` once drift exceeds HARD_SEEK_SEC and route through
+// the SAME buffer-aware rendezvous a mid-playback hard-seek uses. Distinguishes
+// this path from the paused-frame-buffers scenario via pausedBufferEnsures===0
+// (that counter only increments on the OTHER branch, where the room itself is
+// paused).
+export const pausedLateJoinerUsesBufferedCatchup = {
+  name: 'hls-paused-late-joiner-buffered-catchup',
+  async run({ SERVER }) {
+    const { host, partyId } = await spawnHost(SERVER)
+    host.play(0)
+    await sleep(6000)              // host well into playback, far from 0
+    const slow = await spawnGuest(SERVER, host, partyId, SLOW)
+    // Sanity: the guest's own player really does start paused (this is the
+    // exact condition the fix must handle, not a room-level pause).
+    const startedPaused = slow.player.paused
+    const s = startSampler(makeFetchSchedule(SERVER), partyId, [slow])
+    await sleep(9000)              // catch-up window
+    const rows = s.stop()
+    host.disconnect(); slow.disconnect()
+    const worst = worstDrift(rows, 'playing', 3)
+    return { checks: [
+      check('guest video starts paused while room plays (precondition)', startedPaused, `paused=${startedPaused}`),
+      check('routed through buffer-aware hard seek, not a naive seek+play', slow.hardSeekCount >= 1, `hardSeeks=${slow.hardSeekCount}`),
+      check('did not take the room-paused branch', slow.pausedBufferEnsures === 0, `pausedBufferEnsures=${slow.pausedBufferEnsures}`),
+      check('converges to live and resumes playing', worst < 0.8 && !slow.player.paused, `worst=${worst.toFixed(3)}s paused=${slow.player.paused}`),
+    ] }
+  },
+}
+
+// Regression for HOOK finding #15 (operation-identity parity): the paused
+// buffer-aware seek must abandon itself — not resume the OLD frozen target —
+// if the shared timeline moves on (host resumes play) while it's still
+// awaiting the buffer. Before the parity fix this routine had no stillCurrent()
+// re-check, so a resume mid-flight risked leaving the guest paused on a stale
+// frame after the room started playing again.
+export const pausedCatchupAbortsOnHostResume = {
+  name: 'hls-paused-catchup-aborts-on-resume',
+  async run({ SERVER }) {
+    const { host, partyId } = await spawnHost(SERVER)
+    host.play(0)
+    await sleep(1500)
+    host.pause(400)                 // freeze the shared timeline: paused @400
+    await sleep(400)
+    const slow = await spawnGuest(SERVER, host, partyId, SLOW) // joins paused, far from 400
+    await sleep(300)                // let the paused buffer-aware seek start (mid-stall)
+    const ensuresBefore = slow.pausedBufferEnsures
+    host.play(400)                  // host resumes WHILE the guest is still buffering the frozen frame
+    const s = startSampler(makeFetchSchedule(SERVER), partyId, [slow])
+    await sleep(9000)               // let the guest recover and catch up to live playback
+    const rows = s.stop()
+    host.disconnect(); slow.disconnect()
+    const worst = worstDrift(rows, 'playing', 3)
+    return { checks: [
+      check('paused buffer-ensure had actually started before the resume', ensuresBefore >= 1, `ensures=${ensuresBefore}`),
+      check('guest recovers and ends up playing (not stuck paused on stale frame)', !slow.player.paused, `paused=${slow.player.paused}`),
+      check('guest converges to the resumed timeline', worst < 0.8, `worst=${worst.toFixed(3)}s`),
+    ] }
+  },
+}
