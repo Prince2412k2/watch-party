@@ -101,6 +101,13 @@ export function buildHlsUrl(itemId, { maxBitrate, abr } = {}) {
     MediaSourceId: itemId,
     VideoCodec: 'h264',
     AudioCodec: 'aac',
+    // Without an explicit bitrate/channel count Jellyfin's ffmpeg falls back to
+    // a low-bitrate AAC encode and a naive surround→stereo downmix, which is
+    // what "muffled" sounds like. Pin a proper stereo bitrate explicitly —
+    // everyone here listens through browser/laptop speakers or a 2-channel
+    // WebRTC audio path anyway, so downmixing to 5.1 gains nothing.
+    AudioBitRate: '256000',
+    MaxAudioChannels: '2',
   }
   if (abr) {
     // Adaptive (ABR) master: don't pin a single bitrate/resolution. Jellyfin's
