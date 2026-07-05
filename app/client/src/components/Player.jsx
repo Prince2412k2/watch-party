@@ -37,6 +37,12 @@ export default function Player({
   // SyncBridge) because this is the component that owns the `muted` prop.
   const [hostMuted, setHostMuted] = useState(false)
 
+  // Whether audio is muted, independent of playback-control permission — a
+  // guest with no control rights must still be able to unmute and stay
+  // unmuted. Everyone starts muted so autoplay (synced play()) isn't blocked
+  // by the browser; the 'm' key / mute button flips this, not canControl.
+  const [userMuted, setUserMuted] = useState(true)
+
   // Local (non-shared) playback phase from useSyncPlay, surfaced here so the
   // mobile transport button (owned by Player, not the hook) can tell a real
   // user pause apart from useSyncPlay's own catch-up/buffering pauses instead
@@ -55,10 +61,11 @@ export default function Player({
             out under the app bar (bug 7). Desktop controllers keep the skin's
             scrubber; guests get the read-only GuestTimeline below (bug 6). */}
         <VideoSkin className={phone ? 'watch-skin watch-skin--nobar' : 'watch-skin'} style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none' }}>
-          {/* Guests start muted so synced play() autoplays without a gesture;
-              they can unmute from the AV controls. Host forced muted only when
+          {/* Everyone starts muted so synced play() autoplays without a gesture;
+              `userMuted` (not canControl) governs mute state so guests can
+              unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo src={hlsUrl} playsInline preload="auto" muted={!canControl || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <HlsVideo src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         </VideoSkin>
 
         {canControl && hostMuted && (
@@ -68,7 +75,12 @@ export default function Player({
         {/* Route all playback through SyncPlay + keyboard control */}
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
           onOpenChat={onOpenChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
-          seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)} onLocalPhase={setLocalPhase} />
+          seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
+          userMuted={userMuted} onToggleMuted={() => setUserMuted(m => !m)} onLocalPhase={setLocalPhase} />
+
+        {userMuted && !hostMuted && (
+          <UnmuteButton onClick={() => setUserMuted(false)} phone={phone} />
+        )}
 
         {/* Desktop-only "Host controls playback" hint. On phones the same state
             is shown as a lock glyph inside the consolidated bottom bar. */}
@@ -125,7 +137,7 @@ export default function Player({
 }
 
 // ── Bridges the videojs Media instance into our SyncPlay protocol ────────────
-function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, onLocalPhase }) {
+function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }) {
   const toggleFullscreen = () => (immersive ? exitImmersive?.() : enterImmersive?.())
   const media = VPlayer.useMedia()
   const mediaRef = useRef(null)
@@ -299,7 +311,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
         case 'j': if (transport()) seek(m, (m.currentTime || 0) - 10); break
         case 'arrowup': if (m) { e.preventDefault(); m.volume = Math.min(1, (m.volume ?? 1) + 0.1); m.muted = false } break
         case 'arrowdown': if (m) { e.preventDefault(); m.volume = Math.max(0, (m.volume ?? 1) - 0.1) } break
-        case 'm': if (m) m.muted = !m.muted; break
+        case 'm': onToggleMuted?.(); break
         case 'f': toggleFullscreen(); break
         case 'c': e.preventDefault(); onOpenChat?.(); break
         default: return
@@ -322,7 +334,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('watch:transport', onCommand)
     }
-  }, [canControl, onOpenChat, immersive, enterImmersive, exitImmersive, requestPlay, requestPause, requestSeek, holdApplying, releaseApplying, TICKS_PER_SECOND])
+  }, [canControl, onOpenChat, onToggleMuted, immersive, enterImmersive, exitImmersive, requestPlay, requestPause, requestSeek, holdApplying, releaseApplying, TICKS_PER_SECOND])
 
   // The desktop skin is third-party UI, so mark its pointer gestures before its
   // media mutations occur. Only the next matching event may author a command.
@@ -524,6 +536,21 @@ function AVControls({ micOn, camOn, talking, onToggleMic, onToggleCam, onToggleL
 // playback was forced muted to start in sync. One tap restores audio — safe
 // because a click handler is itself a fresh user gesture.
 function RestoreSoundPrompt({ onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      ...glass('clear'), position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+      zIndex: Z.controlBar, display: 'inline-flex', alignItems: 'center', gap: 8,
+      padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
+      color: '#fff', cursor: 'pointer', border: '1px solid rgba(255,255,255,.22)',
+    }}>
+      🔇 Tap for sound
+    </button>
+  )
+}
+
+// Guests (no playback control) get a dedicated unmute affordance, since they
+// have no other way to enable audio — audio is independent of control rights.
+function UnmuteButton({ onClick, phone }) {
   return (
     <button onClick={onClick} style={{
       ...glass('clear'), position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
