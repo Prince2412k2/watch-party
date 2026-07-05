@@ -53,6 +53,25 @@ export function ensureHlsLoad(media, position) {
   try { hls.startLoad(position); return true } catch { return false }
 }
 
+// Choose the newest desired position that remains inside the buffered range
+// which was confirmed around `anchor`. Keeping a margin from the range end
+// avoids resuming exactly on the download frontier. If ranges disappeared
+// during inspection, fall back to the anchor we already sought to.
+export function selectBufferedResumeTarget(media, anchor, desired, endMarginSec = 0.25) {
+  try {
+    const b = media?.buffered
+    for (let i = 0; i < (b?.length || 0); i++) {
+      const start = b.start(i)
+      const end = b.end(i)
+      if (anchor >= start - 0.25 && anchor <= end + 0.25) {
+        const safeEnd = Math.max(anchor, end - Math.max(0, endMarginSec))
+        return Math.max(anchor, Math.min(desired, safeEnd))
+      }
+    }
+  } catch { /* torn-down media */ }
+  return anchor
+}
+
 // Resolve once `targetTime` is buffered with at least `aheadSec` of runway ahead
 // of it (i.e. some buffered range covers [targetTime, targetTime + aheadSec]),
 // or after timeoutMs. Polls video.buffered because there is no single reliable

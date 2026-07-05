@@ -66,19 +66,29 @@ export const hostMigration = {
     const guestsPausedDetail = `g1=${g1.player.paused} g2=${g2.player.paused}`
 
     const notes = []
-    let migrated = false, newHostDrove = false
+    let migrated = false, newHostDrove = false, staysPausedUntilResumed = false, seekDidNotAutoResume = false
     const GRACE = Number(process.env.WP_HOST_GRACE_MS || 0)
     if (GRACE > 0 && GRACE <= 8000) {
       // Server was started with a shortened grace for testing — verify migration.
       await sleep(GRACE + 2500)
       const view = await fetchView(partyId)
       migrated = view.members.find(m => m.isHost)?.userId === g1.userId
-      // new host drives: seek and check schedule moves
+      // Host migration deliberately discards playback intent (see the comment
+      // block on handleHostDisconnect in server/index.js): the new host inherits
+      // a paused, frozen timeline and must explicitly resume it — promotion
+      // itself must not auto-resume playback.
+      const postPromotion = await fetchSchedule(partyId)
+      staysPausedUntilResumed = postPromotion.phase === 'paused' && postPromotion.paused === true
+      // new host drives: seek (NOT play) — the timeline should move to the new
+      // position but STILL not start playing on its own (a scrub/seek while
+      // paused must not resume the room; see the sync:seek "preserve intent"
+      // comment in server/index.js).
       g1.isHost = true
       g1.seek(300)
       await sleep(2500)
       const after = await fetchSchedule(partyId)
       newHostDrove = Math.abs((after.positionTicks / 10_000_000) - 300) < 6
+      seekDidNotAutoResume = after.phase === 'paused' && after.paused === true
     } else {
       notes.push(`migration (oldest→host) not force-tested: HOST_GRACE_MS=30s in prod; set WP_HOST_GRACE_MS<=8000 to exercise it`)
     }
@@ -91,7 +101,9 @@ export const hostMigration = {
     ]
     if (GRACE > 0 && GRACE <= 8000) {
       checks.push(check('oldest guest promoted to host', migrated, `promoted=${migrated}`))
+      checks.push(check('promotion does not auto-resume playback', staysPausedUntilResumed, `phase/paused=${staysPausedUntilResumed}`))
       checks.push(check('new host can drive timeline', newHostDrove, `drove=${newHostDrove}`))
+      checks.push(check('new host seek does not auto-resume (must manually play)', seekDidNotAutoResume, `stillPaused=${seekDidNotAutoResume}`))
     }
     return { checks, notes }
   },
