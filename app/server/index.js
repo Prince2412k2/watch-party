@@ -30,6 +30,7 @@ import {
   findSessionBySocket, findSessionForMember, findSessionByHost,
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
   transferHost, pushMessage, isHost, isMember, publicSession, allSessions,
+  validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
 } from './session.js'
 import { getItems } from './jellyfin.js'
 
@@ -388,6 +389,7 @@ io.on('connection', (socket) => {
       sess.mediaItemId = mediaItemId
       sess.mediaSourceId = src
       sess.stage = 'watching'
+      beginMediaGeneration(sess)
       // Autoplay from the top: the picker's click is a user gesture (host),
       // and guests are muted so synced play() isn't blocked by autoplay policy.
       sess.pos = 0
@@ -410,6 +412,7 @@ io.on('connection', (socket) => {
     sess.mediaItemId = null
     sess.mediaSourceId = null
     sess.stage = 'lobby'
+    beginMediaGeneration(sess)
     resetTimeline(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
@@ -424,34 +427,64 @@ io.on('connection', (socket) => {
 
   // The controller authors intent (play/pause/seek). The effective schedule is
   // intent gated by readiness — in dragging mode a stall freezes the group.
-  socket.on('sync:play', ({ positionTicks = 0, t0 } = {}) => {
+  //
+  // Conflict policy for collaborative control (multiple concurrent controllers):
+  // commands are otherwise applied in server arrival order — last writer wins,
+  // with no merging or rejection based on who issued the previous command. A
+  // controller MAY opt into optimistic concurrency by sending baseVersion; that
+  // command is rejected with 'stale schedule' if sess.schedule.version has moved
+  // on since the controller last observed it. baseVersion is optional and
+  // omitting it (older/legacy clients) falls back to plain last-writer-wins, so
+  // this stays backward-compatible without a protocol bump.
+  function acceptSyncCommand(sess, payload, ack) {
+    const parsed = validateSyncCommand(payload)
+    if (parsed.error) { ack?.({ error: parsed.error }); return null }
+    const authorized = authorizeSyncCommand(sess, parsed.value)
+    if (authorized.error) { ack?.(authorized); return null }
+    const now = Date.now()
+    socket._syncCommandTimes = (socket._syncCommandTimes || []).filter(t => now - t < 3000)
+    if (socket._syncCommandTimes.length >= 30) { ack?.({ error: 'rate limited' }); return null }
+    socket._syncCommandTimes.push(now)
+    return parsed.value
+  }
+
+  socket.on('sync:play', (payload = {}, ack) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return
+    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    const command = acceptSyncCommand(sess, payload, ack)
+    if (!command) return
     sess.intent.playing = true
-    sess.pos = positionTicks
-    startSegment(sess, t0 || Date.now())
+    sess.pos = command.positionTicks
+    startSegment(sess, Date.now())
+    ack?.({ ok: true, version: sess.schedule.version })
   })
 
-  socket.on('sync:pause', ({ positionTicks = 0 } = {}) => {
+  socket.on('sync:pause', (payload = {}, ack) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return
+    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    const command = acceptSyncCommand(sess, payload, ack)
+    if (!command) return
     sess.intent.playing = false
-    sess.pos = positionTicks
+    sess.pos = command.positionTicks
     sess.effPlaying = false
     setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'paused' })
+    ack?.({ ok: true, version: sess.schedule.version })
   })
 
-  socket.on('sync:seek', ({ positionTicks = 0, t0 } = {}) => {
+  socket.on('sync:seek', (payload = {}, ack) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return
-    sess.pos = positionTicks
+    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    const command = acceptSyncCommand(sess, payload, ack)
+    if (!command) return
+    sess.pos = command.positionTicks
     // Preserve intent: scrubbing while paused must not start the room playing.
     if (sess.intent.playing) {
-      startSegment(sess, t0 || Date.now())
+      startSegment(sess, Date.now())
     } else {
       sess.effPlaying = false
       setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'paused' })
     }
+    ack?.({ ok: true, version: sess.schedule.version })
   })
 
   // sync:report — a member's live drift telemetry (debug/observability only)
@@ -462,12 +495,10 @@ io.on('connection', (socket) => {
   })
 
   // sync:stall — a member's buffering state changed (drives dragging mode)
-  socket.on('sync:stall', ({ stalled = false } = {}) => {
+  socket.on('sync:stall', (payload = {}) => {
     const sess = findSessionForMember(userId)
     if (!sess) return
-    if (stalled) sess.stalled.add(userId)
-    else sess.stalled.delete(userId)
-    reconcile(sess)
+    if (applyStallReport(sess, userId, payload)) reconcile(sess)
   })
 
   // party:setSyncMode — host switches hopping ↔ dragging
@@ -475,7 +506,10 @@ io.on('connection', (socket) => {
     const sess = findSessionByHost(userId)
     if (!sess) return ack?.({ error: 'not host' })
     sess.syncMode = mode === 'dragging' ? 'dragging' : 'hopping'
-    if (sess.syncMode === 'hopping') sess.stalled.clear()
+    if (sess.syncMode === 'hopping') {
+      sess.stalled.clear()
+      sess.stallFallback.clear()
+    }
     io.to(sess.id).emit('party:state', publicSession(sess))
     reconcile(sess)
     ack?.({ ok: true })
@@ -520,7 +554,8 @@ io.on('connection', (socket) => {
       const g = removeGuest(sess, userId)
       if (g) io.to(sess.id).emit('user:left', { userId, name })
       // A departing member must not keep the group frozen in dragging mode
-      if (sess.stalled.delete(userId)) reconcile(sess)
+      const stallChanged = sess.stalled.delete(userId) || sess.stallFallback.delete(userId)
+      if (stallChanged) reconcile(sess)
     }
   })
 })
@@ -532,7 +567,11 @@ const TICKS_PER_MS = 10_000
 const STALL_MAX_MS = 30_000     // dragging: don't let one dead client freeze forever
 
 function setSchedule(sess, next) {
-  sess.schedule = { ...next, version: (sess.schedule?.version ?? 0) + 1 }
+  sess.schedule = {
+    ...next,
+    version: (sess.schedule?.version ?? 0) + 1,
+    mediaGeneration: sess.mediaGeneration,
+  }
   io.to(sess.id).emit('sync:schedule', sess.schedule)
 }
 
@@ -615,7 +654,12 @@ function reconcile(sess) {
   clearTimeout(sess._stallTimer)
   if (g && sess.intent.playing) {
     sess._stallTimer = setTimeout(() => {
+      for (const memberId of sess.stalled) sess.stallFallback.add(memberId)
       sess.stalled.clear()
+      io.to(sess.id).emit('sync:stall_fallback', {
+        memberIds: [...sess.stallFallback],
+        mediaGeneration: sess.mediaGeneration,
+      })
       reconcile(sess)
     }, STALL_MAX_MS)
   }
@@ -633,6 +677,14 @@ function handleHostDisconnect(sess) {
   // Freeze the timeline where it currently is, and normalize the derived state
   // so a reconcile() during the grace window (e.g. a stall change) can't act on
   // stale effPlaying/intent/playT0/pos values.
+  //
+  // Product rule (explicit, not incidental): losing the host always pauses the
+  // room, and playback does NOT auto-resume when a new host is promoted below.
+  // The promoted host inherits a paused, frozen-in-place timeline and must
+  // press Play again. This avoids surprising an unattended room into playing
+  // on with nobody driving, and gives the new host a deliberate moment to take
+  // over. If this policy ever changes, update the hostMigration harness
+  // scenario (app/harness/scenarios/advanced.js) to assert the new behavior.
   const frozenPos = livePositionTicks(sess)
   sess.pos = frozenPos
   sess.effPlaying = false

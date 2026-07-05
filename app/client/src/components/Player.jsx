@@ -7,6 +7,9 @@ import { useSyncPlay } from '../hooks/useSyncPlay.js'
 import { useIsMobile, usePhone, useWideBar } from '../hooks/useIsMobile.js'
 import { glass } from '../glass.jsx'
 import { Z } from '../watchLayers.js'
+import { createTransportIntent } from '../sync/transportIntent.js'
+import { isBuffered } from '../sync/bufferSeek.js'
+import { BUFFER_AHEAD_SEC } from '../sync/syncCore.js'
 
 // Fullscreen is owned by WatchView (Party.jsx) via a single `immersive` state and
 // an enterImmersive()/exitImmersive() pair that branches by platform capability
@@ -34,6 +37,13 @@ export default function Player({
   // SyncBridge) because this is the component that owns the `muted` prop.
   const [hostMuted, setHostMuted] = useState(false)
 
+  // Local (non-shared) playback phase from useSyncPlay, surfaced here so the
+  // mobile transport button (owned by Player, not the hook) can tell a real
+  // user pause apart from useSyncPlay's own catch-up/buffering pauses instead
+  // of reading raw media.paused. Lifted out of SyncBridge because it's a
+  // sibling of MobileBottomBar, not an ancestor.
+  const [localPhase, setLocalPhase] = useState('ready')
+
   return (
     <VPlayer.Provider>
       {/* isolate so the skin's internal z-indexed layers don't paint over the
@@ -44,7 +54,7 @@ export default function Player({
             the app's MobileBottomBar fully replaces it, and leaving it would peek
             out under the app bar (bug 7). Desktop controllers keep the skin's
             scrubber; guests get the read-only GuestTimeline below (bug 6). */}
-        <VideoSkin className={phone ? 'watch-skin--nobar' : undefined} style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none' }}>
+        <VideoSkin className={phone ? 'watch-skin watch-skin--nobar' : 'watch-skin'} style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none' }}>
           {/* Guests start muted so synced play() autoplays without a gesture;
               they can unmute from the AV controls. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
@@ -58,7 +68,7 @@ export default function Player({
         {/* Route all playback through SyncPlay + keyboard control */}
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
           onOpenChat={onOpenChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
-          seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)} />
+          seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)} onLocalPhase={setLocalPhase} />
 
         {/* Desktop-only "Host controls playback" hint. On phones the same state
             is shown as a lock glyph inside the consolidated bottom bar. */}
@@ -80,7 +90,7 @@ export default function Player({
           /* Phones: a single consolidated bottom bar — transport + call + settings
              + fullscreen — replacing the three floating desktop clusters. */
           <MobileBottomBar
-            canControl={canControl}
+            canControl={canControl} localPhase={localPhase}
             micOn={micOn} camOn={camOn}
             talking={talking} onTalkStart={onTalkStart} onTalkEnd={onTalkEnd}
             onToggleMic={onToggleMic} onToggleCam={onToggleCam}
@@ -115,7 +125,7 @@ export default function Player({
 }
 
 // ── Bridges the videojs Media instance into our SyncPlay protocol ────────────
-function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked }) {
+function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, onLocalPhase }) {
   const toggleFullscreen = () => (immersive ? exitImmersive?.() : enterImmersive?.())
   const media = VPlayer.useMedia()
   const mediaRef = useRef(null)
@@ -123,11 +133,16 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
 
   const {
     canControl, applyingRef, holdApplying, releaseApplying, notifyUserSeeking, reportStall,
-    requestPlay, requestPause, requestSeek,
+    requestPlay, requestPause, requestSeek, localPhase,
     TICKS_PER_SECOND,
   } = useSyncPlay({ playerRef: mediaRef, isHost, collaborativeControl, syncMode, onStruggle, onAutoplayBlocked })
 
+  // Surface localPhase to Player (MobileBottomBar's transport button needs it
+  // and is a sibling of this component, not a descendant).
+  useEffect(() => { onLocalPhase?.(localPhase) }, [localPhase, onLocalPhase])
+
   const seekTimer = useRef(null)
+  const transportIntent = useRef(createTransportIntent())
   const [buffering, setBuffering] = useState(false)
   const [switchingQuality, setSwitchingQuality] = useState(false)
 
@@ -149,7 +164,10 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
         let t = (m.currentTime || 0) + delta
         if (t < 0) t = 0
         if (Number.isFinite(dur) && dur > 0 && t > dur - 0.5) t = dur - 0.5
+        holdApplying()
         m.currentTime = t
+        requestSeek(Math.round(t * TICKS_PER_SECOND))
+        setTimeout(releaseApplying, 250)
       },
       // ── Bug 2: camera/mic toggle guard ──────────────────────────────────────
       // Enabling/disabling the camera or mic drives getUserMedia, which on some
@@ -173,7 +191,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       },
     }
     return () => { seekBridgeRef.current = null }
-  }, [seekBridgeRef, canControl])
+  }, [seekBridgeRef, canControl, holdApplying, releaseApplying, requestSeek, TICKS_PER_SECOND])
 
   // ── Quality-tier / source swap: preserve position across the reload ──────
   // Changing quality fetches a new transcode URL, which swaps <HlsVideo src>.
@@ -247,10 +265,20 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   }, [srcUrl]) // eslint-disable-line
 
   // ── Keyboard controls ──────────────────────────────────────────────────
-  // Transport keys (play/pause/seek) drive the media element directly; the
-  // event handlers below re-author the shared schedule, keeping everyone synced.
+  // Transport keys author commands directly. Media events are observations;
+  // browser stalls and pipeline reconfiguration must never become room intent.
   // Volume / mute / fullscreen / chat are local and available to everyone.
   useEffect(() => {
+    const ticks = (m) => Math.round((m.currentTime || 0) * TICKS_PER_SECOND)
+    const play = (m) => { requestPlay(ticks(m)); holdApplying(); m.play().catch(() => {}); setTimeout(releaseApplying, 250) }
+    const pause = (m) => { requestPause(ticks(m)); holdApplying(); m.pause(); setTimeout(releaseApplying, 250) }
+    const seek = (m, time) => {
+      const dur = m.duration
+      const max = Number.isFinite(dur) && dur > 0 ? Math.max(0, dur - 0.5) : Infinity
+      const target = Math.min(max, Math.max(0, time))
+      requestSeek(Math.round(target * TICKS_PER_SECOND))
+      holdApplying(); m.currentTime = target; setTimeout(releaseApplying, 250)
+    }
     function onKey(e) {
       const t = e.target
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
@@ -262,13 +290,13 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       const transport = () => { if (!m || !canControl) return false; return true }
       switch (k) {
         case ' ': case 'k':
-          if (!transport()) return; e.preventDefault(); m.paused ? m.play().catch(() => {}) : m.pause(); break
+          if (!transport()) return; e.preventDefault(); m.paused ? play(m) : pause(m); break
         case 'arrowright':
-          if (!transport()) return; e.preventDefault(); m.currentTime = Math.max(0, (m.currentTime || 0) + 5); break
+          if (!transport()) return; e.preventDefault(); seek(m, (m.currentTime || 0) + 5); break
         case 'arrowleft':
-          if (!transport()) return; e.preventDefault(); m.currentTime = Math.max(0, (m.currentTime || 0) - 5); break
-        case 'l': if (transport()) m.currentTime = (m.currentTime || 0) + 10; break
-        case 'j': if (transport()) m.currentTime = Math.max(0, (m.currentTime || 0) - 10); break
+          if (!transport()) return; e.preventDefault(); seek(m, (m.currentTime || 0) - 5); break
+        case 'l': if (transport()) seek(m, (m.currentTime || 0) + 10); break
+        case 'j': if (transport()) seek(m, (m.currentTime || 0) - 10); break
         case 'arrowup': if (m) { e.preventDefault(); m.volume = Math.min(1, (m.volume ?? 1) + 0.1); m.muted = false } break
         case 'arrowdown': if (m) { e.preventDefault(); m.volume = Math.max(0, (m.volume ?? 1) - 0.1) } break
         case 'm': if (m) m.muted = !m.muted; break
@@ -282,8 +310,30 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     }
     // Capture phase so we run before the vidstack skin's own key handler.
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [canControl, onOpenChat, immersive, enterImmersive, exitImmersive])
+    const onCommand = (e) => {
+      const m = mediaRef.current
+      if (!m || !canControl) return
+      if (e.detail?.kind === 'play') play(m)
+      else if (e.detail?.kind === 'pause') pause(m)
+      else if (e.detail?.kind === 'seek') seek(m, e.detail.time)
+    }
+    window.addEventListener('watch:transport', onCommand)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('watch:transport', onCommand)
+    }
+  }, [canControl, onOpenChat, immersive, enterImmersive, exitImmersive, requestPlay, requestPause, requestSeek, holdApplying, releaseApplying, TICKS_PER_SECOND])
+
+  // The desktop skin is third-party UI, so mark its pointer gestures before its
+  // media mutations occur. Only the next matching event may author a command.
+  useEffect(() => {
+    if (!canControl) return
+    const onPointerDown = (e) => {
+      if (e.target?.closest?.('.watch-skin')) transportIntent.current.arm('*')
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [canControl])
 
   // "Catching up…" for guests reflects a real stall only. We turn it on when the
   // player actually stalls ('waiting') and clear it as soon as the frame is
@@ -313,41 +363,63 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   }, [media, isHost])
 
   // Dragging mode: report our buffering state so the group waits for us.
-  // Ready is signalled by 'canplaythrough' (works even while held/paused).
+  // Readiness is measured directly off buffered runway ahead of the current
+  // position (the same isBuffered() check bufferSeek.js's catch-up routines
+  // use), not inferred from 'canplaythrough' (unreliable on adaptive HLS,
+  // which may never fire it) or 'playing' (only proves playback started, not
+  // that there's enough runway left to keep it going). Polled on a timer plus
+  // the events that can plausibly change the answer, since there's no single
+  // reliable "buffer changed" DOM event across engines.
   useEffect(() => {
     if (!media || syncMode !== 'dragging') return
     let stalled = false
     const set = (v) => { if (stalled !== v) { stalled = v; reportStall(v) } }
-    const onStall = () => set(true)
-    const onReady = () => set(false)
-    media.addEventListener('waiting', onStall)
-    media.addEventListener('stalled', onStall)
-    media.addEventListener('canplaythrough', onReady)
-    media.addEventListener('playing', onReady)
+    const check = () => {
+      const t = media.currentTime || 0
+      const ready = isBuffered(media, t) && isBuffered(media, t + BUFFER_AHEAD_SEC)
+      set(!ready)
+    }
+    check()
+    const poll = setInterval(check, 250)
+    media.addEventListener('waiting', check)
+    media.addEventListener('stalled', check)
+    media.addEventListener('playing', check)
+    media.addEventListener('timeupdate', check)
+    media.addEventListener('progress', check)
     return () => {
+      clearInterval(poll)
       if (stalled) reportStall(false)   // don't leave the group frozen on unmount
-      media.removeEventListener('waiting', onStall)
-      media.removeEventListener('stalled', onStall)
-      media.removeEventListener('canplaythrough', onReady)
-      media.removeEventListener('playing', onReady)
+      media.removeEventListener('waiting', check)
+      media.removeEventListener('stalled', check)
+      media.removeEventListener('playing', check)
+      media.removeEventListener('timeupdate', check)
+      media.removeEventListener('progress', check)
     }
   }, [media, syncMode, reportStall])
 
-  // Translate this controller's UI actions into schedule-change requests.
-  // Programmatic (control-loop) changes are suppressed via applyingRef.
+  // Translate only explicitly armed desktop-skin gestures into requests.
+  // Unarmed media events (buffering, catch-up, device/source changes) are
+  // observations and can never alter shared playback intent.
   useEffect(() => {
     if (!media) return
     const ticks = () => Math.round((media.currentTime || 0) * TICKS_PER_SECOND)
 
-    const onPlay   = () => { if (!applyingRef.current && canControl) requestPlay(ticks()) }
-    const onPause  = () => { if (!applyingRef.current && canControl) requestPause(ticks()) }
+    const explicit = (kind) => !applyingRef.current && canControl && transportIntent.current.consume(kind)
+    const onPlay   = () => { if (explicit('play')) requestPlay(ticks()) }
+    const onPause  = () => { if (explicit('pause')) requestPause(ticks()) }
     // Scrub start → tell the loop to stop correcting so it doesn't snap us back.
     const onSeeking = () => { if (!applyingRef.current && canControl) notifyUserSeeking() }
     // A scrubber drag fires many 'seeked' events — author only the settled one.
+    // consume() burns the arm token on the FIRST matching event, so once a
+    // debounce window is already pending (from that first authorized event)
+    // later 'seeked' events in the same drag must still restart the timer even
+    // though the token is gone — otherwise the request fires at whatever
+    // position the drag happened to be at 200ms in, not where it settled.
     const onSeeked = () => {
-      if (applyingRef.current || !canControl) return
+      const pending = seekTimer.current != null
+      if (!pending && !explicit('seek')) return
       clearTimeout(seekTimer.current)
-      seekTimer.current = setTimeout(() => requestSeek(ticks()), 200)
+      seekTimer.current = setTimeout(() => { seekTimer.current = null; requestSeek(ticks()) }, 200)
     }
 
     media.addEventListener('play', onPlay)
@@ -669,7 +741,7 @@ function TimelineControls({ visible, immersive, enterImmersive, exitImmersive })
 // landscape) they inline back into the bar. Fullscreen is NEVER in the overflow.
 // Fades with the auto-hide `visible` layer. Touch targets are 44px with ≥8px gaps.
 function MobileBottomBar({
-  canControl, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
+  canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
   hideSelf, onToggleHideSelf, camStripOpen, onToggleCamStrip, visible, immersive, enterImmersive, exitImmersive,
 }) {
   const media = VPlayer.useMedia()
@@ -680,15 +752,20 @@ function MobileBottomBar({
   const wide = useWideBar()
   const barRef = useRef(null)
 
-  // Reflect real play/pause state on the transport button.
+  // Reflect real play/pause state on the transport button — but only while
+  // localPhase is 'ready'. useSyncPlay pauses the element itself as an
+  // implementation detail of hard-seek catch-up ('catchingUp') and the
+  // paused-frozen-frame load ('buffering'); without this guard those would
+  // flip the button to a "Play" glyph even though shared intent is still
+  // "playing", and tapping it would author a spurious requestPlay.
   useEffect(() => {
     if (!media) return
-    const sync = () => setPaused(!!media.paused)
+    const sync = () => setPaused(!!media.paused && localPhase === 'ready')
     sync()
     media.addEventListener('play', sync)
     media.addEventListener('pause', sync)
     return () => { media.removeEventListener('play', sync); media.removeEventListener('pause', sync) }
-  }, [media])
+  }, [media, localPhase])
 
   // Publish the real (measured) bar height so the camera strip can clear it
   // exactly — no hard-coded offset that drifts if the bar's contents change.
@@ -707,7 +784,11 @@ function MobileBottomBar({
 
   const togglePlay = () => {
     if (!media || !canControl) return
-    media.paused ? media.play().catch(() => {}) : media.pause()
+    // Use the same localPhase-aware `paused` the button renders from, not raw
+    // media.paused, so tapping the button during a catch-up/buffering pause
+    // sends 'pause' (matching what the button visually shows) rather than a
+    // redundant/confusing 'play'.
+    window.dispatchEvent(new CustomEvent('watch:transport', { detail: { kind: paused ? 'play' : 'pause' } }))
   }
   const closeMore = () => setMoreOpen(false)
 

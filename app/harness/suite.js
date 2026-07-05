@@ -10,11 +10,12 @@
 
 import { scale2, scale5, scale10 } from './scenarios/scale.js'
 import { jumpMiddle, jumpBackward, scrubStorm, seekPausedThenPlay, playPauseSeek } from './scenarios/hostjump.js'
-import { playPauseStorm, playPauseStormEndPlay, lateJoiner, modeSwitch } from './scenarios/state.js'
+import { playPauseStorm, playPauseStormEndPlay, lateJoiner, modeSwitch, staleScheduleVersionRejected } from './scenarios/state.js'
 import { singleStall, multiStall, deadClientDisconnect } from './scenarios/dragging.js'
 import { clockSkew, hostMigration, longRun, qualityTierReauthor } from './scenarios/advanced.js'
-import { chaseLoopHostJump, chaseLoopLateJoin, pausedFrameBuffers } from './scenarios/hls.js'
+import { chaseLoopHostJump, chaseLoopLateJoin, pausedFrameBuffers, pausedLateJoinerUsesBufferedCatchup, pausedCatchupAbortsOnHostResume } from './scenarios/hls.js'
 import { guestCannotDrive } from './scenarios/permission.js'
+import { softCorrectionHysteresis } from './scenarios/hysteresis.js'
 
 const SERVER = process.env.WP_SERVER || 'http://localhost:3999'
 
@@ -26,6 +27,8 @@ const ALL = [
   clockSkew, hostMigration, longRun, qualityTierReauthor,
   chaseLoopHostJump, chaseLoopLateJoin, pausedFrameBuffers,
   guestCannotDrive,
+  pausedLateJoinerUsesBufferedCatchup, pausedCatchupAbortsOnHostResume,
+  staleScheduleVersionRejected, softCorrectionHysteresis,
 ]
 
 async function main() {
