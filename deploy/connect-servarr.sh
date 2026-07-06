@@ -7,6 +7,8 @@
 #   2. Ensures the Radarr (/data/media/movies) and Sonarr (/data/media/tv) root folders.
 #   3. Registers Radarr + Sonarr in Prowlarr as fullSync applications.
 #   4. Confirms qBittorrent WebUI credentials and sets the default save path to /data/downloads.
+#   4b. Blocks HEVC/x265 releases in Radarr (no GPU here — HEVC forces a full
+#       software transcode on playback; H.264 direct-plays with zero CPU cost).
 #   5. Connects Bazarr to Radarr + Sonarr for subtitles.
 #
 # It deliberately does NOT add indexers — that is the one manual step (see the
@@ -431,6 +433,91 @@ else
     info "Manual fix: get the temp password via 'docker logs watchparty-qbittorrent',"
     info "log in at $QBIT_URL, then Settings > Web UI > set username/password to match .env.local."
   fi
+fi
+
+# ===========================================================================
+# 4b. Block HEVC/x265 releases in Radarr (no GPU on this VPS -> HEVC forces a
+#     full software transcode on every play, which is the buffering root
+#     cause; H.264 sources direct-play with zero CPU decode/encode cost).
+# ===========================================================================
+ensure_no_hevc_format() {
+  local base="$1" key="$2" fmt_id payload
+
+  _curl -H "X-Api-Key: $key" "$base/api/v3/customformat"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    status warn "Radarr: could not read custom formats (HTTP $HTTP_STATUS)" >&2; return 1
+  fi
+  fmt_id="$(resp_get '[.[] | select(.name == "Block HEVC (no HW transcode)")][0].id // empty')"
+  if [ -n "$fmt_id" ]; then
+    status "exists, skipped" "Radarr custom format 'Block HEVC (no HW transcode)' already present" >&2
+    echo "$fmt_id"
+    return 0
+  fi
+
+  payload='{
+    "name": "Block HEVC (no HW transcode)",
+    "includeCustomFormatWhenRenaming": false,
+    "specifications": [{
+      "name": "HEVC/x265 in release title",
+      "implementation": "ReleaseTitleSpecification",
+      "negate": false, "required": true,
+      "fields": [{"name": "value", "value": "(?i)\\b(x265|h\\.?265|hevc)\\b"}]
+    }]
+  }'
+  _curl -X POST -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+        --data "$payload" "$base/api/v3/customformat"
+  if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
+    status warn "Radarr: failed to create HEVC-block custom format (HTTP $HTTP_STATUS)" >&2; return 1
+  fi
+  fmt_id="$(resp_get '.id')"
+  status created "Radarr custom format 'Block HEVC (no HW transcode)' (id $fmt_id)" >&2
+  echo "$fmt_id"
+}
+
+# Apply the format to every quality profile: score it very negative and make
+# sure the profile's cutoff rejects anything below 0, so a matching release
+# never gets grabbed in the first place (not just deprioritized).
+apply_hevc_block_to_profiles() {
+  local base="$1" key="$2" fmt_id="$3" profiles count=0
+
+  _curl -H "X-Api-Key: $key" "$base/api/v3/qualityprofile"
+  if [ "$HTTP_STATUS" != "200" ]; then
+    status warn "Radarr: could not read quality profiles (HTTP $HTTP_STATUS)"; return 0
+  fi
+  profiles="$RESP"
+  local ids; ids="$(printf '%s' "$profiles" | jq -r '.[].id')"
+  for id in $ids; do
+    local prof already
+    prof="$(printf '%s' "$profiles" | jq --argjson id "$id" '.[] | select(.id == $id)')"
+    already="$(printf '%s' "$prof" | jq --argjson fid "$fmt_id" '(.formatItems // []) | any(.format == $fid and .score <= -1000)')"
+    if [ "$already" = "true" ]; then continue; fi
+    local want
+    want="$(printf '%s' "$prof" | jq --argjson fid "$fmt_id" '
+      .formatItems = ((.formatItems // []) | map(select(.format != $fid))) + [{format: $fid, name: "Block HEVC (no HW transcode)", score: -10000}]
+      | .minFormatScore = ([(.minFormatScore // 0), 0] | max)
+    ')"
+    _curl -X PUT -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
+          --data "$want" "$base/api/v3/qualityprofile/$id"
+    case "$HTTP_STATUS" in
+      200|202) count=$((count+1)) ;;
+      *) status warn "Radarr: failed to update quality profile $id (HTTP $HTTP_STATUS)" ;;
+    esac
+  done
+  if [ "$count" -gt 0 ]; then
+    status updated "Radarr: HEVC block applied to $count quality profile(s)"
+  else
+    status "exists, skipped" "Radarr: all quality profiles already block HEVC"
+  fi
+}
+
+header "4b. Block HEVC/x265 releases (Radarr)"
+if [ "$RADARR_UP" = 1 ]; then
+  HEVC_FMT_ID="$(ensure_no_hevc_format "$RADARR_URL" "$RADARR_KEY" || true)"
+  if [ -n "${HEVC_FMT_ID:-}" ]; then
+    apply_hevc_block_to_profiles "$RADARR_URL" "$RADARR_KEY" "$HEVC_FMT_ID"
+  fi
+else
+  status warn "Radarr skipped (unreachable / no key)"
 fi
 
 # ===========================================================================
