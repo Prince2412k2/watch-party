@@ -6,7 +6,7 @@ import { useFailingCount } from '../hooks/useFailingDownloads.js'
 import { useLibraryViews } from '../hooks/useLibraryViews.js'
 import { C, SANS, MONO, glassStyle, Ic, Icon, Sidebar, TopBar, Notice, Spinner } from '../lib/ui.jsx'
 import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, stateInfo, isPausedState } from '../lib/format.js'
-import { jget, jpost } from '../lib/api.js'
+import { jget, jpost, jdelete } from '../lib/api.js'
 
 /* Pick the best remote poster URL out of a catalog lookup `images` array.
  * Lookup results (not-yet-added) only have full URLs in `remoteUrl`; the local
@@ -308,6 +308,11 @@ export default function Browse() {
             state={stateFor(selected)} torrents={dl.torrents}
             onDownload={() => oneTapAdd(selected)} onOptions={() => setOptionsItem(selected)}
             onPickRelease={() => setPickerItem(selected)}
+            onRemove={async () => {
+              const path = kind === 'movie' ? `radarr/movie/${selected.id}` : `sonarr/series/${selected.id}`
+              await jdelete(`/api/servarr/${path}?deleteFiles=true`)
+              setSelected(null)
+            }}
           />
         ) : (
           <div style={{ padding: mobile ? '4px 16px 100px' : '8px 34px 100px', maxWidth: 1400, margin: '0 auto' }}>
@@ -606,7 +611,9 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }) {
 }
 
 /* ── Detail view — native title page (mirrors Library's Details layout) ─────── */
-function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions, onPickRelease }) {
+function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions, onPickRelease, onRemove }) {
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const [removing, setRemoving] = useState(false)
   const rating = ratingOf(item)
   const runtime = fmtRuntimeFromMinutes(item.runtime)
   const genres = item.genres || []
@@ -741,10 +748,43 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                   </p>
                 </div>
               ) : state === 'added' ? (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '14px 26px', borderRadius: 999,
-                  fontSize: 15, fontWeight: 700, background: 'rgba(62,207,126,.16)', color: C.green, border: `1px solid rgba(62,207,126,.4)` }}>
-                  <Icon path={Ic.check} size={18} sw={2.4} />In library
-                </span>
+                <>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '14px 26px', borderRadius: 999,
+                    fontSize: 15, fontWeight: 700, background: 'rgba(62,207,126,.16)', color: C.green, border: `1px solid rgba(62,207,126,.4)` }}>
+                    <Icon path={Ic.check} size={18} sw={2.4} />In library
+                  </span>
+                  {onRemove && (
+                    <button onClick={() => setConfirmRemove(true)} title="Remove from library"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '14px 20px', borderRadius: 999,
+                        cursor: 'pointer', fontSize: 14, fontWeight: 700, color: C.red, ...glassStyle, background: 'rgba(20,24,30,.5)' }}>
+                      <Icon path={Ic.trash} size={17} sw={2} />Remove
+                    </button>
+                  )}
+                  {confirmRemove && (
+                    <div onClick={() => !removing && setConfirmRemove(false)} style={{ position: 'fixed', inset: 0, zIndex: 100,
+                      display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(4px)' }}>
+                      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(380px, 90vw)', borderRadius: 18, padding: 24,
+                        ...glassStyle, background: 'rgba(20,24,30,.92)' }}>
+                        <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Remove from library?</h2>
+                        <p style={{ fontSize: 14, color: C.dim, lineHeight: 1.55, marginTop: 10 }}>
+                          This deletes the {kind === 'movie' ? 'movie' : 'series'} and its downloaded files, and
+                          stops it from being auto-redownloaded. This can't be undone.
+                        </p>
+                        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                          <button onClick={() => setConfirmRemove(false)} disabled={removing} style={{ flex: 1, height: 46, borderRadius: 13,
+                            border: `1px solid ${C.line2}`, background: 'transparent', color: C.text, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                            Cancel
+                          </button>
+                          <button onClick={async () => { setRemoving(true); try { await onRemove() } finally { setRemoving(false); setConfirmRemove(false) } }}
+                            disabled={removing} style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
+                              background: C.red, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                            {removing ? 'Removing…' : 'Remove'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <>
                   <button onClick={onDownload} style={{ display: 'inline-flex', alignItems: 'center', gap: 11, padding: '15px 32px',
