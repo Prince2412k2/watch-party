@@ -222,6 +222,12 @@ export const sonarr = {
   queue: () => arrFetch('sonarr', '/api/v3/queue', { query: { includeUnknownSeriesItems: true, includeSeries: true, includeEpisode: true, pageSize: 50 } }),
   removeQueueItem: (id, { removeFromClient = true, blocklist = false } = {}) =>
     arrFetch('sonarr', `/api/v3/queue/${id}`, { method: 'DELETE', query: { removeFromClient, blocklist } }),
+  // Deletes the series record. deleteFiles also removes the imported media
+  // from disk; addImportExclusion blocks Sonarr from ever re-adding it via
+  // list sync. Without deleteFiles the media stays but the series (and its
+  // monitoring/auto-search) is gone.
+  remove: (id, { deleteFiles = false, addImportExclusion = false } = {}) =>
+    arrFetch('sonarr', `/api/v3/series/${id}`, { method: 'DELETE', query: { deleteFiles, addImportExclusion } }),
 }
 
 export function sonarrAddPayload(lookupItem, { qualityProfileId, languageProfileId, rootFolderPath, monitor = true, searchNow = true }) {

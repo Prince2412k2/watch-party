@@ -7,3 +7,5 @@ export const jpost = (url, body) => fetch(url, {
   method: 'POST', credentials: 'include',
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 })
+
+export const jdelete = (url) => fetch(url, { method: 'DELETE', credentials: 'include' })
