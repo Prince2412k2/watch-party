@@ -719,6 +719,24 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'radarr/queue/delete', err) }
   })
 
+  // Remove an already-imported movie from the library. deleteFiles defaults
+  // true here (unlike the internal grab-or-remove cleanup above) because this
+  // is the user-facing "remove from library" action — leaving the media file
+  // behind while deleting the Radarr record would just orphan it. Always sets
+  // addImportExclusion so Radarr can't silently re-grab it on the next RSS
+  // sync / automatic search (the actual bug being fixed: a movie deleted only
+  // from qBittorrent stayed monitored in Radarr and kept coming back).
+  app.delete('/api/servarr/radarr/movie/:id', requireAuth, async (req, res) => {
+    if (!ensureConfigured('radarr', res)) return
+    const id = Number(req.params.id)
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+    try {
+      const deleteFiles = req.query.deleteFiles !== 'false'
+      await radarr.remove(id, { deleteFiles, addImportExclusion: true })
+      res.json({ ok: true })
+    } catch (err) { fail(res, 'radarr/movie/delete', err) }
+  })
+
   // ── Sonarr ──────────────────────────────────────────────────────────────────
   app.get('/api/servarr/sonarr/search', requireAuth, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
@@ -739,6 +757,20 @@ export function registerServarrRoutes(app) {
       const data = await sonarr.library()
       res.json((Array.isArray(data) ? data : []).map(shapeSeries))
     } catch (err) { fail(res, 'sonarr/series', err) }
+  })
+
+  // Same fix as radarr/movie/delete above, for series: removes the Sonarr
+  // record (+files by default) and excludes it so it can't silently re-add
+  // itself on the next automatic search.
+  app.delete('/api/servarr/sonarr/series/:id', requireAuth, async (req, res) => {
+    if (!ensureConfigured('sonarr', res)) return
+    const id = Number(req.params.id)
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
+    try {
+      const deleteFiles = req.query.deleteFiles !== 'false'
+      await sonarr.remove(id, { deleteFiles, addImportExclusion: true })
+      res.json({ ok: true })
+    } catch (err) { fail(res, 'sonarr/series/delete', err) }
   })
 
   app.get('/api/servarr/sonarr/quality-profiles', requireAuth, async (_req, res) => {
