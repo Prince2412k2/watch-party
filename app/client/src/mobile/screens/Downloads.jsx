@@ -21,9 +21,6 @@ import { useTorrents } from '../../hooks/useTorrents.js'
  * Endpoints: /api/servarr/health, /downloads/enriched, /{service}/queue[/:id].
  */
 
-const PERI = '#6a8bff'   // "finishing up" / progress-gradient end
-const WARN = '#e2b04a'   // waiting / stalled (semantic, not the brand accent)
-
 // Glyphs the mobile Icon dictionary doesn't carry — kept local (page-scoped) so
 // the shared kit stays untouched. `Icon` just renders whatever `path` it's given.
 const P = {
@@ -58,21 +55,21 @@ function fmtEta(secs) {
 function stateInfo(state) {
   switch (state) {
     case 'downloading': case 'forcedDL': case 'metaDL': case 'checkingDL': case 'allocating':
-      return { label: 'Downloading', color: T.brand, paused: false }
+      return { label: 'Downloading', color: T.brand, textColor: T.text, paused: false }
     case 'uploading': case 'forcedUP': case 'checkingUP': case 'stalledUP':
-      return { label: 'Finishing up', color: PERI, paused: false }
+      return { label: 'Finishing up', color: T.faint, textColor: T.dim, paused: false }
     case 'stalledDL':
-      return { label: 'Waiting', color: WARN, paused: false }
+      return { label: 'Waiting', color: T.faint, textColor: T.dim, paused: false }
     case 'queuedDL': case 'queuedUP': case 'checkingResumeData':
-      return { label: 'Queued', color: T.faint, paused: false }
+      return { label: 'Queued', color: T.faint, textColor: T.dim, paused: false }
     case 'pausedDL': case 'stoppedDL':
-      return { label: 'Paused', color: T.faint, paused: true }
+      return { label: 'Paused', color: T.faint, textColor: T.dim, paused: true }
     case 'pausedUP': case 'stoppedUP':
-      return { label: 'Completed', color: T.brand, paused: true }
+      return { label: 'Completed', color: T.text, textColor: T.text, paused: true }
     case 'error': case 'missingFiles':
-      return { label: 'Error', color: T.red, paused: true }
+      return { label: 'Error', color: T.red, textColor: T.red, paused: true }
     default:
-      return { label: state || 'Unknown', color: T.faint, paused: false }
+      return { label: state || 'Unknown', color: T.faint, textColor: T.dim, paused: false }
   }
 }
 
@@ -209,7 +206,6 @@ function SectionHeader({ label, count, tone, live }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12 }}>
       <span style={{
         width: 8, height: 8, borderRadius: '50%', background: tone, flexShrink: 0,
-        boxShadow: `0 0 8px ${tone}`,
         animation: live ? 'pulse 1.8s ease-in-out infinite' : 'none',
       }} />
       <span style={{ ...TYPE.meta, color: T.dim }}>{label}</span>
@@ -363,16 +359,16 @@ function SummaryCard({ agg, spark, reconnecting }) {
           <span style={{ ...TYPE.meta, color: T.dim }}>downloading</span>
         </div>
         <div style={{ display: 'flex', gap: 16, marginTop: 10, fontFamily: MONO, fontSize: 12.5, fontWeight: 700 }}>
-          <span style={{ color: T.brand }}>↓ {fmtSpeed(agg.down)}</span>
+          <span style={{ color: T.text }}>↓ {fmtSpeed(agg.down)}</span>
           <span style={{ color: T.faint }}>↑ {fmtSpeed(agg.up)}</span>
         </div>
         {reconnecting && (
-          <div style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 11, color: WARN }}>
+          <div style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 11, color: T.dim }}>
             <Spinner size={11} /> reconnecting…
           </div>
         )}
       </div>
-      <Sparkline data={spark} color={T.brand} />
+      <Sparkline data={spark} color={T.text} />
     </div>
   )
 }
@@ -407,7 +403,7 @@ function DlPoster({ src, kind }) {
   return (
     <div style={{
       width: 44, aspectRatio: '2 / 3', borderRadius: 9, overflow: 'hidden', flexShrink: 0,
-      background: `linear-gradient(160deg, ${T.surface2}, ${T.surface})`,
+      background: T.surface2,
       border: `1px solid ${T.line}`, display: 'grid', placeItems: 'center', position: 'relative',
     }}>
       {src && ok
@@ -426,8 +422,7 @@ function TorrentRow({ t, busy, onPause, onResume, onDelete }) {
   const title = t.displayTitle || t.name
   const barFill = info.paused ? T.faint
     : info.label === 'Error' ? T.red
-    : done ? T.brand
-    : `linear-gradient(90deg, ${T.brand}, ${PERI})`
+    : T.text
 
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: R.md, padding: 14 }}>
@@ -440,9 +435,9 @@ function TorrentRow({ t, busy, onPause, onResume, onDelete }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 3, minWidth: 0 }}>
             <span style={{
               width: 6, height: 6, borderRadius: '50%', background: info.color, flexShrink: 0,
-              boxShadow: active ? `0 0 6px ${info.color}` : 'none',
+              animation: active && info.label === 'Downloading' ? 'pulse 1.6s ease-in-out infinite' : 'none',
             }} />
-            <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: info.color, flexShrink: 0 }}>{info.label}</span>
+            <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: info.textColor, flexShrink: 0 }}>{info.label}</span>
             {t.subtitle && (
               <span style={{
                 fontFamily: MONO, fontSize: 11, color: T.faint, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
@@ -466,7 +461,6 @@ function TorrentRow({ t, busy, onPause, onResume, onDelete }) {
       >
         <div style={{
           width: `${pct}%`, height: '100%', borderRadius: 999, background: barFill,
-          boxShadow: active ? `0 0 8px ${T.brand}66` : 'none',
           transition: `width .45s ${EASE}`,
         }} />
       </div>
@@ -566,7 +560,7 @@ function SwitchRow({ label, hint, on, onToggle }) {
       </span>
       <span style={{
         width: 46, height: 28, borderRadius: 999, flexShrink: 0, position: 'relative',
-        background: on ? T.brand : 'rgba(255,255,255,.16)', transition: `background .18s ${EASE}`,
+        background: on ? 'rgba(255,255,255,.34)' : 'rgba(255,255,255,.16)', transition: `background .18s ${EASE}`,
       }}>
         <span style={{
           position: 'absolute', top: 3, left: on ? 21 : 3, width: 22, height: 22, borderRadius: '50%',
@@ -605,7 +599,7 @@ function EmptyState({ icon, title, body }) {
     }}>
       <span style={{
         width: 58, height: 58, borderRadius: 18, display: 'grid', placeItems: 'center', marginBottom: 16,
-        background: 'rgba(62,207,126,.10)', border: '1px solid rgba(62,207,126,.28)', color: T.brand,
+        background: T.surface, border: `1px solid ${T.line}`, color: T.dim,
       }}>
         <Icon path={icon} size={27} sw={1.7} />
       </span>
@@ -652,5 +646,5 @@ function Spinner({ size = 16 }) {
 const reconnectStyle = {
   display: 'inline-flex', alignItems: 'center', gap: 8,
   padding: '14px 16px', borderRadius: R.md, border: `1px solid ${T.line}`, background: T.surface,
-  fontFamily: MONO, fontSize: 12.5, color: WARN,
+  fontFamily: MONO, fontSize: 12.5, color: T.dim,
 }

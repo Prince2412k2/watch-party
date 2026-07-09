@@ -25,8 +25,6 @@ import { PosterSkeleton } from '../ui/Skeleton.jsx'
 // so the shared ui/Icon.jsx stays untouched). Same paths the desktop page used.
 const P_ALERT = 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'
 const P_SPARK = 'M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8'
-const AMBER = '#e2b04a'
-const BLUE = '#6a8bff'
 
 const jget = (url, opts) => fetch(url, { credentials: 'include', ...opts })
 const jpost = (url, body) => fetch(url, {
@@ -305,7 +303,7 @@ function Header({ kind, setKind, term, setTerm, loading, disabled, onSubmit }) {
         onSubmit={(e) => { e.preventDefault(); e.currentTarget.querySelector('input')?.blur(); onSubmit() }}
         style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 12 }}
       >
-        <span style={{ position: 'absolute', left: 14, display: 'grid', placeItems: 'center', color: focus ? T.brand : T.faint, pointerEvents: 'none', transition: `color .15s ${EASE}` }}>
+        <span style={{ position: 'absolute', left: 14, display: 'grid', placeItems: 'center', color: focus ? T.text : T.faint, pointerEvents: 'none', transition: `color .15s ${EASE}` }}>
           <Icon path={Ic.search} size={19} />
         </span>
         <input
@@ -320,8 +318,8 @@ function Header({ kind, setKind, term, setTerm, loading, disabled, onSubmit }) {
           style={{
             width: '100%', height: 48, padding: '0 46px', borderRadius: R.md, outline: 'none',
             color: T.text, background: 'rgba(255,255,255,.05)',
-            border: `1px solid ${focus ? 'rgba(62,207,126,.55)' : T.line}`,
-            boxShadow: focus ? '0 0 0 3px rgba(62,207,126,.12)' : 'none',
+            border: `1px solid ${focus ? T.text : T.line}`,
+            boxShadow: focus ? '0 0 0 3px rgba(255,255,255,.12)' : 'none',
             transition: `border .15s ${EASE}, box-shadow .15s ${EASE}`,
             opacity: disabled ? 0.55 : 1, ...TYPE.input,
           }}
@@ -377,7 +375,7 @@ function RemotePoster({ images, alt, style, useBackdrop, radius }) {
   const [broken, setBroken] = useState(false)
   if (!url || broken) {
     return (
-      <div style={{ ...style, display: 'grid', placeItems: 'center', background: `linear-gradient(160deg, ${T.surface2}, ${T.surface})`, borderRadius: radius }}>
+      <div style={{ ...style, display: 'grid', placeItems: 'center', background: T.surface2, borderRadius: radius }}>
         <Icon path={Ic.film} size={30} stroke={T.faint} sw={1.4} />
       </div>
     )
@@ -420,14 +418,14 @@ function Card({ r, state, torrent, onOpen }) {
         <RemotePoster images={r.images} alt={r.title} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
 
         {rating != null && (
-          <div style={{ position: 'absolute', top: 7, left: 7, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, fontFamily: MONO, fontSize: 11, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
+          <div style={{ position: 'absolute', top: 7, left: 7, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 8, fontFamily: MONO, fontSize: 11, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,.6)' }}>
             <Icon path={Ic.star} size={11} fill="#f5c518" stroke="none" />{rating.toFixed(1)}
           </div>
         )}
 
         {added && (
-          <div style={{ position: 'absolute', top: 7, right: 7, width: 24, height: 24, borderRadius: '50%', display: 'grid', placeItems: 'center', background: T.brand, boxShadow: '0 2px 6px rgba(0,0,0,.4)' }}>
-            <Icon path={Ic.check} size={14} stroke={T.brandInk} sw={3} />
+          <div style={{ position: 'absolute', top: 7, right: 7, width: 24, height: 24, borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.6)' }}>
+            <Icon path={Ic.check} size={14} stroke={T.text} sw={3} />
           </div>
         )}
 
@@ -435,19 +433,19 @@ function Card({ r, state, torrent, onOpen }) {
           <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: 9, background: 'linear-gradient(0deg, rgba(0,0,0,.92) 12%, rgba(0,0,0,.35) 60%, transparent)' }}>
             {downloading ? (
               <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: T.brand, marginBottom: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: T.text, marginBottom: 5 }}>
                   <LiveDot color={T.brand} size={6} />{active ? `${pct}%` : 'Starting'}
                 </div>
                 <div style={{ height: 4, borderRadius: 999, background: 'rgba(255,255,255,.16)', overflow: 'hidden' }}>
-                  <div style={{ width: active ? `${pct}%` : '18%', height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${T.brand}, ${BLUE})`, transition: 'width .4s ease' }} />
+                  <div style={{ width: active ? `${pct}%` : '18%', height: '100%', borderRadius: 999, background: T.text, transition: 'width .4s ease' }} />
                 </div>
               </>
             ) : searching ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: AMBER }}>
-                <LiveDot color={AMBER} size={6} />Finding…
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, color: T.dim }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.faint, flexShrink: 0 }} />Finding…
               </div>
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: AMBER }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: T.dim }}>
                 <Icon path={P_SPARK} size={12} sw={2} />Monitoring
               </div>
             )}
@@ -549,9 +547,9 @@ function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }) {
       <div style={{ position: 'relative', margin: '0 -16px 16px', height: 176, overflow: 'hidden' }}>
         <RemotePoster images={item.images} useBackdrop alt={item.title}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectPosition: 'top center' }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(0deg, rgba(16,19,24,.98) 2%, rgba(16,19,24,.35) 55%, transparent)' }} />
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(0deg, rgba(0,0,0,.9) 2%, rgba(0,0,0,.3) 55%, transparent)' }} />
         <div style={{ position: 'absolute', left: 16, right: 16, bottom: 12 }}>
-          <div style={{ fontFamily: MONO, fontSize: 10.5, color: T.brand, letterSpacing: '.14em', marginBottom: 5 }}>{kind === 'movie' ? 'MOVIE' : 'SERIES'}</div>
+          <div style={{ fontFamily: MONO, fontSize: 10.5, color: T.dim, letterSpacing: '.14em', marginBottom: 5 }}>{kind === 'movie' ? 'MOVIE' : 'SERIES'}</div>
           <h1 style={{ ...TYPE.display, fontSize: 25, color: '#fff', margin: 0 }}>{item.title}</h1>
         </div>
       </div>
@@ -580,12 +578,12 @@ function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }) {
       ) : downloading ? (
         <DownloadProgress torrent={torrent} active={active} pct={pct} />
       ) : searching ? (
-        <StatusLine tone={AMBER} title="Added — finding a release…"
+        <StatusLine tone={T.dim} title="Added — finding a release…"
           body="It’s in your library. We’re looking for a release to download right now." />
       ) : noRelease ? (
-        <ActionState tone={AMBER} icon={P_ALERT} title="No release available right now" note="Try again in a little while." onAction={onDownload} actionLabel="Try again" />
+        <ActionState tone={T.dim} icon={P_ALERT} title="No release available right now" note="Try again in a little while." onAction={onDownload} actionLabel="Try again" />
       ) : searchFailed ? (
-        <ActionState tone={AMBER} icon={P_ALERT} title="Couldn’t check right now" note="Please try again." onAction={onDownload} actionLabel="Retry" />
+        <ActionState tone={T.dim} icon={P_ALERT} title="Couldn’t check right now" note="Please try again." onAction={onDownload} actionLabel="Retry" />
       ) : state === 'added' ? (
         <div>
           <InLibraryChip />
@@ -612,11 +610,11 @@ function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }) {
 function DownloadProgress({ torrent, active, pct }) {
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: T.brand, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: T.text, marginBottom: 8 }}>
         <LiveDot color={T.brand} size={8} />{active ? `Downloading · ${pct}%` : 'Starting download…'}
       </div>
       <div style={{ height: 8, borderRadius: 999, background: 'rgba(255,255,255,.12)', overflow: 'hidden' }}>
-        <div style={{ width: active ? `${pct}%` : '15%', height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${T.brand}, ${BLUE})`, transition: 'width .4s ease' }} />
+        <div style={{ width: active ? `${pct}%` : '15%', height: '100%', borderRadius: 999, background: T.text, transition: 'width .4s ease' }} />
       </div>
       {active && (
         <div style={{ display: 'flex', gap: 14, marginTop: 8, fontFamily: MONO, fontSize: 12, color: T.dim, flexWrap: 'wrap' }}>
@@ -679,7 +677,7 @@ function SeasonChooserBody({ item, onWholeSeriesFallback }) {
     return <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: T.dim, ...TYPE.body }}><Spinner size={18} />Loading seasons…</div>
   }
   if (meta.error) {
-    return <ActionState tone={AMBER} icon={P_ALERT} title={meta.error} />
+    return <ActionState tone={T.dim} icon={P_ALERT} title={meta.error} />
   }
 
   const allReal = real.map((s) => s.seasonNumber)
@@ -693,7 +691,7 @@ function SeasonChooserBody({ item, onWholeSeriesFallback }) {
           <button onClick={() => request(allReal)} disabled={anyRequesting || allMonitored} className="mob-press"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 40, padding: '0 15px', borderRadius: 999, border: 'none',
               cursor: anyRequesting || allMonitored ? 'default' : 'pointer', fontFamily: SANS, fontSize: 13, fontWeight: 700,
-              background: allMonitored ? 'rgba(62,207,126,.16)' : T.primary, color: allMonitored ? T.brand : T.onLight, opacity: anyRequesting && !allMonitored ? 0.6 : 1 }}>
+              background: allMonitored ? 'rgba(255,255,255,.12)' : T.primary, color: allMonitored ? T.text : T.onLight, opacity: anyRequesting && !allMonitored ? 0.6 : 1 }}>
             <Icon path={allMonitored ? Ic.check : Ic.download} size={15} sw={2.3} />All seasons
           </button>
         )}
@@ -713,7 +711,7 @@ function SeasonChooserBody({ item, onWholeSeriesFallback }) {
       )}
 
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 14, fontSize: 12, color: T.faint, lineHeight: 1.5 }}>
-        <Icon path={P_SPARK} size={14} sw={1.8} stroke={AMBER} style={{ flexShrink: 0, marginTop: 1 }} />
+        <Icon path={P_SPARK} size={14} sw={1.8} stroke={T.faint} style={{ flexShrink: 0, marginTop: 1 }} />
         A requested season is monitored and searched — episodes download on their own as they’re found.
       </div>
     </div>
@@ -724,11 +722,11 @@ function SeasonRow({ season, state, disabled, specials, onRequest }) {
   const count = season.totalEpisodeCount > 0 ? `${season.totalEpisodeCount} episode${season.totalEpisodeCount === 1 ? '' : 's'}` : null
 
   const right = (() => {
-    if (state === 'requesting') return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: AMBER }}><Spinner size={15} />Requesting…</span>
-    if (state === 'requested') return <Pill tone={AMBER} icon={P_SPARK} label="Searching…" />
+    if (state === 'requesting') return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: T.dim }}><Spinner size={15} />Requesting…</span>
+    if (state === 'requested') return <Pill icon={P_SPARK} label="Searching…" />
     if (state === 'monitored') return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        <Pill tone={T.brand} icon={Ic.check} label="Monitoring" />
+        <Pill icon={Ic.check} label="Monitoring" />
         <IconBtn onClick={onRequest} disabled={disabled} label="Search this season again"><Icon path={Ic.search} size={16} sw={2} /></IconBtn>
       </span>
     )
@@ -835,9 +833,9 @@ function ReleasePickerBody({ item, onBack, onGrabbed }) {
       ) : meta.error ? (
         <ActionState tone={T.red} icon={P_ALERT} title={meta.error} onAction={() => setNonce((n) => n + 1)} actionLabel="Try again" />
       ) : data?.searchFailed ? (
-        <ActionState tone={AMBER} icon={P_ALERT} title="Couldn’t reach the sources just now." note="Please try again." onAction={() => setNonce((n) => n + 1)} actionLabel="Try again" />
+        <ActionState tone={T.dim} icon={P_ALERT} title="Couldn’t reach the sources just now." note="Please try again." onAction={() => setNonce((n) => n + 1)} actionLabel="Try again" />
       ) : releases.length === 0 ? (
-        <ActionState tone={AMBER} icon={Ic.search} title="No sources found for this title right now." />
+        <ActionState tone={T.dim} icon={Ic.search} title="No sources found for this title right now." />
       ) : (
         <>
           {grabError && <div style={{ marginBottom: 10 }}><ActionState tone={T.red} icon={P_ALERT} title={grabError} /></div>}
@@ -845,7 +843,7 @@ function ReleasePickerBody({ item, onBack, onGrabbed }) {
             {releases.map((rel) => <ReleaseRow key={rel.guid} rel={rel} grabbing={grabbing} onGrab={() => grab(rel)} />)}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 12, fontSize: 12, color: T.faint, lineHeight: 1.5 }}>
-            <Icon path={P_ALERT} size={13} sw={1.8} stroke={AMBER} style={{ flexShrink: 0, marginTop: 1 }} />
+            <Icon path={P_ALERT} size={13} sw={1.8} stroke={T.faint} style={{ flexShrink: 0, marginTop: 1 }} />
             Greyed rows were skipped by the auto-picker for the reason shown.
           </div>
         </>
@@ -858,7 +856,7 @@ function ReleaseRow({ rel, grabbing, onGrab }) {
   const anyBusy = !!grabbing
   const rejected = rel.rejected
   const seeds = rel.seeders
-  const seedColor = seeds == null ? T.faint : seeds > 0 ? T.brand : T.red
+  const seedColor = seeds == null ? T.faint : seeds > 0 ? T.text : T.red
   const reason = rejected ? (rel.rejections?.[0] || 'Skipped by the quality profile') : null
 
   return (
@@ -867,14 +865,14 @@ function ReleaseRow({ rel, grabbing, onGrab }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 6, fontFamily: MONO, fontSize: 11.5 }}>
         {rel.quality && <span style={{ padding: '2px 8px', borderRadius: 7, background: 'rgba(255,255,255,.07)', color: T.dim, fontWeight: 700 }}>{rel.quality}</span>}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: seedColor, fontWeight: 700 }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: seedColor, boxShadow: seeds > 0 ? `0 0 6px ${seedColor}` : 'none' }} />
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: seedColor }} />
           {seeds == null ? '—' : seeds} seed{seeds === 1 ? '' : 's'}
         </span>
         <span style={{ color: T.dim }}>{fmtSize(rel.size)}</span>
         {rel.indexer && <span title={rel.indexer} style={{ color: T.faint, maxWidth: 130, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rel.indexer}</span>}
       </div>
       {reason ? (
-        <div title={rel.rejections?.join(' · ')} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: AMBER, fontWeight: 600 }}>
+        <div title={rel.rejections?.join(' · ')} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: T.dim, fontWeight: 600 }}>
           <Icon path={P_ALERT} size={13} sw={2} /><span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{reason}</span>
         </div>
       ) : (
@@ -912,16 +910,16 @@ function IconBtn({ children, onClick, disabled, label }) {
     </button>
   )
 }
-function Pill({ tone, icon, label }) {
+function Pill({ icon, label }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 32, padding: '0 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: tone, background: tone === T.brand ? 'rgba(62,207,126,.16)' : 'rgba(226,176,74,.14)', border: `1px solid ${tone === T.brand ? 'rgba(62,207,126,.4)' : 'rgba(226,176,74,.4)'}` }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 32, padding: '0 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: T.text, background: 'rgba(255,255,255,.08)', border: `1px solid ${T.line2}` }}>
       <Icon path={icon} size={13} sw={2.4} />{label}
     </span>
   )
 }
 function InLibraryChip() {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: 44, padding: '0 18px', borderRadius: 999, fontSize: 14.5, fontWeight: 700, background: 'rgba(62,207,126,.16)', color: T.brand, border: `1px solid rgba(62,207,126,.4)` }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: 44, padding: '0 18px', borderRadius: 999, fontSize: 14.5, fontWeight: 700, background: 'rgba(255,255,255,.08)', color: T.text, border: `1px solid ${T.line2}` }}>
       <Icon path={Ic.check} size={17} sw={2.4} />In library
     </span>
   )
@@ -952,7 +950,7 @@ function ActionState({ tone, icon, title, note, onAction, actionLabel }) {
   )
 }
 function LiveDot({ color, size = 8 }) {
-  return <span style={{ width: size, height: size, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}`, animation: 'pulse 1.6s ease-in-out infinite', flexShrink: 0 }} />
+  return <span style={{ width: size, height: size, borderRadius: '50%', background: color, animation: 'pulse 1.6s ease-in-out infinite', flexShrink: 0 }} />
 }
 function Spinner({ size = 18, dark }) {
   return <span style={{ display: 'inline-block', width: size, height: size, borderRadius: '50%', border: `2px solid ${dark ? 'rgba(10,11,13,.25)' : 'rgba(255,255,255,.22)'}`, borderTopColor: dark ? T.onLight : T.text, animation: 'spin .7s linear infinite' }} />
@@ -962,7 +960,7 @@ function NotAvailable({ kind, state }) {
   const unreachable = state?.configured && !state?.reachable
   return (
     <div style={{ marginTop: 4, padding: '44px 24px', borderRadius: R.lg, border: `1px solid ${T.line}`, background: 'rgba(255,255,255,.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animation: 'up .4s ease both' }}>
-      <span style={{ width: 60, height: 60, borderRadius: 18, display: 'grid', placeItems: 'center', marginBottom: 16, background: 'rgba(62,207,126,.1)', color: T.brand, border: `1px solid rgba(62,207,126,.3)` }}>
+      <span style={{ width: 60, height: 60, borderRadius: 18, display: 'grid', placeItems: 'center', marginBottom: 16, background: T.surface, color: T.dim, border: `1px solid ${T.line}` }}>
         <Icon path={unreachable ? P_ALERT : Ic.compass} size={28} sw={1.7} />
       </span>
       <h2 style={{ ...TYPE.title, color: T.text, margin: 0 }}>{unreachable ? 'Browse is temporarily unavailable' : 'Browsing isn’t set up yet'}</h2>
