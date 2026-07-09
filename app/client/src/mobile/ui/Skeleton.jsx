@@ -1,9 +1,9 @@
 import { T, R } from '../theme.js'
 
 /**
- * Shimmer placeholder. Reuses the global `shim` keyframe (styles.css). Give it
- * width/height/radius; defaults to a text-line block. Use while data loads so
- * screens don't pop in.
+ * Neutral loading placeholder — a flat `surface` block that breathes with the
+ * global `pulse` keyframe (styles.css). Give it width/height/radius; defaults
+ * to a text-line block. Use while data loads so screens don't pop in.
  */
 export function Skeleton({ w = '100%', h = 14, radius = R.sm, style }) {
   return (
@@ -11,9 +11,8 @@ export function Skeleton({ w = '100%', h = 14, radius = R.sm, style }) {
       aria-hidden="true"
       style={{
         display: 'block', width: w, height: h, borderRadius: radius,
-        backgroundImage: `linear-gradient(90deg, ${T.surface} 25%, ${T.surface2} 50%, ${T.surface} 75%)`,
-        backgroundSize: '200% 100%',
-        animation: 'shim 1.3s ease-in-out infinite',
+        background: T.surface2,
+        animation: 'pulse 1.3s ease-in-out infinite',
         ...style,
       }}
     />
