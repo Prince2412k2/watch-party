@@ -9,6 +9,10 @@ import { Z } from '../watchLayers.js'
 import { createTransportIntent } from '../sync/transportIntent.js'
 import { isBuffered } from '../sync/bufferSeek.js'
 import { BUFFER_AHEAD_SEC } from '../sync/syncCore.js'
+import { IS_NATIVE } from '../native/env.js'
+import { IPC } from '../native/contract.ts'
+import { invoke } from '../native/ipc.js'
+import { MpvBackend } from '../native/MpvBackend.js'
 
 // Fullscreen is owned by WatchView (Party.jsx) via a single `immersive` state and
 // an enterImmersive()/exitImmersive() pair that branches by platform capability
@@ -51,6 +55,27 @@ export default function Player({
   // of reading raw media.paused. Lifted out of SyncBridge because it's a
   // sibling of MobileBottomBar, not an ancestor.
   const [localPhase, setLocalPhase] = useState('ready')
+
+  // Native (Tauri) desktop shell: the video surface + its transport are
+  // rendered by mpv itself (own OSC), not React — see PLAN.md §0.6/§2. Player
+  // only owns an opaque region for Rust to position the mpv window over, plus
+  // the non-video room chrome (chat/mic/cam/layout toggles), docked beside/
+  // below that region so nothing ever paints over the native surface. The web
+  // branch below (vidstack + the custom control bar) is untouched.
+  if (IS_NATIVE) {
+    return (
+      <NativePlayer
+        hlsUrl={hlsUrl} isHost={isHost} collaborativeControl={collaborativeControl}
+        syncMode={syncMode} onStruggle={onStruggle} canControl={canControl}
+        onToggleMic={onToggleMic} onToggleCam={onToggleCam} micOn={micOn} camOn={camOn}
+        talking={talking} onToggleLayout={onToggleLayout} onOpenChat={onOpenChat} layoutMode={layoutMode}
+        hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
+        immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
+        phone={phone} camStripOpen={camStripOpen} onToggleCamStrip={onToggleCamStrip}
+        seekBridgeRef={seekBridgeRef}
+      />
+    )
+  }
 
   return (
     <VPlayer.Provider>
@@ -120,6 +145,193 @@ export default function Player({
         )}
       </div>
     </VPlayer.Provider>
+  )
+}
+
+// ── Native (Tauri) branch — opaque video-stage + docked non-video chrome ────
+// The mpv window is a separate, OPAQUE native surface that Rust positions to
+// exactly cover the div rendered here (via mpv_set_region, in device px) — it
+// is never a transparent hole with DOM drawn over it, so there is no
+// compositing problem to solve on the React side (PLAN.md §0.6/§2). mpv's own
+// OSC provides play/pause/scrubber/volume/settings; this component does not
+// render any of that. It only:
+//   1. reports the video-stage rect to Rust (mount/resize/scroll/fullscreen)
+//   2. hands an MpvBackend to useSyncPlay so REMOTE sync corrections still
+//      flow through the exact same host-authority engine the web player uses
+//   3. mirrors `canControl` to mpv_set_can_control so a plain guest can't
+//      drive playback via the OSC
+//   4. renders the non-video room chrome (chat/mic/cam/layout toggles) docked
+//      below the video stage — never overlapping it
+function NativePlayer({
+  hlsUrl, isHost, collaborativeControl, syncMode, onStruggle, canControl,
+  onToggleMic, onToggleCam, micOn, camOn, talking,
+  onToggleLayout, onOpenChat, layoutMode,
+  hideSelf, onToggleHideSelf,
+  immersive, enterImmersive, exitImmersive,
+  phone, camStripOpen, onToggleCamStrip, seekBridgeRef,
+}) {
+  const stageRef = useRef(null)
+  // One MpvBackend per mounted native player, torn down on unmount — mirrors
+  // the lifetime of the <HlsVideo> element it replaces.
+  const backendRef = useRef(null)
+  if (!backendRef.current) backendRef.current = new MpvBackend()
+  const playerRef = useRef(null)
+  playerRef.current = backendRef.current
+
+  // Drop-in for the web path's SyncBridge: useSyncPlay only ever touches the
+  // HTMLMediaElement duck-type surface (contract.ts §4.1), so handing it an
+  // MpvBackend instead of a real element reuses the entire host-authority
+  // sync engine unmodified.
+  const {
+    requestPlay, requestPause, requestSeek, holdApplying, releaseApplying,
+    TICKS_PER_SECOND,
+  } = useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode, onStruggle })
+
+  useEffect(() => {
+    return () => { backendRef.current?.destroy(); backendRef.current = null }
+  }, [])
+
+  // Load/replace the source. Same trigger the web path uses (srcUrl change);
+  // MpvBackend resolves this to the native-stream signed URL internally.
+  const firstLoad = useRef(true)
+  useEffect(() => {
+    if (!hlsUrl) return
+    backendRef.current?.load(hlsUrl, { paused: false })
+    firstLoad.current = false
+  }, [hlsUrl])
+
+  // Gate mpv's own OSC interactivity — a plain guest must not be able to
+  // perceptibly disrupt playback via the native controls (PLAN.md §2 risk 2).
+  useEffect(() => { invoke(IPC.MPV_SET_CAN_CONTROL, { canControl }) }, [canControl])
+
+  // Report the opaque video-stage rect (device px) so Rust can position the
+  // embedded mpv window exactly over it, on every layout-affecting event.
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    const report = () => {
+      const r = el.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      invoke(IPC.MPV_SET_REGION, {
+        x: Math.round(r.left * dpr), y: Math.round(r.top * dpr),
+        w: Math.round(r.width * dpr), h: Math.round(r.height * dpr), dpr,
+      })
+    }
+    report()
+    const ro = new ResizeObserver(report)
+    ro.observe(el)
+    window.addEventListener('resize', report)
+    window.addEventListener('scroll', report, true)
+    document.addEventListener('fullscreenchange', report)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', report)
+      window.removeEventListener('scroll', report, true)
+      document.removeEventListener('fullscreenchange', report)
+    }
+  }, [])
+  // Re-report whenever a prop that can move/resize the stage without firing
+  // the observers above changes (fullscreen toggle, camera-strip open/close,
+  // phone/desktop chrome swap).
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    invoke(IPC.MPV_SET_REGION, {
+      x: Math.round(r.left * dpr), y: Math.round(r.top * dpr),
+      w: Math.round(r.width * dpr), h: Math.round(r.height * dpr), dpr,
+    })
+  }, [immersive, camStripOpen, phone])
+
+  // Imperative seek for the surface gesture layer, mirroring the web path's
+  // seekBridgeRef contract — kept for callers that still reach for it, even
+  // though there's no double-tap gesture layer over an opaque native surface.
+  useEffect(() => {
+    if (!seekBridgeRef) return
+    seekBridgeRef.current = {
+      canControl,
+      seekBy: (delta) => {
+        const m = playerRef.current
+        if (!m || !canControl) return
+        const dur = m.duration
+        let t = (m.currentTime || 0) + delta
+        if (t < 0) t = 0
+        if (Number.isFinite(dur) && dur > 0 && t > dur - 0.5) t = dur - 0.5
+        holdApplying()
+        m.currentTime = t
+        requestSeek(Math.round(t * TICKS_PER_SECOND))
+        setTimeout(releaseApplying, 250)
+      },
+      guardToggle: async (fn) => { try { await fn?.() } catch {} },
+    }
+    return () => { seekBridgeRef.current = null }
+  }, [seekBridgeRef, canControl, holdApplying, releaseApplying, requestSeek, TICKS_PER_SECOND])
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#000' }}>
+      {/* OPAQUE video stage — Rust embeds/positions the real mpv window over
+          this exact rect. Nothing (no DOM, no overlay) may render on top of
+          it; that's the whole point of the native-player decision. */}
+      <div ref={stageRef} style={{ flex: 1, minHeight: 0, background: '#000' }} />
+
+      {/* Non-video room chrome, docked BELOW the video stage — never
+          overlapping it. mpv's own OSC (skinned in Rust/Lua, see N1) provides
+          play/pause/scrubber/volume/settings; only room-essential toggles
+          (chat/mic/cam/layout) live here. */}
+      <div style={{
+        flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+        padding: '10px 14px', background: '#0a0a0b', borderTop: '1px solid rgba(255,255,255,.08)',
+      }}>
+        {onOpenChat && (
+          <IconBtn onClick={onOpenChat} title="Chat">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M21 11.5a8.4 8.4 0 0 1-1.1 4.2L21 20l-4.3-1a8.4 8.4 0 1 1 4.3-7.5Z"/></svg>
+          </IconBtn>
+        )}
+        {onToggleMic && (
+          <IconBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn} active={talking}>
+            {micOn
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
+          </IconBtn>
+        )}
+        {onToggleCam && (
+          <IconBtn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
+            {camOn
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
+          </IconBtn>
+        )}
+        {onToggleHideSelf && (
+          <IconBtn onClick={onToggleHideSelf} active={hideSelf} title={hideSelf ? 'Show my camera to me' : 'Hide my camera from me'}>
+            {hideSelf
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
+          </IconBtn>
+        )}
+        {onToggleCamStrip && (
+          <IconBtn onClick={onToggleCamStrip} active={camStripOpen} title={camStripOpen ? 'Hide cameras' : 'Show cameras'}>
+            {camStripOpen
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="8" width="5" height="8" rx="1"/><rect x="9.5" y="8" width="5" height="8" rx="1"/><rect x="16" y="8" width="5" height="8" rx="1"/></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M3 8h1m4.5 0H14m2 0h5v8h-1M3 8v8h9"/></svg>}
+          </IconBtn>
+        )}
+        {onToggleLayout && (
+          <IconBtn onClick={onToggleLayout} title="Camera layout">
+            {layoutMode === 'float'
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="13" y="12" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="11" y="3" width="10" height="18" rx="1.5"/></svg>}
+          </IconBtn>
+        )}
+        {!phone && (
+          <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen' : 'Full screen'}>
+            {immersive
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>}
+          </IconBtn>
+        )}
+      </div>
+    </div>
   )
 }
 
