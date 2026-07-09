@@ -64,9 +64,15 @@ pub struct MpvSetCanControlArgs {
     pub can_control: bool,
 }
 
-#[tauri::command]
-pub async fn mpv_load(app: tauri::AppHandle, args: MpvLoadArgs) -> Result<(), String> {
-    crate::mpv::load(&app, &args.url, args.start_sec, args.paused)
+// NOTE: commands take flat, individual params (not a single `args` struct) so
+// the frozen JS contract's flat payloads — e.g. invoke('mpv_load', {url,
+// startSec, paused}) — deserialize correctly. `rename_all = "camelCase"` maps
+// the camelCase JS keys onto these snake_case params. A single struct param
+// would make Tauri require the payload wrapped as {args:{...}}, which the
+// client does not send (see contract.ts).
+#[tauri::command(rename_all = "camelCase")]
+pub async fn mpv_load(app: tauri::AppHandle, url: String, start_sec: f64, paused: bool) -> Result<(), String> {
+    crate::mpv::load(&app, &url, start_sec, paused)
 }
 
 #[tauri::command]
@@ -80,38 +86,38 @@ pub async fn mpv_pause() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn mpv_seek(args: MpvSeekArgs) -> Result<(), String> {
-    crate::mpv::seek(args.sec)
+pub async fn mpv_seek(sec: f64) -> Result<(), String> {
+    crate::mpv::seek(sec)
 }
 
 #[tauri::command]
-pub async fn mpv_set_speed(args: MpvSetSpeedArgs) -> Result<(), String> {
-    crate::mpv::set_speed(args.rate)
+pub async fn mpv_set_speed(rate: f64) -> Result<(), String> {
+    crate::mpv::set_speed(rate)
 }
 
 #[tauri::command]
-pub async fn mpv_set_volume(args: MpvSetVolumeArgs) -> Result<(), String> {
-    crate::mpv::set_volume(args.vol)
+pub async fn mpv_set_volume(vol: f64) -> Result<(), String> {
+    crate::mpv::set_volume(vol)
 }
 
 #[tauri::command]
-pub async fn mpv_set_muted(args: MpvSetMutedArgs) -> Result<(), String> {
-    crate::mpv::set_muted(args.muted)
+pub async fn mpv_set_muted(muted: bool) -> Result<(), String> {
+    crate::mpv::set_muted(muted)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn mpv_set_region(app: tauri::AppHandle, x: f64, y: f64, w: f64, h: f64, dpr: f64) -> Result<(), String> {
+    crate::mpv::set_region(&app, x, y, w, h, dpr)
 }
 
 #[tauri::command]
-pub async fn mpv_set_region(app: tauri::AppHandle, args: MpvSetRegionArgs) -> Result<(), String> {
-    crate::mpv::set_region(&app, args.x, args.y, args.w, args.h, args.dpr)
+pub async fn mpv_set_fullscreen(on: bool) -> Result<(), String> {
+    crate::mpv::set_fullscreen(on)
 }
 
-#[tauri::command]
-pub async fn mpv_set_fullscreen(args: MpvSetFullscreenArgs) -> Result<(), String> {
-    crate::mpv::set_fullscreen(args.on)
-}
-
-#[tauri::command]
-pub async fn mpv_set_can_control(args: MpvSetCanControlArgs) -> Result<(), String> {
-    crate::mpv::set_can_control(args.can_control)
+#[tauri::command(rename_all = "camelCase")]
+pub async fn mpv_set_can_control(can_control: bool) -> Result<(), String> {
+    crate::mpv::set_can_control(can_control)
 }
 
 #[tauri::command]
@@ -162,28 +168,31 @@ pub struct DlStartResult {
     pub id: String,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn dl_start(
     app: tauri::AppHandle,
-    args: DlStartArgs,
+    item_id: String,
+    url: String,
+    title: String,
+    parts: Option<u32>,
 ) -> Result<DlStartResult, String> {
-    let id = crate::download::start(app, args.item_id, args.url, args.title, args.parts).await?;
+    let id = crate::download::start(app, item_id, url, title, parts).await?;
     Ok(DlStartResult { id })
 }
 
 #[tauri::command]
-pub async fn dl_pause(app: tauri::AppHandle, args: DlIdArgs) -> Result<(), String> {
-    crate::download::pause(app, args.id).await
+pub async fn dl_pause(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    crate::download::pause(app, id).await
 }
 
 #[tauri::command]
-pub async fn dl_resume(app: tauri::AppHandle, args: DlIdArgs) -> Result<(), String> {
-    crate::download::resume(app, args.id).await
+pub async fn dl_resume(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    crate::download::resume(app, id).await
 }
 
 #[tauri::command]
-pub async fn dl_cancel(app: tauri::AppHandle, args: DlIdArgs) -> Result<(), String> {
-    crate::download::cancel(app, args.id).await
+pub async fn dl_cancel(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    crate::download::cancel(app, id).await
 }
 
 #[tauri::command]
@@ -217,20 +226,20 @@ pub async fn offline_list(app: tauri::AppHandle) -> Result<Vec<OfflineRecord>, S
         .collect())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn offline_path(
     app: tauri::AppHandle,
-    args: OfflinePathArgs,
+    item_id: String,
 ) -> Result<OfflinePathResult, String> {
     let dir = crate::download::offline_dir(&app)?;
-    let path = crate::offline::get(&dir, &args.item_id).map(|e| e.path);
+    let path = crate::offline::get(&dir, &item_id).map(|e| e.path);
     Ok(OfflinePathResult { path })
 }
 
-#[tauri::command]
-pub async fn offline_remove(app: tauri::AppHandle, args: OfflinePathArgs) -> Result<(), String> {
+#[tauri::command(rename_all = "camelCase")]
+pub async fn offline_remove(app: tauri::AppHandle, item_id: String) -> Result<(), String> {
     let dir = crate::download::offline_dir(&app)?;
-    crate::offline::remove(&dir, &args.item_id);
+    crate::offline::remove(&dir, &item_id);
     Ok(())
 }
 
