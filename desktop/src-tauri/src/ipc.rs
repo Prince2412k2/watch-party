@@ -171,34 +171,32 @@ pub struct DlStartResult {
 }
 
 #[tauri::command]
-pub async fn dl_start(args: DlStartArgs) -> Result<DlStartResult, String> {
-    let _ = args;
-    // TODO(N2): download.rs — multi-part resumable Range downloader; persist
-    // per-part state so a crash/quit resumes from last offsets, not zero.
-    todo!("agent N2: implement dl_start")
+pub async fn dl_start(
+    app: tauri::AppHandle,
+    args: DlStartArgs,
+) -> Result<DlStartResult, String> {
+    let id = crate::download::start(app, args.item_id, args.url, args.title, args.parts).await?;
+    Ok(DlStartResult { id })
 }
 
 #[tauri::command]
-pub async fn dl_pause(args: DlIdArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N2: implement dl_pause")
+pub async fn dl_pause(app: tauri::AppHandle, args: DlIdArgs) -> Result<(), String> {
+    crate::download::pause(app, args.id).await
 }
 
 #[tauri::command]
-pub async fn dl_resume(args: DlIdArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N2: implement dl_resume")
+pub async fn dl_resume(app: tauri::AppHandle, args: DlIdArgs) -> Result<(), String> {
+    crate::download::resume(app, args.id).await
 }
 
 #[tauri::command]
-pub async fn dl_cancel(args: DlIdArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N2: implement dl_cancel")
+pub async fn dl_cancel(app: tauri::AppHandle, args: DlIdArgs) -> Result<(), String> {
+    crate::download::cancel(app, args.id).await
 }
 
 #[tauri::command]
-pub async fn dl_list() -> Result<Vec<DownloadRecord>, String> {
-    todo!("agent N2: implement dl_list (rehydrated from on-disk state on launch)")
+pub async fn dl_list(app: tauri::AppHandle) -> Result<Vec<DownloadRecord>, String> {
+    crate::download::list(app).await
 }
 
 #[derive(Deserialize)]
@@ -213,20 +211,35 @@ pub struct OfflinePathResult {
 }
 
 #[tauri::command]
-pub async fn offline_list() -> Result<Vec<OfflineRecord>, String> {
-    todo!("agent N2: implement offline_list")
+pub async fn offline_list(app: tauri::AppHandle) -> Result<Vec<OfflineRecord>, String> {
+    let dir = crate::download::offline_dir(&app)?;
+    Ok(crate::offline::list(&dir)
+        .into_iter()
+        .map(|e| OfflineRecord {
+            item_id: e.item_id,
+            title: e.title,
+            path: e.path,
+            size_bytes: e.size_bytes,
+            added_at: e.added_at,
+        })
+        .collect())
 }
 
 #[tauri::command]
-pub async fn offline_path(args: OfflinePathArgs) -> Result<OfflinePathResult, String> {
-    let _ = args;
-    todo!("agent N2: implement offline_path")
+pub async fn offline_path(
+    app: tauri::AppHandle,
+    args: OfflinePathArgs,
+) -> Result<OfflinePathResult, String> {
+    let dir = crate::download::offline_dir(&app)?;
+    let path = crate::offline::get(&dir, &args.item_id).map(|e| e.path);
+    Ok(OfflinePathResult { path })
 }
 
 #[tauri::command]
-pub async fn offline_remove(args: OfflinePathArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N2: implement offline_remove")
+pub async fn offline_remove(app: tauri::AppHandle, args: OfflinePathArgs) -> Result<(), String> {
+    let dir = crate::download::offline_dir(&app)?;
+    crate::offline::remove(&dir, &args.item_id);
+    Ok(())
 }
 
 // ── main.rs / window.rs (agent N7) ──────────────────────────────────────────
