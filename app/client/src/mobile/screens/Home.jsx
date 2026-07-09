@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext.jsx'
 import { navigate } from '../../router.js'
 import { useMobileShell } from '../shellContext.js'
 import { useTorrents, isActiveState } from '../../hooks/useTorrents.js'
-import { T, SANS, MONO, R, EASE, TYPE, BRAND_GRADIENT, SP } from '../theme.js'
+import { T, SANS, MONO, R, EASE, TYPE, AVATAR_BG, SP } from '../theme.js'
 import { TopBar, TopBarButton } from '../ui/TopBar.jsx'
 import { Icon, Ic, viewIcon } from '../ui/Icon.jsx'
 import { Img } from '../ui/Poster.jsx'
@@ -64,7 +64,7 @@ function Art({ id, type = 'Primary', fallback, alt = '', ratio = '2 / 3', radius
       <span aria-hidden style={{
         position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
         fontFamily: SANS, fontWeight: 800, fontSize: 24, color: T.faint,
-        background: `linear-gradient(160deg, ${T.surface2}, ${T.surface})`,
+        background: T.surface2,
       }}>{(alt || '?').trim().charAt(0).toUpperCase()}</span>
       <Img id={id} type={type} fallback={fallback} alt={alt}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -85,7 +85,7 @@ function PosterCard({ item, onOpen, badge }) {
           {badge && (
             <span style={{
               position: 'absolute', top: 8, left: 8, ...TYPE.meta, fontSize: 9.5, letterSpacing: '.12em',
-              padding: '3px 7px', borderRadius: 999, background: T.brand, color: T.brandInk,
+              padding: '3px 7px', borderRadius: 999, background: 'rgba(0,0,0,.6)', color: T.dim,
             }}>{badge}</span>
           )}
         </Art>
@@ -110,7 +110,7 @@ function StillCard({ item, onOpen, progress }) {
           alt={label} ratio="16 / 9">
           {progress && pct > 0 && (
             <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'rgba(0,0,0,.5)' }}>
-              <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: T.brand }} />
+              <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: T.text }} />
             </span>
           )}
         </Art>
@@ -161,19 +161,19 @@ function DownloadingCard({ torrent }) {
       <button className="mob-press" style={cardBtn} onClick={() => navigate('/downloads')} title={torrent.name} aria-label={`${title} — downloading ${pct}%`}>
         <div style={{
           display: 'flex', gap: 12, padding: 12, borderRadius: R.md, border: `1px solid ${T.line}`,
-          background: 'linear-gradient(135deg, rgba(62,207,126,.12), rgba(106,139,255,.1)), rgba(20,24,30,.7)',
+          background: T.surface,
         }}>
           <DlPoster src={torrent.posterUrl} kind={torrent.kind} w={54} />
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 5, ...TYPE.meta, fontSize: 10, color: T.brand }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.brand, boxShadow: `0 0 6px ${T.brand}`, animation: 'pulse 1.6s ease-in-out infinite' }} />
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.brand, animation: 'pulse 1.6s ease-in-out infinite' }} />
               DOWNLOADING
             </div>
             <div style={{ ...TYPE.body, fontWeight: 700, color: T.text, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{title}</div>
             {torrent.subtitle && <div style={{ fontFamily: MONO, fontSize: 11, color: T.faint, marginTop: 2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{torrent.subtitle}</div>}
             <div style={{ marginTop: 'auto', paddingTop: 10 }}>
               <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
-                <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: BRAND_GRADIENT, transition: 'width .4s' }} />
+                <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: T.text, transition: 'width .4s' }} />
               </div>
               <div style={{ display: 'flex', gap: 12, marginTop: 8, fontFamily: MONO, fontSize: 11, color: T.faint }}>
                 <span style={{ color: T.text, fontWeight: 700 }}>{pct}%</span>
@@ -227,11 +227,11 @@ function DetailHero({ item, onWatch }) {
   return (
     <div>
       <Art id={backdropId} type="Backdrop" fallback={{ id: data.Id, type: 'Primary' }} alt={data.Name} ratio="16 / 9" radius={R.lg}>
-        <span style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, rgba(11,13,16,.9) 2%, rgba(11,13,16,.15) 62%, transparent)` }} />
+        <span style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, rgba(0,0,0,.9) 2%, rgba(0,0,0,.15) 62%, transparent)` }} />
       </Art>
 
       <h2 style={{ ...TYPE.title, fontSize: 22, color: T.text, marginTop: 14 }}>{data.Name}</h2>
-      {epLine && <div style={{ fontFamily: MONO, fontSize: 12, color: T.brand, marginTop: 6 }}>{epLine}</div>}
+      {epLine && <div style={{ fontFamily: MONO, fontSize: 12, color: T.dim, marginTop: 6 }}>{epLine}</div>}
 
       <MetaChips items={[
         data.Type !== 'Episode' && data.ProductionYear,
@@ -244,10 +244,10 @@ function DetailHero({ item, onWatch }) {
       {isLeaf && (
         <button className="mob-press" onClick={() => onWatch(item.Id)} style={{
           marginTop: 18, width: '100%', height: 54, borderRadius: R.pill, border: 'none', cursor: 'pointer',
-          background: BRAND_GRADIENT, color: '#0b0d10', ...TYPE.headline, fontWeight: 800,
+          background: T.primary, color: T.onLight, ...TYPE.headline, fontWeight: 800,
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
         }}>
-          <Icon path={Ic.play} size={20} fill="#0b0d10" stroke="none" />
+          <Icon path={Ic.play} size={20} fill={T.onLight} stroke="none" />
           {resuming ? 'Resume together' : 'Watch together'}
         </button>
       )}
@@ -274,7 +274,7 @@ function EpisodeRow({ ep, onWatch }) {
       <Art id={ep.Id} type="Thumb" fallback={{ id: ep.SeriesId || ep.Id, type: 'Backdrop' }} alt={ep.Name} ratio="16 / 9" radius={10} style={{ width: 120, flex: '0 0 auto' }} />
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ ...TYPE.label, color: T.text, display: 'block', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-          {num && <span style={{ color: T.brand, fontFamily: MONO, marginRight: 6 }}>{num}</span>}{ep.Name}
+          {num && <span style={{ color: T.dim, fontFamily: MONO, marginRight: 6 }}>{num}</span>}{ep.Name}
         </span>
         {rt && <span style={{ fontFamily: MONO, fontSize: 11, color: T.faint, display: 'block', marginTop: 4 }}>{rt}</span>}
       </span>
@@ -361,7 +361,7 @@ function DetailSheet({ item, onClose }) {
             <div style={{
               position: 'sticky', top: 0, zIndex: 3, margin: '0 -16px', padding: '0 16px 12px',
               display: 'flex', alignItems: 'center', gap: 10,
-              background: 'linear-gradient(180deg, rgba(16,19,24,.97) 66%, rgba(16,19,24,0))',
+              background: 'linear-gradient(180deg, rgba(0,0,0,.92) 66%, rgba(0,0,0,0))',
             }}>
               <button onClick={pop} aria-label="Back" className="mob-press" style={{
                 width: 44, height: 44, flex: '0 0 auto', borderRadius: 999, border: `1px solid ${T.line}`,
@@ -398,7 +398,7 @@ function AccountSheet({ open, onClose, user, initials, logout, onJoin }) {
   return (
     <Sheet open={open} onClose={onClose} title="Account">
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '2px 0 18px' }}>
-        <span style={{ width: 52, height: 52, borderRadius: 999, display: 'grid', placeItems: 'center', background: BRAND_GRADIENT, color: '#0b0d10', ...TYPE.headline, fontWeight: 800 }}>{initials}</span>
+        <span style={{ width: 52, height: 52, borderRadius: 999, display: 'grid', placeItems: 'center', background: AVATAR_BG, border: `1px solid ${T.line2}`, color: T.text, ...TYPE.headline, fontWeight: 800 }}>{initials}</span>
         <div style={{ minWidth: 0 }}>
           <div style={{ ...TYPE.headline, color: T.text, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{user?.name || 'You'}</div>
           <div style={{ ...TYPE.label, fontWeight: 500, color: T.dim, marginTop: 2 }}>Signed in with Jellyfin</div>
@@ -444,17 +444,17 @@ function EmptyState({ onStart }) {
   return (
     <div style={{ padding: '9vh 24px', display: 'grid', placeItems: 'center', textAlign: 'center' }}>
       <div style={{ maxWidth: 320, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-        <span style={{ width: 60, height: 60, borderRadius: 20, display: 'grid', placeItems: 'center', background: T.surface, border: `1px solid ${T.line}`, color: T.brand }}>
+        <span style={{ width: 60, height: 60, borderRadius: 20, display: 'grid', placeItems: 'center', background: T.surface, border: `1px solid ${T.line}`, color: T.dim }}>
           <Icon path={Ic.film} size={28} />
         </span>
         <h2 style={{ ...TYPE.title, color: T.text }}>Nothing here yet</h2>
         <p style={{ ...TYPE.body, color: T.dim }}>Your library looks empty. Start a watch party or join a friend with a code.</p>
         <button onClick={onStart} className="mob-press" style={{
           marginTop: 6, height: 50, padding: '0 24px', borderRadius: R.pill, border: 'none', cursor: 'pointer',
-          background: BRAND_GRADIENT, color: '#0b0d10', ...TYPE.headline, fontWeight: 800,
+          background: T.primary, color: T.onLight, ...TYPE.headline, fontWeight: 800,
           display: 'inline-flex', alignItems: 'center', gap: 9,
         }}>
-          <Icon path={Ic.play} size={19} fill="#0b0d10" stroke="none" />Start a watch party
+          <Icon path={Ic.play} size={19} fill={T.onLight} stroke="none" />Start a watch party
         </button>
       </div>
     </div>
