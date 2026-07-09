@@ -10,7 +10,14 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Testing/debugging bridge for @hypothesi/tauri-mcp-cli — debug builds only,
+    // never present in release. See desktop/README.md and get-setup-instructions.
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+
+    builder
         // N7: a second launch (e.g. double-clicking the app icon again while
         // it's tray-resident) focuses the existing window instead of spawning
         // a competing process that would fight N2's downloader over the same
