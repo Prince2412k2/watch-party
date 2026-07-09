@@ -7,25 +7,32 @@ import { useState } from 'react'
 import { navigate } from '../router.js'
 import { glass } from '../glass.jsx'
 
-/* ── Sen-Player-inspired glass palette — dark, atmospheric, artwork carries the color ── */
+/* ── Editorial / theater palette — warm ink, single deep-red accent ──────────
+   Criterion/MUBI-leaning. Keys match the old object 1:1 so every page inherits
+   the new look untouched; only the values (and the new serif) changed. The
+   `accent` is now the deep brick red — primary CTAs read as red pills with
+   warm-paper ink, not the old white pill. */
 export const C = {
-  bg: '#0b0d10',
-  surface: '#16191e',
-  surface2: '#20242b',
-  text: '#F1F3F6',
-  dim: '#A6ADB8',
-  faint: '#6B7280',
-  line: 'rgba(255,255,255,.08)',
-  line2: 'rgba(255,255,255,.16)',
-  accent: '#FFFFFF',        // white pill (Sen Player "Play")
-  accentDim: '#D7DBE0',
-  onAccent: '#0a0b0d',
-  green: '#3ecf7e',
-  amber: '#e2b04a',
-  red: 'rgb(240,170,170)',
-  glass: 'rgba(20,24,30,.62)',
-  glassHi: 'rgba(38,44,54,.7)',
+  bg: '#12100e',            // warm charcoal page ground
+  surface: '#1b1714',
+  surface2: '#26221e',
+  text: '#F3ECE3',          // warm paper
+  dim: '#ABA095',
+  faint: '#75695E',
+  line: 'rgba(243,236,227,.09)',
+  line2: 'rgba(243,236,227,.18)',
+  accent: '#C4392F',        // deep brick red — the single accent
+  accentDim: '#A63229',
+  accentSoft: 'rgba(196,57,47,.15)',
+  onAccent: '#FBF4EC',      // warm paper ink on the red accent
+  glass2: 'rgba(243,236,227,.05)',
+  green: '#54B487',
+  amber: '#D99A4E',
+  red: '#E5848A',           // danger text tint (distinct from the brand accent)
+  glass: 'rgba(27,23,20,.66)',
+  glassHi: 'rgba(41,35,30,.74)',
 }
+export const SERIF = "'Fraunces', 'Iowan Old Style', Georgia, serif"
 export const SANS = "'Hanken Grotesk', system-ui, -apple-system, sans-serif"
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
@@ -110,10 +117,11 @@ export function NavRow({ mobile, icon, label, active, onClick, badge = 0, alertB
         padding: mobile ? '11px 0' : '10px 12px', borderRadius: 12, border: 'none', cursor: 'pointer', width: '100%',
         fontFamily: SANS, fontSize: 14.5, fontWeight: active ? 700 : 500, textAlign: 'left',
         color: active ? C.text : (h ? C.text : C.dim),
-        background: active ? 'rgba(255,255,255,.11)' : (h ? 'rgba(255,255,255,.05)' : 'transparent'),
-        transition: 'background .15s, color .15s',
+        background: active ? C.accentSoft : (h ? C.glass2 : 'transparent'),
+        boxShadow: active && !mobile ? `inset 2px 0 0 ${C.accent}` : 'none',
+        transition: 'background .15s, color .15s, box-shadow .15s',
       }}>
-      <Icon path={icon} size={mobile ? 21 : 19} sw={active ? 2 : 1.7} />
+      <Icon path={icon} size={mobile ? 21 : 19} sw={active ? 2 : 1.7} style={{ color: active ? C.accent : 'currentColor' }} />
       {!mobile && <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{label}</span>}
       {showAlert && (mobile
         ? <span aria-label={`${alertBadge} need attention`} style={{ position: 'absolute', top: 8, right: 12, width: 9, height: 9,
@@ -146,10 +154,10 @@ export function Sidebar({ mobile, width, views = [], downloadCount = 0, failingC
       padding: mobile ? '12px 8px' : '18px 14px', ...glassStyle, boxShadow: '0 24px 60px rgba(0,0,0,.5)',
     }}>
       {!mobile && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 8px 18px', cursor: 'pointer' }}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 8px 20px', cursor: 'pointer' }}
           onClick={() => navigate('/library')}>
-          <div style={{ width: 22, height: 22, borderRadius: 7, background: `linear-gradient(135deg, ${C.green}, #6a8bff)` }} />
-          <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '.02em' }}>Watchparty</span>
+          <span style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 600, letterSpacing: '-.02em', color: C.text }}>Watchparty</span>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.accent, alignSelf: 'flex-end', marginBottom: 5 }} />
         </div>
       )}
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3, overflowY: 'auto', scrollbarWidth: 'none', flex: 1 }}>
@@ -174,12 +182,12 @@ export function TopBar({ mobile, initials, logout, title, detail, onBack }) {
     <div style={{
       position: 'sticky', top: 0, zIndex: 15, display: 'flex', alignItems: 'center', gap: 12,
       padding: mobile ? '12px 12px' : '16px 20px',
-      background: 'linear-gradient(180deg, rgba(11,13,16,.55), rgba(11,13,16,0))',
+      background: 'linear-gradient(180deg, rgba(18,16,14,.72), rgba(18,16,14,0))',
     }}>
       <GlassBtn onClick={detail ? onBack : () => navigate('/library')} title={detail ? 'Back' : 'Back to library'}>
         <Icon path={Ic.chevL} size={18} sw={2} />
       </GlassBtn>
-      <span style={{ fontSize: mobile ? 15 : 17, fontWeight: 800, letterSpacing: '-.01em' }}>{title}</span>
+      <span style={{ fontFamily: SERIF, fontSize: mobile ? 19 : 23, fontWeight: 600, letterSpacing: '-.02em' }}>{title}</span>
       <div style={{ flex: 1 }} />
       <div title={initials} style={{ width: 38, height: 38, borderRadius: '50%', display: 'grid', placeItems: 'center',
         fontSize: 12, fontWeight: 700, ...glassStyle, flexShrink: 0 }}>{initials}</div>
@@ -207,7 +215,7 @@ export function Notice({ icon, title, body, tone, compact }) {
         background: bg === 'transparent' ? 'rgba(255,255,255,.04)' : bg, border: `1px solid ${border}` }}>
         <Icon path={icon} size={26} stroke={color} sw={1.7} />
       </div>
-      <h2 style={{ fontSize: 20, fontWeight: 800, margin: 0, color: tone === 'error' ? C.red : C.text }}>{title}</h2>
+      <h2 style={{ fontFamily: SERIF, fontSize: 24, fontWeight: 600, letterSpacing: '-.02em', margin: 0, color: tone === 'error' ? C.red : C.text }}>{title}</h2>
       {body && <p style={{ color: C.dim, fontSize: 14.5, lineHeight: 1.6, maxWidth: 420, marginTop: 8 }}>{body}</p>}
     </div>
   )

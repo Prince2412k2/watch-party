@@ -1,27 +1,33 @@
-@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Editorial / theater palette — warm ink, single deep-red accent ──────────
+   Criterion/MUBI-leaning: warm-tinted charcoals (never pure #000 or cool gray),
+   paper-toned text, one considered brick-red accent. Every gray in the app is
+   tinted warm through these tokens; keys are unchanged so pages inherit the new
+   look with no per-page edits. */
 :root {
-  --bg: #08080a;
-  --accent: #E4E8EE;              /* editorial steel — matches the library */
-  --accent-soft: rgba(228,232,238,.14);
-  --accent-glow: rgba(228,232,238,.28);
-  --on-accent: #0a0a0c;           /* dark text for use on the light steel accent */
-  --text: rgba(255,255,255,.95);
-  --text2: rgba(255,255,255,.58);
-  --text3: rgba(255,255,255,.32);
-  /* Solid dark surfaces — readable over video, no muddy glass */
-  --glass: #14161c;
-  --glass2: rgba(255,255,255,.04);
-  --stroke: rgba(255,255,255,.08);
-  --stroke2: rgba(255,255,255,.16);
+  --bg: #0b0806;                  /* warmest black, behind everything */
+  --accent: #C4392F;              /* deep brick red — the single accent */
+  --accent-soft: rgba(196,57,47,.15);
+  --accent-glow: rgba(196,57,47,.38);
+  --on-accent: #FBF4EC;           /* warm paper ink on the red accent */
+  --text: #F3ECE3;                /* warm paper */
+  --text2: rgba(243,236,227,.60);
+  --text3: rgba(243,236,227,.34);
+  /* Solid warm-charcoal surfaces — readable over video, no muddy glass */
+  --glass: #1b1714;
+  --glass2: rgba(243,236,227,.05);
+  --stroke: rgba(243,236,227,.09);
+  --stroke2: rgba(243,236,227,.18);
   --hi: transparent;
   --blur: none;
   --shadow: 0 4px 20px rgba(0,0,0,.5);
   --shadow-lg: 0 16px 48px rgba(0,0,0,.65);
-  --red: #FF453A;
-  --green: #30D158;
+  --red: #E5484D;                 /* danger — cooler/brighter than the brand red */
+  --green: #54B487;               /* warm-tuned success */
+  --serif: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
   --r: 14px;
   --r-lg: 22px;
 }
@@ -30,11 +36,18 @@ html, body, #root {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Hanken Grotesk', 'Geist', -apple-system, system-ui, sans-serif;
+  font-family: 'Hanken Grotesk', -apple-system, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
 }
+
+/* Editorial display type — serif, optically sized, tight tracking. Apply via
+   the `.serif` helper or font-family: var(--serif). Headlines balance their
+   wrap so no orphan words sit alone on the last line. */
+.serif { font-family: var(--serif); font-optical-sizing: auto; }
+h1, h2, h3 { text-wrap: balance; }
+p { text-wrap: pretty; }
 
 input, button, textarea { font-family: inherit; }
 
@@ -54,9 +67,26 @@ media-player, media-player:focus, media-player:focus-visible,
    controllers can still drag to seek. */
 .watch-skin--nobar .media-controls { display: none !important; }
 
+html { scroll-behavior: smooth; }
+
 ::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 99px; }
+::-webkit-scrollbar-thumb { background: rgba(243,236,227,.16); border-radius: 99px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* Keyboard focus ring in the brand accent (mouse clicks stay clean via the
+   :focus:not(:focus-visible) rule below). Accessibility, not optional. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ── Film-grain overlay ──────────────────────────────────────────────────────
+   A fixed, non-interactive noise layer that breaks the digital flatness of the
+   warm-charcoal surfaces (editorial/theater texture). Mount <div class="grain"/>
+   once near the app root. Very low opacity so it reads as tooth, not static. */
+.grain::before {
+  content: ''; position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+  opacity: .035; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@media (prefers-reduced-motion: reduce) { .grain::before { opacity: .025; } }
 
 /* ── Animations ─────────────────────────────── */
 @keyframes spin  { to { transform: rotate(360deg); } }

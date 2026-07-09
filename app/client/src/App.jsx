@@ -79,6 +79,7 @@ export default function App() {
   return (
     <AuthProvider>
       <GlassDefs />
+      <div className="grain" aria-hidden />
       <Router />
     </AuthProvider>
   )
