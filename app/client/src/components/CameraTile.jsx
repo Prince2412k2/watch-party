@@ -1,12 +1,7 @@
 import { useEffect, useRef } from 'react'
 
-const COLORS = ['#0A84FF','#FF9F0A','#30D158','#BF5AF2','#FF6482','#64D2FF']
-function colorFor(name = '') {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff
-  return COLORS[Math.abs(h) % COLORS.length]
-}
-
+// Avatars carry identity through initials only — a fixed neutral fill, no
+// per-user hue (monochrome; color is reserved for semantic status).
 function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
 }
@@ -30,14 +25,13 @@ export default function CameraTile({ participant, isLocal, isHost, onHide, onRem
     }
   }, [participant.audioTrack, isLocal])
 
-  const color = colorFor(participant.name)
   const ini = initials(participant.name)
   const speaking = participant.isSpeaking
   const muted = !participant.audioTrack
 
   return (
     <div style={{
-      position: 'absolute', inset: 0, borderRadius: 17, overflow: 'hidden',
+      position: 'absolute', inset: 0, borderRadius: 12, overflow: 'hidden',
     }}>
       {/* Video or avatar */}
       {hasVideo
@@ -45,27 +39,29 @@ export default function CameraTile({ participant, isLocal, isHost, onHide, onRem
         : (
           <div style={{
             width: '100%', height: '100%',
-            background: `color-mix(in srgb, ${color} 45%, #0c1322)`,
+            background: 'var(--glass2, rgba(255,255,255,.04))',
             display: 'grid', placeItems: 'center',
           }}>
-            <span style={{ fontSize: 28, fontWeight: 700, color: 'rgba(255,255,255,.3)' }}>{ini}</span>
+            <span style={{ fontSize: 28, fontWeight: 700, color: 'var(--text3)' }}>{ini}</span>
           </div>
         )
       }
       {!isLocal && <audio ref={audioRef} autoPlay />}
 
-      {/* Gradient overlay */}
+      {/* Black-alpha legibility scrim (the one allowed gradient) so the name
+          row stays readable over any footage */}
       <div style={{
         position: 'absolute', inset: 0,
-        background: 'linear-gradient(180deg, rgba(0,0,0,.25) 0%, transparent 30%, transparent 60%, rgba(0,0,0,.55))',
+        background: 'linear-gradient(180deg, rgba(0,0,0,.2) 0%, transparent 30%, transparent 60%, rgba(0,0,0,.55) 100%)',
+        pointerEvents: 'none',
       }} />
 
-      {/* Speaking ring */}
+      {/* Active-speaker indicator: a single thin muted-red ring, not a boxed
+          colored border around the whole tile */}
       {speaking && (
         <div style={{
-          position: 'absolute', inset: -2, borderRadius: 19,
-          border: '2px solid var(--green)',
-          boxShadow: '0 0 0 3px rgba(48,209,88,.2)',
+          position: 'absolute', inset: 0, borderRadius: 12,
+          boxShadow: 'inset 0 0 0 2px var(--live)',
           pointerEvents: 'none',
         }} />
       )}
@@ -79,10 +75,17 @@ export default function CameraTile({ participant, isLocal, isHost, onHide, onRem
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="2"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M12 2a3 3 0 0 1 3 3v6"/><path d="M19 10v2a7 7 0 0 1-.7 3"/></svg>
         )}
         {speaking && (
-          <div className="speak-bars"><span/><span/><span/></div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 10 }}>
+            {[0, 1, 2].map(i => (
+              <span key={i} style={{
+                width: 2.5, height: '100%', borderRadius: 2, background: 'var(--text)',
+                opacity: .85, transformOrigin: 'bottom', animation: `bar .6s ease-in-out ${i * .2}s infinite`,
+              }} />
+            ))}
+          </div>
         )}
         <span style={{
-          fontSize: 12, fontWeight: 600, color: '#fff',
+          fontSize: 12, fontWeight: 600, color: 'var(--text)',
           textShadow: '0 1px 4px rgba(0,0,0,.7)',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>{participant.name}{isLocal ? ' (you)' : ''}</span>
@@ -91,4 +94,4 @@ export default function CameraTile({ participant, isLocal, isHost, onHide, onRem
   )
 }
 
-export { colorFor, initials }
+export { initials }
