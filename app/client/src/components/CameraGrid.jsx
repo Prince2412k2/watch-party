@@ -52,9 +52,8 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
               }))}
           >
             <div style={{
-              width: '100%', height: '100%', borderRadius: 17,
-              border: '1px solid rgba(255,255,255,.18)',
-              boxShadow: '0 12px 34px rgba(0,0,0,.45)',
+              width: '100%', height: '100%', borderRadius: 12,
+              border: '1px solid var(--stroke)',
               overflow: 'hidden', position: 'relative',
             }}>
               <CameraTile
@@ -76,7 +75,7 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
                     title="Remove camera for everyone"
                     style={{
                       width: 24, height: 24, borderRadius: 7, border: 'none',
-                      background: 'rgba(0,0,0,.5)', backdropFilter: 'blur(6px)',
+                      background: 'rgba(0,0,0,.6)',
                       color: 'var(--red)', display: 'grid', placeItems: 'center', cursor: 'pointer',
                     }}
                   >
@@ -89,8 +88,8 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
                     title="Hide for me"
                     style={{
                       width: 24, height: 24, borderRadius: 7, border: 'none',
-                      background: 'rgba(0,0,0,.5)', backdropFilter: 'blur(6px)',
-                      color: '#fff', display: 'grid', placeItems: 'center', cursor: 'pointer',
+                      background: 'rgba(0,0,0,.6)',
+                      color: 'var(--text)', display: 'grid', placeItems: 'center', cursor: 'pointer',
                     }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
@@ -104,7 +103,7 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
                 display: 'flex', gap: 3, cursor: 'grab', pointerEvents: 'none',
               }}>
                 {[0,1,2].map(k => (
-                  <div key={k} style={{ width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.6)' }} />
+                  <div key={k} style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--text2)' }} />
                 ))}
               </div>
             </div>
@@ -120,8 +119,7 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
           {hiddenMenuOpen && (
             <div style={{
               position: 'absolute', left: 0, bottom: 'calc(100% + 8px)', minWidth: 200, maxWidth: 260,
-              borderRadius: 14, overflow: 'hidden', background: 'var(--glass)',
-              backdropFilter: 'var(--blur)', WebkitBackdropFilter: 'var(--blur)',
+              borderRadius: 12, overflow: 'hidden', background: 'var(--glass)',
               border: '1px solid var(--stroke)', boxShadow: 'var(--shadow-lg)',
               animation: 'up .18s ease both',
             }}>
@@ -141,8 +139,8 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
             </div>
           )}
           <button onClick={() => setHiddenMenuOpen(o => !o)} title="Show hidden cameras" style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '8px 13px', borderRadius: 13, cursor: 'pointer',
-            background: 'var(--glass)', backdropFilter: 'var(--blur)', WebkitBackdropFilter: 'var(--blur)',
+            display: 'flex', alignItems: 'center', gap: 8, padding: '8px 13px', borderRadius: 10, cursor: 'pointer',
+            background: 'var(--glass)',
             border: '1px solid var(--stroke)', boxShadow: 'var(--shadow)', color: 'var(--text2)',
           }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
