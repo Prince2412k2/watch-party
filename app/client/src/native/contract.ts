@@ -53,6 +53,7 @@ export const IPC = {
   MPV_SET_MUTED: 'mpv_set_muted',       // { muted }
   MPV_SET_REGION: 'mpv_set_region',     // { x, y, w, h, dpr }
   MPV_SET_FULLSCREEN: 'mpv_set_fullscreen', // { on }
+  MPV_SET_CAN_CONTROL: 'mpv_set_can_control', // { canControl } — gate mpv OSC interactivity
   MPV_TEARDOWN: 'mpv_teardown',
   // downloader (download.rs)
   DL_START: 'dl_start',                 // { itemId, url, title, parts? } -> { id }

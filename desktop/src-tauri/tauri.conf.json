@@ -4,10 +4,13 @@
   "version": "0.1.0",
   "identifier": "com.watchparty.desktop",
   "build": {
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:5183",
     "frontendDist": "../../app/client/dist",
-    "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "beforeDevCommand": {
+      "script": "npm run dev -- --port 5183 --strictPort",
+      "cwd": "../../app/client"
+    },
+    "beforeBuildCommand": "npm run build --prefix ../../app/client"
   },
   "app": {
     "windows": [
