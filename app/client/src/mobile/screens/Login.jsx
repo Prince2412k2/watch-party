@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext.jsx'
-import { T, TYPE, R, EASE, BRAND_GRADIENT } from '../theme.js'
+import { T, TYPE, R, EASE, AVATAR_BG } from '../theme.js'
 import { Icon, Ic } from '../ui/Icon.jsx'
 
 /**
@@ -46,15 +46,15 @@ export default function Login() {
   }
 
   const caption = (on) => ({
-    ...TYPE.meta, color: on ? T.brand : T.dim, display: 'block',
+    ...TYPE.meta, color: on ? T.text : T.dim, display: 'block',
     marginBottom: 8, transition: `color .16s ${EASE}`,
   })
   const fieldStyle = (on, pad) => ({
     width: '100%', height: 54, padding: `0 ${pad}px 0 46px`, borderRadius: R.md,
-    border: `1px solid ${on ? T.brand : T.line2}`,
-    background: on ? 'rgba(62,207,126,.06)' : 'rgba(255,255,255,.05)',
+    border: `1px solid ${on ? T.text : T.line2}`,
+    background: 'rgba(255,255,255,.05)',
     color: T.text, ...TYPE.input, outline: 'none',
-    boxShadow: on ? '0 0 0 3px rgba(62,207,126,.14)' : 'none',
+    boxShadow: on ? '0 0 0 3px rgba(255,255,255,.12)' : 'none',
     transition: `border-color .16s ${EASE}, box-shadow .16s ${EASE}, background .16s ${EASE}`,
   })
   const lead = { position: 'absolute', left: 14, top: 0, bottom: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }
@@ -65,24 +65,17 @@ export default function Login() {
       padding: `calc(var(--sa-t) + 32px) calc(var(--sa-r) + 22px) calc(var(--sa-b) + 28px) calc(var(--sa-l) + 22px)`,
       position: 'relative', overflow: 'hidden',
     }}>
-      {/* login-only brand halo behind the mark (shell paints the base ambient) */}
-      <div aria-hidden style={{
-        position: 'absolute', top: '-4%', left: '50%', transform: 'translateX(-50%)',
-        width: 340, height: 340, borderRadius: '50%', background: BRAND_GRADIENT,
-        filter: 'blur(96px)', opacity: 0.2, pointerEvents: 'none',
-      }} />
-
       <div style={{
         position: 'relative', width: '100%', maxWidth: 400, margin: '0 auto',
         display: 'flex', flexDirection: 'column', alignItems: 'center', animation: 'up .5s ease both',
       }}>
-        {/* app-tile mark — same play-on-gradient language as the Party CTA */}
+        {/* app-tile mark — flat solid surface, no glow */}
         <div style={{
-          width: 76, height: 76, borderRadius: 22, background: BRAND_GRADIENT,
+          width: 76, height: 76, borderRadius: 22, background: AVATAR_BG,
+          border: `1px solid ${T.line2}`,
           display: 'grid', placeItems: 'center', marginBottom: 22,
-          boxShadow: '0 18px 44px rgba(62,207,126,.28), inset 0 1px 0 rgba(255,255,255,.45)',
         }}>
-          <Icon path={Ic.play} size={34} fill="#0b0d10" stroke="none" />
+          <Icon path={Ic.play} size={34} fill={T.text} stroke="none" />
         </div>
 
         <div style={{ ...TYPE.meta, letterSpacing: '.3em', color: T.dim, marginBottom: 16 }}>Watchparty</div>
@@ -95,7 +88,7 @@ export default function Login() {
           <label style={{ display: 'block' }}>
             <span style={caption(focus === 'u')}>Username</span>
             <div style={{ position: 'relative' }}>
-              <span style={lead}><Icon path={Ic.user} size={19} stroke={focus === 'u' ? T.brand : T.faint} /></span>
+              <span style={lead}><Icon path={Ic.user} size={19} stroke={focus === 'u' ? T.text : T.faint} /></span>
               <input
                 type="text" value={username} onChange={(e) => setUsername(e.target.value)}
                 onFocus={() => setFocus('u')} onBlur={() => setFocus('')}
@@ -110,7 +103,7 @@ export default function Login() {
           <label style={{ display: 'block' }}>
             <span style={caption(focus === 'p')}>Password</span>
             <div style={{ position: 'relative' }}>
-              <span style={lead}><Icon path={LOCK} size={19} stroke={focus === 'p' ? T.brand : T.faint} /></span>
+              <span style={lead}><Icon path={LOCK} size={19} stroke={focus === 'p' ? T.text : T.faint} /></span>
               <input
                 type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
                 onFocus={() => setFocus('p')} onBlur={() => setFocus('')}

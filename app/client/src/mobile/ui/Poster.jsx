@@ -68,7 +68,7 @@ export function Poster({ id, type = 'Primary', fallback, title = '', w, ratio = 
         <div style={{
           width: '100%', height: '100%', display: 'grid', placeItems: 'center',
           color: T.faint, fontFamily: "'Hanken Grotesk', sans-serif", fontWeight: 800, fontSize: 26,
-          background: `linear-gradient(160deg, ${T.surface2}, ${T.surface})`,
+          background: T.surface,
         }}>
           {(title || '?').trim().charAt(0).toUpperCase()}
         </div>

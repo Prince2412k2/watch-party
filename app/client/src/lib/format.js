@@ -53,13 +53,13 @@ export function fmtRuntimeFromMinutes(mins) {
 export function stateInfo(state) {
   switch (state) {
     case 'downloading': case 'forcedDL': case 'metaDL': case 'checkingDL': case 'allocating':
-      return { label: 'Downloading', color: C.green, paused: false }
+      return { label: 'Downloading', color: C.live, paused: false }
     case 'uploading': case 'forcedUP': case 'checkingUP':
-      return { label: 'Finishing up', color: '#6a8bff', paused: false }
+      return { label: 'Finishing up', color: C.dim, paused: false }
     case 'stalledDL':
-      return { label: 'Waiting', color: C.amber, paused: false }
+      return { label: 'Waiting', color: C.dim, paused: false }
     case 'stalledUP':
-      return { label: 'Finishing up', color: '#6a8bff', paused: false }
+      return { label: 'Finishing up', color: C.dim, paused: false }
     case 'queuedDL': case 'queuedUP': case 'checkingResumeData':
       return { label: 'Queued', color: C.faint, paused: false }
     case 'pausedDL': case 'stoppedDL':

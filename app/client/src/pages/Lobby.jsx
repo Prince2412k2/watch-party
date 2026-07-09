@@ -6,14 +6,6 @@ export default function Lobby({ partyId }) {
       position: 'fixed', inset: 0, background: 'var(--bg)',
       display: 'grid', placeItems: 'center', overflow: 'hidden',
     }}>
-      {/* Single intentional spotlight — theatre before the lights */}
-      <div style={{
-        position: 'absolute', top: '38%', left: '50%',
-        width: 720, height: 720, transform: 'translate(-50%,-50%)',
-        background: 'radial-gradient(circle, rgba(10,132,255,.10) 0%, transparent 60%)',
-        pointerEvents: 'none',
-      }} />
-
       <div style={{
         position: 'relative', textAlign: 'center',
         display: 'flex', flexDirection: 'column', alignItems: 'center',
