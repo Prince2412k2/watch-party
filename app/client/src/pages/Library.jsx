@@ -5,7 +5,7 @@ import { useFailingCount } from '../hooks/useFailingDownloads.js'
 import { isActiveState } from '../hooks/useTorrents.js'
 import { navigate } from '../router.js'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail.jsx'
-import { C, SANS, MONO, glassStyle, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui.jsx'
+import { C, SANS, MONO, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui.jsx'
 import { fmtRuntimeFromTicks, fmtSpeed } from '../lib/format.js'
 
 const img = (id, type = 'Primary') => `/api/library/image/${id}?type=${type}`
@@ -242,28 +242,22 @@ export default function Library({
   const sidebarW = mobile ? 62 : 236
 
   return (
-    // Outer shell: fixed full-bleed. Holds the atmospheric backdrop, the floating
-    // sidebar, and the scrollable content pane. It does NOT scroll itself.
+    // Outer shell: fixed full-bleed. Holds the flush sidebar and the scrollable
+    // content pane. It does NOT scroll itself.
     <div style={{
       position: 'fixed', inset: 0, background: C.bg, color: C.text, fontFamily: SANS,
       overflow: 'hidden',
     }}>
       {following && <GhostCursor ref={ghostRef} name={driverName} />}
 
-      {/* Ambient darkened backdrop behind everything */}
-      <div style={{ position: 'absolute', inset: 0, background:
-        `radial-gradient(120% 90% at 12% -10%, rgba(62,207,126,.06), transparent 55%),
-         radial-gradient(120% 90% at 100% 0%, rgba(120,140,220,.07), transparent 55%),
-         ${C.bg}`, pointerEvents: 'none' }} />
-
       <Sidebar mobile={mobile} width={sidebarW} views={views} activeId={current ? stack[0].id : null}
         onHome={goHome} onView={openView} showDiscover={!embedded} downloadCount={dlActive} failingCount={failingCount} />
 
-      {/* Scrollable content pane — this is the element the mirror engine drives. */}
+      {/* Scrollable content pane — flush to the viewport edge (no inset panel).
+          This is the element the mirror engine drives. */}
       <div ref={scrollRef} style={{
-        position: 'absolute', top: mobile ? 8 : 12, right: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-        left: sidebarW + (mobile ? 8 : 12),
-        borderRadius: mobile ? 14 : 20, overflow: 'hidden auto',
+        position: 'absolute', top: 0, right: 0, bottom: 0, left: sidebarW,
+        overflow: 'hidden auto',
         overflowY: following ? 'hidden' : 'auto',
       }}>
         <TopBar embedded={embedded} mobile={mobile} initials={initials} logout={logout}
@@ -272,7 +266,7 @@ export default function Library({
         {banner}
         {error && (
           <div style={{ margin: '14px 20px', padding: '12px 16px', borderRadius: 12,
-            background: 'rgba(220,60,60,.12)', border: '1px solid rgba(220,60,60,.3)', color: 'rgb(240,170,170)', fontSize: 14 }}>{error}</div>
+            background: 'rgba(224,101,94,.12)', border: `1px solid rgba(224,101,94,.35)`, color: C.red, fontSize: 14 }}>{error}</div>
         )}
 
         <div style={{ pointerEvents: canDrive ? 'auto' : 'none' }}>
@@ -313,26 +307,25 @@ const GhostCursor = forwardRef(function GhostCursor({ name }, ref) {
       {name && (
         <span style={{
           marginTop: 12, padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-          background: C.green, color: C.onAccent, boxShadow: '0 2px 8px rgba(0,0,0,.5)',
+          background: C.surface3, color: C.text, boxShadow: '0 2px 8px rgba(0,0,0,.5)',
         }}>{name}</span>
       )}
     </div>
   )
 })
 
-/* ── Floating glass sidebar ─────────────────────────────────────────────── */
+/* ── Flush sidebar (edge-to-edge, hairline border, no floating panel) ───── */
 function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover, downloadCount = 0, failingCount = 0 }) {
   return (
     <aside style={{
-      position: 'absolute', top: mobile ? 8 : 12, left: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-      width, borderRadius: mobile ? 16 : 22, zIndex: 20, display: 'flex', flexDirection: 'column',
-      padding: mobile ? '12px 8px' : '18px 14px', ...glassStyle,
-      boxShadow: '0 24px 60px rgba(0,0,0,.5)',
+      position: 'absolute', top: 0, left: 0, bottom: 0,
+      width, zIndex: 20, display: 'flex', flexDirection: 'column',
+      padding: mobile ? '12px 8px' : '22px 16px',
+      background: C.bg, borderRight: `1px solid ${C.line}`,
     }}>
       {!mobile && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 8px 18px', cursor: 'pointer' }} onClick={onHome}>
-          <div style={{ width: 22, height: 22, borderRadius: 7, background: `linear-gradient(135deg, ${C.green}, #6a8bff)` }} />
-          <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '.02em' }}>Watchparty</span>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '2px 8px 22px', cursor: 'pointer' }} onClick={onHome}>
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Watchparty</span>
         </div>
       )}
 
@@ -349,17 +342,6 @@ function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover,
             onClick={() => navigate('/downloads')} />
         )}
       </nav>
-
-      {/* Footer brand block (this app's own — not "SEN PRO") */}
-      {!mobile && (
-        <div style={{ marginTop: 12, padding: '12px 10px', borderRadius: 14, background: 'rgba(255,255,255,.03)', border: `1px solid ${C.line}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 18, height: 18, borderRadius: 6, background: `linear-gradient(135deg, ${C.green}, #6a8bff, #d16aff)` }} />
-            <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: '.04em', background: `linear-gradient(90deg, ${C.green}, #8aa0ff)`, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>WATCHPARTY</span>
-          </div>
-          <div style={{ fontSize: 11, color: C.faint, marginTop: 4 }}>Watch together, in sync</div>
-        </div>
-      )}
     </aside>
   )
 }
@@ -371,7 +353,7 @@ function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBa
     <div style={{
       position: 'sticky', top: 0, zIndex: 15, display: 'flex', alignItems: 'center',
       gap: 12, padding: mobile ? '12px 12px' : '16px 20px',
-      background: 'linear-gradient(180deg, rgba(11,13,16,.55), rgba(11,13,16,0))',
+      background: 'linear-gradient(180deg, rgba(0,0,0,.55), rgba(0,0,0,0))',
     }}>
       {/* Left: back + home when drilled in */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -400,7 +382,7 @@ function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBa
           </GlassBtn>
           <div title={initials} style={{
             width: 38, height: 38, borderRadius: '50%', display: 'grid', placeItems: 'center',
-            fontSize: 12, fontWeight: 700, ...glassStyle, flexShrink: 0,
+            fontSize: 12, fontWeight: 700, background: C.surface2, border: `1px solid ${C.line}`, color: C.text, flexShrink: 0,
           }}>{initials}</div>
           <GlassBtn onClick={logout} title="Sign out"><Icon path={Ic.logout} size={17} sw={1.8} /></GlassBtn>
         </div>
@@ -429,9 +411,9 @@ function JoinDialog({ mobile, onClose }) {
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'grid', placeItems: 'center',
-      padding: 16, background: 'rgba(6,8,11,.66)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', animation: 'up .2s ease both' }}>
-      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} style={{ width: 'min(380px, 100%)', borderRadius: 20, padding: mobile ? 20 : 26,
-        ...glassStyle, background: 'rgba(22,25,30,.92)', boxShadow: '0 30px 80px rgba(0,0,0,.6)' }}>
+      padding: 16, background: 'rgba(0,0,0,.66)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'up .2s ease both' }}>
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} style={{ width: 'min(380px, 100%)', borderRadius: 16, padding: mobile ? 20 : 26,
+        background: C.surface, border: `1px solid ${C.line}`, boxShadow: '0 24px 60px rgba(0,0,0,.7)' }}>
         <h2 style={{ fontSize: 19, fontWeight: 800, margin: '0 0 6px', fontFamily: SANS }}>Join a party</h2>
         <p style={{ color: C.dim, fontSize: 13.5, lineHeight: 1.5, margin: '0 0 16px', fontFamily: SANS }}>
           Enter the code the host shared with you.
@@ -442,7 +424,7 @@ function JoinDialog({ mobile, onClose }) {
             background: 'rgba(255,255,255,.04)', color: C.text, fontFamily: MONO, fontSize: 18, letterSpacing: '.14em',
             textAlign: 'center', textTransform: 'uppercase', outline: 'none' }} />
         {err && (
-          <div role="alert" style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(220,60,60,.12)', border: '1px solid rgba(220,60,60,.3)', color: 'rgb(240,170,170)', fontSize: 13.5, fontFamily: SANS }}>{err}</div>
+          <div role="alert" style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(224,101,94,.12)', border: `1px solid rgba(224,101,94,.35)`, color: C.red, fontSize: 13.5, fontFamily: SANS }}>{err}</div>
         )}
         <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
           <button type="button" onClick={onClose} style={{ flex: 1, height: 46, borderRadius: 13, border: `1px solid ${C.line2}`,
@@ -458,7 +440,7 @@ function JoinDialog({ mobile, onClose }) {
 /* ── HOME ───────────────────────────────────────────────────────────────── */
 function HomeView({ home, loading, onOpen, onOpenView, embedded, downloads, onOpenDownload }) {
   const mobileHome = useIsMobile()
-  const pad = mobileHome ? '0 12px' : '0 26px'
+  const pad = mobileHome ? '0 16px' : '0 44px'
 
   // Recently added — fetched independently of /home. Jellyfin-only, so it works
   // regardless of Servarr. /api/library/latest returns a flat array; [] if empty
@@ -530,7 +512,7 @@ function PosterCard({ item, onClick }) {
         <Img id={item.Id} type="Primary" fallback={{ id: item.SeriesId || item.Id, type: 'Backdrop' }} alt={item.Name}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.06)' : 'scale(1)', transition: 'transform .4s' }} />
         <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 8px', borderRadius: 999, fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
-          background: 'rgba(62,207,126,.9)', color: '#06210f', boxShadow: '0 2px 6px rgba(0,0,0,.4)' }}>NEW</div>
+          background: 'rgba(0,0,0,.6)', color: C.dim, letterSpacing: '.06em' }}>NEW</div>
       </div>
       <div style={{ marginTop: 9, fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.Name}</div>
       {item.ProductionYear && <div style={{ fontFamily: MONO, fontSize: 12, color: C.faint, marginTop: 2 }}>{item.ProductionYear}</div>}
@@ -596,7 +578,7 @@ function RailArrow({ dir, show, onClick }) {
     <button onClick={onClick} aria-label={dir < 0 ? 'Scroll left' : 'Scroll right'} style={{
       position: 'absolute', top: 'calc(50% - 34px)', [dir < 0 ? 'left' : 'right']: 6, transform: 'translateY(-50%)',
       width: 44, height: 44, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer',
-      ...glassStyle, background: 'rgba(10,12,15,.55)', color: '#fff',
+      background: 'rgba(0,0,0,.6)', border: `1px solid ${C.line}`, color: '#fff',
       opacity: show ? 1 : 0, pointerEvents: show ? 'auto' : 'none', transition: 'opacity .2s', zIndex: 5,
     }}>
       <Icon path={dir < 0 ? Ic.chevL : Ic.chevR} size={22} sw={2.2} />
@@ -631,8 +613,8 @@ function StillCard({ item, onClick, progress }) {
         <Img id={item.Id} type="Thumb" fallback={{ id: item.SeriesId || item.Id, type: 'Backdrop' }} alt={label}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.05)' : 'scale(1)', transition: 'transform .4s' }} />
         {progress && pct > 0 && (
-          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'rgba(0,0,0,.55)' }}>
-            <div style={{ width: `${pct}%`, height: '100%', background: C.green }} />
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'rgba(255,255,255,.15)' }}>
+            <div style={{ width: `${pct}%`, height: '100%', background: C.text }} />
           </div>
         )}
       </div>
@@ -687,10 +669,10 @@ function PosterCardFluid({ item, onClick, badge }) {
         <Img id={item.Id} type="Primary" alt={item.Name}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.06)' : 'scale(1)', transition: 'transform .4s' }} />
         {epCount > 0 && (
-          <div style={{ position: 'absolute', top: 8, right: 8, minWidth: 22, height: 22, padding: '0 6px', borderRadius: 999, display: 'grid', placeItems: 'center', fontFamily: MONO, fontSize: 11.5, fontWeight: 700, background: C.green, color: '#06210f', boxShadow: '0 2px 6px rgba(0,0,0,.4)' }}>{epCount}</div>
+          <div style={{ position: 'absolute', top: 8, right: 8, minWidth: 22, height: 22, padding: '0 6px', borderRadius: 999, display: 'grid', placeItems: 'center', fontFamily: MONO, fontSize: 11.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: C.text }}>{epCount}</div>
         )}
         {fullyWatched && !epCount && (
-          <div style={{ position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: '50%', display: 'grid', placeItems: 'center', background: C.green, boxShadow: '0 2px 6px rgba(0,0,0,.4)' }}>
+          <div style={{ position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: '50%', display: 'grid', placeItems: 'center', background: C.green }}>
             <Icon path={Ic.check} size={13} stroke="#06210f" sw={3} />
           </div>
         )}
@@ -698,7 +680,7 @@ function PosterCardFluid({ item, onClick, badge }) {
           <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 7px', borderRadius: 8, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff' }}>{badge}</div>
         )}
         {rating != null && (
-          <div style={{ position: 'absolute', bottom: 8, right: 8, padding: '2px 8px', borderRadius: 8, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>{rating.toFixed(1)}</div>
+          <div style={{ position: 'absolute', bottom: 8, right: 8, padding: '2px 8px', borderRadius: 8, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,.7)' }}>{rating.toFixed(1)}</div>
         )}
       </div>
       <div style={{ marginTop: 9, fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.Name}</div>
@@ -713,7 +695,7 @@ function CircleAction({ icon, title }) {
   return (
     <button title={title} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{
       width: 54, height: 54, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer',
-      ...glassStyle, background: h ? C.glassHi : 'rgba(20,24,30,.5)', color: '#fff', transition: 'background .15s',
+      border: `1px solid ${C.line}`, background: h ? C.surface2 : C.surface, color: C.text, transition: 'background .15s',
     }}>
       <Icon path={icon} size={22} sw={1.9} />
     </button>
@@ -764,16 +746,17 @@ function Details({ itemId, onWatch, onOpen, onBack }) {
 
   return (
     <div style={{ paddingBottom: 100 }}>
-      {/* Big blurred backdrop filling the panel */}
+      {/* Full-bleed backdrop hero — real Jellyfin artwork with only a black-alpha
+          legibility scrim, no blur/frost. */}
       <div style={{ position: 'relative', minHeight: 'min(78vh, 640px)', display: 'flex', alignItems: 'flex-end' }}>
-        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: 'inherit' }}>
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
           <Img id={backdropId} type="Backdrop" fallback={{ id: backdropId, type: 'Primary' }}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', filter: 'blur(2px)', transform: 'scale(1.05)' }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 4%, rgba(11,13,16,.55) 48%, rgba(11,13,16,.25) 100%)` }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(11,13,16,.7) 0%, rgba(11,13,16,.35) 45%, transparent 82%)` }} />
+            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center' }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, rgba(0,0,0,.92) 4%, rgba(0,0,0,.55) 48%, rgba(0,0,0,.2) 100%)` }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(0,0,0,.7) 0%, rgba(0,0,0,.35) 45%, transparent 82%)` }} />
         </div>
 
-        <div style={{ position: 'relative', width: '100%', padding: mobile ? '0 16px 26px' : '0 34px 36px' }}>
+        <div style={{ position: 'relative', width: '100%', padding: mobile ? '0 16px 26px' : '0 44px 36px' }}>
           {/* Three circular glass actions */}
           <div style={{ display: 'flex', gap: 14, marginBottom: 20 }}>
             <CircleAction icon={Ic.history} title="Restart / history" />
@@ -797,11 +780,11 @@ function Details({ itemId, onWatch, onOpen, onBack }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 8, fontSize: 15, fontWeight: 600 }}>
             {d.CommunityRating != null && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: C.text }}>
-                <Icon path={Ic.star} size={16} fill="#f5c518" stroke="none" />{d.CommunityRating.toFixed(1)}
+                <Icon path={Ic.star} size={16} fill={C.text} stroke="none" />{d.CommunityRating.toFixed(1)}
               </span>
             )}
             {d.CriticRating != null && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#ff6b5e' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: C.dim }}>
                 <span style={{ fontSize: 15 }}>&#127813;</span>{d.CriticRating}%
               </span>
             )}
@@ -818,7 +801,7 @@ function Details({ itemId, onWatch, onOpen, onBack }) {
 
           {/* Overview */}
           {d.Overview && (
-            <p style={{ fontSize: 15, lineHeight: 1.6, color: 'rgba(241,243,246,.85)', maxWidth: 720, margin: 0,
+            <p style={{ fontSize: 15, lineHeight: 1.6, color: C.dim, maxWidth: 720, margin: 0,
               display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               {d.Name ? <b style={{ fontWeight: 700 }}>[{d.Name}]</b> : null} {d.Overview}
             </p>
@@ -827,7 +810,7 @@ function Details({ itemId, onWatch, onOpen, onBack }) {
       </div>
 
       {/* Body */}
-      <div style={{ padding: mobile ? '0 16px' : '0 34px' }}>
+      <div style={{ padding: mobile ? '0 16px' : '0 44px' }}>
         {isSeries && seasons.length > 0 && (
           <SectionHead title="Seasons" count={seasons.length}>
             <PosterWall>{seasons.map(s => <WallPoster key={s.Id} item={s} onClick={() => onOpen(s)} />)}</PosterWall>
@@ -855,7 +838,7 @@ function Details({ itemId, onWatch, onOpen, onBack }) {
     </div>
   )
 }
-const linkPill = { padding: '9px 16px', borderRadius: 999, ...glassStyle, color: C.text, fontFamily: MONO, fontSize: 12.5, textDecoration: 'none', display: 'inline-block' }
+const linkPill = { padding: '9px 16px', borderRadius: 999, background: C.surface, border: `1px solid ${C.line}`, color: C.text, fontFamily: MONO, fontSize: 12.5, textDecoration: 'none', display: 'inline-block' }
 
 function SectionHead({ title, count, children }) {
   return (
@@ -874,7 +857,7 @@ function CastPerson({ person }) {
   const [ok, setOk] = useState(true)
   return (
     <div style={{ flex: '0 0 120px', width: 120 }}>
-      <div style={{ width: 120, height: 120, borderRadius: 18, overflow: 'hidden', marginBottom: 10, background: C.surface2, display: 'grid', placeItems: 'center', ...glassStyle }}>
+      <div style={{ width: 120, height: 120, borderRadius: 18, overflow: 'hidden', marginBottom: 10, background: C.surface2, display: 'grid', placeItems: 'center', border: `1px solid ${C.line}` }}>
         {ok
           ? <img src={img(person.Id, 'Primary')} alt={person.Name} onError={() => setOk(false)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           : <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke={C.faint} strokeWidth="1.6"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>}
@@ -891,7 +874,7 @@ function GridView({ stack, items, loading, onOpen, onCrumb, onHome }) {
   const mobile = useIsMobile()
   const current = stack[stack.length - 1]
   return (
-    <div style={{ padding: mobile ? '4px 16px 100px' : '8px 34px 100px' }}>
+    <div style={{ padding: mobile ? '4px 16px 100px' : '8px 44px 100px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: MONO, fontSize: 12.5, color: C.dim, marginBottom: 18 }}>
         <span onClick={onHome} style={{ cursor: 'pointer' }}>Home</span>
         {stack.map((s, i) => (
