@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { glass } from '../../glass.jsx'
 import { T, R, EASE, Z, TYPE } from '../theme.js'
 
 /**
- * Bottom sheet: scrim (scrimIn) + a glass panel that rises from the bottom
- * (sheetUp). Anchored to the DYNAMIC viewport and safe-area padded so it clears
- * the home indicator and never hides under Safari's collapsing toolbar. Closes
+ * Bottom sheet: a blurred scrim (scrimIn) behind a flat, solid `surface` panel
+ * that rises from the bottom (sheetUp). Anchored to the DYNAMIC viewport and
+ * safe-area padded so it clears the home indicator and never hides under
+ * Safari's collapsing toolbar. Closes
  * on scrim tap, the ✕, Escape, or a downward drag on the grab handle. Rendered
  * through a portal so it floats above the shell scroll region.
  *
@@ -42,17 +42,20 @@ export function Sheet({ open, onClose, title, children, maxHeight = '85dvh' }) {
       <div
         onClick={onClose}
         style={{
-          position: 'absolute', inset: 0, background: 'rgba(4,5,7,.62)',
+          position: 'absolute', inset: 0, background: 'rgba(0,0,0,.6)',
+          backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)',
           animation: open ? 'scrimIn .22s ease both' : 'scrimIn .18s ease reverse both',
         }}
       />
       <div
         onAnimationEnd={() => { if (!open) setMounted(false) }}
         style={{
-          ...glass('heavy', { refract: true }),
           position: 'relative',
-          borderRadius: `${R.lg}px ${R.lg}px 0 0`,
+          background: T.surface,
+          border: `1px solid ${T.line}`,
           borderBottom: 'none',
+          borderRadius: `${R.lg}px ${R.lg}px 0 0`,
+          boxShadow: '0 -24px 60px rgba(0,0,0,.7)',
           maxHeight, display: 'flex', flexDirection: 'column',
           paddingBottom: `calc(var(--sa-b) + 14px)`,
           transform: `translateY(${dragY}px)`,
