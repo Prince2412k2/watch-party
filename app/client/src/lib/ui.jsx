@@ -7,32 +7,33 @@ import { useState } from 'react'
 import { navigate } from '../router.js'
 import { glass } from '../glass.jsx'
 
-/* ── Editorial / theater palette — warm ink, single deep-red accent ──────────
-   Criterion/MUBI-leaning. Keys match the old object 1:1 so every page inherits
-   the new look untouched; only the values (and the new serif) changed. The
-   `accent` is now the deep brick red — primary CTAs read as red pills with
-   warm-paper ink, not the old white pill. */
+/* ── Cinematic minimal — dark, flat, content-first ───────────────────────────
+   Premium-OTT (Apple TV / Max). Neutral near-black solid surfaces, NO glass.
+   Artwork carries the color; the UI keeps a near-white `accent` for primary
+   controls and one quiet warm `live` accent for emphasis/progress/live. Keys
+   match the old object 1:1 so every page inherits the flat look untouched. */
 export const C = {
-  bg: '#12100e',            // warm charcoal page ground
-  surface: '#1b1714',
-  surface2: '#26221e',
-  text: '#F3ECE3',          // warm paper
-  dim: '#ABA095',
-  faint: '#75695E',
-  line: 'rgba(243,236,227,.09)',
-  line2: 'rgba(243,236,227,.18)',
-  accent: '#C4392F',        // deep brick red — the single accent
-  accentDim: '#A63229',
-  accentSoft: 'rgba(196,57,47,.15)',
-  onAccent: '#FBF4EC',      // warm paper ink on the red accent
-  glass2: 'rgba(243,236,227,.05)',
-  green: '#54B487',
-  amber: '#D99A4E',
-  red: '#E5848A',           // danger text tint (distinct from the brand accent)
-  glass: 'rgba(27,23,20,.66)',
-  glassHi: 'rgba(41,35,30,.74)',
+  bg: '#0a0a0b',            // neutral near-black page ground
+  surface: '#151517',
+  surface2: '#202023',
+  text: '#F4F4F5',
+  dim: '#98989F',
+  faint: '#646469',
+  line: 'rgba(255,255,255,.07)',
+  line2: 'rgba(255,255,255,.13)',
+  accent: '#F3F3F4',        // near-white primary control (play pill)
+  accentDim: '#CFCFD2',
+  accentSoft: 'rgba(243,243,244,.10)',
+  onAccent: '#101012',      // dark ink on the near-white accent
+  live: '#E0A458',          // single quiet warm accent — live/progress/focus
+  liveSoft: 'rgba(224,164,88,.14)',
+  glass2: 'rgba(255,255,255,.05)',
+  green: '#63B98A',         // muted functional success
+  amber: '#E0A458',
+  red: '#E06A63',           // muted danger
+  glass: '#151517',         // solid surface (flat)
+  glassHi: '#202023',
 }
-export const SERIF = "'Fraunces', 'Iowan Old Style', Georgia, serif"
 export const SANS = "'Hanken Grotesk', system-ui, -apple-system, sans-serif"
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
@@ -90,6 +91,7 @@ export function viewIcon(v) {
   return Ic.folder
 }
 
+// Flat, quiet icon/pill button — solid surface, hairline border, no glass.
 export function GlassBtn({ onClick, title, children, pill, wide }) {
   const [h, setH] = useState(false)
   return (
@@ -97,8 +99,9 @@ export function GlassBtn({ onClick, title, children, pill, wide }) {
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'center',
         height: 38, width: pill ? 'auto' : 38, padding: pill ? '0 16px' : 0,
-        borderRadius: 999, cursor: 'pointer', color: C.text, fontFamily: SANS, fontSize: 13.5, fontWeight: 600,
-        ...glassStyle, background: h ? C.glassHi : C.glass, transition: 'background .15s', flexShrink: 0,
+        borderRadius: 10, cursor: 'pointer', color: h ? C.text : C.dim, fontFamily: SANS, fontSize: 13.5, fontWeight: 600,
+        background: h ? C.surface2 : C.surface, border: `1px solid ${C.line}`,
+        transition: 'background .15s, color .15s', flexShrink: 0,
       }}>{children}</button>
   )
 }
@@ -149,15 +152,16 @@ export function NavRow({ mobile, icon, label, active, onClick, badge = 0, alertB
 export function Sidebar({ mobile, width, views = [], downloadCount = 0, failingCount = 0, current }) {
   return (
     <aside style={{
-      position: 'absolute', top: mobile ? 8 : 12, left: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-      width, borderRadius: mobile ? 16 : 22, zIndex: 20, display: 'flex', flexDirection: 'column',
-      padding: mobile ? '12px 8px' : '18px 14px', ...glassStyle, boxShadow: '0 24px 60px rgba(0,0,0,.5)',
+      position: 'absolute', top: 0, left: 0, bottom: 0,
+      width, zIndex: 20, display: 'flex', flexDirection: 'column',
+      padding: mobile ? '12px 8px' : '22px 16px',
+      background: C.bg, borderRight: `1px solid ${C.line}`,
     }}>
       {!mobile && (
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 8px 20px', cursor: 'pointer' }}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 8px 24px', cursor: 'pointer' }}
           onClick={() => navigate('/library')}>
-          <span style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 600, letterSpacing: '-.02em', color: C.text }}>Watchparty</span>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.accent, alignSelf: 'flex-end', marginBottom: 5 }} />
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.live }} />
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-.01em', color: C.text }}>Watchparty</span>
         </div>
       )}
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3, overflowY: 'auto', scrollbarWidth: 'none', flex: 1 }}>
@@ -182,15 +186,15 @@ export function TopBar({ mobile, initials, logout, title, detail, onBack }) {
     <div style={{
       position: 'sticky', top: 0, zIndex: 15, display: 'flex', alignItems: 'center', gap: 12,
       padding: mobile ? '12px 12px' : '16px 20px',
-      background: 'linear-gradient(180deg, rgba(18,16,14,.72), rgba(18,16,14,0))',
+      background: 'linear-gradient(180deg, rgba(10,10,11,.85), rgba(10,10,11,0))',
     }}>
       <GlassBtn onClick={detail ? onBack : () => navigate('/library')} title={detail ? 'Back' : 'Back to library'}>
         <Icon path={Ic.chevL} size={18} sw={2} />
       </GlassBtn>
-      <span style={{ fontFamily: SERIF, fontSize: mobile ? 19 : 23, fontWeight: 600, letterSpacing: '-.02em' }}>{title}</span>
+      <span style={{ fontSize: mobile ? 18 : 22, fontWeight: 700, letterSpacing: '-.02em' }}>{title}</span>
       <div style={{ flex: 1 }} />
       <div title={initials} style={{ width: 38, height: 38, borderRadius: '50%', display: 'grid', placeItems: 'center',
-        fontSize: 12, fontWeight: 700, ...glassStyle, flexShrink: 0 }}>{initials}</div>
+        fontSize: 12, fontWeight: 700, background: C.surface2, border: `1px solid ${C.line}`, color: C.text, flexShrink: 0 }}>{initials}</div>
       <GlassBtn onClick={logout} title="Sign out"><Icon path={Ic.logout} size={17} sw={1.8} /></GlassBtn>
     </div>
   )
@@ -209,13 +213,13 @@ export function Notice({ icon, title, body, tone, compact }) {
     )
   }
   return (
-    <div style={{ marginTop: 8, padding: '46px 28px', borderRadius: 18, ...glassStyle, animation: 'up .4s ease both',
+    <div style={{ marginTop: 8, padding: '46px 28px', borderRadius: C.rLg || 20, background: C.surface, border: `1px solid ${C.line}`, animation: 'up .4s ease both',
       display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
       <div style={{ width: 56, height: 56, borderRadius: 16, display: 'grid', placeItems: 'center', marginBottom: 16,
         background: bg === 'transparent' ? 'rgba(255,255,255,.04)' : bg, border: `1px solid ${border}` }}>
         <Icon path={icon} size={26} stroke={color} sw={1.7} />
       </div>
-      <h2 style={{ fontFamily: SERIF, fontSize: 24, fontWeight: 600, letterSpacing: '-.02em', margin: 0, color: tone === 'error' ? C.red : C.text }}>{title}</h2>
+      <h2 style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.02em', margin: 0, color: tone === 'error' ? C.red : C.text }}>{title}</h2>
       {body && <p style={{ color: C.dim, fontSize: 14.5, lineHeight: 1.6, maxWidth: 420, marginTop: 8 }}>{body}</p>}
     </div>
   )

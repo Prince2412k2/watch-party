@@ -16,22 +16,21 @@ export const T = {
   line:      'rgba(243,236,227,.09)',
   line2:     'rgba(243,236,227,.18)',
   // `brand` stays the FUNCTIONAL success/live color (download progress, speed,
-  // seeds, presence, "Monitoring") — warm-tuned green. The editorial deep-red
-  // is a SEPARATE `accent`, migrated onto emphasis/selection/CTA surfaces
-  // screen-by-screen so functional greens never turn red (which would read as
-  // error). Both coexist during the page-migration phase.
-  brand:     '#54B487',   // warm-tuned functional green (live/active/progress)
+  // seeds, presence, "Monitoring") — muted green. The primary CTA is near-white
+  // (Apple-TV play pill); the one quiet color accent is a warm amber (`accent`),
+  // used for emphasis/active/focus. Migrated onto surfaces screen-by-screen so
+  // functional greens never turn amber. Both coexist during page migration.
+  brand:     '#63B98A',   // muted functional green (live/active/progress)
   brandInk:  '#08160e',   // ink on brand green
-  accent:    '#C4392F',   // deep brick red — editorial emphasis/CTA accent
-  accentInk: '#FBF4EC',   // warm paper ink on the red accent
-  onLight:   '#FBF4EC',   // ink on the primary button
-  primary:   '#C4392F',   // primary pill — the deep-red accent
-  red:       '#E5484D',   // danger — distinct from the brand red
-  glass:     'rgba(27,23,20,.66)',
-  glassHi:   'rgba(41,35,30,.74)',
+  accent:    '#E0A458',   // quiet warm amber — emphasis/active/focus accent
+  accentInk: '#1A1206',   // dark ink on the amber accent
+  onLight:   '#101012',   // dark ink on the near-white primary button
+  primary:   '#F3F3F4',   // primary pill — near-white (Apple-TV play)
+  red:       '#E06A63',   // muted danger
+  glass:     '#151517',   // solid surface (flat, no blur)
+  glassHi:   '#202023',
 }
 
-export const SERIF = "'Fraunces', 'Iowan Old Style', Georgia, serif"
 export const SANS = "'Hanken Grotesk', system-ui, -apple-system, sans-serif"
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
@@ -41,23 +40,21 @@ export const DUR = { fast: '.14s', base: '.24s', slow: '.32s' }
 
 // Type scale (§1.2) — spread onto style objects. Sizes in px (root 16px).
 export const TYPE = {
-  display:  { fontFamily: SERIF, fontSize: 32,  lineHeight: 1.04, fontWeight: 600, letterSpacing: '-0.02em' },
-  title:    { fontFamily: SERIF, fontSize: 22,  lineHeight: 1.12, fontWeight: 600, letterSpacing: '-0.02em' },
-  headline: { fontFamily: SANS, fontSize: 17,   lineHeight: 1.25, fontWeight: 700 },
+  display:  { fontFamily: SANS, fontSize: 30,   lineHeight: 1.06, fontWeight: 700, letterSpacing: '-0.03em' },
+  title:    { fontFamily: SANS, fontSize: 21,   lineHeight: 1.15, fontWeight: 700, letterSpacing: '-0.02em' },
+  headline: { fontFamily: SANS, fontSize: 17,   lineHeight: 1.25, fontWeight: 600 },
   body:     { fontFamily: SANS, fontSize: 15,   lineHeight: 1.5,  fontWeight: 500 },
   label:    { fontFamily: SANS, fontSize: 13,   lineHeight: 1.3,  fontWeight: 600 },
   meta:     { fontFamily: MONO, fontSize: 11.5, lineHeight: 1.2,  fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase' },
   input:    { fontFamily: SANS, fontSize: 16,   lineHeight: 1.4,  fontWeight: 500 },   // never below 16 (iOS zoom)
 }
 
-// Signature brand mark gradient (logo/accents). Replaces the old green→blue→
-// purple "AI gradient" with a warm editorial deep-red→ember ramp. Ambient page
-// glows below are warm-tinted so sections gain depth without the cool cast.
-export const BRAND_GRADIENT = 'linear-gradient(135deg, #C4392F, #8f2a22)'
-export const AMBIENT = [
-  'radial-gradient(62% 46% at 12% -4%, rgba(196,57,47,.16), transparent 60%)',
-  'radial-gradient(58% 46% at 104% 6%, rgba(160,80,40,.12), transparent 62%)',
-].join(',')
+// Accent mark gradient for avatars/initials — a restrained warm-amber ramp
+// (replaces the old green→blue→purple "AI gradient"). Dark ink stays readable
+// on it. Ambient page glow is a single, barely-there warm wash so sections gain
+// depth without decoration — cinematic minimal keeps chrome quiet.
+export const BRAND_GRADIENT = 'linear-gradient(135deg, #E0A458, #C98A3E)'
+export const AMBIENT = 'radial-gradient(80% 60% at 50% -10%, rgba(224,164,88,.07), transparent 60%)'
 
 // Spacing scale (px) — keep rhythm consistent across screens.
 export const SP = { xs: 6, sm: 10, md: 14, lg: 20, xl: 28, xxl: 40 }

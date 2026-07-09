@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { navigate } from './router.js'
-import { GlassDefs } from './glass.jsx'
 import { usePhone } from './hooks/useIsMobile.js'
 import Login from './pages/Login.jsx'
 import Library from './pages/Library.jsx'
@@ -78,8 +77,6 @@ function Router() {
 export default function App() {
   return (
     <AuthProvider>
-      <GlassDefs />
-      <div className="grain" aria-hidden />
       <Router />
     </AuthProvider>
   )

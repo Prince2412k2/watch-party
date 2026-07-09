@@ -250,20 +250,15 @@ export default function Library({
     }}>
       {following && <GhostCursor ref={ghostRef} name={driverName} />}
 
-      {/* Ambient darkened backdrop behind everything */}
-      <div style={{ position: 'absolute', inset: 0, background:
-        `radial-gradient(120% 90% at 12% -10%, rgba(62,207,126,.06), transparent 55%),
-         radial-gradient(120% 90% at 100% 0%, rgba(120,140,220,.07), transparent 55%),
-         ${C.bg}`, pointerEvents: 'none' }} />
-
       <Sidebar mobile={mobile} width={sidebarW} views={views} activeId={current ? stack[0].id : null}
         onHome={goHome} onView={openView} showDiscover={!embedded} downloadCount={dlActive} failingCount={failingCount} />
 
-      {/* Scrollable content pane — this is the element the mirror engine drives. */}
+      {/* Scrollable content pane — flush, edge-to-edge (cinematic); the element
+          the mirror engine drives. */}
       <div ref={scrollRef} style={{
-        position: 'absolute', top: mobile ? 8 : 12, right: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-        left: sidebarW + (mobile ? 8 : 12),
-        borderRadius: mobile ? 14 : 20, overflow: 'hidden auto',
+        position: 'absolute', top: 0, right: 0, bottom: 0,
+        left: sidebarW,
+        overflow: 'hidden auto',
         overflowY: following ? 'hidden' : 'auto',
       }}>
         <TopBar embedded={embedded} mobile={mobile} initials={initials} logout={logout}
@@ -324,19 +319,19 @@ const GhostCursor = forwardRef(function GhostCursor({ name }, ref) {
 function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover, downloadCount = 0, failingCount = 0 }) {
   return (
     <aside style={{
-      position: 'absolute', top: mobile ? 8 : 12, left: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-      width, borderRadius: mobile ? 16 : 22, zIndex: 20, display: 'flex', flexDirection: 'column',
-      padding: mobile ? '12px 8px' : '18px 14px', ...glassStyle,
-      boxShadow: '0 24px 60px rgba(0,0,0,.5)',
+      position: 'absolute', top: 0, left: 0, bottom: 0,
+      width, zIndex: 20, display: 'flex', flexDirection: 'column',
+      padding: mobile ? '14px 8px' : '24px 16px',
+      background: C.bg, borderRight: `1px solid ${C.line}`,
     }}>
       {!mobile && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 8px 18px', cursor: 'pointer' }} onClick={onHome}>
-          <div style={{ width: 22, height: 22, borderRadius: 7, background: `linear-gradient(135deg, ${C.green}, #6a8bff)` }} />
-          <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '.02em' }}>Watchparty</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 8px 26px', cursor: 'pointer' }} onClick={onHome}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.live, flexShrink: 0 }} />
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Watchparty</span>
         </div>
       )}
 
-      <nav style={{ display: 'flex', flexDirection: 'column', gap: 3, overflowY: 'auto', scrollbarWidth: 'none', flex: 1 }}>
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto', scrollbarWidth: 'none', flex: 1 }}>
         <NavRow mobile={mobile} icon={Ic.home} label="Home" active={!activeId} onClick={onHome} />
         {views.map(v => (
           <NavRow key={v.Id} mobile={mobile} icon={viewIcon(v)} label={v.Name} active={activeId === v.Id} onClick={() => onView(v)} />
@@ -350,15 +345,8 @@ function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover,
         )}
       </nav>
 
-      {/* Footer brand block (this app's own — not "SEN PRO") */}
       {!mobile && (
-        <div style={{ marginTop: 12, padding: '12px 10px', borderRadius: 14, background: 'rgba(255,255,255,.03)', border: `1px solid ${C.line}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 18, height: 18, borderRadius: 6, background: `linear-gradient(135deg, ${C.green}, #6a8bff, #d16aff)` }} />
-            <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: '.04em', background: `linear-gradient(90deg, ${C.green}, #8aa0ff)`, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>WATCHPARTY</span>
-          </div>
-          <div style={{ fontSize: 11, color: C.faint, marginTop: 4 }}>Watch together, in sync</div>
-        </div>
+        <div style={{ padding: '10px 12px', fontSize: 11, color: C.faint }}>Watch together, in sync</div>
       )}
     </aside>
   )
@@ -370,8 +358,8 @@ function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBa
   return (
     <div style={{
       position: 'sticky', top: 0, zIndex: 15, display: 'flex', alignItems: 'center',
-      gap: 12, padding: mobile ? '12px 12px' : '16px 20px',
-      background: 'linear-gradient(180deg, rgba(11,13,16,.55), rgba(11,13,16,0))',
+      gap: 12, padding: mobile ? '14px 16px' : '20px 28px',
+      background: 'linear-gradient(180deg, rgba(10,10,11,.9) 20%, rgba(10,10,11,0))',
     }}>
       {/* Left: back + home when drilled in */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -381,7 +369,7 @@ function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBa
             <GlassBtn onClick={onHome} title="Home"><Icon path={Ic.home} size={17} sw={1.8} /></GlassBtn>
           </>
         ) : (
-          <span style={{ fontSize: mobile ? 15 : 17, fontWeight: 800, letterSpacing: '-.01em', paddingLeft: 4 }}>Home</span>
+          <span style={{ fontSize: mobile ? 20 : 26, fontWeight: 700, letterSpacing: '-.03em', paddingLeft: 2 }}>Home</span>
         )}
       </div>
 
@@ -458,7 +446,7 @@ function JoinDialog({ mobile, onClose }) {
 /* ── HOME ───────────────────────────────────────────────────────────────── */
 function HomeView({ home, loading, onOpen, onOpenView, embedded, downloads, onOpenDownload }) {
   const mobileHome = useIsMobile()
-  const pad = mobileHome ? '0 12px' : '0 26px'
+  const pad = mobileHome ? '0 16px' : '0 44px'
 
   // Recently added — fetched independently of /home. Jellyfin-only, so it works
   // regardless of Servarr. /api/library/latest returns a flat array; [] if empty
@@ -525,12 +513,12 @@ function PosterCard({ item, onClick }) {
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} aria-label={item.Name}
       style={{ flex: '0 0 auto', width: 170, border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', scrollSnapAlign: 'start' }}>
       <div style={{ position: 'relative', aspectRatio: '2/3', borderRadius: 14, overflow: 'hidden', background: C.surface,
-        boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
-        transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
+        boxShadow: h ? '0 16px 44px rgba(0,0,0,.62)' : 'none',
+        transform: h ? 'translateY(-4px)' : 'none', transition: 'transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s' }}>
         <Img id={item.Id} type="Primary" fallback={{ id: item.SeriesId || item.Id, type: 'Backdrop' }} alt={item.Name}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.06)' : 'scale(1)', transition: 'transform .4s' }} />
-        <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 8px', borderRadius: 999, fontFamily: MONO, fontSize: 10.5, fontWeight: 700,
-          background: 'rgba(62,207,126,.9)', color: '#06210f', boxShadow: '0 2px 6px rgba(0,0,0,.4)' }}>NEW</div>
+        <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 8px', borderRadius: 6, fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: '.08em',
+          background: 'rgba(0,0,0,.6)', color: C.live }}>NEW</div>
       </div>
       <div style={{ marginTop: 9, fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.Name}</div>
       {item.ProductionYear && <div style={{ fontFamily: MONO, fontSize: 12, color: C.faint, marginTop: 2 }}>{item.ProductionYear}</div>}
@@ -552,8 +540,8 @@ function DownloadingCard({ torrent, onOpen }) {
     <button onClick={onOpen} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} title={torrent.name}
       style={{ flex: '0 0 auto', width: 170, border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', scrollSnapAlign: 'start' }}>
       <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden',
-        boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
-        transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
+        boxShadow: h ? '0 16px 44px rgba(0,0,0,.62)' : 'none',
+        transform: h ? 'translateY(-4px)' : 'none', transition: 'transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s' }}>
         <DownloadPoster posterUrl={torrent.posterUrl} kind={torrent.kind} pct={pct} paused={false} width="100%" radius={14} ringSize={78} />
       </div>
       <div style={{ marginTop: 9, fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
@@ -626,13 +614,13 @@ function StillCard({ item, onClick, progress }) {
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{ flex: '0 0 auto', width: 300, border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', scrollSnapAlign: 'start' }}>
       <div style={{ position: 'relative', aspectRatio: '16/9', borderRadius: 14, overflow: 'hidden', background: C.surface,
-        boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
-        transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
+        boxShadow: h ? '0 16px 44px rgba(0,0,0,.62)' : 'none',
+        transform: h ? 'translateY(-4px)' : 'none', transition: 'transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s' }}>
         <Img id={item.Id} type="Thumb" fallback={{ id: item.SeriesId || item.Id, type: 'Backdrop' }} alt={label}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.05)' : 'scale(1)', transition: 'transform .4s' }} />
         {progress && pct > 0 && (
-          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'rgba(0,0,0,.55)' }}>
-            <div style={{ width: `${pct}%`, height: '100%', background: C.green }} />
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'rgba(0,0,0,.55)' }}>
+            <div style={{ width: `${pct}%`, height: '100%', background: C.live }} />
           </div>
         )}
       </div>
@@ -649,8 +637,8 @@ function ViewCard({ view, onClick }) {
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{ flex: '0 0 auto', width: 300, border: 'none', background: 'none', padding: 0, cursor: 'pointer', scrollSnapAlign: 'start' }}>
       <div style={{ position: 'relative', aspectRatio: '16/9', borderRadius: 14, overflow: 'hidden', background: C.surface,
-        boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
-        transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
+        boxShadow: h ? '0 16px 44px rgba(0,0,0,.62)' : 'none',
+        transform: h ? 'translateY(-4px)' : 'none', transition: 'transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s' }}>
         <Img id={view.Id} type="Primary"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: h ? 'brightness(1)' : 'brightness(.74)', transition: 'filter .25s' }} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, rgba(0,0,0,.72), rgba(0,0,0,.1))' }} />
@@ -682,8 +670,8 @@ function PosterCardFluid({ item, onClick, badge }) {
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} aria-label={item.Name}
       style={{ width: '100%', border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
       <div style={{ position: 'relative', aspectRatio: '2/3', borderRadius: 14, overflow: 'hidden', background: C.surface,
-        boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
-        transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
+        boxShadow: h ? '0 16px 44px rgba(0,0,0,.62)' : 'none',
+        transform: h ? 'translateY(-4px)' : 'none', transition: 'transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s' }}>
         <Img id={item.Id} type="Primary" alt={item.Name}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.06)' : 'scale(1)', transition: 'transform .4s' }} />
         {epCount > 0 && (
@@ -698,7 +686,7 @@ function PosterCardFluid({ item, onClick, badge }) {
           <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 7px', borderRadius: 8, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff' }}>{badge}</div>
         )}
         {rating != null && (
-          <div style={{ position: 'absolute', bottom: 8, right: 8, padding: '2px 8px', borderRadius: 8, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>{rating.toFixed(1)}</div>
+          <div style={{ position: 'absolute', bottom: 8, right: 8, padding: '2px 8px', borderRadius: 6, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,.68)' }}>{rating.toFixed(1)}</div>
         )}
       </div>
       <div style={{ marginTop: 9, fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.Name}</div>
@@ -712,8 +700,8 @@ function CircleAction({ icon, title }) {
   const [h, setH] = useState(false)
   return (
     <button title={title} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{
-      width: 54, height: 54, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer',
-      ...glassStyle, background: h ? C.glassHi : 'rgba(20,24,30,.5)', color: '#fff', transition: 'background .15s',
+      width: 50, height: 50, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer',
+      background: h ? C.surface2 : 'rgba(255,255,255,.06)', border: `1px solid ${C.line2}`, color: '#fff', transition: 'background .15s',
     }}>
       <Icon path={icon} size={22} sw={1.9} />
     </button>
@@ -769,8 +757,8 @@ function Details({ itemId, onWatch, onOpen, onBack }) {
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: 'inherit' }}>
           <Img id={backdropId} type="Backdrop" fallback={{ id: backdropId, type: 'Primary' }}
             style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', filter: 'blur(2px)', transform: 'scale(1.05)' }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 4%, rgba(11,13,16,.55) 48%, rgba(11,13,16,.25) 100%)` }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(11,13,16,.7) 0%, rgba(11,13,16,.35) 45%, transparent 82%)` }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 3%, rgba(10,10,11,.5) 46%, rgba(10,10,11,.15) 100%)` }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(10,10,11,.78) 0%, rgba(10,10,11,.32) 46%, transparent 82%)` }} />
         </div>
 
         <div style={{ position: 'relative', width: '100%', padding: mobile ? '0 16px 26px' : '0 34px 36px' }}>

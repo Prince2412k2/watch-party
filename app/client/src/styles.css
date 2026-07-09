@@ -1,35 +1,39 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ── Editorial / theater palette — warm ink, single deep-red accent ──────────
-   Criterion/MUBI-leaning: warm-tinted charcoals (never pure #000 or cool gray),
-   paper-toned text, one considered brick-red accent. Every gray in the app is
-   tinted warm through these tokens; keys are unchanged so pages inherit the new
-   look with no per-page edits. */
+/* ── Cinematic minimal — dark, flat, content-first ───────────────────────────
+   Premium-OTT direction (Apple TV / Max): neutral near-black solid surfaces,
+   NO glass/blur, hairline dividers, huge whitespace. Artwork carries the color;
+   the UI keeps one quiet warm accent (--live) for emphasis/progress/live and a
+   near-white --accent for primary controls. Token keys are unchanged so every
+   surface inherits the flat look; only values changed. */
 :root {
-  --bg: #0b0806;                  /* warmest black, behind everything */
-  --accent: #C4392F;              /* deep brick red — the single accent */
-  --accent-soft: rgba(196,57,47,.15);
-  --accent-glow: rgba(196,57,47,.38);
-  --on-accent: #FBF4EC;           /* warm paper ink on the red accent */
-  --text: #F3ECE3;                /* warm paper */
-  --text2: rgba(243,236,227,.60);
-  --text3: rgba(243,236,227,.34);
-  /* Solid warm-charcoal surfaces — readable over video, no muddy glass */
-  --glass: #1b1714;
-  --glass2: rgba(243,236,227,.05);
-  --stroke: rgba(243,236,227,.09);
-  --stroke2: rgba(243,236,227,.18);
+  --bg: #0a0a0b;                  /* neutral near-black, behind everything */
+  --accent: #F3F3F4;              /* near-white primary control (play pill) */
+  --accent-soft: rgba(243,243,244,.10);
+  --accent-glow: rgba(243,243,244,.22);
+  --on-accent: #101012;           /* dark ink on the near-white accent */
+  --live: #E0A458;                /* single quiet warm accent — live/progress/focus */
+  --live-soft: rgba(224,164,88,.14);
+  --text: #F4F4F5;
+  --text2: rgba(244,244,245,.60);
+  --text3: rgba(244,244,245,.34);
+  /* Solid surfaces — flat, opaque, no backdrop-filter */
+  --glass: #151517;
+  --glass2: rgba(255,255,255,.05);
+  --surface: #151517;
+  --surface2: #202023;
+  --stroke: rgba(255,255,255,.07);
+  --stroke2: rgba(255,255,255,.13);
   --hi: transparent;
   --blur: none;
-  --shadow: 0 4px 20px rgba(0,0,0,.5);
-  --shadow-lg: 0 16px 48px rgba(0,0,0,.65);
-  --red: #E5484D;                 /* danger — cooler/brighter than the brand red */
-  --green: #54B487;               /* warm-tuned success */
-  --serif: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
-  --r: 14px;
-  --r-lg: 22px;
+  --shadow: 0 4px 24px rgba(0,0,0,.55);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,.7);
+  --red: #E06A63;                 /* muted danger */
+  --green: #63B98A;               /* muted success */
+  --r: 12px;
+  --r-lg: 20px;
 }
 
 html, body, #root {
@@ -42,11 +46,8 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* Editorial display type — serif, optically sized, tight tracking. Apply via
-   the `.serif` helper or font-family: var(--serif). Headlines balance their
-   wrap so no orphan words sit alone on the last line. */
-.serif { font-family: var(--serif); font-optical-sizing: auto; }
-h1, h2, h3 { text-wrap: balance; }
+/* Clean typographic defaults — balanced heading wrap, no orphan words. */
+h1, h2, h3 { text-wrap: balance; letter-spacing: -0.02em; }
 p { text-wrap: pretty; }
 
 input, button, textarea { font-family: inherit; }
@@ -70,23 +71,12 @@ media-player, media-player:focus, media-player:focus-visible,
 html { scroll-behavior: smooth; }
 
 ::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-thumb { background: rgba(243,236,227,.16); border-radius: 99px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 99px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* Keyboard focus ring in the brand accent (mouse clicks stay clean via the
+/* Keyboard focus ring in the quiet warm accent (mouse clicks stay clean via the
    :focus:not(:focus-visible) rule below). Accessibility, not optional. */
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
-
-/* ── Film-grain overlay ──────────────────────────────────────────────────────
-   A fixed, non-interactive noise layer that breaks the digital flatness of the
-   warm-charcoal surfaces (editorial/theater texture). Mount <div class="grain"/>
-   once near the app root. Very low opacity so it reads as tooth, not static. */
-.grain::before {
-  content: ''; position: fixed; inset: 0; z-index: 9999; pointer-events: none;
-  opacity: .035; mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-@media (prefers-reduced-motion: reduce) { .grain::before { opacity: .025; } }
+:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; border-radius: 3px; }
 
 /* ── Animations ─────────────────────────────── */
 @keyframes spin  { to { transform: rotate(360deg); } }
@@ -135,13 +125,11 @@ html { scroll-behavior: smooth; }
   --sa-l: env(safe-area-inset-left, 0px);
 }
 
-/* ── Glass surface ──────────────────────────── */
+/* ── Solid surface (was glass — now flat, no blur) ─────────────────────────── */
 .glass {
   background: var(--glass);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
   border: 1px solid var(--stroke);
-  box-shadow: var(--shadow), inset 0 1px 0 var(--hi);
+  box-shadow: var(--shadow);
 }
 
 /* ── Icon button base ───────────────────────── */
@@ -156,7 +144,7 @@ html { scroll-behavior: smooth; }
   transition: background .15s, color .15s;
 }
 .icon-btn:hover { background: var(--glass2); color: var(--text); }
-.icon-btn.active { color: var(--accent); }
+.icon-btn.active { color: var(--live); }
 
 /* ── Badge ──────────────────────────────────── */
 .badge {
