@@ -1,0 +1,51 @@
+name: watchparty
+description: "Watchparty — Flutter desktop client (all-codec playback, watch-party sync, LiveKit A/V, chat, offline, servarr)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Playback (libmpv, all-codec, GPU texture) — proven in the spike.
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
+
+  # Native WebRTC A/V — proven in the spike.
+  livekit_client: ^2.8.1
+
+  # Sync signaling (same socket.io contract as the web app).
+  socket_io_client: ^3.1.2
+
+  # HTTP + session-cookie persistence.
+  dio: ^5.10.0
+  cookie_jar: ^4.0.9
+  dio_cookie_manager: ^3.4.0
+
+  # State / routing / persistence.
+  flutter_riverpod: ^2.6.1
+  go_router: ^14.8.1
+  shared_preferences: ^2.5.3
+  # Resumable, background, restart-surviving downloads.
+  background_downloader: ^9.2.0
+
+  # Immutable models + JSON.
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  build_runner: ^2.4.15
+  freezed: ^2.5.8
+  json_serializable: ^6.9.5
+
+flutter:
+  uses-material-design: true
