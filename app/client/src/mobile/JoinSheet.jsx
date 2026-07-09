@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { navigate } from '../router.js'
-import { T, MONO, TYPE, R, EASE, BRAND_GRADIENT } from './theme.js'
+import { T, MONO, TYPE, R, EASE } from './theme.js'
 import { Sheet } from './ui/Sheet.jsx'
 import { Icon, Ic } from './ui/Icon.jsx'
 
@@ -30,15 +30,15 @@ export function JoinSheet({ open, onClose }) {
         style={{
           width: '100%', display: 'flex', alignItems: 'center', gap: 14,
           padding: '16px 16px', borderRadius: R.md, border: 'none', cursor: 'pointer',
-          background: BRAND_GRADIENT, color: '#0b0d10', textAlign: 'left', marginBottom: 18,
+          background: T.primary, color: T.onLight, textAlign: 'left', marginBottom: 18,
         }}
       >
-        <span style={{ width: 42, height: 42, borderRadius: 999, background: 'rgba(11,13,16,.16)', display: 'grid', placeItems: 'center', flex: '0 0 auto' }}>
-          <Icon path={Ic.play} size={22} fill="#0b0d10" stroke="none" />
+        <span style={{ width: 42, height: 42, borderRadius: 999, background: 'rgba(10,10,11,.14)', display: 'grid', placeItems: 'center', flex: '0 0 auto' }}>
+          <Icon path={Ic.play} size={22} fill={T.onLight} stroke="none" />
         </span>
         <span style={{ minWidth: 0 }}>
-          <span style={{ ...TYPE.headline, display: 'block', color: '#0b0d10' }}>Start a new party</span>
-          <span style={{ ...TYPE.label, display: 'block', fontWeight: 600, color: 'rgba(11,13,16,.7)' }}>Pick something to watch, invite friends</span>
+          <span style={{ ...TYPE.headline, display: 'block', color: T.onLight }}>Start a new party</span>
+          <span style={{ ...TYPE.label, display: 'block', fontWeight: 600, color: 'rgba(10,10,11,.65)' }}>Pick something to watch, invite friends</span>
         </span>
       </button>
 
@@ -61,7 +61,7 @@ export function JoinSheet({ open, onClose }) {
             spellCheck={false}
             style={{
               flex: 1, minWidth: 0, height: 52, padding: '0 16px', borderRadius: R.md,
-              border: `1px solid ${valid ? T.brand : T.line2}`,
+              border: `1px solid ${valid ? T.text : T.line2}`,
               background: 'rgba(255,255,255,.05)', color: T.text,
               fontFamily: MONO, fontSize: 20, fontWeight: 600, letterSpacing: '.22em', outline: 'none',
               transition: `border-color .15s ${EASE}`,
