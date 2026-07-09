@@ -391,11 +391,11 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
         <div role="alert" style={{
           position: 'absolute', top: 'calc(var(--sa-t) + 70px)', left: '50%', transform: 'translateX(-50%)', zIndex: Z.toast, maxWidth: '80vw',
           display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 12,
-          background: '#2A1012', border: '1px solid rgba(255,69,58,.6)', color: '#FFE3E0',
+          background: 'rgba(224,101,94,.14)', border: '1px solid rgba(224,101,94,.4)', color: 'var(--text)',
           fontSize: 13.5, fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,.55)',
           animation: 'in .22s cubic-bezier(.2,0,.1,1)',
         }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
           {lk.error}
         </div>
       )}
@@ -449,8 +449,8 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
       {/* Notification ripple from the right edge ('on' mode) */}
       {ripple > 0 && !chatOpen && (
         <div key={ripple} onAnimationEnd={() => setRipple(0)}
-          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 80, zIndex: Z.chatEdge, pointerEvents: 'none',
-            background: 'linear-gradient(270deg, rgba(255,255,255,.22), transparent)', transformOrigin: 'right',
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, zIndex: Z.chatEdge, pointerEvents: 'none',
+            background: 'var(--text)', transformOrigin: 'right',
             animation: 'edgeRipple .9s ease-out forwards' }} />
       )}
 
@@ -462,9 +462,8 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
         <div key={seekFx.key} className="seek-fx" aria-hidden style={{
           position: 'absolute', top: 0, bottom: 0, width: '38%',
           [seekFx.dir < 0 ? 'left' : 'right']: 0,
-          zIndex: Z.buffering, pointerEvents: 'none', color: '#fff',
+          zIndex: Z.buffering, pointerEvents: 'none', color: 'var(--text)',
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
-          background: `radial-gradient(circle at ${seekFx.dir < 0 ? '30%' : '70%'} 50%, rgba(255,255,255,.16), rgba(255,255,255,0) 62%)`,
           animation: 'seekFx .6s ease-out both',
         }}>
           <div style={{ display: 'grid', placeItems: 'center', width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,.42)', border: '1px solid rgba(255,255,255,.28)' }}>
@@ -541,9 +540,8 @@ function RotateHint() {
         marginTop: 'calc((var(--sa-t) - var(--sa-b)) / 2)', // stay centered within the safe area
         display: 'inline-flex', alignItems: 'center', gap: 9,
         padding: '9px 12px 9px 15px', borderRadius: 999, cursor: 'pointer',
-        background: 'rgba(0,0,0,.62)', border: '1px solid rgba(255,255,255,.16)',
-        color: '#fff', fontSize: 12, fontWeight: 600, textAlign: 'left',
-        backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+        background: 'rgba(0,0,0,.72)', border: '1px solid rgba(255,255,255,.16)',
+        color: 'var(--text)', fontSize: 12, fontWeight: 600, textAlign: 'left',
         boxShadow: '0 10px 32px rgba(0,0,0,.5)',
       }}
     >
@@ -619,12 +617,12 @@ function CodePill({ code, count }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '7px 8px 7px 14px', borderRadius: 999,
-      background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)',
+      background: 'var(--glass2)', border: '1px solid var(--stroke)',
     }}>
-      <span style={{ fontSize: 13, color: 'rgba(255,255,255,.55)' }}>Code</span>
-      <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '.1em', fontFamily: 'ui-monospace, monospace' }}>{code}</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,.08)', fontSize: 12.5, fontWeight: 600 }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#E4E8EE' }} />
+      <span style={{ fontSize: 13, color: 'var(--text3)' }}>Code</span>
+      <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '.1em', fontFamily: 'JetBrains Mono, ui-monospace, monospace', color: 'var(--text)' }}>{code}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, background: 'var(--glass2)', fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--text)' }} />
         {count}
       </span>
     </div>
@@ -636,9 +634,9 @@ function ChoosingBanner({ host }) {
     <div style={{
       maxWidth: 1240, margin: '14px auto 0', padding: '10px 16px', borderRadius: 10,
       display: 'flex', alignItems: 'center', gap: 10,
-      background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.18)', color: '#C7CCD3', fontSize: 13.5, fontWeight: 600,
+      background: 'var(--glass2)', border: '1px solid var(--stroke2)', color: 'var(--text2)', fontSize: 13.5, fontWeight: 600,
     }}>
-      <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#E4E8EE', animation: 'pulse 2s ease-in-out infinite' }} />
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--text)', animation: 'pulse 2s ease-in-out infinite' }} />
       {host || 'The host'} is choosing what to watch…
     </div>
   )
@@ -649,8 +647,8 @@ function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }) 
     <button onClick={onClick} title={title} style={{
       ...glass('light'), width: 48, height: 48, borderRadius: 16, cursor: 'pointer',
       display: 'grid', placeItems: 'center',
-      color: danger ? '#FF6B6B' : '#fff',
-      ...(on ? { backgroundColor: 'rgba(255,255,255,.26)' } : {}),
+      color: danger ? 'var(--red)' : 'var(--text)',
+      ...(on ? { backgroundColor: 'var(--glass2)' } : {}),
     }}>{children}</button>
   )
   return (
