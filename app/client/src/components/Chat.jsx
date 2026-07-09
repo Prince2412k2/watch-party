@@ -7,12 +7,6 @@ const MONO = "'JetBrains Mono', ui-monospace, monospace"
 function fmt(ts) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
-const COLORS = ['#7dd3fc', '#fca5a5', '#86efac', '#c4b5fd', '#fda4af', '#fcd34d']
-function colorFor(name = '') {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff
-  return COLORS[Math.abs(h) % COLORS.length]
-}
 
 // Alert modes: focus (open+focus on msg), on (edge ripple), mute (silent)
 const ALERT = {
@@ -57,13 +51,13 @@ export default function Chat({ top = 76, mobileSheet = false }) {
 
   return (
     <div style={{
-      ...glass('heavy', { refract: true }),
+      ...glass('light'),
       ...frame,
-      zIndex: 22, borderRadius: 18, display: 'flex', flexDirection: 'column', overflow: 'hidden', color: '#fff',
+      zIndex: 22, borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'var(--text)',
     }}>
       {/* Header — minimal: label + alert toggle + close */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px 12px 16px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-        <span style={{ flex: 1, fontFamily: MONO, fontSize: 11, letterSpacing: '.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,.5)' }}>Chat</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px 12px 16px', borderBottom: '1px solid var(--stroke)' }}>
+        <span style={{ flex: 1, fontFamily: MONO, fontSize: 11, letterSpacing: '.16em', textTransform: 'uppercase', color: 'var(--text2)' }}>Chat</span>
         <button onClick={() => setAlertMode(a.next)} title={a.label} style={hdrBtn(alertMode === 'mute')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{a.icon}</svg>
         </button>
@@ -75,7 +69,7 @@ export default function Chat({ top = 76, mobileSheet = false }) {
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {messages.length === 0 && (
-          <div style={{ margin: 'auto', textAlign: 'center', color: 'rgba(255,255,255,.32)', fontSize: 13 }}>No messages yet</div>
+          <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>No messages yet</div>
         )}
         {messages.map((msg, i) => {
           const cont = i > 0 && messages[i - 1].userId === msg.userId
@@ -83,11 +77,11 @@ export default function Chat({ top = 76, mobileSheet = false }) {
             <div key={i} style={{ marginTop: cont ? -6 : 0 }}>
               {!cont && (
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: colorFor(msg.name) }}>{msg.name}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, color: 'rgba(255,255,255,.3)' }}>{fmt(msg.timestamp)}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{msg.name}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text3)' }}>{fmt(msg.timestamp)}</span>
                 </div>
               )}
-              <div style={{ fontSize: 14, lineHeight: 1.5, color: 'rgba(255,255,255,.92)', wordBreak: 'break-word' }}>{msg.text}</div>
+              <div style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--text2)', wordBreak: 'break-word' }}>{msg.text}</div>
             </div>
           )
         })}
@@ -95,14 +89,14 @@ export default function Chat({ top = 76, mobileSheet = false }) {
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSend} style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'center', borderTop: '1px solid rgba(255,255,255,.08)' }}>
+      <form onSubmit={handleSend} style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'center', borderTop: '1px solid var(--stroke)' }}>
         <input ref={inputRef} value={text} onChange={e => setText(e.target.value)} placeholder="Message…" maxLength={500}
-          style={{ flex: 1, padding: '11px 14px', borderRadius: 999, border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.05)', color: '#fff', fontSize: 14, outline: 'none', transition: 'border-color .15s' }}
-          onFocus={e => e.target.style.borderColor = 'rgba(255,255,255,.36)'}
-          onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,.12)'} />
+          style={{ flex: 1, padding: '11px 14px', borderRadius: 999, border: '1px solid var(--stroke2)', background: 'var(--glass2)', color: 'var(--text)', fontSize: 14, outline: 'none', transition: 'border-color .15s' }}
+          onFocus={e => e.target.style.borderColor = 'var(--text3)'}
+          onBlur={e => e.target.style.borderColor = 'var(--stroke2)'} />
         <button type="submit" disabled={!text.trim()} style={{
           width: 40, height: 40, flexShrink: 0, borderRadius: '50%', border: 'none',
-          background: text.trim() ? '#EDEFF2' : 'rgba(255,255,255,.06)', color: text.trim() ? '#0a0a0c' : 'rgba(255,255,255,.3)',
+          background: text.trim() ? 'var(--accent)' : 'var(--glass2)', color: text.trim() ? 'var(--on-accent)' : 'var(--text3)',
           display: 'grid', placeItems: 'center', cursor: text.trim() ? 'pointer' : 'default', transition: 'background .15s',
         }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
@@ -114,5 +108,5 @@ export default function Chat({ top = 76, mobileSheet = false }) {
 
 const hdrBtn = (active) => ({
   width: 30, height: 30, borderRadius: 9, border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center',
-  background: 'transparent', color: active ? 'rgba(255,255,255,.35)' : 'rgba(255,255,255,.7)',
+  background: 'transparent', color: active ? 'var(--text3)' : 'var(--text2)',
 })

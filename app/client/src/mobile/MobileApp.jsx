@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { T, AMBIENT } from './theme.js'
+import { T } from './theme.js'
 import { ShellContext } from './shellContext.js'
 import { TabBar } from './TabBar.jsx'
 import { JoinSheet } from './JoinSheet.jsx'
@@ -21,9 +21,8 @@ function screenFor(path) {
 /**
  * Phone app shell. Fixed to the dynamic viewport (100dvh) so the collapsing URL
  * bar never shifts layout; a single inner region scrolls with momentum; a
- * floating glass tab bar sits above the home indicator (hidden on /login). The
- * ambient backdrop and <GlassDefs/> (mounted at app root) give every screen the
- * same Midnight-Glass ground.
+ * flush tab bar sits above the home indicator (hidden on /login). Flat
+ * monochrome ground — no ambient glow, no gradient chrome.
  */
 export default function MobileApp({ path }) {
   const [joinOpen, setJoinOpen] = useState(false)
@@ -34,9 +33,8 @@ export default function MobileApp({ path }) {
   return (
     <ShellContext.Provider value={ctx}>
       <div className="mobile-shell" style={{ color: T.text }}>
-        {/* ambient ground — dual radial glows over the page bg */}
+        {/* flat ground */}
         <div aria-hidden style={{ position: 'absolute', inset: 0, background: T.bg, pointerEvents: 'none' }} />
-        <div aria-hidden style={{ position: 'absolute', inset: 0, background: AMBIENT, pointerEvents: 'none' }} />
 
         {/* the ONLY scroller */}
         <div

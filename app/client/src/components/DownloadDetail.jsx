@@ -10,15 +10,27 @@
 
 import { useEffect, useState } from 'react'
 import { useIsMobile } from '../hooks/useIsMobile.js'
-import { C, SANS, MONO, glassStyle, Ic, Icon } from '../lib/ui.jsx'
+import { C, SANS, MONO, Ic, Icon } from '../lib/ui.jsx'
 import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, isPausedState } from '../lib/format.js'
 import { jpost } from '../lib/api.js'
+
+/* ── Monochrome tokens local to this file. Progress is white on a white-alpha
+   track; the only color is a single muted red used strictly for the "active
+   transfer" dot and destructive/delete actions — never as decoration. ────── */
+const WHITE = '#F4F4F5'
+const TRACK = 'rgba(255,255,255,.18)'
+const LIVE = '#E0655E'
+const DANGER = '#E0655E'
+const DANGER_BG = 'rgba(224,101,94,.12)'
+const DANGER_BORDER = 'rgba(224,101,94,.35)'
+const FLAT = { backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)', boxShadow: 'none' }
 
 const clampPct = (progress) => Math.max(0, Math.min(100, Math.round((progress || 0) * 100)))
 
 /* ── Circular progress ring (SVG donut: track circle + progress arc via
-   stroke-dasharray/stroke-dashoffset, NN% centered). ────────────────────────── */
-export function DownloadRing({ pct = 0, size = 72, stroke = 6, color = C.green, track = 'rgba(255,255,255,.2)', labelColor = '#fff', labelSize }) {
+   stroke-dasharray/stroke-dashoffset, NN% centered). Neutral white by default —
+   no phase color. ────────────────────────────────────────────────────────── */
+export function DownloadRing({ pct = 0, size = 72, stroke = 6, color = WHITE, track = TRACK, labelColor = '#fff', labelSize }) {
   const clamped = Math.max(0, Math.min(100, Math.round(pct)))
   const r = (size - stroke) / 2
   const circ = 2 * Math.PI * r
@@ -37,15 +49,15 @@ export function DownloadRing({ pct = 0, size = 72, stroke = 6, color = C.green, 
   )
 }
 
-/* ── 2:3 poster tile with the ring centered over a subtle dark scrim. Robust
+/* ── 2:3 poster tile with the ring centered over a flat black-alpha scrim (the
+   one allowed non-white overlay — a legibility scrim, not decoration). Robust
    DARK placeholder (film/tv icon on the dark surface) when there's no poster or
-   it 404s — never a blank white square. A small pulsing "downloading" dot sits
-   top-left while active. ─────────────────────────────────────────────────────── */
+   it 404s — never a blank white square. A single small "live" red dot sits
+   top-left while actively downloading — the only color on the tile. ──────── */
 export function DownloadPoster({ posterUrl, kind, pct = 0, paused = false, width = 170, radius = 14, ringSize }) {
   const [ok, setOk] = useState(true)
   const show = posterUrl && ok
   const rs = ringSize ?? Math.round(Math.min(width, 200) * 0.46)
-  const ringColor = paused ? C.dim : C.green
   return (
     <div style={{ position: 'relative', width: width === '100%' ? '100%' : width, aspectRatio: '2/3', borderRadius: radius,
       overflow: 'hidden', background: C.surface, display: 'grid', placeItems: 'center' }}>
@@ -53,15 +65,14 @@ export function DownloadPoster({ posterUrl, kind, pct = 0, paused = false, width
         ? <img src={posterUrl} alt="" onError={() => setOk(false)}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
         : <Icon path={kind === 'movie' ? Ic.film : Ic.tv} size={40} stroke={C.faint} sw={1.4} />}
-      {/* Dark scrim under the ring so the % stays legible over any artwork. */}
-      <div style={{ position: 'absolute', inset: 0, background:
-        'radial-gradient(circle at 50% 50%, rgba(6,8,11,.66) 0%, rgba(6,8,11,.34) 52%, rgba(6,8,11,.12) 100%)' }} />
-      <div style={{ position: 'relative' }}><DownloadRing pct={pct} size={rs} color={ringColor} /></div>
+      {/* Flat black-alpha scrim under the ring so the % stays legible over any artwork. */}
+      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.5)' }} />
+      <div style={{ position: 'relative' }}><DownloadRing pct={pct} size={rs} color={paused ? C.dim : WHITE} /></div>
       {!paused && (
         <span style={{ position: 'absolute', top: 8, left: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
-          padding: '3px 8px', borderRadius: 999, background: 'rgba(6,8,11,.55)', backdropFilter: 'blur(6px)',
-          WebkitBackdropFilter: 'blur(6px)', fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '.05em', color: C.green }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, boxShadow: `0 0 6px ${C.green}`,
+          padding: '3px 8px', borderRadius: 999, background: 'rgba(0,0,0,.55)',
+          fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '.05em', color: C.text }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: LIVE,
             animation: 'pulse 1.6s ease-in-out infinite' }} />DL
         </span>
       )}
@@ -134,36 +145,37 @@ export function DownloadDetail({ torrent, onClose }) {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: C.bg, color: C.text, fontFamily: SANS,
       overflowY: 'auto', animation: 'up .25s ease both' }}>
-      {/* Blurred hero from the poster (a downloading title has no wide backdrop). */}
+      {/* Backdrop from the poster, darkened with a flat black-alpha scrim (the one
+          allowed gradient — single-hue black, purely for text legibility). */}
       <div style={{ position: 'relative', minHeight: mobile ? 'auto' : 'min(72vh, 600px)', display: 'flex', alignItems: 'flex-end' }}>
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
           {posterUrl
             ? <img src={posterUrl} alt="" referrerPolicy="no-referrer"
                 style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', filter: 'blur(26px) brightness(.6)', transform: 'scale(1.15)' }} />
             : <div style={{ width: '100%', height: '100%', background: C.surface }} />}
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 4%, rgba(11,13,16,.55) 48%, rgba(11,13,16,.3) 100%)` }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(11,13,16,.72) 0%, rgba(11,13,16,.35) 45%, transparent 82%)` }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, rgba(0,0,0,.92) 4%, rgba(0,0,0,.55) 48%, rgba(0,0,0,.3) 100%)` }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(0,0,0,.72) 0%, rgba(0,0,0,.35) 45%, transparent 82%)` }} />
         </div>
 
         {/* Back / close */}
         <button onClick={onClose} title="Back" style={{ position: 'absolute', top: mobile ? 12 : 18, left: mobile ? 12 : 18, zIndex: 3,
-          width: 40, height: 40, borderRadius: 999, display: 'grid', placeItems: 'center', cursor: 'pointer', color: '#fff',
-          ...glassStyle, background: C.glass }}>
+          width: 40, height: 40, borderRadius: 999, display: 'grid', placeItems: 'center', cursor: 'pointer', color: C.text,
+          ...FLAT }}>
           <Icon path={Ic.chevL} size={18} sw={2} />
         </button>
 
         <div style={{ position: 'relative', width: '100%', padding: mobile ? '110px 16px 22px' : '0 40px 40px',
           display: 'flex', gap: mobile ? 16 : 28, alignItems: 'flex-end' }}>
           {/* Poster with the ring overlay (the "progress" in lieu of a play button) */}
-          <div style={{ width: mobile ? 128 : 200, flexShrink: 0, boxShadow: '0 20px 50px rgba(0,0,0,.6)', borderRadius: 16, overflow: 'hidden' }}>
+          <div style={{ width: mobile ? 128 : 200, flexShrink: 0, boxShadow: '0 16px 44px rgba(0,0,0,.62)', borderRadius: 16, overflow: 'hidden' }}>
             <DownloadPoster posterUrl={posterUrl} kind={kind} pct={pct} paused={paused} width={mobile ? 128 : 200} radius={16} />
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: MONO, fontSize: 11.5, fontWeight: 700,
-              letterSpacing: '.06em', color: paused ? C.dim : C.green, marginBottom: 10 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: paused ? C.dim : C.green,
-                boxShadow: paused ? 'none' : `0 0 6px ${C.green}`, animation: paused ? 'none' : 'pulse 1.6s ease-in-out infinite' }} />
+              letterSpacing: '.06em', color: C.dim, marginBottom: 10 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: paused ? C.faint : LIVE,
+                animation: paused ? 'none' : 'pulse 1.6s ease-in-out infinite' }} />
               {done ? 'FINISHING UP' : paused ? 'PAUSED' : 'DOWNLOADING'}
             </div>
             <h1 style={{ fontSize: mobile ? 26 : 40, fontWeight: 800, letterSpacing: '-.02em', margin: 0, lineHeight: 1.05,
@@ -175,7 +187,7 @@ export function DownloadDetail({ torrent, onClose }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 14, fontSize: 15, fontWeight: 600 }}>
                 {rating != null && (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: C.text }}>
-                    <Icon path={Ic.star} size={16} fill="#f5c518" stroke="none" />{rating.toFixed(1)}
+                    <Icon path={Ic.star} size={16} fill={C.text} stroke="none" />{rating.toFixed(1)}
                   </span>
                 )}
                 {genres.slice(0, 3).map((g) => <span key={g} style={{ color: C.dim }}>{g}</span>)}
@@ -191,7 +203,7 @@ export function DownloadDetail({ torrent, onClose }) {
 
             {/* Progress + live stats + controls (no Play — it isn't watchable yet). */}
             <div style={{ display: 'flex', alignItems: 'center', gap: mobile ? 16 : 24, flexWrap: 'wrap', marginTop: 22 }}>
-              <DownloadRing pct={pct} size={mobile ? 88 : 104} stroke={8} color={paused ? C.dim : C.green} />
+              <DownloadRing pct={pct} size={mobile ? 88 : 104} stroke={8} color={paused ? C.dim : WHITE} />
               <div style={{ minWidth: 180 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '6px 20px', fontFamily: MONO, fontSize: 13, color: C.dim }}>
                   <span>↓ {fmtSpeed(torrent.dlspeed)}</span>
@@ -208,13 +220,13 @@ export function DownloadDetail({ torrent, onClose }) {
               <button onClick={onPauseResume} disabled={busy || done} title={paused ? 'Resume' : 'Pause'}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '13px 26px', border: 'none', borderRadius: 999,
                   background: C.accent, color: C.onAccent, fontFamily: SANS, fontSize: 15, fontWeight: 700,
-                  cursor: busy || done ? 'default' : 'pointer', opacity: busy || done ? 0.5 : 1, boxShadow: '0 10px 30px rgba(0,0,0,.4)' }}>
+                  cursor: busy || done ? 'default' : 'pointer', opacity: busy || done ? 0.5 : 1 }}>
                 <Icon path={paused ? Ic.play : Ic.pause} size={17} fill={paused ? 'currentColor' : 'none'} stroke={paused ? 'none' : 'currentColor'} sw={2} />
                 {paused ? 'Resume' : 'Pause'}
               </button>
               <button onClick={() => setConfirmDel(true)} disabled={busy} title="Delete"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '13px 24px', borderRadius: 999,
-                  border: '1px solid rgba(220,60,60,.4)', background: 'rgba(220,60,60,.14)', color: C.red,
+                  border: `1px solid ${DANGER_BORDER}`, background: DANGER_BG, color: DANGER,
                   fontFamily: SANS, fontSize: 15, fontWeight: 700, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
                 <Icon path={Ic.trash} size={17} sw={2} />Delete
               </button>
@@ -230,7 +242,7 @@ export function DownloadDetail({ torrent, onClose }) {
       {/* Overview */}
       {overview && (
         <div style={{ padding: mobile ? '0 16px 60px' : '0 40px 80px' }}>
-          <p style={{ fontSize: 15, lineHeight: 1.65, color: 'rgba(241,243,246,.85)', maxWidth: 760, margin: 0 }}>{overview}</p>
+          <p style={{ fontSize: 15, lineHeight: 1.65, color: C.dim, maxWidth: 760, margin: 0 }}>{overview}</p>
         </div>
       )}
 
@@ -243,18 +255,19 @@ export function DownloadDetail({ torrent, onClose }) {
 }
 
 /* Delete confirm — mirrors Downloads.jsx's DeleteDialog (with the same
-   "also delete files" toggle) so the two surfaces read identically. */
+   "also delete files" toggle) so the two surfaces read identically: a flat
+   solid surface, no blur, sitting on a plain black-alpha scrim. */
 function DeleteConfirm({ name, mobile, onClose, onConfirm }) {
   const [deleteFiles, setDeleteFiles] = useState(false)
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 130, display: 'grid', placeItems: 'center',
-      padding: 16, background: 'rgba(6,8,11,.66)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', animation: 'up .2s ease both' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(440px, 100%)', borderRadius: 20, padding: mobile ? 20 : 26,
-        ...glassStyle, background: 'rgba(22,25,30,.92)', boxShadow: '0 30px 80px rgba(0,0,0,.6)' }}>
+      padding: 16, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'up .2s ease both' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(440px, 100%)', borderRadius: 16, padding: mobile ? 20 : 26,
+        ...FLAT, boxShadow: '0 24px 60px rgba(0,0,0,.7)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <div style={{ width: 42, height: 42, borderRadius: 12, display: 'grid', placeItems: 'center', flexShrink: 0,
-            background: 'rgba(220,60,60,.12)', border: '1px solid rgba(220,60,60,.3)' }}>
-            <Icon path={Ic.trash} size={20} stroke={C.red} sw={1.8} />
+            background: DANGER_BG, border: `1px solid ${DANGER_BORDER}` }}>
+            <Icon path={Ic.trash} size={20} stroke={DANGER} sw={1.8} />
           </div>
           <h2 style={{ fontSize: 19, fontWeight: 800, margin: 0 }}>Remove download?</h2>
         </div>
@@ -268,7 +281,7 @@ function DeleteConfirm({ name, mobile, onClose, onConfirm }) {
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Also delete downloaded files</div>
             <div style={{ fontSize: 12, color: C.faint, marginTop: 2 }}>Erase the data on disk, not just the download</div>
           </div>
-          <span style={{ width: 42, height: 24, borderRadius: 999, background: deleteFiles ? C.green : 'rgba(255,255,255,.14)',
+          <span style={{ width: 42, height: 24, borderRadius: 999, background: deleteFiles ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.14)',
             position: 'relative', transition: 'background .18s', flexShrink: 0 }}>
             <span style={{ position: 'absolute', top: 3, left: deleteFiles ? 21 : 3, width: 18, height: 18, borderRadius: '50%',
               background: '#fff', transition: 'left .18s' }} />
@@ -279,7 +292,7 @@ function DeleteConfirm({ name, mobile, onClose, onConfirm }) {
             cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: C.text, background: 'rgba(255,255,255,.04)' }}>Cancel</button>
           <button onClick={() => onConfirm(deleteFiles)} style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
             cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: '#fff',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'rgb(200,64,64)' }}>
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: DANGER }}>
             <Icon path={Ic.trash} size={16} sw={2} />Remove
           </button>
         </div>

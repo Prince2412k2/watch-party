@@ -7,24 +7,32 @@ import { useState } from 'react'
 import { navigate } from '../router.js'
 import { glass } from '../glass.jsx'
 
-/* ── Sen-Player-inspired glass palette — dark, atmospheric, artwork carries the color ── */
+/* ── Cinematic minimal — dark, flat, monochrome ──────────────────────────────
+   Content is the interface (Apple TV / Max). Neutral near-black -> near-white
+   ramp, ONE color family total: semantic status (danger/live/success), never
+   used decoratively. No brand hue, no gradients, no glass. Keys match the old
+   object 1:1 so every page inherits this untouched. */
 export const C = {
-  bg: '#0b0d10',
-  surface: '#16191e',
-  surface2: '#20242b',
-  text: '#F1F3F6',
-  dim: '#A6ADB8',
-  faint: '#6B7280',
+  bg: '#0a0a0b',
+  surface: '#141416',
+  surface2: '#1e1e21',
+  surface3: '#2a2a2e',
+  text: '#F4F4F5',
+  dim: 'rgba(244,244,245,.62)',
+  faint: 'rgba(244,244,245,.36)',
   line: 'rgba(255,255,255,.08)',
-  line2: 'rgba(255,255,255,.16)',
-  accent: '#FFFFFF',        // white pill (Sen Player "Play")
-  accentDim: '#D7DBE0',
-  onAccent: '#0a0b0d',
-  green: '#3ecf7e',
-  amber: '#e2b04a',
-  red: 'rgb(240,170,170)',
-  glass: 'rgba(20,24,30,.62)',
-  glassHi: 'rgba(38,44,54,.7)',
+  line2: 'rgba(255,255,255,.14)',
+  accent: '#F4F4F5',         // near-white primary control (Play pill) — NOT a color accent
+  accentDim: '#CBCBCE',
+  accentSoft: 'rgba(255,255,255,.08)',
+  onAccent: '#0a0a0b',
+  // Semantic status ONLY — never decorative, never "brand", never active-state fill.
+  green: '#5AB98A',          // success tick, sparingly
+  amber: '#E0655E',          // (legacy key name) — mapped to danger/live red, see `red`/`live`
+  red: '#E0655E',
+  live: '#E0655E',           // active-download / recording dot
+  glass: '#141416',          // flat solid surface (no blur)
+  glassHi: '#1e1e21',
 }
 export const SANS = "'Hanken Grotesk', system-ui, -apple-system, sans-serif"
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
@@ -83,6 +91,7 @@ export function viewIcon(v) {
   return Ic.folder
 }
 
+// Flat, quiet icon/pill button — solid surface, hairline border, no glass.
 export function GlassBtn({ onClick, title, children, pill, wide }) {
   const [h, setH] = useState(false)
   return (
@@ -90,12 +99,15 @@ export function GlassBtn({ onClick, title, children, pill, wide }) {
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'center',
         height: 38, width: pill ? 'auto' : 38, padding: pill ? '0 16px' : 0,
-        borderRadius: 999, cursor: 'pointer', color: C.text, fontFamily: SANS, fontSize: 13.5, fontWeight: 600,
-        ...glassStyle, background: h ? C.glassHi : C.glass, transition: 'background .15s', flexShrink: 0,
+        borderRadius: 10, cursor: 'pointer', color: h ? C.text : C.dim, fontFamily: SANS, fontSize: 13.5, fontWeight: 600,
+        background: h ? C.surface2 : C.surface, border: `1px solid ${C.line}`,
+        transition: 'background .15s, color .15s', flexShrink: 0,
       }}>{children}</button>
   )
 }
 
+// Active = brighter + heavier text/icon ONLY. No background fill, no rail, no
+// dot, no color — that boxed-pill treatment was explicitly rejected.
 export function NavRow({ mobile, icon, label, active, onClick, badge = 0, alertBadge = 0 }) {
   const [h, setH] = useState(false)
   const showBadge = badge > 0
@@ -107,10 +119,10 @@ export function NavRow({ mobile, icon, label, active, onClick, badge = 0, alertB
       style={{
         position: 'relative',
         display: 'flex', alignItems: 'center', gap: mobile ? 0 : 12, justifyContent: mobile ? 'center' : 'flex-start',
-        padding: mobile ? '11px 0' : '10px 12px', borderRadius: 12, border: 'none', cursor: 'pointer', width: '100%',
+        padding: mobile ? '11px 0' : '10px 12px', borderRadius: 10, border: 'none', cursor: 'pointer', width: '100%',
         fontFamily: SANS, fontSize: 14.5, fontWeight: active ? 700 : 500, textAlign: 'left',
         color: active ? C.text : (h ? C.text : C.dim),
-        background: active ? 'rgba(255,255,255,.11)' : (h ? 'rgba(255,255,255,.05)' : 'transparent'),
+        background: h && !active ? 'rgba(255,255,255,.04)' : 'transparent',
         transition: 'background .15s, color .15s',
       }}>
       <Icon path={icon} size={mobile ? 21 : 19} sw={active ? 2 : 1.7} />
@@ -141,15 +153,15 @@ export function NavRow({ mobile, icon, label, active, onClick, badge = 0, alertB
 export function Sidebar({ mobile, width, views = [], downloadCount = 0, failingCount = 0, current }) {
   return (
     <aside style={{
-      position: 'absolute', top: mobile ? 8 : 12, left: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-      width, borderRadius: mobile ? 16 : 22, zIndex: 20, display: 'flex', flexDirection: 'column',
-      padding: mobile ? '12px 8px' : '18px 14px', ...glassStyle, boxShadow: '0 24px 60px rgba(0,0,0,.5)',
+      position: 'absolute', top: 0, left: 0, bottom: 0,
+      width, zIndex: 20, display: 'flex', flexDirection: 'column',
+      padding: mobile ? '12px 8px' : '22px 16px',
+      background: C.bg, borderRight: `1px solid ${C.line}`,
     }}>
       {!mobile && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 8px 18px', cursor: 'pointer' }}
+        <div style={{ display: 'flex', alignItems: 'center', padding: '2px 8px 22px', cursor: 'pointer' }}
           onClick={() => navigate('/library')}>
-          <div style={{ width: 22, height: 22, borderRadius: 7, background: `linear-gradient(135deg, ${C.green}, #6a8bff)` }} />
-          <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '.02em' }}>Watchparty</span>
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Watchparty</span>
         </div>
       )}
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3, overflowY: 'auto', scrollbarWidth: 'none', flex: 1 }}>
@@ -174,24 +186,24 @@ export function TopBar({ mobile, initials, logout, title, detail, onBack }) {
     <div style={{
       position: 'sticky', top: 0, zIndex: 15, display: 'flex', alignItems: 'center', gap: 12,
       padding: mobile ? '12px 12px' : '16px 20px',
-      background: 'linear-gradient(180deg, rgba(11,13,16,.55), rgba(11,13,16,0))',
+      background: 'linear-gradient(180deg, rgba(10,10,11,.85) 20%, rgba(10,10,11,0))',
     }}>
       <GlassBtn onClick={detail ? onBack : () => navigate('/library')} title={detail ? 'Back' : 'Back to library'}>
         <Icon path={Ic.chevL} size={18} sw={2} />
       </GlassBtn>
-      <span style={{ fontSize: mobile ? 15 : 17, fontWeight: 800, letterSpacing: '-.01em' }}>{title}</span>
+      <span style={{ fontSize: mobile ? 18 : 20, fontWeight: 700, letterSpacing: '-.02em' }}>{title}</span>
       <div style={{ flex: 1 }} />
       <div title={initials} style={{ width: 38, height: 38, borderRadius: '50%', display: 'grid', placeItems: 'center',
-        fontSize: 12, fontWeight: 700, ...glassStyle, flexShrink: 0 }}>{initials}</div>
+        fontSize: 12, fontWeight: 700, background: C.surface2, border: `1px solid ${C.line}`, color: C.text, flexShrink: 0 }}>{initials}</div>
       <GlassBtn onClick={logout} title="Sign out"><Icon path={Ic.logout} size={17} sw={1.8} /></GlassBtn>
     </div>
   )
 }
 
 export function Notice({ icon, title, body, tone, compact }) {
-  const color = tone === 'error' ? C.red : tone === 'ok' ? C.green : tone === 'warn' ? C.amber : C.dim
-  const bg = tone === 'error' ? 'rgba(220,60,60,.1)' : tone === 'ok' ? 'rgba(62,207,126,.1)' : tone === 'warn' ? 'rgba(226,176,74,.1)' : 'transparent'
-  const border = tone === 'error' ? 'rgba(220,60,60,.3)' : tone === 'ok' ? 'rgba(62,207,126,.3)' : tone === 'warn' ? 'rgba(226,176,74,.3)' : C.line
+  const color = tone === 'error' ? C.red : tone === 'ok' ? C.green : tone === 'warn' ? C.red : C.dim
+  const bg = tone === 'error' ? 'rgba(224,101,94,.1)' : tone === 'ok' ? 'rgba(90,185,138,.1)' : tone === 'warn' ? 'rgba(224,101,94,.1)' : 'transparent'
+  const border = tone === 'error' ? 'rgba(224,101,94,.3)' : tone === 'ok' ? 'rgba(90,185,138,.3)' : tone === 'warn' ? 'rgba(224,101,94,.3)' : C.line
   if (compact) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 12, padding: '10px 14px', borderRadius: 10,
@@ -201,7 +213,7 @@ export function Notice({ icon, title, body, tone, compact }) {
     )
   }
   return (
-    <div style={{ marginTop: 8, padding: '46px 28px', borderRadius: 18, ...glassStyle, animation: 'up .4s ease both',
+    <div style={{ marginTop: 8, padding: '46px 28px', borderRadius: 16, background: C.surface, border: `1px solid ${C.line}`, animation: 'up .4s ease both',
       display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
       <div style={{ width: 56, height: 56, borderRadius: 16, display: 'grid', placeItems: 'center', marginBottom: 16,
         background: bg === 'transparent' ? 'rgba(255,255,255,.04)' : bg, border: `1px solid ${border}` }}>

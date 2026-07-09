@@ -5,23 +5,29 @@
 // Dark-first and canonical — this is the theme the PWA manifest/theme-color
 // commit to. Do NOT add new font families; these are already loaded in styles.css.
 
+// Cinematic minimal — dark, flat, monochrome (matches desktop C in lib/ui.jsx).
+// `brand` stays the FUNCTIONAL status color (active download/recording dot)
+// only — it is never used as a fill, emphasis, or active-state color. Progress
+// bars are near-white, not colored.
 export const T = {
-  bg:        '#0b0d10',   // page ground (matches Library/FindDownload/Downloads)
-  bgDeep:    '#08080a',   // status-bar / manifest theme-color, behind everything
-  surface:   '#16191e',
-  surface2:  '#20242b',
-  text:      '#F1F3F6',
-  dim:       '#A6ADB8',
-  faint:     '#6B7280',
+  bg:        '#0a0a0b',   // page ground (matches desktop C.bg)
+  bgDeep:    '#0a0a0b',   // status-bar / manifest theme-color, behind everything
+  surface:   '#141416',
+  surface2:  '#1e1e21',
+  surface3:  '#2a2a2e',
+  text:      '#F4F4F5',
+  dim:       'rgba(244,244,245,.62)',
+  faint:     'rgba(244,244,245,.36)',
   line:      'rgba(255,255,255,.08)',
-  line2:     'rgba(255,255,255,.16)',
-  brand:     '#3ecf7e',   // green — live/active/accent (downloads, presence, progress)
-  brandInk:  '#06210f',   // ink on brand
-  onLight:   '#0a0b0d',   // ink on the white primary button
-  primary:   '#FFFFFF',   // "Play"/primary pill (Sen-Player white)
-  red:       '#FF6B6B',
-  glass:     'rgba(20,24,30,.62)',
-  glassHi:   'rgba(38,44,54,.7)',
+  line2:     'rgba(255,255,255,.14)',
+  brand:     '#E0655E',   // active-download / recording status dot ONLY
+  brandInk:  '#2a0f0d',   // ink on brand
+  onLight:   '#0a0a0b',   // ink on the near-white primary button
+  primary:   '#F4F4F5',   // "Play"/primary pill — near-white, not a color accent
+  red:       '#E0655E',
+  green:     '#5AB98A',   // success tick, sparingly
+  glass:     '#141416',   // flat solid surface (no blur)
+  glassHi:   '#1e1e21',
 }
 
 export const SANS = "'Hanken Grotesk', system-ui, -apple-system, sans-serif"
@@ -42,12 +48,13 @@ export const TYPE = {
   input:    { fontFamily: SANS, fontSize: 16,   lineHeight: 1.4,  fontWeight: 500 },   // never below 16 (iOS zoom)
 }
 
-// Signature brand mark gradient (logo/accents). Ambient page glows below.
-export const BRAND_GRADIENT = 'linear-gradient(135deg, #3ecf7e, #6a8bff, #d16aff)'
-export const AMBIENT = [
-  'radial-gradient(62% 46% at 12% -4%, rgba(62,207,126,.16), transparent 60%)',
-  'radial-gradient(58% 46% at 104% 6%, rgba(106,139,255,.15), transparent 62%)',
-].join(',')
+// Gradients are gone (cinematic-minimal: no color, no gradients). These two
+// exports are kept so importing screens don't break the build immediately —
+// each mobile-screen agent replaces its own usages with AVATAR_BG / nothing
+// per the redesign plan (docs/redesign/PLAN.md, foundation step 4).
+export const BRAND_GRADIENT = '#1e1e21'
+export const AVATAR_BG = '#1e1e21'
+export const AMBIENT = 'none'
 
 // Spacing scale (px) — keep rhythm consistent across screens.
 export const SP = { xs: 6, sm: 10, md: 14, lg: 20, xl: 28, xxl: 40 }
