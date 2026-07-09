@@ -64,67 +64,58 @@ pub struct MpvSetCanControlArgs {
 }
 
 #[tauri::command]
-pub async fn mpv_load(args: MpvLoadArgs) -> Result<(), String> {
-    let _ = args;
-    // TODO(N1): mpv.rs — libmpv `loadfile`, seek to start_sec, set pause state.
-    todo!("agent N1: implement mpv_load")
+pub async fn mpv_load(app: tauri::AppHandle, args: MpvLoadArgs) -> Result<(), String> {
+    crate::mpv::load(&app, &args.url, args.start_sec, args.paused)
 }
 
 #[tauri::command]
 pub async fn mpv_play() -> Result<(), String> {
-    todo!("agent N1: implement mpv_play")
+    crate::mpv::play()
 }
 
 #[tauri::command]
 pub async fn mpv_pause() -> Result<(), String> {
-    todo!("agent N1: implement mpv_pause")
+    crate::mpv::pause()
 }
 
 #[tauri::command]
 pub async fn mpv_seek(args: MpvSeekArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N1: implement mpv_seek")
+    crate::mpv::seek(args.sec)
 }
 
 #[tauri::command]
 pub async fn mpv_set_speed(args: MpvSetSpeedArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N1: implement mpv_set_speed")
+    crate::mpv::set_speed(args.rate)
 }
 
 #[tauri::command]
 pub async fn mpv_set_volume(args: MpvSetVolumeArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N1: implement mpv_set_volume")
+    crate::mpv::set_volume(args.vol)
 }
 
 #[tauri::command]
 pub async fn mpv_set_muted(args: MpvSetMutedArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N1: implement mpv_set_muted")
+    crate::mpv::set_muted(args.muted)
 }
 
 #[tauri::command]
-pub async fn mpv_set_region(args: MpvSetRegionArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N1: implement mpv_set_region (see window.rs for the Phase-0 compositing approach)")
+pub async fn mpv_set_region(app: tauri::AppHandle, args: MpvSetRegionArgs) -> Result<(), String> {
+    crate::mpv::set_region(&app, args.x, args.y, args.w, args.h, args.dpr)
 }
 
 #[tauri::command]
 pub async fn mpv_set_fullscreen(args: MpvSetFullscreenArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N1: implement mpv_set_fullscreen")
+    crate::mpv::set_fullscreen(args.on)
 }
 
 #[tauri::command]
 pub async fn mpv_set_can_control(args: MpvSetCanControlArgs) -> Result<(), String> {
-    let _ = args;
-    todo!("agent N1: implement mpv_set_can_control (gate mpv OSC interactivity)")
+    crate::mpv::set_can_control(args.can_control)
 }
 
 #[tauri::command]
 pub async fn mpv_teardown() -> Result<(), String> {
-    todo!("agent N1: implement mpv_teardown")
+    crate::mpv::teardown()
 }
 
 // ── download.rs / offline.rs (agent N2) ─────────────────────────────────────

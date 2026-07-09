@@ -3729,10 +3729,12 @@ dependencies = [
 name = "watchparty-desktop"
 version = "0.1.0"
 dependencies = [
+ "raw-window-handle",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "x11",
 ]
 
 [[package]]
