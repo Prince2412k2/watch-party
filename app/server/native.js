@@ -8,11 +8,12 @@
 // server-held per-user Jellyfin token captured at mint time — never the
 // client's session cookie.
 //
-// STATUS: contract + signing/verification are real; the actual Jellyfin
-// byte-range proxy (marked TODO below) is implemented by agent N3 per the
-// native redesign plan. Phase-0 ships this stubbed so N4 (MpvBackend) and N6
-// (offline UI) have a real endpoint shape to build against.
+// STATUS: contract, signing/verification, AND the Jellyfin byte-range proxy
+// are all real (agent N3). Streams straight through without buffering so many
+// concurrent Range requests against the same token (the multi-part
+// downloader) each get their own independent upstream connection.
 import crypto from 'crypto'
+import { Readable } from 'stream'
 import { requireAuth, getJellyfin } from './auth.js'
 
 const SECRET = process.env.NATIVE_STREAM_SECRET
@@ -42,6 +43,10 @@ function verify(token) {
   return payload
 }
 
+// Headers we pass straight through from Jellyfin's response to the client,
+// verbatim, whether it's a 200 (full body) or a 206 (ranged).
+const PASSTHROUGH_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges']
+
 export function registerNativeRoutes(app) {
   if (!SECRET) {
     // Fail closed, not open: the whole feature is unavailable rather than
@@ -68,17 +73,44 @@ export function registerNativeRoutes(app) {
 
   // No requireAuth here on purpose — the signed token IS the auth. mpv and the
   // Rust downloader call this directly, outside the browser's cookie jar.
+  // Each call opens its own independent upstream fetch, so N concurrent Range
+  // requests for the same token (the multi-part downloader) proxy to N
+  // independent Jellyfin connections — nothing here is shared/serialized.
   app.get('/api/library/native/file', async (req, res) => {
     const payload = verify(req.query.token)
     if (!payload) return res.status(401).json({ error: 'invalid or expired token' })
 
-    // TODO (agent N3): proxy Jellyfin's original/static stream for
-    // payload.itemId using payload.jellyfinToken against payload.baseUrl,
-    // e.g. `${baseUrl}/Videos/${itemId}/stream?static=true&api_key=${jellyfinToken}`,
-    // passing through the client's `Range` header and the upstream response's
-    // status/`Content-Range`/`Content-Length`/`Accept-Ranges`/`Content-Type`
-    // verbatim (206 on a ranged request), so multiple concurrent Range GETs
-    // for the same token (the multi-part downloader) all work independently.
-    res.status(501).json({ error: 'native file proxy not implemented yet (agent N3)', itemId: payload.itemId })
+    const { itemId, jellyfinToken, baseUrl } = payload
+    const target = `${baseUrl}/Videos/${encodeURIComponent(itemId)}/stream?static=true&mediaSourceId=${encodeURIComponent(itemId)}&api_key=${encodeURIComponent(jellyfinToken)}`
+
+    try {
+      const upstream = await fetch(target, {
+        headers: req.headers.range ? { Range: req.headers.range } : {},
+      })
+
+      if (!upstream.ok && upstream.status !== 206) {
+        res.status(upstream.status).end()
+        return
+      }
+
+      res.status(upstream.status)
+      for (const h of PASSTHROUGH_HEADERS) {
+        const val = upstream.headers.get(h)
+        if (val) res.set(h, val)
+      }
+      if (!res.get('content-type')) res.set('Content-Type', 'video/mp4')
+
+      // Stream straight through — never buffer the whole file in memory, so
+      // this scales to many concurrent (large) Range GETs against one token.
+      if (!upstream.body) return res.end()
+      const nodeStream = Readable.fromWeb(upstream.body)
+      nodeStream.on('error', () => res.destroy())
+      req.on('close', () => nodeStream.destroy())
+      nodeStream.pipe(res)
+    } catch (err) {
+      console.error('native/file', err.message)
+      if (!res.headersSent) res.status(502).end()
+      else res.destroy()
+    }
   })
 }
