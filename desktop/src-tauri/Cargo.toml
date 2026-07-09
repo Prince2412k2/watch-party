@@ -3,7 +3,7 @@ name = "watchparty-desktop"
 version = "0.1.0"
 description = "Watchparty desktop — all-codec playback, offline downloads, watch-party sync"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.77.2"
 
 [lib]
 name = "watchparty_desktop_lib"
@@ -16,6 +16,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# N7: tray-resident lifecycle plugins (docs/native/PLAN.md §2b).
+tauri-plugin-single-instance = "2.4.2"
+tauri-plugin-window-state = "2.4.1"
+tauri-plugin-updater = "2.10.1"
+tokio = { version = "1.52.3", features = ["time"] }
 # N1 (mpv.rs) will add an mpv binding crate here (e.g. `libmpv2`) once the
 # Phase-0 spike confirms the compositing approach and the exact crate/version.
 # N2 (download.rs) will add an HTTP client (e.g. `reqwest`) + async runtime
