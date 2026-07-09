@@ -4,9 +4,19 @@ import { useIsMobile } from '../hooks/useIsMobile.js'
 import { useTorrents } from '../hooks/useTorrents.js'
 import { useLibraryViews } from '../hooks/useLibraryViews.js'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail.jsx'
-import { C, SANS, MONO, glassStyle, Ic, Icon, Sidebar, TopBar, Notice, Spinner } from '../lib/ui.jsx'
+import { C, SANS, MONO, Ic, Icon, Sidebar, TopBar, Notice, Spinner } from '../lib/ui.jsx'
 import { fmtSize, fmtSpeed, stateInfo } from '../lib/format.js'
 import { jget } from '../lib/api.js'
+
+/* ── Cinematic-minimal, monochrome tokens local to this screen. `ui.jsx`'s
+   palette still carries the old liquid-glass colors (out of scope here), so
+   status/progress visuals are derived from these flat, neutral values instead
+   of the legacy status colors on the shared object — the only color left is
+   `DANGER`, used strictly for failed/error/destructive states. ────────────── */
+const DANGER = '#E0655E'
+const DANGER_BG = 'rgba(224,101,94,.12)'
+const DANGER_BORDER = 'rgba(224,101,94,.35)'
+const FLAT = { backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)', boxShadow: 'none' }
 
 /* ── Failing queue items (Radarr/Sonarr) poller ──────────────────────────────
    Visibility-aware ~6s polling of both *arr queues for items stuck in a
@@ -91,11 +101,6 @@ export default function Downloads() {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: C.bg, color: C.text, fontFamily: SANS, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background:
-        `radial-gradient(120% 90% at 12% -10%, rgba(62,207,126,.06), transparent 55%),
-         radial-gradient(120% 90% at 100% 0%, rgba(120,140,220,.07), transparent 55%),
-         ${C.bg}` }} />
-
       <Sidebar mobile={mobile} width={sidebarW} views={views} downloadCount={dl.activeCount} failingCount={(failing.items || []).length} current="downloads" />
 
       <div style={{
@@ -139,14 +144,14 @@ function NeedsAttention({ healthLoading, arrReady, failing }) {
   return (
     <section style={{ marginBottom: 36, animation: 'up .4s ease both' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-        <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', margin: 0, color: items.length ? C.red : C.text }}>
+        <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', margin: 0, color: items.length ? DANGER : C.text }}>
           Needs attention
         </h2>
         {items.length > 0 && (
           <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.dim }}>{items.length} stuck</span>
         )}
         {failing.loadError && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: C.amber }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: C.faint }}>
             <Spinner size={12} />reconnecting…
           </span>
         )}
@@ -169,17 +174,17 @@ function FailingRow({ q, busy, onRemove }) {
   const [confirm, setConfirm] = useState(false)
   const reasons = q.statusMessages.length > 0 ? q.statusMessages : (q.errorMessage ? [q.errorMessage] : ['No reason given.'])
   return (
-    <div style={{ padding: '15px 18px', borderRadius: 14, ...glassStyle, border: '1px solid rgba(220,60,60,.28)' }}>
+    <div style={{ padding: '15px 18px', borderRadius: 14, ...FLAT, border: `1px solid ${DANGER_BORDER}` }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ width: 34, height: 34, borderRadius: 10, flexShrink: 0, display: 'grid', placeItems: 'center',
-          background: 'rgba(220,60,60,.14)', border: '1px solid rgba(220,60,60,.3)' }}>
-          <Icon path={Ic.alert} size={17} stroke={C.red} sw={2} />
+          background: DANGER_BG, border: `1px solid ${DANGER_BORDER}` }}>
+          <Icon path={Ic.alert} size={17} stroke={DANGER} sw={2} />
         </div>
         <div style={{ flex: 1, minWidth: 180 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{q.title}</div>
           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
             {reasons.map((r, i) => (
-              <span key={i} style={{ fontSize: 12.5, color: C.red }}>{r}</span>
+              <span key={i} style={{ fontSize: 12.5, color: DANGER }}>{r}</span>
             ))}
           </div>
           <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11.5, color: C.faint }}>
@@ -211,9 +216,9 @@ function FailingRow({ q, busy, onRemove }) {
 function pillBtnStyle(danger) {
   return {
     display: 'inline-flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px', borderRadius: 999,
-    border: danger ? '1px solid rgba(220,60,60,.4)' : `1px solid ${C.line2}`, cursor: 'pointer',
+    border: danger ? `1px solid ${DANGER_BORDER}` : `1px solid ${C.line2}`, cursor: 'pointer',
     fontFamily: SANS, fontSize: 12.5, fontWeight: 700,
-    background: danger ? 'rgba(220,60,60,.14)' : 'rgba(255,255,255,.04)', color: danger ? C.red : C.text,
+    background: danger ? DANGER_BG : 'rgba(255,255,255,.04)', color: danger ? DANGER : C.text,
   }
 }
 
@@ -237,12 +242,12 @@ function ActiveDownloads({ mobile, healthLoading, qbitReady, qbit, dl }) {
         <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', margin: 0 }}>Active</h2>
         {qbitReady && list.length > 0 && (
           <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.dim }}>
-            {dl.activeCount} active · <span style={{ color: C.green }}>↓ {fmtSpeed(agg.dl)}</span>
+            {dl.activeCount} active · ↓ {fmtSpeed(agg.dl)}
             <span style={{ color: C.faint }}> · ↑ {fmtSpeed(agg.up)}</span>
           </span>
         )}
         {qbitReady && dl.loadError && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: C.amber }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 12, color: C.faint }}>
             <Spinner size={12} />reconnecting…
           </span>
         )}
@@ -282,6 +287,14 @@ function ActiveDownloads({ mobile, healthLoading, qbitReady, qbit, dl }) {
   )
 }
 
+/* Neutral status read for a torrent row: only the error state gets a semantic
+   color, everything else — downloading, finishing up, queued, paused — is
+   plain dim/faint text. Progress never carries a phase color. */
+function statusColor(info) {
+  if (info.label === 'Error') return DANGER
+  return info.paused ? C.faint : C.dim
+}
+
 /* ── Active download card — 2:3 poster with the circular progress ring, title +
    state/subtitle below, and inline pause/resume + delete controls. Clicking the
    poster opens the full download detail. Matches the Library "Downloading now"
@@ -297,14 +310,14 @@ function TorrentCard({ t, busy, onOpen, onPause, onResume, onDelete }) {
     <div onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{ display: 'flex', flexDirection: 'column' }}>
       <button onClick={onOpen} aria-label={title} title={t.name}
         style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', borderRadius: 14, overflow: 'hidden',
-          boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
-          transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
+          boxShadow: h ? '0 16px 44px rgba(0,0,0,.62)' : 'none',
+          transform: h ? 'translateY(-4px)' : 'none', transition: 'transform .2s cubic-bezier(.2,.8,.2,1), box-shadow .2s cubic-bezier(.2,.8,.2,1)' }}>
         <DownloadPoster posterUrl={t.posterUrl} kind={t.kind} pct={pct} paused={info.paused} width="100%" radius={14} ringSize={78} />
       </button>
       <div style={{ marginTop: 9, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.name}>{title}</div>
-          <div style={{ fontFamily: MONO, fontSize: 11.5, color: info.color, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ fontFamily: MONO, fontSize: 11.5, color: statusColor(info), marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {info.label}{subtitle ? ` · ${subtitle}` : ''}
           </div>
         </div>
@@ -325,8 +338,8 @@ function RowBtn({ title, icon, onClick, disabled, danger }) {
       onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', flexShrink: 0,
         border: `1px solid ${C.line}`, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
-        color: danger ? (h ? C.red : C.dim) : (h ? C.text : C.dim),
-        background: h ? (danger ? 'rgba(220,60,60,.12)' : 'rgba(255,255,255,.07)') : 'rgba(255,255,255,.03)',
+        color: danger ? (h ? DANGER : C.dim) : (h ? C.text : C.dim),
+        background: h ? (danger ? DANGER_BG : 'rgba(255,255,255,.07)') : 'rgba(255,255,255,.03)',
         transition: 'background .15s, color .15s' }}>
       <Icon path={icon} size={16} sw={1.9} />
     </button>
@@ -342,7 +355,7 @@ function Toggle({ label, hint, on, set }) {
         <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{label}</div>
         {hint && <div style={{ fontSize: 12, color: C.faint, marginTop: 2 }}>{hint}</div>}
       </div>
-      <span style={{ width: 42, height: 24, borderRadius: 999, background: on ? C.green : 'rgba(255,255,255,.14)',
+      <span style={{ width: 42, height: 24, borderRadius: 999, background: on ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.14)',
         position: 'relative', transition: 'background .18s', flexShrink: 0 }}>
         <span style={{ position: 'absolute', top: 3, left: on ? 21 : 3, width: 18, height: 18, borderRadius: '50%',
           background: '#fff', transition: 'left .18s' }} />
@@ -356,13 +369,13 @@ function DeleteDialog({ t, onClose, onConfirm }) {
   const [deleteFiles, setDeleteFiles] = useState(false)
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'grid', placeItems: 'center',
-      padding: 16, background: 'rgba(6,8,11,.66)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', animation: 'up .2s ease both' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(440px, 100%)', borderRadius: 20, padding: mobile ? 20 : 26,
-        ...glassStyle, background: 'rgba(22,25,30,.92)', boxShadow: '0 30px 80px rgba(0,0,0,.6)' }}>
+      padding: 16, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'up .2s ease both' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(440px, 100%)', borderRadius: 16, padding: mobile ? 20 : 26,
+        ...FLAT, boxShadow: '0 24px 60px rgba(0,0,0,.7)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <div style={{ width: 42, height: 42, borderRadius: 12, display: 'grid', placeItems: 'center', flexShrink: 0,
-            background: 'rgba(220,60,60,.12)', border: '1px solid rgba(220,60,60,.3)' }}>
-            <Icon path={Ic.trash} size={20} stroke={C.red} sw={1.8} />
+            background: DANGER_BG, border: `1px solid ${DANGER_BORDER}` }}>
+            <Icon path={Ic.trash} size={20} stroke={DANGER} sw={1.8} />
           </div>
           <h2 style={{ fontSize: 19, fontWeight: 800, margin: 0 }}>Remove download?</h2>
         </div>
@@ -377,7 +390,7 @@ function DeleteDialog({ t, onClose, onConfirm }) {
           </button>
           <button onClick={() => onConfirm(deleteFiles)} style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
             cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: '#fff',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'rgb(200,64,64)' }}>
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: DANGER }}>
             <Icon path={Ic.trash} size={16} sw={2} />Remove
           </button>
         </div>
@@ -388,11 +401,11 @@ function DeleteDialog({ t, onClose, onConfirm }) {
 
 function DownloadsUnavailable({ configured }) {
   return (
-    <div style={{ marginTop: 8, padding: '40px 26px', borderRadius: 18, ...glassStyle,
+    <div style={{ marginTop: 8, padding: '40px 26px', borderRadius: 16, ...FLAT,
       display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animation: 'up .4s ease both' }}>
       <div style={{ width: 60, height: 60, borderRadius: 16, display: 'grid', placeItems: 'center', marginBottom: 16,
-        background: 'rgba(62,207,126,.1)', border: '1px solid rgba(62,207,126,.3)' }}>
-        <Icon path={Ic.download} size={28} stroke={C.green} sw={1.7} />
+        background: 'rgba(255,255,255,.06)', border: `1px solid ${C.line2}` }}>
+        <Icon path={Ic.download} size={28} stroke={C.text} sw={1.7} />
       </div>
       <h2 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>
         {configured ? 'Downloads are temporarily unavailable' : 'Downloads aren’t set up yet'}
