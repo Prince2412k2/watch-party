@@ -287,12 +287,6 @@ export default function Browse() {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: C.bg, color: C.text, fontFamily: SANS, overflow: 'hidden' }}>
-      {/* Ambient backdrop — identical recipe to Library */}
-      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background:
-        `radial-gradient(120% 90% at 12% -10%, rgba(62,207,126,.06), transparent 55%),
-         radial-gradient(120% 90% at 100% 0%, rgba(120,140,220,.07), transparent 55%),
-         ${C.bg}` }} />
-
       <Sidebar mobile={mobile} width={sidebarW} views={views} downloadCount={dl.activeCount} failingCount={failingCount} current="browse" />
 
       <div style={{
@@ -508,9 +502,9 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }) {
 
         {rating != null && (
           <div style={{ position: 'absolute', top: 8, left: 8, display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: '2px 8px', borderRadius: 8, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff',
-            background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
-            <Icon path={Ic.star} size={12} fill="#f5c518" stroke="none" />{rating.toFixed(1)}
+            padding: '2px 8px', borderRadius: 8, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: C.text,
+            background: 'rgba(0,0,0,.7)' }}>
+            <Icon path={Ic.star} size={12} fill={C.text} stroke="none" />{rating.toFixed(1)}
           </div>
         )}
 
@@ -525,32 +519,32 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }) {
 
           {downloading ? (
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: C.green, marginBottom: 6 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.green, boxShadow: `0 0 6px ${C.green}`, animation: 'pulse 1.6s ease-in-out infinite' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.live, boxShadow: `0 0 6px ${C.live}`, animation: 'pulse 1.6s ease-in-out infinite' }} />
                 {active ? `Downloading · ${pct}%` : 'Starting…'}
               </div>
               <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,.14)', overflow: 'hidden' }}>
                 <div style={{ width: active ? `${pct}%` : '18%', height: '100%', borderRadius: 999,
-                  background: `linear-gradient(90deg, ${C.green}, #6a8bff)`, transition: 'width .4s ease' }} />
+                  background: C.text, transition: 'width .4s ease' }} />
               </div>
             </div>
           ) : searching ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: '#e2b04a' }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#e2b04a', boxShadow: '0 0 6px #e2b04a', animation: 'pulse 1.6s ease-in-out infinite' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 11.5, fontWeight: 700, color: C.dim }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.text, animation: 'pulse 1.6s ease-in-out infinite' }} />
               Finding a release…
             </div>
           ) : monitoring ? (
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: '#e2b04a' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.text }}>
                 <Icon path={Ic.spark} size={13} sw={2} />Added — monitoring
               </div>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,.72)', marginTop: 3, lineHeight: 1.35 }}>
+              <div style={{ fontSize: 11, color: C.dim, marginTop: 3, lineHeight: 1.35 }}>
                 Episodes download on their own as they appear.
               </div>
             </div>
           ) : noRelease ? (
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: '#e2b04a', marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.red, marginBottom: 8 }}>
                 <Icon path={Ic.alert} size={13} sw={2} />No release available right now
               </div>
               <button onClick={(e) => { e.stopPropagation(); onDownload() }}
@@ -562,7 +556,7 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }) {
             </div>
           ) : searchFailed ? (
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: '#e2b04a', marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.red, marginBottom: 8 }}>
                 <Icon path={Ic.alert} size={13} sw={2} />Couldn’t check — try again
               </div>
               <button onClick={(e) => { e.stopPropagation(); onDownload() }}
@@ -574,15 +568,15 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }) {
             </div>
           ) : state === 'added' ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
-              padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, background: 'rgba(62,207,126,.16)',
-              color: C.green, border: `1px solid rgba(62,207,126,.4)` }}>
+              padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, background: 'rgba(255,255,255,.1)',
+              color: C.text, border: `1px solid ${C.line2}` }}>
               <Icon path={Ic.check} size={14} sw={2.4} />In library
             </span>
           ) : state === 'error' ? (
             <button onClick={(e) => { e.stopPropagation(); onDownload() }}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 7, alignSelf: 'flex-start', padding: '8px 14px',
-                borderRadius: 999, border: `1px solid rgba(240,170,170,.5)`, cursor: 'pointer', fontFamily: SANS,
-                fontSize: 13, fontWeight: 700, background: 'rgba(220,60,60,.14)', color: C.red }}>
+                borderRadius: 999, border: `1px solid rgba(224,101,94,.35)`, cursor: 'pointer', fontFamily: SANS,
+                fontSize: 13, fontWeight: 700, background: 'rgba(224,101,94,.12)', color: C.red }}>
               <Icon path={Ic.alert} size={14} sw={2} />Retry
             </button>
           ) : (
@@ -597,8 +591,8 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }) {
 
         {state === 'added' && !downloading && (
           <div style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: '50%',
-            display: 'grid', placeItems: 'center', background: C.green, boxShadow: '0 2px 6px rgba(0,0,0,.4)' }}>
-            <Icon path={Ic.check} size={14} stroke="#06210f" sw={3} />
+            display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.7)', border: `1px solid ${C.line2}` }}>
+            <Icon path={Ic.check} size={14} stroke={C.text} sw={3} />
           </div>
         )}
       </button>
@@ -642,9 +636,9 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
       <div style={{ position: 'relative', minHeight: mobile ? 'auto' : 'min(70vh, 560px)', display: 'flex', alignItems: 'flex-end' }}>
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
           <Poster images={item.images} useBackdrop alt={item.title}
-            style={{ width: '100%', height: '100%', objectPosition: 'top center', filter: 'blur(3px)', transform: 'scale(1.06)' }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 4%, rgba(11,13,16,.55) 48%, rgba(11,13,16,.25) 100%)` }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(11,13,16,.72) 0%, rgba(11,13,16,.35) 45%, transparent 82%)` }} />
+            style={{ width: '100%', height: '100%', objectPosition: 'top center', transform: 'scale(1.03)' }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 4%, rgba(0,0,0,.55) 48%, rgba(0,0,0,.25) 100%)` }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(0,0,0,.72) 0%, rgba(0,0,0,.35) 45%, transparent 82%)` }} />
         </div>
 
         <div style={{ position: 'relative', width: '100%', padding: mobile ? '120px 16px 20px' : '0 34px 34px',
@@ -657,7 +651,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
           )}
 
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: MONO, fontSize: 12, color: C.green, marginBottom: 8, letterSpacing: '.06em' }}>
+            <div style={{ fontFamily: MONO, fontSize: 12, color: C.faint, marginBottom: 8, letterSpacing: '.06em' }}>
               {kind === 'movie' ? 'MOVIE' : 'SERIES'}
             </div>
             <h1 style={{ fontSize: mobile ? 28 : 40, fontWeight: 800, letterSpacing: '-.02em', margin: 0, lineHeight: 1.05 }}>{item.title}</h1>
@@ -666,7 +660,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 14, fontSize: 15, fontWeight: 600 }}>
               {rating != null && (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: C.text }}>
-                  <Icon path={Ic.star} size={16} fill="#f5c518" stroke="none" />{rating.toFixed(1)}
+                  <Icon path={Ic.star} size={16} fill={C.text} stroke="none" />{rating.toFixed(1)}
                 </span>
               )}
               {genres.slice(0, 3).map((g) => <span key={g} style={{ color: C.dim }}>{g}</span>)}
@@ -689,13 +683,13 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 22, flexWrap: 'wrap' }}>
               {downloading ? (
                 <div style={{ minWidth: mobile ? '100%' : 320, maxWidth: 420 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: C.green, marginBottom: 8 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.green, boxShadow: `0 0 7px ${C.green}`, animation: 'pulse 1.6s ease-in-out infinite' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.live, boxShadow: `0 0 7px ${C.live}`, animation: 'pulse 1.6s ease-in-out infinite' }} />
                     {active ? `Downloading · ${pct}%` : 'Starting download…'}
                   </div>
                   <div style={{ height: 8, borderRadius: 999, background: 'rgba(255,255,255,.12)', overflow: 'hidden' }}>
                     <div style={{ width: active ? `${pct}%` : '15%', height: '100%', borderRadius: 999,
-                      background: `linear-gradient(90deg, ${C.green}, #6a8bff)`, transition: 'width .4s ease' }} />
+                      background: C.text, transition: 'width .4s ease' }} />
                   </div>
                   {active && (
                     <div style={{ display: 'flex', gap: 14, marginTop: 8, fontFamily: MONO, fontSize: 12.5, color: C.dim, flexWrap: 'wrap' }}>
@@ -707,8 +701,8 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                 </div>
               ) : searching ? (
                 <div style={{ minWidth: mobile ? '100%' : 320, maxWidth: 460 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontFamily: SANS, fontSize: 15, fontWeight: 700, color: '#e2b04a' }}>
-                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#e2b04a', boxShadow: '0 0 8px #e2b04a', animation: 'pulse 1.6s ease-in-out infinite' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontFamily: SANS, fontSize: 15, fontWeight: 700, color: C.text }}>
+                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: C.text, animation: 'pulse 1.6s ease-in-out infinite' }} />
                     Added — finding a release…
                   </div>
                   <p style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.55, marginTop: 8, maxWidth: 460 }}>
@@ -718,7 +712,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
               ) : monitoring ? (
                 <div style={{ minWidth: mobile ? '100%' : 320, maxWidth: 480 }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '13px 22px', borderRadius: 999,
-                    fontSize: 14.5, fontWeight: 700, background: 'rgba(226,176,74,.14)', color: '#e2b04a', border: '1px solid rgba(226,176,74,.4)' }}>
+                    fontSize: 14.5, fontWeight: 700, background: C.surface2, color: C.text, border: `1px solid ${C.line2}` }}>
                     <Icon path={Ic.spark} size={17} sw={2} />Added — monitoring
                   </span>
                   <p style={{ fontSize: 13.5, color: C.dim, lineHeight: 1.6, marginTop: 12, maxWidth: 480 }}>
@@ -732,7 +726,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                     boxShadow: '0 10px 30px rgba(0,0,0,.4)' }}>
                     <Icon path={Ic.download} size={19} sw={2.2} />Try again
                   </button>
-                  <p style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: '#e2b04a', lineHeight: 1.6, marginTop: 14, maxWidth: 480, fontWeight: 600 }}>
+                  <p style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: C.red, lineHeight: 1.6, marginTop: 14, maxWidth: 480, fontWeight: 600 }}>
                     <Icon path={Ic.alert} size={16} sw={2} />No release available right now — try again later.
                   </p>
                 </div>
@@ -743,14 +737,14 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                     boxShadow: '0 10px 30px rgba(0,0,0,.4)' }}>
                     <Icon path={Ic.download} size={19} sw={2.2} />Retry
                   </button>
-                  <p style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: '#e2b04a', lineHeight: 1.6, marginTop: 14, maxWidth: 480, fontWeight: 600 }}>
+                  <p style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: C.red, lineHeight: 1.6, marginTop: 14, maxWidth: 480, fontWeight: 600 }}>
                     <Icon path={Ic.alert} size={16} sw={2} />Couldn’t check for a release right now. Please try again.
                   </p>
                 </div>
               ) : state === 'added' ? (
                 <>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, padding: '14px 26px', borderRadius: 999,
-                    fontSize: 15, fontWeight: 700, background: 'rgba(62,207,126,.16)', color: C.green, border: `1px solid rgba(62,207,126,.4)` }}>
+                    fontSize: 15, fontWeight: 700, background: C.surface2, color: C.text, border: `1px solid ${C.line2}` }}>
                     <Icon path={Ic.check} size={18} sw={2.4} />In library
                   </span>
                   {onRemove && (
@@ -762,7 +756,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                   )}
                   {confirmRemove && (
                     <div onClick={() => !removing && setConfirmRemove(false)} style={{ position: 'fixed', inset: 0, zIndex: 100,
-                      display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(4px)' }}>
+                      display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(2px)' }}>
                       <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(380px, 90vw)', borderRadius: 18, padding: 24,
                         ...glassStyle, background: 'rgba(20,24,30,.92)' }}>
                         <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Remove from library?</h2>
@@ -777,7 +771,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                           </button>
                           <button onClick={async () => { setRemoving(true); try { await onRemove() } finally { setRemoving(false); setConfirmRemove(false) } }}
                             disabled={removing} style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
-                              background: C.red, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                              background: C.red, color: C.text, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                             {removing ? 'Removing…' : 'Remove'}
                           </button>
                         </div>
@@ -788,7 +782,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
               ) : (
                 <>
                   <button onClick={onDownload} style={{ display: 'inline-flex', alignItems: 'center', gap: 11, padding: '15px 32px',
-                    border: 'none', borderRadius: 999, background: state === 'error' ? 'rgba(220,60,60,.16)' : C.accent,
+                    border: 'none', borderRadius: 999, background: state === 'error' ? 'rgba(224,101,94,.14)' : C.accent,
                     color: state === 'error' ? C.red : C.onAccent, fontFamily: SANS, fontSize: 16, fontWeight: 700, cursor: 'pointer',
                     boxShadow: '0 10px 30px rgba(0,0,0,.4)', transition: 'transform .15s' }}
                     onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseLeave={(e) => e.currentTarget.style.transform = 'none'}>
@@ -796,7 +790,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                     {state === 'error' ? 'Retry download' : 'Download'}
                   </button>
                   <button onClick={onOptions} title="Download options" style={{ width: 52, height: 52, borderRadius: '50%',
-                    display: 'grid', placeItems: 'center', cursor: 'pointer', ...glassStyle, background: 'rgba(20,24,30,.5)', color: '#fff' }}>
+                    display: 'grid', placeItems: 'center', cursor: 'pointer', ...glassStyle, background: 'rgba(20,24,30,.5)', color: C.text }}>
                     <Icon path={Ic.gear} size={21} sw={1.7} />
                   </button>
                 </>
@@ -922,9 +916,10 @@ function SeasonChooser({ item, mobile, onWholeSeriesFallback }) {
         {real.length > 1 && (
           <button onClick={() => request(allReal)} disabled={anyRequesting || allMonitored}
             title="Monitor and search every season"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999, border: 'none',
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 999,
+              border: allMonitored ? `1px solid ${C.line2}` : 'none',
               cursor: anyRequesting || allMonitored ? 'default' : 'pointer', fontFamily: SANS, fontSize: 13.5, fontWeight: 700,
-              background: allMonitored ? 'rgba(62,207,126,.16)' : C.accent, color: allMonitored ? C.green : C.onAccent,
+              background: allMonitored ? C.surface2 : C.accent, color: allMonitored ? C.text : C.onAccent,
               opacity: anyRequesting && !allMonitored ? 0.6 : 1, transition: 'opacity .15s' }}>
             {allMonitored
               ? <><Icon path={Ic.check} size={15} sw={2.4} />All seasons</>
@@ -953,7 +948,7 @@ function SeasonChooser({ item, mobile, onWholeSeriesFallback }) {
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 14, fontSize: 12.5, color: C.faint, lineHeight: 1.5 }}>
-        <Icon path={Ic.spark} size={14} sw={1.8} stroke="#e2b04a" />
+        <Icon path={Ic.spark} size={14} sw={1.8} stroke={C.faint} />
         A requested season is monitored and searched — episodes download on their own as they’re found.
       </div>
     </div>
@@ -970,13 +965,13 @@ function SeasonRow({ season, state, disabled, specials, onRequest }) {
 
   const right = (() => {
     if (state === 'requesting') {
-      return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: SANS, fontSize: 13, fontWeight: 700, color: '#e2b04a' }}>
+      return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontFamily: SANS, fontSize: 13, fontWeight: 700, color: C.dim }}>
         <Spinner size={15} />Requesting…
       </span>
     }
     if (state === 'requested') {
       return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5,
-        fontWeight: 700, background: 'rgba(226,176,74,.14)', color: '#e2b04a', border: '1px solid rgba(226,176,74,.4)' }}>
+        fontWeight: 700, background: C.surface2, color: C.text, border: `1px solid ${C.line2}` }}>
         <Icon path={Ic.spark} size={13} sw={2} />Searching…
       </span>
     }
@@ -984,7 +979,7 @@ function SeasonRow({ season, state, disabled, specials, onRequest }) {
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 999, fontSize: 12.5,
-            fontWeight: 700, background: 'rgba(62,207,126,.16)', color: C.green, border: '1px solid rgba(62,207,126,.4)' }}>
+            fontWeight: 700, background: C.surface2, color: C.text, border: `1px solid ${C.line2}` }}>
             <Icon path={Ic.check} size={13} sw={2.6} />Monitoring
           </span>
           <button onClick={onRequest} disabled={disabled} title="Search this season again"
@@ -998,8 +993,8 @@ function SeasonRow({ season, state, disabled, specials, onRequest }) {
     if (state === 'error') {
       return <button onClick={onRequest} disabled={disabled}
         style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 999,
-          border: '1px solid rgba(240,170,170,.5)', cursor: disabled ? 'default' : 'pointer', fontFamily: SANS, fontSize: 13, fontWeight: 700,
-          background: 'rgba(220,60,60,.14)', color: C.red, opacity: disabled ? 0.6 : 1 }}>
+          border: '1px solid rgba(224,101,94,.35)', cursor: disabled ? 'default' : 'pointer', fontFamily: SANS, fontSize: 13, fontWeight: 700,
+          background: 'rgba(224,101,94,.12)', color: C.red, opacity: disabled ? 0.6 : 1 }}>
         <Icon path={Ic.alert} size={14} sw={2} />Retry
       </button>
     }
@@ -1088,7 +1083,7 @@ function OptionsDialog({ kind, item, onClose, onAdded }) {
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'grid', placeItems: 'center',
-      padding: 16, background: 'rgba(6,8,11,.66)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', animation: 'up .2s ease both' }}>
+      padding: 16, background: 'rgba(6,8,11,.66)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'up .2s ease both' }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         width: 'min(560px, 100%)', maxHeight: '86vh', overflow: 'auto', borderRadius: 20, padding: mobile ? 18 : 26,
         ...glassStyle, background: 'rgba(22,25,30,.92)', boxShadow: '0 30px 80px rgba(0,0,0,.6)' }}>
@@ -1097,7 +1092,7 @@ function OptionsDialog({ kind, item, onClose, onAdded }) {
             <Poster images={item.images} alt={item.title} style={{ width: '100%', height: '100%' }} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontFamily: MONO, color: C.green, marginBottom: 4 }}>{kind === 'movie' ? 'MOVIE' : 'SERIES'}</div>
+            <div style={{ fontSize: 12, fontFamily: MONO, color: C.faint, marginBottom: 4 }}>{kind === 'movie' ? 'MOVIE' : 'SERIES'}</div>
             <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.01em', margin: 0, lineHeight: 1.2 }}>{item.title}</h2>
             <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.faint, marginTop: 4 }}>
               {[item.year, kind === 'series' && item.seasonCount != null ? `${item.seasonCount} seasons` : null].filter(Boolean).join(' · ')}
@@ -1159,7 +1154,7 @@ function OptionsDialog({ kind, item, onClose, onAdded }) {
               style={{ width: '100%', marginTop: 18, height: 48, borderRadius: 14, border: 'none',
                 cursor: canSubmit ? 'pointer' : 'default', fontFamily: SANS, fontSize: 15, fontWeight: 700,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9,
-                background: result?.ok ? 'rgba(62,207,126,.2)' : C.accent, color: result?.ok ? C.green : C.onAccent,
+                background: result?.ok ? C.surface3 : C.accent, color: result?.ok ? C.text : C.onAccent,
                 opacity: canSubmit || result?.ok ? 1 : 0.55, transition: 'opacity .15s' }}>
               {submitting ? <><Spinner size={17} dark />{kind === 'movie' ? 'Finding a release…' : 'Adding…'}</>
                 : result?.ok ? <><Icon path={Ic.check} size={17} sw={2.4} />Done</>
@@ -1264,7 +1259,7 @@ function ReleasePicker({ item, onClose, onGrabbed }) {
 
   return (
     <div onClick={doClose} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'grid', placeItems: 'center',
-      padding: 16, background: 'rgba(6,8,11,.66)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', animation: 'up .2s ease both' }}>
+      padding: 16, background: 'rgba(6,8,11,.66)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'up .2s ease both' }}>
       <div onClick={(e) => e.stopPropagation()} style={{
         width: 'min(640px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', borderRadius: 20, padding: mobile ? 18 : 24,
         ...glassStyle, background: 'rgba(22,25,30,.92)', boxShadow: '0 30px 80px rgba(0,0,0,.6)' }}>
@@ -1274,7 +1269,7 @@ function ReleasePicker({ item, onClose, onGrabbed }) {
             <Poster images={item.images} alt={item.title} style={{ width: '100%', height: '100%' }} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontFamily: MONO, color: C.green, marginBottom: 4 }}>CHOOSE A RELEASE</div>
+            <div style={{ fontSize: 12, fontFamily: MONO, color: C.faint, marginBottom: 4 }}>CHOOSE A RELEASE</div>
             <h2 style={{ fontSize: 19, fontWeight: 800, letterSpacing: '-.01em', margin: 0, lineHeight: 1.2 }}>{item.title}</h2>
             <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.faint, marginTop: 4 }}>
               {[item.year, meta.loading ? null : `${releases.length} source${releases.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
@@ -1314,7 +1309,7 @@ function ReleasePicker({ item, onClose, onGrabbed }) {
               ))}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 12, fontSize: 12, color: C.faint }}>
-              <Icon path={Ic.alert} size={13} sw={1.8} stroke="#e2b04a" />
+              <Icon path={Ic.alert} size={13} sw={1.8} stroke={C.faint} />
               Greyed rows were skipped by the auto-picker for the reason shown.
             </div>
           </>
@@ -1332,7 +1327,7 @@ function ReleaseRow({ rel, grabbing, onGrab }) {
   const anyBusy = !!grabbing
   const rejected = rel.rejected
   const seeds = rel.seeders
-  const seedColor = seeds == null ? C.faint : seeds > 0 ? C.green : C.red
+  const seedColor = seeds == null ? C.faint : seeds > 0 ? C.text : C.red
   const reason = rejected ? (rel.rejections?.[0] || 'Skipped by the quality profile') : null
 
   return (
@@ -1350,7 +1345,7 @@ function ReleaseRow({ rel, grabbing, onGrab }) {
             )}
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: seedColor, fontWeight: 700 }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: seedColor,
-                boxShadow: seeds > 0 ? `0 0 6px ${seedColor}` : 'none' }} />
+                boxShadow: 'none' }} />
               {seeds == null ? '—' : seeds} seed{seeds === 1 ? '' : 's'}
             </span>
             <span style={{ color: C.faint }}>{rel.leechers == null ? '—' : rel.leechers} peers</span>
@@ -1361,7 +1356,7 @@ function ReleaseRow({ rel, grabbing, onGrab }) {
           </div>
           {reason && (
             <div title={rel.rejections?.join(' · ')} style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7,
-              fontSize: 12, color: '#e2b04a', fontWeight: 600 }}>
+              fontSize: 12, color: C.dim, fontWeight: 600 }}>
               <Icon path={Ic.alert} size={13} sw={2} />
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{reason}</span>
             </div>
@@ -1416,10 +1411,10 @@ function Toggle({ label, hint, on, set }) {
         <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{label}</div>
         {hint && <div style={{ fontSize: 12, color: C.faint, marginTop: 2 }}>{hint}</div>}
       </div>
-      <span style={{ width: 42, height: 24, borderRadius: 999, background: on ? C.green : 'rgba(255,255,255,.14)',
+      <span style={{ width: 42, height: 24, borderRadius: 999, background: on ? C.text : 'rgba(255,255,255,.14)',
         position: 'relative', transition: 'background .18s', flexShrink: 0 }}>
         <span style={{ position: 'absolute', top: 3, left: on ? 21 : 3, width: 18, height: 18, borderRadius: '50%',
-          background: '#fff', transition: 'left .18s' }} />
+          background: on ? C.onAccent : C.text, transition: 'left .18s' }} />
       </span>
     </button>
   )
@@ -1434,8 +1429,8 @@ function NotAvailable({ kind, state }) {
     <div style={{ marginTop: 8, padding: '46px 28px', borderRadius: 18, ...glassStyle,
       display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animation: 'up .4s ease both' }}>
       <div style={{ width: 64, height: 64, borderRadius: 18, display: 'grid', placeItems: 'center', marginBottom: 18,
-        background: 'rgba(62,207,126,.1)', border: `1px solid rgba(62,207,126,.3)` }}>
-        <Icon path={unreachable ? Ic.alert : Ic.compass} size={30} stroke={C.green} sw={1.7} />
+        background: 'rgba(255,255,255,.04)', border: `1px solid ${C.line}` }}>
+        <Icon path={unreachable ? Ic.alert : Ic.compass} size={30} stroke={C.dim} sw={1.7} />
       </div>
       <h2 style={{ fontSize: 21, fontWeight: 800, margin: 0 }}>
         {unreachable ? 'Browse is temporarily unavailable' : 'Browsing isn’t set up yet'}
