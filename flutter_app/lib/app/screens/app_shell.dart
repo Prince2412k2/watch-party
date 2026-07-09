@@ -4,13 +4,16 @@ import 'package:go_router/go_router.dart';
 import '../../ui/ui.dart';
 
 /// The persistent shell (nav rail + content area) that wraps the primary
-/// destinations. E1 finalizes the chrome; Phase 0 gives a working frame so the
-/// app boots and routes are navigable.
+/// destinations. Below `_compactBreakpoint` the rail collapses to icons only
+/// so the window stays usable when snapped narrow; there is no separate
+/// mobile layout in scope for v1 (desktop-first, PLAN §0).
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.child, required this.location});
 
   final Widget child;
   final String location;
+
+  static const _compactBreakpoint = 720.0;
 
   static const _destinations = [
     NavDestination(icon: Icons.home_outlined, label: 'Home', route: '/home'),
@@ -28,18 +31,63 @@ class AppShell extends StatelessWidget {
     return '/home';
   }
 
+  String get _title {
+    for (final d in _destinations) {
+      if (d.route == _current) return d.label;
+    }
+    return 'Watchparty';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          NavRail(
-            destinations: _destinations,
-            currentRoute: _current,
-            onSelect: (route) => context.go(route),
+          _WindowChrome(title: _title),
+          const Divider(height: 1, color: AppColors.line),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < _compactBreakpoint;
+                return Row(
+                  children: [
+                    NavRail(
+                      destinations: _destinations,
+                      currentRoute: _current,
+                      compact: compact,
+                      onSelect: (route) => context.go(route),
+                    ),
+                    const VerticalDivider(width: 1, color: AppColors.line),
+                    Expanded(child: child),
+                  ],
+                );
+              },
+            ),
           ),
-          const VerticalDivider(width: 1, color: AppColors.line),
-          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
+/// A flat, chrome-only title bar: it doesn't own real OS window controls (no
+/// window-manager package is wired yet — that's E10 packaging), but gives the
+/// shell a desktop-app top edge with the current section name, matching the
+/// "content is the interface" rule — no gradient, no elevation shadow.
+class _WindowChrome extends StatelessWidget {
+  const _WindowChrome({required this.title});
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 44,
+      color: AppColors.bg,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      child: Row(
+        children: [
+          Text(title,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.dim)),
         ],
       ),
     );

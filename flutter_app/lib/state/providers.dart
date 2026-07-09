@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/api_client.dart';
 import '../data/mock_api_client.dart';
 import '../net/socket_client.dart';
+import '../download/downloader.dart';
 
 /// Core dependency-injection seams (PLAN §3.8). Phase 0 wires MOCK
 /// implementations so the app boots and every epic has something to build
@@ -16,3 +17,8 @@ final apiClientProvider = Provider<ApiClient>((ref) => MockApiClient());
 /// The socket.io client for sync/chat. Mock by default.
 final socketClientProvider =
     Provider<SocketClient>((ref) => MockSocketClient());
+
+/// The resumable-download service (E8.1). A single [Downloader] instance is
+/// shared by [downloadsProvider] and [offlineProvider]; both rehydrate from
+/// its persisted state on first read.
+final downloaderProvider = Provider<Downloader>((ref) => Downloader());

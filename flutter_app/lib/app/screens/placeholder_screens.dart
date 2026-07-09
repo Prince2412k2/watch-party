@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../state/state.dart';
 import '../../ui/ui.dart';
 
 /// Simple placeholder screens (PLAN §3.7). Each owning epic replaces its screen;
@@ -23,66 +20,6 @@ class _Placeholder extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
           if (body != null) Text(body!, style: AppTheme.dim),
         ],
-      ),
-    );
-  }
-}
-
-/// Login (E2 owns). Phase 0 renders the form and calls the (mock) authProvider.
-class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({super.key});
-  @override
-  ConsumerState<LoginScreen> createState() => _LoginScreenState();
-}
-
-class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _user = TextEditingController(text: 'root');
-  final _pass = TextEditingController(text: 'root');
-
-  @override
-  void dispose() {
-    _user.dispose();
-    _pass.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final auth = ref.watch(authProvider);
-    ref.listen(authProvider, (_, next) {
-      if (next.isAuthenticated) context.go('/home');
-    });
-
-    return Scaffold(
-      body: Center(
-        child: SizedBox(
-          width: 360,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('Watchparty', style: AppTheme.titleLarge, textAlign: TextAlign.center),
-              const SizedBox(height: AppSpacing.xl),
-              AppTextField(controller: _user, label: 'Username'),
-              const SizedBox(height: AppSpacing.lg),
-              AppTextField(controller: _pass, label: 'Password', obscureText: true),
-              if (auth.error != null) ...[
-                const SizedBox(height: AppSpacing.md),
-                Text(auth.error!, style: const TextStyle(color: AppColors.red, fontSize: 13)),
-              ],
-              const SizedBox(height: AppSpacing.xl),
-              AppButton(
-                label: 'Sign in',
-                variant: AppButtonVariant.primary,
-                expand: true,
-                busy: auth.loading,
-                onPressed: () => ref
-                    .read(authProvider.notifier)
-                    .login(_user.text, _pass.text),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

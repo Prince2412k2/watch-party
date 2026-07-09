@@ -39,15 +39,52 @@ abstract final class AppTheme {
       scrollbarTheme: const ScrollbarThemeData(
         thumbColor: WidgetStatePropertyAll(AppColors.line2),
       ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: AppColors.surface3,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          border: Border.all(color: AppColors.line),
+        ),
+        textStyle: const TextStyle(color: AppColors.text, fontSize: 12),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: AppColors.accent,
+        linearTrackColor: AppColors.line2,
+      ),
+      dialogTheme: const DialogThemeData(backgroundColor: AppColors.surface),
+      popupMenuTheme: PopupMenuThemeData(
+        color: AppColors.surface2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppSpacing.radius),
+          side: const BorderSide(color: AppColors.line),
+        ),
+      ),
     );
   }
 
-  /// A few named text styles the widgets reference directly.
+  /// The type scale (PLAN §0/§3.6). Named after intent, not size — screens
+  /// reach for `AppTheme.titleLarge` etc. rather than raw `TextStyle`s.
+  static const TextStyle displaySmall = TextStyle(
+    fontFamily: AppFonts.sans,
+    fontSize: 28,
+    fontWeight: FontWeight.w800,
+    letterSpacing: -0.6,
+    color: AppColors.text,
+  );
+
   static const TextStyle titleLarge = TextStyle(
     fontFamily: AppFonts.sans,
     fontSize: 20,
     fontWeight: FontWeight.w700,
     letterSpacing: -0.4,
+    color: AppColors.text,
+  );
+
+  static const TextStyle titleMedium = TextStyle(
+    fontFamily: AppFonts.sans,
+    fontSize: 16,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.2,
     color: AppColors.text,
   );
 
@@ -63,6 +100,13 @@ abstract final class AppTheme {
     fontSize: 13.5,
     fontWeight: FontWeight.w500,
     color: AppColors.dim,
+  );
+
+  static const TextStyle caption = TextStyle(
+    fontFamily: AppFonts.sans,
+    fontSize: 12,
+    fontWeight: FontWeight.w600,
+    color: AppColors.faint,
   );
 
   static const TextStyle mono = TextStyle(
