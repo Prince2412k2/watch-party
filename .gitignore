@@ -20,7 +20,7 @@ media-data/
 
 # persistent session store (session cookies/data, not app secrets — still
 # private, keep out of git)
-data/
+/data/
 
 # VPN / WireGuard / OpenVPN configs — contain private keys, never commit
 *.conf
