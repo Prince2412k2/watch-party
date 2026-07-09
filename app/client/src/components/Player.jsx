@@ -4,8 +4,7 @@ import { VideoSkin, videoFeatures } from '@videojs/react/video'
 import { HlsVideo } from '@videojs/react/media/hls-video'
 import '@videojs/react/video/skin.css'
 import { useSyncPlay } from '../hooks/useSyncPlay.js'
-import { useIsMobile, usePhone, useWideBar } from '../hooks/useIsMobile.js'
-import { glass } from '../glass.jsx'
+import { useWideBar } from '../hooks/useIsMobile.js'
 import { Z } from '../watchLayers.js'
 import { createTransportIntent } from '../sync/transportIntent.js'
 import { isBuffered } from '../sync/bufferSeek.js'
@@ -17,6 +16,8 @@ import { BUFFER_AHEAD_SEC } from '../sync/syncCore.js'
 // the enter/exit icon from `immersive` and call those callbacks — no per-device
 // branching lives in the button path anymore.
 const VPlayer = createPlayer({ features: videoFeatures })
+
+const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
 
 export default function Player({
   hlsUrl, isHost, collaborativeControl, syncMode, onStruggle,
@@ -42,6 +43,7 @@ export default function Player({
   // unmuted. Everyone starts muted so autoplay (synced play()) isn't blocked
   // by the browser; the 'm' key / mute button flips this, not canControl.
   const [userMuted, setUserMuted] = useState(true)
+  const toggleMuted = () => setUserMuted(m => !m)
 
   // Local (non-shared) playback phase from useSyncPlay, surfaced here so the
   // mobile transport button (owned by Player, not the hook) can tell a real
@@ -55,12 +57,11 @@ export default function Player({
       {/* isolate so the skin's internal z-indexed layers don't paint over the
           camera tiles / chat that render as siblings of this player */}
       <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', isolation: 'isolate' }}>
-        {/* Skin is interactive only for controllers; guests can't drive transport.
-            On phones we hide the skin's own bottom control bar (watch-skin--nobar):
-            the app's MobileBottomBar fully replaces it, and leaving it would peek
-            out under the app bar (bug 7). Desktop controllers keep the skin's
-            scrubber; guests get the read-only GuestTimeline below (bug 6). */}
-        <VideoSkin className={phone ? 'watch-skin watch-skin--nobar' : 'watch-skin'} style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none' }}>
+        {/* The vidstack skin's own control bar is fully replaced by the flat,
+            single-row control bar below (desktop: DesktopControlBar; phone:
+            MobileBottomBar) — always hide it, on every platform. Skin is
+            interactive only for controllers; guests can't drive transport. */}
+        <VideoSkin className="watch-skin watch-skin--nobar" style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none' }}>
           {/* Everyone starts muted so synced play() autoplays without a gesture;
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
@@ -76,26 +77,10 @@ export default function Player({
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
           onOpenChat={onOpenChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
           seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
-          userMuted={userMuted} onToggleMuted={() => setUserMuted(m => !m)} onLocalPhase={setLocalPhase} />
+          userMuted={userMuted} onToggleMuted={toggleMuted} onLocalPhase={setLocalPhase} />
 
         {userMuted && !hostMuted && (
-          <UnmuteButton onClick={() => setUserMuted(false)} phone={phone} />
-        )}
-
-        {/* Desktop-only "Host controls playback" hint. On phones the same state
-            is shown as a lock glyph inside the consolidated bottom bar. */}
-        {!canControl && !phone && (
-          <div style={{
-            ...glass('light'),
-            position: 'absolute', bottom: 150, left: '50%', transform: 'translateX(-50%)',
-            zIndex: 20, display: 'flex', alignItems: 'center', gap: 7,
-            padding: '7px 13px', borderRadius: 999, color: 'rgba(255,255,255,.75)',
-            fontSize: 12.5, fontWeight: 600, pointerEvents: 'none',
-            opacity: visible ? 1 : 0, transition: 'opacity .25s',
-          }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-            Host controls playback
-          </div>
+          <UnmuteButton onClick={toggleMuted} />
         )}
 
         {phone ? (
@@ -113,22 +98,24 @@ export default function Player({
           />
         ) : (
           <>
-            {/* Guests can't drive the skin's scrubber, so give them a read-only
-                timeline they can SEE (bug 6). Controllers use the skin's own. */}
-            {!canControl && <GuestTimeline visible={visible} />}
-
-            {/* Call controls (mic / cam / layout) — bottom-center */}
-            <AVControls
-              micOn={micOn} camOn={camOn}
-              talking={talking}
-              onToggleMic={onToggleMic} onToggleCam={onToggleCam}
+            {/* Quiet top-of-stage row: only meaningful while chrome is visible.
+                Room-essential toggles only — no labels, no boxes. */}
+            <TopBar
+              visible={visible} onOpenChat={onOpenChat}
+              micOn={micOn} camOn={camOn} onToggleMic={onToggleMic} onToggleCam={onToggleCam}
+              talking={talking} hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
               onToggleLayout={onToggleLayout} layoutMode={layoutMode}
-              hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-              visible={visible}
             />
 
-            {/* Playback controls (settings / fullscreen) — anchored above the timeline */}
-            <TimelineControls visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} />
+            {/* One control row, pinned bottom, over the single allowed black-alpha
+                scrim. Read-only for guests (no thumb, no pointer events on the
+                scrubber) — canControl gates interactivity throughout. */}
+            <DesktopControlBar
+              visible={visible} canControl={canControl}
+              immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
+              userMuted={userMuted} onToggleMuted={toggleMuted}
+              localPhase={localPhase}
+            />
           </>
         )}
       </div>
@@ -137,6 +124,11 @@ export default function Player({
 }
 
 // ── Bridges the videojs Media instance into our SyncPlay protocol ────────────
+// NOTE: nothing in this function was touched for the visual redesign — it is
+// the sync/transport authority (useSyncPlay, transportIntent arm/consume,
+// holdApplying/releaseApplying, buffer-aware seek, ABR wiring) and stays exactly
+// as it was. Only its own overlay render (buffering/switching-quality) at the
+// bottom was restyled to the neutral spinner spec.
 function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }) {
   const toggleFullscreen = () => (immersive ? exitImmersive?.() : enterImmersive?.())
   const media = VPlayer.useMedia()
@@ -338,6 +330,8 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
 
   // The desktop skin is third-party UI, so mark its pointer gestures before its
   // media mutations occur. Only the next matching event may author a command.
+  // The check is a plain `.watch-skin` class match — our own custom scrubber
+  // (rendered outside VideoSkin) also carries this class for the same reason.
   useEffect(() => {
     if (!canControl) return
     const onPointerDown = (e) => {
@@ -448,142 +442,151 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   }, [media, canControl, applyingRef, notifyUserSeeking, requestPlay, requestPause, requestSeek, TICKS_PER_SECOND])
 
   if (!buffering && !switchingQuality) return null
+  // Neutral spinner: 2px ring, white top segment, transparent rest. Flat
+  // black-alpha backdrop, no blur, no color.
   return (
     <div style={{
-      position: 'absolute', inset: 0, zIndex: 25, display: 'grid', placeItems: 'center',
-      background: 'rgba(6,8,15,.55)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)',
+      position: 'absolute', inset: 0, zIndex: Z.buffering, display: 'grid', placeItems: 'center',
+      background: 'rgba(0,0,0,.55)',
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
         <div style={{
-          width: 44, height: 44, borderRadius: '50%',
-          border: '3px solid var(--stroke2)', borderTopColor: 'var(--accent)',
+          width: 32, height: 32, borderRadius: '50%',
+          border: '2px solid rgba(255,255,255,.14)', borderTopColor: '#f4f4f5',
           animation: 'spin .9s linear infinite',
         }} />
-        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{switchingQuality ? 'Switching quality…' : 'Catching up…'}</span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(244,244,245,.62)' }}>{switchingQuality ? 'Switching quality…' : 'Catching up…'}</span>
       </div>
     </div>
   )
 }
 
-// ── Separate liquid-glass control buttons: media group ‖ call group ──────────
-function GBtn({ onClick, title, active, danger, children }) {
+// ── Shared monochrome icon button ────────────────────────────────────────────
+// No box, no border, no fill at rest — dim glyph brightens to text on hover.
+// Used by the top bar and the desktop control row alike.
+function IconBtn({ onClick, title, active, danger, size = 34, children, style }) {
   return (
-    // stopPropagation so a mic/cam/hide/layout click is self-contained and can
-    // never reach the surface tap / any video gesture layer (bug 2 hardening).
-    <button onClick={(e) => { e.stopPropagation(); onClick?.(e) }} title={title} style={{
-      ...glass('light'), width: 48, height: 48, borderRadius: 16, display: 'grid', placeItems: 'center',
-      cursor: 'pointer', color: danger ? '#FF6B6B' : '#fff',
-      ...(active ? { backgroundColor: 'rgba(255,255,255,.26)' } : {}),
-      transition: 'background-color .15s, transform .12s',
-    }}
-      onMouseDown={e => e.currentTarget.style.transform = 'scale(.94)'}
-      onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
-      onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}>
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
+      title={title} aria-label={title}
+      style={{
+        width: size, height: size, border: 'none', background: 'transparent', borderRadius: 8,
+        display: 'grid', placeItems: 'center', cursor: 'pointer',
+        color: danger ? '#e0655e' : (active ? '#f4f4f5' : 'rgba(244,244,245,.62)'),
+        transition: 'color .15s',
+        ...style,
+      }}
+      onMouseEnter={e => { if (!danger) e.currentTarget.style.color = '#f4f4f5' }}
+      onMouseLeave={e => { if (!danger) e.currentTarget.style.color = active ? '#f4f4f5' : 'rgba(244,244,245,.62)' }}
+    >
       {children}
     </button>
   )
 }
 
-// Call controls only (mic / cam / layout). Playback (volume, seek, fullscreen)
-// lives in the video timeline; sound was removed to de-dup with it.
-function AVControls({ micOn, camOn, talking, onToggleMic, onToggleCam, onToggleLayout, layoutMode, hideSelf, onToggleHideSelf, visible }) {
-  const mobile = useIsMobile()
+// Quiet top-of-stage row (desktop). Only renders content while chrome is
+// visible; fades with it. No title/back affordance is wired here — Player
+// isn't handed a title or a back handler, only room-essential toggles.
+function TopBar({ visible, onOpenChat, micOn, camOn, onToggleMic, onToggleCam, talking, hideSelf, onToggleHideSelf, onToggleLayout, layoutMode }) {
   return (
     <div style={{
-      position: 'absolute', bottom: mobile ? 80 : 92, left: '50%', transform: 'translateX(-50%)', zIndex: 18,
-      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+      position: 'absolute', top: 0, left: 0, right: 0, zIndex: Z.controlBar,
+      display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+      padding: '10px 14px',
       opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
     }}>
-      {/* Talking indicator ↔ hold-to-talk hint (see PTTHint) */}
-      <PTTHint talking={talking} muted={!micOn} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      {/* Mic button reflects three states: muted (danger), unmuted (default),
-          and actively talking via PTT (active highlight, mic-open icon). */}
-      <GBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn} active={talking}>
-        {micOn
-          ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
-          : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
-      </GBtn>
-      <GBtn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
-        {camOn
-          ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
-          : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
-      </GBtn>
-      {/* Hide self-view: purely local — camera keeps publishing, we just drop our
-          own tile. Kept here (not on the tile) so it stays reachable to re-show. */}
-      {onToggleHideSelf && (
-        <GBtn onClick={onToggleHideSelf} active={hideSelf} title={hideSelf ? 'Show my camera to me' : 'Hide my camera from me'}>
-          {hideSelf
-            ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
-            : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
-        </GBtn>
+      {onOpenChat && (
+        <IconBtn onClick={onOpenChat} title="Chat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M21 11.5a8.4 8.4 0 0 1-1.1 4.2L21 20l-4.3-1a8.4 8.4 0 1 1 4.3-7.5Z"/></svg>
+        </IconBtn>
       )}
-      <GBtn onClick={onToggleLayout} title="Camera layout">
-        {layoutMode === 'float'
-          ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="13" y="12" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
-          : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="11" y="3" width="10" height="18" rx="1.5"/></svg>}
-      </GBtn>
-      </div>
+      {onToggleMic && (
+        <IconBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn} active={talking}>
+          {micOn
+            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
+            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
+        </IconBtn>
+      )}
+      {onToggleCam && (
+        <IconBtn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
+          {camOn
+            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
+            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
+        </IconBtn>
+      )}
+      {onToggleHideSelf && (
+        <IconBtn onClick={onToggleHideSelf} active={hideSelf} title={hideSelf ? 'Show my camera to me' : 'Hide my camera from me'}>
+          {hideSelf
+            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
+            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
+        </IconBtn>
+      )}
+      {onToggleLayout && (
+        <IconBtn onClick={onToggleLayout} title="Camera layout">
+          {layoutMode === 'float'
+            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="13" y="12" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="11" y="3" width="10" height="18" rx="1.5"/></svg>}
+        </IconBtn>
+      )}
     </div>
   )
 }
 
-// Small glass affordance sitting just above the desktop AV controls. When idle
-// it advertises the shortcut ("Hold T to talk"); while a PTT hold is active it
-// flips to a live "Talking…" state with a pulsing green dot. Hidden when the
-// user has manually unmuted (nothing to advertise — they're already live).
-// Shown to the host only, only when autoplay-with-sound was blocked and
-// playback was forced muted to start in sync. One tap restores audio — safe
-// because a click handler is itself a fresh user gesture.
+// Host restores audio after autoplay-with-sound was blocked. Flat, no glass,
+// no color — a plain dim pill that brightens on hover.
 function RestoreSoundPrompt({ onClick }) {
   return (
     <button onClick={onClick} style={{
-      ...glass('clear'), position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+      position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
       zIndex: Z.controlBar, display: 'inline-flex', alignItems: 'center', gap: 8,
       padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
-      color: '#fff', cursor: 'pointer', border: '1px solid rgba(255,255,255,.22)',
+      color: '#f4f4f5', cursor: 'pointer', background: 'rgba(0,0,0,.5)',
+      border: '1px solid rgba(255,255,255,.14)',
     }}>
-      🔇 Tap for sound
+      Tap for sound
     </button>
   )
 }
 
 // Guests (no playback control) get a dedicated unmute affordance, since they
 // have no other way to enable audio — audio is independent of control rights.
-function UnmuteButton({ onClick, phone }) {
+function UnmuteButton({ onClick }) {
   return (
     <button onClick={onClick} style={{
-      ...glass('clear'), position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+      position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
       zIndex: Z.controlBar, display: 'inline-flex', alignItems: 'center', gap: 8,
       padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
-      color: '#fff', cursor: 'pointer', border: '1px solid rgba(255,255,255,.22)',
+      color: '#f4f4f5', cursor: 'pointer', background: 'rgba(0,0,0,.5)',
+      border: '1px solid rgba(255,255,255,.14)',
     }}>
-      🔇 Tap for sound
+      Tap for sound
     </button>
   )
 }
 
+// Hold-T-to-talk hint / live "Talking…" state, shown above the AV cluster.
+// Neutral — no green. Active state = brighter + a plain white pulse dot, per
+// the "active = brightness, not color" rule.
 function PTTHint({ talking, muted }) {
   if (!talking && !muted) return null
   return (
     <div style={{
-      ...glass('clear'), display: 'inline-flex', alignItems: 'center', gap: 7,
+      display: 'inline-flex', alignItems: 'center', gap: 7,
       padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-      color: talking ? '#7CFFB2' : 'rgba(255,255,255,.72)',
-      border: talking ? '1px solid rgba(124,255,178,.4)' : undefined,
+      background: 'rgba(0,0,0,.5)', color: talking ? '#f4f4f5' : 'rgba(244,244,245,.62)',
       transition: 'color .15s',
     }}>
       {talking ? (
         <>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#3ddc84', animation: 'pulse 1.2s ease-in-out infinite' }} />
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f4f4f5', animation: 'pulse 1.2s ease-in-out infinite' }} />
           Talking…
         </>
       ) : (
         <>
           <kbd style={{
             fontFamily: 'inherit', fontSize: 11, fontWeight: 700, lineHeight: 1,
-            padding: '2px 6px', borderRadius: 5, background: 'rgba(255,255,255,.14)',
-            border: '1px solid rgba(255,255,255,.22)',
+            padding: '2px 6px', borderRadius: 5, background: 'rgba(255,255,255,.1)',
+            border: '1px solid rgba(255,255,255,.14)',
           }}>T</kbd>
           Hold to talk
         </>
@@ -660,12 +663,7 @@ function levelLabel(l) {
   return [h, mbps].filter(Boolean).join(' · ') || 'Auto'
 }
 
-// ── Read-only playback timeline (bug 6) ──────────────────────────────────────
-// Guests must SEE the shared position/duration/progress even though they can't
-// scrub. The vidstack skin's own scrubber only reveals on pointer activity, which
-// the guest `pointerEvents:none` suppresses — so guests never saw it. This is a
-// pure-display timeline (no seek handlers) shown to non-controllers on desktop,
-// and embedded in the phone bar (where the skin's bar is hidden) for everyone.
+// ── Read-only playback clock (position / duration / buffer) ─────────────────
 function useMediaClock(media) {
   const [c, setC] = useState({ cur: 0, dur: 0, buf: 0 })
   useEffect(() => {
@@ -691,82 +689,215 @@ function fmtClock(s) {
   return `${h > 0 ? `${h}:` : ''}${mm}:${String(sec).padStart(2, '0')}`
 }
 
-// The timeline row: current time · progress (played + buffered) · duration.
-function TimelineTrack() {
+// ── The scrubber: thin (4px, 6px on hover/scrub), white played, white-alpha
+// buffered/track, round thumb visible only on hover/scrub. Read-only for
+// guests — no thumb, no pointer events, position/buffer still shown. Dragging
+// mutates media.currentTime directly (same authoring path the old skin
+// scrubber used); the surrounding row carries the `.watch-skin` class so the
+// pointerdown-arm listener in SyncBridge still arms before we mutate, and the
+// existing seeking/seeked → requestSeek pipeline authors the room exactly as
+// before.
+function Scrubber({ canControl }) {
   const media = VPlayer.useMedia()
   const { cur, dur, buf } = useMediaClock(media)
+  const [hover, setHover] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const trackRef = useRef(null)
+
   const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
   const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
-  const time = { fontSize: 11.5, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
+  const active = hover || dragging
+  const barH = active ? 6 : 4
+
+  const ratioFromEvent = (e) => {
+    const el = trackRef.current
+    if (!el) return 0
+    const r = el.getBoundingClientRect()
+    const clientX = 'touches' in e && e.touches.length ? e.touches[0].clientX : e.clientX
+    return Math.min(1, Math.max(0, (clientX - r.left) / r.width))
+  }
+
+  const onPointerDown = (e) => {
+    if (!canControl || !media) return
+    e.stopPropagation()
+    setDragging(true)
+    const seekTo = (ev) => {
+      const dur2 = media.duration || 0
+      media.currentTime = ratioFromEvent(ev) * dur2
+    }
+    seekTo(e)
+    const move = (ev) => seekTo(ev)
+    const up = () => {
+      setDragging(false)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up, { once: true })
+  }
+
   return (
-    <div aria-label="Playback progress" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
-      <span style={{ ...time, minWidth: 40, textAlign: 'right', color: 'rgba(255,255,255,.78)' }}>{fmtClock(cur)}</span>
-      <div style={{ position: 'relative', flex: 1, height: 4, borderRadius: 999, background: 'rgba(255,255,255,.2)', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${bufPct}%`, background: 'rgba(255,255,255,.3)' }} />
-        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${pct}%`, background: '#EDEFF2' }} />
+    <div
+      ref={trackRef}
+      onMouseEnter={() => canControl && setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onPointerDown={onPointerDown}
+      style={{
+        position: 'relative', flex: 1, height: 16, display: 'flex', alignItems: 'center',
+        cursor: canControl ? 'pointer' : 'default', pointerEvents: canControl ? 'auto' : 'none',
+      }}
+    >
+      <div style={{ position: 'absolute', left: 0, right: 0, height: barH, borderRadius: 999, background: 'rgba(255,255,255,.14)', transition: 'height .15s' }} />
+      <div style={{ position: 'absolute', left: 0, height: barH, width: `${bufPct}%`, borderRadius: 999, background: 'rgba(255,255,255,.28)', transition: 'height .15s' }} />
+      <div style={{ position: 'absolute', left: 0, height: barH, width: `${pct}%`, borderRadius: 999, background: '#f4f4f5', transition: 'height .15s' }} />
+      {canControl && (
+        <div style={{
+          position: 'absolute', left: `${pct}%`, width: 10, height: 10, marginLeft: -5,
+          borderRadius: '50%', background: '#f4f4f5', opacity: active ? 1 : 0, transition: 'opacity .15s',
+        }} />
+      )}
+    </div>
+  )
+}
+
+// Guest-only "who's driving" hint — text only, no lock box.
+function HostControlsHint() {
+  return (
+    <div style={{ fontSize: 11.5, fontWeight: 500, color: 'rgba(244,244,245,.36)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+      Host controls playback
+    </div>
+  )
+}
+
+// Hover-reveal volume slider. Desktop only, purely local (media.volume) —
+// independent of the shared `userMuted` flag, which callers still flip via
+// the mute icon.
+function VolumeControl({ userMuted, onToggleMuted }) {
+  const media = VPlayer.useMedia()
+  const [open, setOpen] = useState(false)
+  const [volume, setVolume] = useState(1)
+
+  useEffect(() => {
+    if (!media) return
+    setVolume(media.volume ?? 1)
+  }, [media])
+
+  const muted = userMuted || volume === 0
+  return (
+    <div
+      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}
+      style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+    >
+      <IconBtn onClick={onToggleMuted} title={muted ? 'Unmute' : 'Mute'}>
+        {muted
+          ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M23 9l-6 6M17 9l6 6"/></svg>
+          : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 6a9 9 0 0 1 0 12"/></svg>}
+      </IconBtn>
+      <div style={{ width: open ? 70 : 0, overflow: 'hidden', transition: 'width .18s' }}>
+        <input
+          type="range" min={0} max={1} step={0.01} value={userMuted ? 0 : volume}
+          onChange={(e) => {
+            const v = Number(e.target.value)
+            setVolume(v)
+            if (media) media.volume = v
+            if (v > 0 && userMuted) onToggleMuted?.()
+            if (v === 0 && !userMuted) onToggleMuted?.()
+          }}
+          style={{ width: 64, accentColor: '#f4f4f5', height: 16, cursor: 'pointer' }}
+        />
       </div>
-      <span style={{ ...time, minWidth: 40, color: 'rgba(255,255,255,.5)' }}>{fmtClock(dur)}</span>
     </div>
   )
 }
 
-// Desktop read-only timeline for guests: a floating glass bar pinned to the
-// bottom, clear of the AV cluster + settings gear. Fades with the chrome.
-function GuestTimeline({ visible }) {
-  return (
-    <div style={{
-      position: 'absolute', left: 16, right: 16, bottom: 16, zIndex: 17,
-      ...glass('clear'), borderRadius: 12, padding: '9px 16px',
-      opacity: visible ? 1 : 0, pointerEvents: 'none', transition: 'opacity .25s',
-    }}>
-      <TimelineTrack />
-    </div>
-  )
-}
-
-// Settings + fullscreen — anchored bottom-right, ABOVE the video timeline row
-// (bug 7: the vidstack control bar sits at bottom:0.5rem, so a bottom:14 gear
-// landed on top of it). The FS button reads the single `immersive` state and
-// calls the enter/exit callbacks owned by WatchView; no per-device branching here.
-function TimelineControls({ visible, immersive, enterImmersive, exitImmersive }) {
+// ── Desktop control row ──────────────────────────────────────────────────────
+// The single pinned-bottom row: play/pause, current time, scrubber, duration,
+// volume, settings, fullscreen — over the one allowed black-alpha scrim. No
+// box, no border around the row itself.
+function DesktopControlBar({ visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }) {
   const media = VPlayer.useMedia()
   const quality = useQualityLevels(media)
+  const { cur, dur } = useMediaClock(media)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const smallBtn = {
-    width: 40, height: 40, borderRadius: 12, border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center',
-    background: 'transparent', color: '#fff', transition: 'background .15s',
+  const [paused, setPaused] = useState(true)
+
+  useEffect(() => {
+    if (!media) return
+    const sync = () => setPaused(!!media.paused && localPhase === 'ready')
+    sync()
+    media.addEventListener('play', sync)
+    media.addEventListener('pause', sync)
+    return () => { media.removeEventListener('play', sync); media.removeEventListener('pause', sync) }
+  }, [media, localPhase])
+
+  const togglePlay = () => {
+    if (!canControl) return
+    window.dispatchEvent(new CustomEvent('watch:transport', { detail: { kind: paused ? 'play' : 'pause' } }))
   }
+
+  // Menus never auto-hide: force the row visible while settings is open, even
+  // if the idle timer (owned by the party frame) has already faded `visible`.
+  const shown = visible || settingsOpen
+
   return (
-    <div style={{
-      position: 'absolute', right: 14, bottom: 68, zIndex: 19, display: 'flex', alignItems: 'center', gap: 2,
-      ...glass('clear'), borderRadius: 14, padding: 3,
-      opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
+    <div className="watch-skin" style={{
+      position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: Z.controlBar,
+      opacity: shown ? 1 : 0, pointerEvents: shown ? 'auto' : 'none', transition: 'opacity .25s',
     }}>
-      <div style={{ position: 'relative' }}>
-        <button onClick={() => setSettingsOpen(o => !o)} title="Settings" style={{ ...smallBtn, background: settingsOpen ? 'rgba(255,255,255,.18)' : 'transparent' }}>
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
-        {settingsOpen && <SettingsMenu media={media} quality={quality} onClose={() => setSettingsOpen(false)} />}
+      {/* The one allowed gradient: a neutral black-alpha legibility scrim. */}
+      <div aria-hidden style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: 120,
+        background: 'linear-gradient(0deg, rgba(0,0,0,.8), transparent)',
+        pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'relative', display: 'flex', alignItems: 'center', gap: 12,
+        padding: '0 18px 14px',
+      }}>
+        <IconBtn onClick={togglePlay} title={paused ? 'Play' : 'Pause'} active size={36}>
+          {paused
+            ? <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            : <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+        </IconBtn>
+
+        <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#f4f4f5', minWidth: 40, flexShrink: 0 }}>{fmtClock(cur)}</span>
+
+        <Scrubber canControl={canControl} />
+
+        <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', minWidth: 40, flexShrink: 0 }}>{fmtClock(dur)}</span>
+
+        {!canControl && <HostControlsHint />}
+
+        <VolumeControl userMuted={userMuted} onToggleMuted={onToggleMuted} />
+
+        <div style={{ position: 'relative' }}>
+          <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </IconBtn>
+          {settingsOpen && <SettingsMenu media={media} quality={quality} onClose={() => setSettingsOpen(false)} />}
+        </div>
+
+        <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
+          {immersive
+            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
+            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>}
+        </IconBtn>
       </div>
-      <button onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'} style={smallBtn}>
-        {immersive
-          ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
-          : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>}
-      </button>
     </div>
   )
 }
 
 // ── Mobile consolidated bottom bar ───────────────────────────────────────────
-// One glass bar pinned to the bottom (clear of the home-indicator via safe-area).
-// It carries a PRIMARY cluster that is always one tap away — transport
-// (host-only play/pause, or a lock glyph for guests), mic, cam, and fullscreen —
-// plus the SECONDARY controls (push-to-talk, hide-self, camera-strip toggle,
-// quality/settings). On short/narrow phones (< 820px, see `useWideBar`) the
-// secondary set collapses behind a "⋯" overflow popover so nothing clips or
-// horizontally scrolls at e.g. 740×360; on roomy phones (≥ 820px, e.g. 844-wide
-// landscape) they inline back into the bar. Fullscreen is NEVER in the overflow.
-// Fades with the auto-hide `visible` layer. Touch targets are 44px with ≥8px gaps.
+// One flat bar pinned to the bottom (clear of the home-indicator via safe-area),
+// over the same black-alpha scrim as the desktop row. It carries a PRIMARY
+// cluster that is always one tap away — transport (host-only play/pause, or a
+// lock glyph for guests), mic, cam, and fullscreen — plus the SECONDARY
+// controls (push-to-talk, hide-self, camera-strip toggle, quality/settings). On
+// short/narrow phones (< 820px, see `useWideBar`) the secondary set collapses
+// behind a "⋯" overflow popover so nothing clips or horizontally scrolls at
+// e.g. 740×360; on roomy phones (≥ 820px, e.g. 844-wide landscape) they inline
+// back into the bar. Fullscreen is NEVER in the overflow. Fades with the
+// auto-hide `visible` layer. Touch targets are 44px with ≥8px gaps.
 function MobileBottomBar({
   canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
   hideSelf, onToggleHideSelf, camStripOpen, onToggleCamStrip, visible, immersive, enterImmersive, exitImmersive,
@@ -827,67 +958,69 @@ function MobileBottomBar({
   const hideSelfControl = onToggleHideSelf ? (
     <BarBtn key="hide" onClick={() => { onToggleHideSelf(); closeMore() }} active={hideSelf} title={hideSelf ? 'Show my camera to me' : 'Hide my camera from me'}>
       {hideSelf
-        ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
-        : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
+        ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
+        : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
     </BarBtn>
   ) : null
   const camStripControl = (
     <BarBtn key="camstrip" onClick={() => { onToggleCamStrip?.(); closeMore() }} active={camStripOpen} title={camStripOpen ? 'Hide cameras' : 'Show cameras'}>
       {camStripOpen
-        ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="8" width="5" height="8" rx="1"/><rect x="9.5" y="8" width="5" height="8" rx="1"/><rect x="16" y="8" width="5" height="8" rx="1"/></svg>
-        : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M3 8h1m4.5 0H14m2 0h5v8h-1M3 8v8h9"/></svg>}
+        ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="8" width="5" height="8" rx="1"/><rect x="9.5" y="8" width="5" height="8" rx="1"/><rect x="16" y="8" width="5" height="8" rx="1"/></svg>
+        : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M3 8h1m4.5 0H14m2 0h5v8h-1M3 8v8h9"/></svg>}
     </BarBtn>
   )
   const settingsControl = (
     <div key="settings" style={{ position: 'relative' }}>
       <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </BarBtn>
       {settingsOpen && <SettingsMenu media={media} quality={quality} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
   const secondary = [talkControl, hideSelfControl, camStripControl, settingsControl].filter(Boolean)
 
+  // Menus never auto-hide: keep the bar visible while settings/overflow is open.
+  const shown = visible || settingsOpen || moreOpen
+
   return (
-    <div style={{
+    <div className="watch-skin" style={{
       position: 'absolute', zIndex: Z.controlBar,
       left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
       bottom: 'calc(var(--sa-b) + 8px)',
-      opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
+      opacity: shown ? 1 : 0, pointerEvents: shown ? 'auto' : 'none', transition: 'opacity .25s',
     }}>
-      {/* Bottom scrim (G5 / icon-contrast): a soft dark gradient rising behind the
-          bar so white glyphs hold ≥3:1 contrast even over a bright video frame —
-          the glass tint alone is only ~30% opaque and lets bright frames bleed
-          through. On-brand and light-touch (fades to nothing above the bar). */}
+      {/* The one allowed gradient: a neutral black-alpha legibility scrim rising
+          behind the bar so glyphs hold contrast over a bright video frame. */}
       <div aria-hidden style={{
         position: 'absolute', left: -8, right: -8, bottom: -8, top: -48,
-        background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.28) 60%, rgba(0,0,0,.42) 100%)',
-        borderRadius: 24, pointerEvents: 'none',
+        background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.4) 60%, rgba(0,0,0,.6) 100%)',
+        pointerEvents: 'none',
       }} />
       <div ref={barRef} style={{
         position: 'relative',
-        ...glass('medium'), borderRadius: 18, padding: '6px 8px',
-        display: 'flex', flexDirection: 'column', gap: 6,
+        display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 6px 2px',
       }}>
         {/* Read-only timeline row (bug 6): everyone on a phone sees position /
             progress / duration here. The skin's own scrubber is hidden on phones
             (watch-skin--nobar); controllers still scrub via double-tap-seek. */}
-        <div style={{ padding: '2px 6px 0' }}><TimelineTrack /></div>
+        <div style={{ padding: '2px 6px 0' }}>
+          <MobileTimelineRow canControl={canControl} />
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
         {/* Transport: play/pause for controllers, lock glyph for guests */}
         {canControl ? (
           <BarBtn onClick={togglePlay} title={paused ? 'Play' : 'Pause'} primary>
             {paused
-              ? <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-              : <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+              ? <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              : <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
           </BarBtn>
         ) : (
           <div title="Host controls playback" style={{
             width: 44, height: 44, borderRadius: 14, display: 'grid', placeItems: 'center',
-            color: 'rgba(255,255,255,.6)', flexShrink: 0,
+            color: 'rgba(244,244,245,.62)', flexShrink: 0,
           }}>
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
           </div>
         )}
 
@@ -895,13 +1028,13 @@ function MobileBottomBar({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center' }}>
           <BarBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn} active={talking}>
             {micOn
-              ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
-              : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
+              ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
+              : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
           </BarBtn>
           <BarBtn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
             {camOn
-              ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
-              : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
+              ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
+              : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
           </BarBtn>
           {/* Roomy phones (≥820px): inline the secondary controls right here. */}
           {wide && secondary}
@@ -917,8 +1050,8 @@ function MobileBottomBar({
               one-tap action; it is intentionally NOT placed in the overflow. */}
           <BarBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen' : 'Full screen'}>
             {immersive
-              ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
-              : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>}
+              ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
+              : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>}
           </BarBtn>
 
           {/* Overflow "⋯": secondary controls for narrow phones. Anchored to the
@@ -926,7 +1059,7 @@ function MobileBottomBar({
           {!wide && (
             <div style={{ position: 'relative' }}>
               <BarBtn onClick={() => setMoreOpen(o => !o)} active={moreOpen} title="More controls">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
               </BarBtn>
               {moreOpen && (
                 <>
@@ -934,9 +1067,9 @@ function MobileBottomBar({
                       also toggle chrome via the surface tap handler. */}
                   <div onClick={(e) => { e.stopPropagation(); closeMore() }} style={{ position: 'fixed', inset: 0, zIndex: Z.controlBar }} />
                   <div onClick={(e) => e.stopPropagation()} style={{
-                    ...glass('heavy', { refract: true }),
+                    backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
                     position: 'absolute', bottom: 'calc(100% + 10px)', right: 0, zIndex: Z.controlBar + 1,
-                    display: 'flex', alignItems: 'center', gap: 8, padding: 8, borderRadius: 16,
+                    display: 'flex', alignItems: 'center', gap: 8, padding: 8, borderRadius: 12,
                     animation: 'up .18s ease both',
                   }}>
                     {secondary}
@@ -962,15 +1095,36 @@ function MobileBottomBar({
   )
 }
 
-// 44px touch-target button used across the mobile bar.
+// Compact read-only mono time row for the mobile bar — time / scrubber / time,
+// matching the desktop scrubber but sized for the touch bar. Read-only, same
+// as the desktop guest scrubber (mobile transport is via double-tap-seek).
+function MobileTimelineRow({ canControl }) {
+  const media = VPlayer.useMedia()
+  const { cur, dur, buf } = useMediaClock(media)
+  const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
+  const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
+  return (
+    <div aria-label="Playback progress" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+      <span style={{ fontFamily: MONO_F, fontSize: 11, fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right', color: '#f4f4f5', flexShrink: 0 }}>{fmtClock(cur)}</span>
+      <div style={{ position: 'relative', flex: 1, height: 4, borderRadius: 999, overflow: 'hidden', background: 'rgba(255,255,255,.14)' }}>
+        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${bufPct}%`, background: 'rgba(255,255,255,.28)' }} />
+        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${pct}%`, background: '#f4f4f5' }} />
+      </div>
+      <span style={{ fontFamily: MONO_F, fontSize: 11, fontVariantNumeric: 'tabular-nums', minWidth: 36, color: 'rgba(244,244,245,.62)', flexShrink: 0 }}>{fmtClock(dur)}</span>
+      {!canControl && <span style={{ fontSize: 10.5, color: 'rgba(244,244,245,.36)', flexShrink: 0 }}>Host controls</span>}
+    </div>
+  )
+}
+
+// 44px touch-target button used across the mobile bar. Flat: no glass, active
+// state is brightness only (never a color fill) except the semantic `danger`
+// (muted mic/cam) and the near-white `primary` transport knob.
 function BarBtn({ onClick, title, active, danger, primary, children }) {
   return (
     <button onClick={(e) => { e.stopPropagation(); onClick?.(e) }} title={title} aria-label={title} style={{
-      width: 44, height: 44, flexShrink: 0, borderRadius: 14, border: 'none', display: 'grid', placeItems: 'center',
-      cursor: 'pointer', color: danger ? '#FF6B6B' : (primary ? '#0a0a0c' : '#fff'),
-      // Idle fill bumped .08 → .14 (G5): gives idle buttons more material so the
-      // glyph reads over bright frames; paired with the bar scrim for ≥3:1.
-      background: primary ? '#EDEFF2' : (active ? 'rgba(255,255,255,.24)' : 'rgba(255,255,255,.14)'),
+      width: 44, height: 44, flexShrink: 0, borderRadius: 12, border: 'none', display: 'grid', placeItems: 'center',
+      cursor: 'pointer', color: danger ? '#e0655e' : (primary ? '#0a0a0b' : '#f4f4f5'),
+      background: primary ? '#f4f4f5' : (active ? 'rgba(255,255,255,.14)' : 'transparent'),
       transition: 'background-color .15s, transform .12s',
     }}
       onTouchStart={e => e.currentTarget.style.transform = 'scale(.94)'}
@@ -982,9 +1136,10 @@ function BarBtn({ onClick, title, active, danger, primary, children }) {
 
 // Mobile press-and-hold talk button. Uses pointer events (covers touch + mouse)
 // so pointerup/cancel/leave all release — the mic can't stay open if the finger
-// slides off. touchAction:none stops the hold from scrolling the bar. Reflects
-// the live "talking" state with a green highlight; a no-op if the user already
-// manually unmuted (the PTT hook swallows start() in that case).
+// slides off. touchAction:none stops the hold from scrolling the bar. Active
+// state (currently talking) is brightness only — near-white fill, never a
+// color highlight. No-op if the user already manually unmuted (the PTT hook
+// swallows start() in that case).
 function TalkBtn({ talking, onStart, onStop }) {
   const down = (e) => { e.stopPropagation(); e.preventDefault(); onStart?.() }
   const up = (e) => { e.stopPropagation(); onStop?.() }
@@ -994,20 +1149,20 @@ function TalkBtn({ talking, onStart, onStop }) {
       onPointerDown={down} onPointerUp={up} onPointerCancel={up} onPointerLeave={up} onLostPointerCapture={up}
       onContextMenu={(e) => e.preventDefault()}
       style={{
-        width: 44, height: 44, flexShrink: 0, borderRadius: 14, border: 'none', display: 'grid', placeItems: 'center',
+        width: 44, height: 44, flexShrink: 0, borderRadius: 12, border: 'none', display: 'grid', placeItems: 'center',
         cursor: 'pointer', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
-        color: talking ? '#0a0a0c' : '#fff',
-        background: talking ? '#7CFFB2' : 'rgba(255,255,255,.14)',
+        color: talking ? '#0a0a0b' : '#f4f4f5',
+        background: talking ? '#f4f4f5' : 'rgba(255,255,255,.14)',
         transition: 'background-color .12s, transform .12s',
         transform: talking ? 'scale(.94)' : 'scale(1)',
       }}>
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
     </button>
   )
 }
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
-const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
+// Flat solid surface, hairline border, radius 12 — no blur, no gradient.
 function SettingsMenu({ media, quality, onClose }) {
   const [view, setView] = useState('main')     // main | quality | subs | audio
   const [q, setQ] = useState('')
@@ -1045,38 +1200,38 @@ function SettingsMenu({ media, quality, onClose }) {
   const curAudio = audios.length ? trackName(audios[audioActive] || {}, audioActive) : '—'
 
   const panel = {
-    ...glass('heavy', { refract: true }),
+    backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
     position: 'absolute', bottom: 52, right: 0, zIndex: 31, width: 272, maxHeight: '60vh',
-    display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', color: '#fff',
+    display: 'flex', flexDirection: 'column', borderRadius: 12, overflow: 'hidden', color: '#f4f4f5',
     animation: 'up .18s ease both',
   }
   const navRow = (label, value, onClick) => (
-    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', padding: '12px 14px', border: 'none', cursor: 'pointer', background: 'transparent', color: '#fff', fontSize: 14, fontWeight: 500, textAlign: 'left' }}>
+    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', padding: '12px 14px', border: 'none', cursor: 'pointer', background: 'transparent', color: '#f4f4f5', fontSize: 13.5, fontWeight: 500, textAlign: 'left' }}>
       <span>{label}</span>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(255,255,255,.5)', fontSize: 13, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(244,244,245,.62)', fontSize: 12.5, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {value}
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6" /></svg>
       </span>
     </button>
   )
   const optRow = (label, active, onClick, key) => (
-    <button key={key} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', border: 'none', cursor: 'pointer', background: active ? 'rgba(255,255,255,.1)' : 'transparent', color: active ? '#fff' : 'rgba(255,255,255,.7)', fontSize: 13.5, fontWeight: active ? 600 : 500, textAlign: 'left' }}>
+    <button key={key} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', border: 'none', cursor: 'pointer', background: active ? 'rgba(255,255,255,.06)' : 'transparent', color: active ? '#f4f4f5' : 'rgba(244,244,245,.62)', fontSize: 13, fontWeight: active ? 600 : 500, textAlign: 'left' }}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" style={{ opacity: active ? 1 : 0, flexShrink: 0 }}><path d="M20 6 9 17l-5-5" /></svg>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   )
   const subHeader = (title) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 12px', borderBottom: '1px solid rgba(255,255,255,.08)', flexShrink: 0 }}>
-      <button onClick={() => setView('main')} style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.08)', color: '#fff', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+      <button onClick={() => setView('main')} style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.06)', color: '#f4f4f5', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="m15 18-6-6 6-6" /></svg>
       </button>
-      <span style={{ fontFamily: MONO_F, fontSize: 11, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(255,255,255,.6)' }}>{title}</span>
+      <span style={{ fontFamily: MONO_F, fontSize: 11, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(244,244,245,.62)' }}>{title}</span>
     </div>
   )
   const searchBox = (
     <div style={{ padding: 10, flexShrink: 0 }}>
       <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" autoFocus
-        style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.05)', color: '#fff', fontSize: 13, outline: 'none' }} />
+        style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', color: '#f4f4f5', fontSize: 13, outline: 'none' }} />
     </div>
   )
   const filtered = (arr) => arr.map((t, i) => [t, i]).filter(([t, i]) => trackName(t, i).toLowerCase().includes(q.toLowerCase()))
@@ -1097,7 +1252,7 @@ function SettingsMenu({ media, quality, onClose }) {
           <>
             {subHeader('Quality')}
             <div style={{ overflowY: 'auto', padding: '6px 0' }}>
-              {!hasLevels && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(255,255,255,.4)' }}>Loading available qualities…</div>}
+              {!hasLevels && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(244,244,245,.36)' }}>Loading available qualities…</div>}
               {/* Auto = real ABR (bandwidth-driven). Shows the level currently playing. */}
               {optRow(autoLabel, quality.selected === -1, () => { quality.choose(-1); setView('main') }, 'auto')}
               {/* Real variant rungs reported by hls.js, highest bitrate first */}
@@ -1115,7 +1270,7 @@ function SettingsMenu({ media, quality, onClose }) {
             {subs.length > 8 && searchBox}
             <div style={{ overflowY: 'auto', padding: '6px 0' }}>
               {optRow('Off', subActive === -1, () => { chooseSub(-1); setView('main') }, 'off')}
-              {subs.length === 0 && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(255,255,255,.4)' }}>None available in this stream</div>}
+              {subs.length === 0 && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(244,244,245,.36)' }}>None available in this stream</div>}
               {filtered(subs).map(([t, i]) => optRow(trackName(t, i), subActive === i, () => { chooseSub(i); setView('main') }, i))}
             </div>
           </>
