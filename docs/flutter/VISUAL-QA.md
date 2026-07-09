@@ -69,8 +69,44 @@ they get real screens in Wave 2 (below)._
 - [ ] (Deferred to Wave 3 party screen) camera tiles + chat panel — the LiveKit
       spike already proved camera works; these get wired into the party UI next.
 
-_Party screen (E5), which composes player + camera tiles + chat with live sync,
-and packaging (E10) are Wave 3 — checklist items added when they land._
+## Wave 3 — watch party + packaging
+
+**Party (E5) — the big one; ideally test with a 2nd participant (web app or a
+2nd machine) in the same party:**
+- [ ] Nav → **Party**: create a party (you become host) or join by id.
+- [ ] In the party: video **stage** with docked side panel (tabs: Room / Chat /
+      People) — player never covered by overlays.
+- [ ] **Room tab**: your **camera tile** + others; mic/cam/hide-self toggles;
+      host controls (collaborative toggle, sync mode); **Stop Movie** (back to
+      lobby, party stays) vs **Stop Stream** (leave/end).
+- [ ] **People tab**: roster; as host, transfer-host / kick; approve/reject a
+      waiting guest.
+- [ ] **Chat tab**: send/receive messages.
+- [ ] **Live sync (needs a 2nd client)**: host play/pause/seek drives the guest's
+      video; a guest without control can't disrupt playback; host handoff works.
+- [ ] **Camera/mic actually works** (the whole reason we left Tauri) — you see
+      your webcam tile and, with a 2nd participant, see+hear them.
+
+**Packaging (E10):**
+- [ ] **Single instance**: launching the app a 2nd time just focuses the
+      existing window (no duplicate).
+- [ ] **Window state**: resize/move, quit, relaunch → same size/position.
+- [ ] **Close-to-tray**: closing the window hides it (tray icon remains, process
+      alive, any download keeps going); tray **Quit** actually exits.
+- [ ] **AppImage** runs on this machine: `flutter_app/packaging/build-linux.sh`
+      then launch `packaging/dist/Watchparty-*.AppImage` — plays a title (proves
+      libmpv is bundled) and camera works (libwebrtc bundled).
+
+---
+
+## Notes / known follow-ups (not blockers)
+- Minor ApiClient gaps flagged by E9 (servarr delete-with-body, 5xx handling,
+  servarrImageUrl query shape) — cosmetic, fix if servarr UX needs it.
+- `router.dart` still imports `PartyScreen` via `placeholder_screens.dart`
+  (which now just re-exports `party_screen.dart`) — works; one-line cleanup
+  whenever router is next touched.
+- App id is now `com.watchparty.desktop` (cookie jar path changed accordingly;
+  a pre-existing login won't carry over from the old `com.example` path).
 
 ---
 
