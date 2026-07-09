@@ -5,6 +5,7 @@
 //! they do not rename or reshape anything below without updating both sides.
 
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 // ── mpv.rs (agent N1) ────────────────────────────────────────────────────────
 
@@ -231,11 +232,25 @@ pub async fn offline_remove(args: OfflinePathArgs) -> Result<(), String> {
 
 // ── main.rs / window.rs (agent N7) ──────────────────────────────────────────
 
-/// Real exit from the tray menu. Fires the flush hook N2 relies on to persist
-/// in-flight download part-state before the process actually dies.
+/// Real exit — invoked both directly (frontend `invoke('app_quit')`) and from
+/// the tray "Quit" menu item (see `lib.rs`'s `on_menu_event`), so there is
+/// exactly one exit path regardless of trigger.
+///
+/// Emits `app:before-quit` and gives listeners a brief grace window to flush
+/// state before the process actually dies. This is the documented hook N2's
+/// downloader should use: `download.rs` should register a listener (or, once
+/// its module has real state, call a synchronous `download::flush_all(&app)`
+/// here directly) to persist per-part progress before `app.exit(0)` runs —
+/// today `download.rs` is still a stub, so there is nothing to flush yet.
 #[tauri::command]
 pub async fn app_quit(app: tauri::AppHandle) -> Result<(), String> {
-    // TODO(N7): call the N2-provided flush hook here before app.exit(0).
+    app.emit("app:before-quit", ())
+        .map_err(|e: tauri::Error| e.to_string())?;
+    // TODO(N2): replace this fixed grace period with an actual awaited flush,
+    // e.g. `download::flush_all(&app).await;`, once download.rs has state to
+    // persist. The delay below is a placeholder so listeners have *a* chance
+    // to react before exit, not a substitute for a real flush.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     app.exit(0);
     Ok(())
 }
