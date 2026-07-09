@@ -10,7 +10,10 @@
       "script": "npm run dev -- --port 5183 --strictPort",
       "cwd": "../../app/client"
     },
-    "beforeBuildCommand": "npm run build --prefix ../../app/client"
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../../app/client"
+    }
   },
   "app": {
     "windows": [
@@ -20,7 +23,6 @@
         "height": 800,
         "minWidth": 900,
         "minHeight": 600,
-        "transparent": true,
         "hiddenTitle": true
       }
     ],
@@ -36,5 +38,12 @@
       "icons/128x128.png",
       "icons/icon.png"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": ["https://example.invalid/updater/{{target}}/{{arch}}/{{current_version}}"],
+      "pubkey": ""
+    }
   }
 }
