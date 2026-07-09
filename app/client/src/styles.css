@@ -32,6 +32,19 @@
   --scrim: rgba(0,0,0,.6);
   --r: 12px;
   --r-lg: 16px;
+
+  /* Aliases — a couple of components reach for the more literal name
+     (var(--danger)/var(--primary)/var(--surface)/var(--dim)) instead of the
+     canonical token above. Same values, kept in sync manually. */
+  --danger: var(--red);
+  --primary: var(--accent);
+  --onPrimary: var(--on-accent);
+  --surface: var(--glass);
+  --surface2: var(--glass2);
+  --dim: var(--text2);
+  --faint: var(--text3);
+  --line: var(--stroke);
+  --line2: var(--stroke2);
 }
 
 html, body, #root {
