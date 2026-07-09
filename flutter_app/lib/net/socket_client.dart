@@ -37,7 +37,7 @@ abstract class SocketClient {
 /// cookie value is injected via [cookieHeader] (E2 wires it from the
 /// [DioApiClient]'s jar). Same origin as [AppConfig.apiBase].
 class IoSocketClient implements SocketClient {
-  IoSocketClient({String? url, this.cookieHeader})
+  IoSocketClient({String? url, this.cookieHeader, this.cookieHeaderProvider})
       : _url = url ?? AppConfig.socketUrl;
 
   final String _url;
@@ -45,17 +45,25 @@ class IoSocketClient implements SocketClient {
   /// Full `Cookie:` header value (e.g. `connect.sid=s%3A...`).
   final String? cookieHeader;
 
+  /// Alternative to [cookieHeader] for a caller that can't compute the header
+  /// synchronously at construction time (e.g. reading a [DioApiClient]'s
+  /// [CookieJar] happens after login, well after the socket client is built
+  /// and DI-wired). Resolved once per [connect] call when [cookieHeader] is
+  /// null.
+  final Future<String?> Function()? cookieHeaderProvider;
+
   io.Socket? _socket;
   final _connCtrl = StreamController<bool>.broadcast();
 
   @override
   Future<void> connect() async {
+    final cookie = cookieHeader ?? await cookieHeaderProvider?.call();
     final builder = io.OptionBuilder()
         .setTransports(['websocket'])
         .disableAutoConnect()
         .enableForceNew();
-    if (cookieHeader != null) {
-      builder.setExtraHeaders({'Cookie': cookieHeader!});
+    if (cookie != null) {
+      builder.setExtraHeaders({'Cookie': cookie});
     }
     final socket = io.io(_url, builder.build());
     _socket = socket;

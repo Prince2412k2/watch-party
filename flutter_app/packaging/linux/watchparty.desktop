@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Watchparty
+Comment=Watch together — sync playback, chat, and video calls
+Exec=watchparty %U
+Icon=com.watchparty.desktop
+Terminal=false
+Categories=AudioVideo;Video;Network;
+StartupWMClass=watchparty
