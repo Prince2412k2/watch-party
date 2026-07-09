@@ -161,6 +161,63 @@ vs the sync engine's timing assumptions (mitigate: the adapter emits
 
 ---
 
+## 2b. Prior art & libraries (researched — use these, don't reinvent)
+
+### mpv-in-Tauri embedding (N1's crux)
+- **`tauri-plugin-libmpv` (nini22P)** — libmpv-based Tauri v2 plugin, exposes
+  commands + property observation. **Linux window embedding does NOT work
+  (experimental); Windows only.** ⇒ NOT usable for our Linux dev target as-is.
+  https://github.com/nini22P/tauri-plugin-libmpv
+- **`tauri-plugin-mpv` (nini22P)** — controls a separate mpv *process* over JSON
+  IPC. Also **Linux embedding doesn't work.** ⇒ not usable for us.
+  https://github.com/nini22P/tauri-plugin-mpv
+- **⭐ MaxVideoPlayer / its `tauri-plugin-mpv` (MaxMB15)** — the reference that
+  actually WORKS on Linux: embeds libmpv via **EGL + X11 child window / Wayland
+  subsurface** (`src/linux.rs`), custom FFI (`src/engine.rs` lifecycle,
+  `src/mpv.rs` state), Tauri v2, marks macOS+Linux "Active". Also ships
+  `bundle-libmpv-linux.sh` (ldd + patchelf) to bundle `libmpv.so` into an
+  AppImage — exactly N7's packaging need. **License: PolyForm Noncommercial —
+  STUDY the approach, do not copy code** unless this project is confirmed
+  noncommercial (flag to the owner). This is the architecture N1 should mirror.
+  https://github.com/MaxMB15/MaxVideoPlayer
+- Simplest fallback (tauri discussion #6343): run libmpv in a **child
+  `WebviewWindow`** and sync its position/size to an HTML div. Worse UX (a
+  separate OS-managed child window) but a known-working escape hatch if the
+  EGL-subsurface embed fights us on a given compositor.
+- Rust bindings options: **`libmpv-sys`** (raw FFI — what a MaxVideoPlayer-style
+  custom embed needs), `mpv`/`libmpv` (Cobrand safe bindings, older, SDL2/GL
+  embed examples), `mpv-client` (for writing mpv Lua-like plugins, NOT for
+  embedding — not what we want).
+- **N1 recommendation:** don't adopt the nini22P plugins (Linux-broken); build a
+  thin custom embed mirroring MaxVideoPlayer's EGL+subsurface approach against
+  `libmpv-sys`, OR start from the child-`WebviewWindow` fallback to unblock
+  fast and upgrade later. The embedding spike (Agent Card N1, task 1) decides.
+
+### Multi-part downloader (N2)
+Don't hand-roll the chunking/resume state machine — evaluate these first:
+- **`http-downloader`** — multithreaded, **breakpoint resume**, speed limit +
+  tracking, runtime-tunable parallel connection count / chunk size. Closest
+  match to §0.5's requirements.
+- **`trauma`** — download-manager abstraction (list of URLs, resume if the
+  server supports it, progress). Higher-level, less control over per-part state.
+- **`parallel_downloader`** — concurrent + resume + retries + SHA-256 verify.
+- N2 still owns the **offline manifest + tray-resume orchestration**, but the
+  raw parallel-range-with-resume mechanics can come from one of these.
+
+### Tauri official plugins (N7)
+- Tray icon is built into Tauri v2 (`tray-icon` feature — already enabled).
+- **`tauri-plugin-single-instance`** — prevents a 2nd launch fighting the
+  tray-resident 1st over downloads (important given close-to-tray, §0.5).
+- **`tauri-plugin-window-state`** — persist/restore window size+position.
+- **`tauri-plugin-updater`** — auto-update (the §5 N7 "updater stub").
+
+### Playback sync / Jellyfin
+Nothing to adopt — the sync engine is our own (`syncCore.js`, reused verbatim
+via `MpvBackend`) and Jellyfin access already goes through our backend. No
+third-party watch-party-sync lib is a fit here.
+
+---
+
 ## 3. Repo layout (new code is mostly greenfield → low conflict)
 
 ```
@@ -327,9 +384,13 @@ first work-block on the embedding spike below before building out every command.
    own native window, then GTK-child-window-embed (or `wl_subsurface` on native
    Wayland) that window into the Tauri window at an arbitrary rect, and confirm
    it tracks `mpv_set_region` updates live (resize, and the camera-strip
-   toggling/fullscreen cases described in Agent Card N5). Report back if the
-   Linux path is NOT workable so the plan can be revisited — do not silently
-   fall back to a worse UX without flagging it.
+   toggling/fullscreen cases described in Agent Card N5). **Read §2b first —
+   mirror MaxVideoPlayer's EGL+X11-child/Wayland-subsurface approach (study,
+   don't copy — noncommercial license) against `libmpv-sys`; do NOT use the
+   nini22P plugins (Linux embedding broken). The child-`WebviewWindow` fallback
+   from §2b is the escape hatch.** Report back if the Linux path is NOT
+   workable so the plan can be revisited — do not silently fall back to a worse
+   UX without flagging it.
 2. **OSC + permission gating (§2 risk 2):** enable mpv's built-in OSC, skin it
    via `osc.conf`/a small Lua override toward the redesign's monochrome look
    (best-effort, not pixel-perfect — see §2 risk 3), and implement
@@ -352,8 +413,11 @@ dir fills on playback.
 
 **N2 — `rust-downloader`** · owns `desktop/src-tauri/src/download.rs`, `offline.rs`,
 and their `ipc.rs` command registration.
-**Multi-part, resumable** Range downloader: split the file into N parts by
-byte-range, fetch them concurrently (bounded worker pool), write into a single
+**Read §2b first** — prefer building on `http-downloader` (multithread +
+breakpoint-resume + tunable chunking) rather than hand-rolling the range/resume
+state machine; N2 still owns the offline manifest + tray-resume orchestration
+on top. **Multi-part, resumable** Range downloader: split the file into N parts
+by byte-range, fetch them concurrently (bounded worker pool), write into a single
 preallocated sparse file (or per-part temp files reassembled on completion).
 Persist per-part progress to an on-disk state file (e.g. `<dest>.part.json`)
 frequently enough that a crash/quit loses at most a few seconds, and resume each
@@ -428,7 +492,14 @@ monochrome system. Build against mock IPC.
 build scripts, icons, updater config, CI stubs, and the **system-tray + window
 lifecycle** wiring in `main.rs` (tray icon, menu with Quit, and the
 window-close handler that hides-to-tray instead of exiting).
-Dev workflow (`tauri dev` against vite), prod build (`tauri build` bundling
+**Read §2b first** — use the Tauri official plugins rather than rolling your
+own: `tauri-plugin-single-instance` (stop a 2nd launch fighting the
+tray-resident 1st over downloads), `tauri-plugin-window-state` (persist window
+size/pos), `tauri-plugin-updater` (the updater stub). For libmpv AppImage
+bundling, follow MaxVideoPlayer's `bundle-libmpv-linux.sh` ldd+patchelf recipe
+(§2b) and declare libmpv a system dep for deb/rpm.
+Dev workflow (`tauri dev` starts its own vite via `beforeDevCommand`, already
+wired to a dedicated port), prod build (`tauri build` bundling
 `app/client/dist`), libmpv bundling strategy per-OS (documented; Linux proven),
 app metadata/icons, auto-update config stub, CI matrix stub for mac/win/linux
 (not required green off-Linux). Tray behavior: window "close" → `hide()` +
