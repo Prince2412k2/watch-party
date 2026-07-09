@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../sync/sync_engine.dart';
+import '../sync/sync_engine_impl.dart';
 
 /// Watch-party state (PLAN §3.8). Phase 0 holds a nullable [PartyState] and a
 /// mock [SyncEngine]; E5 fills create/join/host-authority. Surface frozen.
@@ -36,5 +37,6 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 final partyProvider =
     StateNotifierProvider<PartyNotifier, PartyState?>((ref) => PartyNotifier());
 
-/// The sync engine driving playback from the party timeline (mock in Phase 0).
-final syncEngineProvider = Provider<SyncEngine>((ref) => MockSyncEngine());
+/// The sync engine driving playback from the party timeline. E5.1 fills the
+/// real host-authority engine (Phase 0 shipped a passive [MockSyncEngine]).
+final syncEngineProvider = Provider<SyncEngine>((ref) => SyncEngineImpl());
