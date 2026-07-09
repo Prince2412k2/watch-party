@@ -16,8 +16,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# N1 (mpv.rs) will add an mpv binding crate here (e.g. `libmpv2`) once the
-# Phase-0 spike confirms the compositing approach and the exact crate/version.
+# N1 (mpv.rs / window.rs): hand-rolled libmpv FFI (no bindgen — libclang absent
+# on the dev box) linking libmpv.so directly, plus Xlib for the embedded X11
+# child window (mpv `--wid`) that mirrors MaxVideoPlayer's X11-child approach.
+raw-window-handle = "0.6"
+x11 = { version = "2", features = ["xlib"] }
 # N2 (download.rs) will add an HTTP client (e.g. `reqwest`) + async runtime
 # (`tokio`) here for the multi-part downloader.
 

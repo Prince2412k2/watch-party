@@ -7,6 +7,11 @@ mod window;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            // N1 dev-only embedded-playback smoke test (env-gated, see mpv.rs).
+            mpv::maybe_smoke_test(&app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // mpv.rs (N1)
             ipc::mpv_load,
