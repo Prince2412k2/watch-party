@@ -1,9 +1,8 @@
-import { glass } from '../../glass.jsx'
 import { T, TYPE, EASE } from '../theme.js'
 import { Icon, Ic } from './Icon.jsx'
 
 /**
- * Per-screen glass header. Sticks to the top of the shell's scroll region and
+ * Per-screen flush header. Sticks to the top of the shell's scroll region and
  * pads `var(--sa-t)` so content clears the (translucent) status bar. Props:
  *   title    — string or node (rendered at `title` scale)
  *   onBack   — if set, shows a back chevron (≥44px target)
@@ -16,9 +15,9 @@ export function TopBar({ title, subtitle, onBack, left, right, large = false }) 
   return (
     <header
       style={{
-        ...glass('medium', { refract: true }),
+        background: T.bg,
+        borderBottom: `1px solid ${T.line}`,
         position: 'sticky', top: 0, zIndex: 20,
-        borderRadius: 0, borderLeft: 'none', borderRight: 'none', borderTop: 'none',
         paddingTop: `calc(var(--sa-t) + 10px)`,
         paddingBottom: 12,
         paddingLeft: `calc(var(--sa-l) + 16px)`,
@@ -48,7 +47,7 @@ export function TopBar({ title, subtitle, onBack, left, right, large = false }) 
   )
 }
 
-// 44×44 circular glass action button for the top bar (and reusable elsewhere).
+// 44×44 circular flat action button for the top bar (and reusable elsewhere).
 export function TopBarButton({ children, onClick, label, active = false, badge }) {
   return (
     <button
@@ -60,8 +59,8 @@ export function TopBarButton({ children, onClick, label, active = false, badge }
         width: 44, height: 44, borderRadius: 999,
         display: 'grid', placeItems: 'center',
         border: `1px solid ${T.line}`,
-        background: active ? T.glassHi : 'rgba(255,255,255,.05)',
-        color: active ? T.brand : T.text,
+        background: active ? T.surface2 : T.surface,
+        color: T.text,
         cursor: 'pointer', flex: '0 0 auto',
         transition: `background .15s ${EASE}, color .15s ${EASE}`,
       }}
