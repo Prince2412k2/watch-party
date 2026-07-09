@@ -33,6 +33,7 @@ class Downloader {
   final OfflineManifestStore _manifestStore;
 
   final _recordsController = StreamController<DownloadRecord>.broadcast();
+  final _offlineController = StreamController<OfflineRecord>.broadcast();
   final _lastEmit = <String, DateTime>{};
   static const _minEmitGap = Duration(milliseconds: 400);
 
@@ -50,6 +51,11 @@ class Downloader {
   /// Fires whenever a tracked download's [DownloadRecord] changes (progress
   /// coalesced to roughly [_minEmitGap]; status changes always pass through).
   Stream<DownloadRecord> get recordStream => _recordsController.stream;
+
+  /// Fires whenever a title finishes downloading and lands in the offline
+  /// manifest (E8.3) — `offlineProvider` listens so a title flips to
+  /// "Downloaded" live, without waiting for the next app boot's rehydrate.
+  Stream<OfflineRecord> get offlineUpdates => _offlineController.stream;
 
   /// Rehydrates from background_downloader's persisted DB + the offline
   /// manifest. Call once at app boot, before reading [activeRecords] /
@@ -186,6 +192,7 @@ class Downloader {
     );
     _offline = [..._offline.where((o) => o.itemId != record.itemId), record];
     await _manifestStore.save(_offline);
+    _offlineController.add(record);
   }
 
   Map<String, dynamic> _decodeMeta(String? metaData) {
@@ -273,5 +280,8 @@ class Downloader {
           DownloadStatus.failed,
       };
 
-  void dispose() => _recordsController.close();
+  void dispose() {
+    _recordsController.close();
+    _offlineController.close();
+  }
 }

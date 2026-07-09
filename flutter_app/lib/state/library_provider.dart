@@ -4,8 +4,9 @@ import '../data/api_client.dart';
 import '../models/models.dart';
 import 'providers.dart';
 
-/// Home/browse data (PLAN §3.8). Async providers over [apiClientProvider]. E3
-/// enriches (sections, continue-watching, filters); the shapes are frozen.
+/// Home/browse data (PLAN §3.8 / E3). Async providers over [apiClientProvider].
+/// The shapes below are the frozen Phase-0 contract; E3 adds the browse
+/// filter state (query + type) that drives [browseItemsProvider].
 
 /// The aggregated home payload (views + resume + next-up).
 final homeProvider = FutureProvider<HomeData>((ref) async {
@@ -29,4 +30,36 @@ final searchProvider =
     FutureProvider.family<List<LibraryItem>, String>((ref, query) async {
   if (query.trim().isEmpty) return const [];
   return ref.read(apiClientProvider).search(query);
+});
+
+/// Basic type filter for the Browse grid. `all` means no filtering.
+enum BrowseTypeFilter { all, movie, series }
+
+extension on BrowseTypeFilter {
+  String? get jellyfinType => switch (this) {
+        BrowseTypeFilter.all => null,
+        BrowseTypeFilter.movie => 'Movie',
+        BrowseTypeFilter.series => 'Series',
+      };
+}
+
+/// The Browse screen's live search text (empty = browse the whole library).
+final browseQueryProvider = StateProvider<String>((ref) => '');
+
+/// The Browse screen's type filter (All / Movie / Series).
+final browseTypeFilterProvider =
+    StateProvider<BrowseTypeFilter>((ref) => BrowseTypeFilter.all);
+
+/// Combines [browseQueryProvider] + [browseTypeFilterProvider] into the list
+/// the Browse grid renders: searches when there's a query, otherwise lists
+/// the full library — either way filtered client-side by type (the server
+/// doesn't expose a type filter on `/api/library/items` or `/search`).
+final browseItemsProvider = FutureProvider<List<LibraryItem>>((ref) async {
+  final query = ref.watch(browseQueryProvider).trim();
+  final type = ref.watch(browseTypeFilterProvider).jellyfinType;
+  final api = ref.read(apiClientProvider);
+
+  final items = query.isEmpty ? await api.items() : await api.search(query);
+  if (type == null) return items;
+  return items.where((i) => i.type == type).toList();
 });

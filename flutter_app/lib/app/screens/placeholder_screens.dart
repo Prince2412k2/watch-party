@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../ui/ui.dart';
 
-/// Simple placeholder screens (PLAN §3.7). Each owning epic replaces its screen;
-/// Phase 0 gives every route a real, navigable widget.
+/// Remaining placeholder screen(s). Browse/Detail (E3), Downloads/Offline (E8),
+/// and Servarr (E9) now have real implementations in their own files; PartyScreen
+/// is still a placeholder until E5 (Wave 3) replaces it.
 class _Placeholder extends StatelessWidget {
   const _Placeholder({required this.title, this.body});
   final String title;
@@ -25,21 +26,6 @@ class _Placeholder extends StatelessWidget {
   }
 }
 
-class BrowseScreen extends StatelessWidget {
-  const BrowseScreen({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const _Placeholder(title: 'Browse', body: 'Search + grid + filters (E3).');
-}
-
-class DetailScreen extends StatelessWidget {
-  const DetailScreen({super.key, required this.itemId});
-  final String itemId;
-  @override
-  Widget build(BuildContext context) =>
-      _Placeholder(title: 'Title detail', body: 'Item $itemId — metadata, Play, Download (E3/E4).');
-}
-
 class PartyScreen extends StatelessWidget {
   const PartyScreen({super.key, this.partyId});
   final String? partyId;
@@ -47,25 +33,4 @@ class PartyScreen extends StatelessWidget {
   Widget build(BuildContext context) => _Placeholder(
       title: 'Watch Party',
       body: partyId == null ? 'Create or join a party (E5/E6/E7).' : 'Party $partyId');
-}
-
-class DownloadsScreen extends StatelessWidget {
-  const DownloadsScreen({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const _Placeholder(title: 'Downloads', body: 'Resumable downloads + progress (E8).');
-}
-
-class OfflineScreen extends StatelessWidget {
-  const OfflineScreen({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const _Placeholder(title: 'Offline', body: 'Downloaded titles, play with no network (E8).');
-}
-
-class ServarrScreen extends StatelessWidget {
-  const ServarrScreen({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const _Placeholder(title: 'Find & Download', body: 'Servarr search / releases / queue (E9).');
 }
