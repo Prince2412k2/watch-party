@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../download/downloader.dart';
@@ -6,13 +8,17 @@ import 'providers.dart';
 
 /// The offline (fully-downloaded) library (PLAN §3.8 / E8.3). Rehydrated from
 /// [Downloader]'s persisted manifest at startup so the library survives an
-/// app restart with no network involved.
+/// app restart with no network involved, and kept live thereafter via
+/// [Downloader.offlineUpdates] so a title flips to "Downloaded" the moment
+/// its download completes (E8.2's `DownloadButton` watches this).
 class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   OfflineNotifier(this._downloader) : super(const []) {
+    _sub = _downloader.offlineUpdates.listen(upsert);
     _rehydrate();
   }
 
   final Downloader _downloader;
+  late final StreamSubscription<OfflineRecord> _sub;
 
   Future<void> _rehydrate() async {
     await _downloader.init();
@@ -29,6 +35,12 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   Future<void> remove(String itemId) async {
     await _downloader.removeOffline(itemId);
     state = state.where((r) => r.itemId != itemId).toList();
+  }
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
   }
 }
 

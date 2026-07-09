@@ -7,6 +7,12 @@ import 'screens/app_shell.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/gallery_screen.dart';
+import 'screens/browse_screen.dart';
+import 'screens/detail_screen.dart';
+import 'screens/downloads_screen.dart';
+import 'screens/offline_screen.dart';
+import 'screens/servarr_screen.dart';
+import 'screens/servarr_queue_screen.dart';
 import 'screens/placeholder_screens.dart';
 
 /// FROZEN CONTRACT (PLAN §3.7). Route names + go_router config. The primary
@@ -82,6 +88,7 @@ GoRouter buildRouter(WidgetRef ref) {
           GoRoute(path: Routes.downloads, builder: (_, _) => const DownloadsScreen()),
           GoRoute(path: Routes.offline, builder: (_, _) => const OfflineScreen()),
           GoRoute(path: Routes.servarr, builder: (_, _) => const ServarrScreen()),
+          GoRoute(path: '${Routes.servarr}/queue', builder: (_, _) => const ServarrQueueScreen()),
         ],
       ),
     ],

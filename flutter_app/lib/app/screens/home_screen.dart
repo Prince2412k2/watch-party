@@ -8,9 +8,9 @@ import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 
-/// The mock home screen (PLAN Phase 0 boot target). Renders sections from the
-/// (mock) [homeProvider] so the app visibly boots through the router. E3
-/// replaces the layout with the real hero + rails.
+/// The real Home screen (E3 T3.1): Continue Watching / Next Up / Libraries
+/// rails over the real [homeProvider] (`GET /api/library/home`). Replaces the
+/// Phase-0 mock layout.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -21,20 +21,30 @@ class HomeScreen extends ConsumerWidget {
 
     return home.when(
       loading: () => const _HomeSkeleton(),
-      error: (e, _) => Center(
-        child: Text('Failed to load home\n$e',
-            textAlign: TextAlign.center, style: AppTheme.dim),
+      error: (e, _) => ErrorState(
+        title: 'Failed to load home',
+        message: '$e',
+        onRetry: () => ref.invalidate(homeProvider),
       ),
-      data: (data) => ListView(
-        padding: const EdgeInsets.all(AppSpacing.xxl),
-        children: [
-          const Text('Home', style: AppTheme.titleLarge),
-          const SizedBox(height: AppSpacing.xl),
-          _Rail(title: 'Continue Watching', items: data.resume, api: api),
-          _Rail(title: 'Next Up', items: data.nextUp, api: api),
-          _Rail(title: 'Libraries', items: data.views, api: api),
-        ],
-      ),
+      data: (data) {
+        if (data.views.isEmpty && data.resume.isEmpty && data.nextUp.isEmpty) {
+          return const EmptyState(
+            title: 'Your library is empty',
+            message: 'Titles added to Jellyfin will show up here.',
+            icon: Icons.movie_filter_outlined,
+          );
+        }
+        return ListView(
+          padding: const EdgeInsets.all(AppSpacing.xxl),
+          children: [
+            const Text('Home', style: AppTheme.titleLarge),
+            const SizedBox(height: AppSpacing.xl),
+            _Rail(title: 'Continue Watching', items: data.resume, api: api),
+            _Rail(title: 'Next Up', items: data.nextUp, api: api),
+            _Rail(title: 'Libraries', items: data.views, api: api),
+          ],
+        );
+      },
     );
   }
 }
@@ -51,11 +61,7 @@ class _Rail extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.md),
-          child: Text(title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.text)),
-        ),
+        SectionHeader(title: title),
         SizedBox(
           height: 300,
           child: ListView.separated(
