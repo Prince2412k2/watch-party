@@ -4,22 +4,15 @@
   "version": "0.1.0",
   "identifier": "com.watchparty.desktop",
   "build": {
-    "devUrl": "http://localhost:5183",
-    "frontendDist": "../../app/client/dist",
-    "beforeDevCommand": {
-      "script": "npm run dev -- --port 5183 --strictPort",
-      "cwd": "../../app/client"
-    },
-    "beforeBuildCommand": {
-      "script": "npm run build",
-      "cwd": "../../app/client"
-    }
+    "devUrl": "https://dsk-4161.tail0a3558.ts.net",
+    "frontendDist": "../../app/client/dist"
   },
   "app": {
     "withGlobalTauri": true,
     "windows": [
       {
         "title": "Watchparty",
+        "url": "https://dsk-4161.tail0a3558.ts.net",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
