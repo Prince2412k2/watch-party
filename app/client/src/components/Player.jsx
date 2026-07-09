@@ -191,13 +191,31 @@ function NativePlayer({
     return () => { backendRef.current?.destroy(); backendRef.current = null }
   }, [])
 
-  // Load/replace the source. Same trigger the web path uses (srcUrl change);
-  // MpvBackend resolves this to the native-stream signed URL internally.
-  const firstLoad = useRef(true)
+  // Load/replace the source. The web path plays a transcoded HLS URL; the
+  // native path must instead direct-play the ORIGINAL file via N3's signed
+  // stream-url proxy (no transcode). We reuse `hlsUrl` only to recover the
+  // Jellyfin item id (…/Videos/<itemId>/master.m3u8), then resolve the signed
+  // absolute file URL and hand THAT to mpv. Passing hlsUrl straight to mpv was
+  // the bug: it's a relative /api/library/hls/… path, which mpv treats as a
+  // local file and fails to open.
   useEffect(() => {
     if (!hlsUrl) return
-    backendRef.current?.load(hlsUrl, { paused: false })
-    firstLoad.current = false
+    const m = hlsUrl.match(/\/Videos\/([^/?]+)\//)
+    const itemId = m && m[1]
+    if (!itemId) { console.error('[native] could not extract itemId from', hlsUrl); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/library/native/stream-url/${itemId}`, { credentials: 'include' })
+        if (!r.ok) throw new Error(`stream-url ${r.status}`)
+        const { url } = await r.json()
+        if (!url) throw new Error('stream-url response missing url')
+        if (!cancelled) backendRef.current?.load(url, { paused: false })
+      } catch (e) {
+        console.error('[native] failed to resolve native stream URL:', e)
+      }
+    })()
+    return () => { cancelled = true }
   }, [hlsUrl])
 
   // Gate mpv's own OSC interactivity — a plain guest must not be able to
