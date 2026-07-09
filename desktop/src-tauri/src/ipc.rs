@@ -240,21 +240,16 @@ pub async fn offline_remove(app: tauri::AppHandle, args: OfflinePathArgs) -> Res
 /// the tray "Quit" menu item (see `lib.rs`'s `on_menu_event`), so there is
 /// exactly one exit path regardless of trigger.
 ///
-/// Emits `app:before-quit` and gives listeners a brief grace window to flush
-/// state before the process actually dies. This is the documented hook N2's
-/// downloader should use: `download.rs` should register a listener (or, once
-/// its module has real state, call a synchronous `download::flush_all(&app)`
-/// here directly) to persist per-part progress before `app.exit(0)` runs —
-/// today `download.rs` is still a stub, so there is nothing to flush yet.
+/// Emits `app:before-quit` (so any frontend listener can react), then
+/// synchronously flushes N2's download registry to disk before the process
+/// dies. Per-part byte offsets are already continuously archived by
+/// http-downloader's breakpoint-resume; this flush persists our own
+/// `dl_list`-facing metadata so it isn't stale on next launch.
 #[tauri::command]
 pub async fn app_quit(app: tauri::AppHandle) -> Result<(), String> {
     app.emit("app:before-quit", ())
         .map_err(|e: tauri::Error| e.to_string())?;
-    // TODO(N2): replace this fixed grace period with an actual awaited flush,
-    // e.g. `download::flush_all(&app).await;`, once download.rs has state to
-    // persist. The delay below is a placeholder so listeners have *a* chance
-    // to react before exit, not a substitute for a real flush.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    crate::download::flush(&app);
     app.exit(0);
     Ok(())
 }
