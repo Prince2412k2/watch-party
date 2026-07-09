@@ -38,7 +38,21 @@
   process. Worth keeping `GDK_BACKEND=x11` as a documented fallback in
   `desktop/README.md` for anyone hitting the same "app runs, no window" symptom.
 
-## What's NOT yet proven — the real crux (§2 of PLAN.md)
+## SUPERSEDED: the transparent-webview compositing approach
+After this spike, the product owner decided the **video player is native, not
+React** (PLAN.md §0.6): the video + its transport controls are drawn by mpv's
+own OSC in an **opaque** embedded window, and camera tiles/chat render in a
+separate React region that never overlaps the video. That removes the
+transparent-webview / DOM-over-video compositing problem this spike was
+originally meant to de-risk — so the "What's NOT yet proven" section just below
+is **partially moot**: there is no longer a transparent hole or DOM-over-video
+layering to prove. What replaces it is a *different, smaller* risk owned by
+agent N1: embedding a foreign mpv-owned native window inside the Tauri window
+(GTK child / wl_subsurface on Linux) and gating mpv's OSC per-user. See the
+rewritten PLAN.md §2. The toolchain findings below (deps, GDK_BACKEND=x11,
+icons) all still stand.
+
+## What's NOT yet proven (kept for history; compositing parts now superseded)
 The compositing test above only exercised the **opaque** Login screen. The
 actual hard problem — mpv rendering into a region **behind** a transparent
 webview, with DOM overlays (camera tiles, chat, minimal controls) compositing

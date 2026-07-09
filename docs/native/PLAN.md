@@ -36,6 +36,17 @@ side where needed.
    persisted and **resume automatically** after any exit/crash. (True headless
    post-Quit downloading via a separate daemon is out of scope for v1 — the tray
    keeps the process alive, which covers "keeps going if I close the window".)
+6. **The video player is native, not React (superseding the original §2
+   compositing approach).** The video surface AND its transport controls
+   (play/pause, scrubber, volume, settings) are rendered natively — **mpv's own
+   built-in OSC** (skinned to roughly match the redesign), not React/DOM.
+   Camera tiles and chat stay React, but render in a **separate, non-overlapping
+   region** docked below/beside the native player (see the ASCII layout in §2).
+   This eliminates the transparent-webview/DOM-over-video compositing problem
+   entirely — the native player region is an **opaque** embedded window, not a
+   see-through hole. Phase 0's original spike (proving DOM-over-transparent-mpv
+   compositing) is superseded by this decision; see SPIKE-NOTES.md's
+   "Superseded" section for what's now moot vs. still useful.
 
 ---
 
@@ -43,16 +54,25 @@ side where needed.
 
 ```
 ┌──────────────────────────── Tauri window ─────────────────────────────┐
-│  System webview (transparent where video shows)                        │
-│    → existing React app (app/client)                                    │
+│  ┌───────────────────────────────────────────────────────────────┐    │
+│  │  NATIVE mpv child window (opaque, no transparency needed)      │    │
+│  │  video + mpv's own skinned OSC draws transport controls        │    │
+│  │  directly on the mpv surface — no React/DOM involved here      │    │
+│  └───────────────────────────────────────────────────────────────┘    │
+│  System webview — everything ELSE (existing React app)                 │
 │    → detects native via window.__TAURI__                                │
-│    → renders the SAME redesigned minimal controls + party overlays      │
-│      (camera tiles, chat) as DOM, over a transparent "video hole"       │
-│    → useSyncPlay drives an MpvBackend (HTMLMediaElement duck-type)       │
+│    → renders a "video stage" placeholder div (position/size only —      │
+│      the mpv window is embedded/positioned to exactly cover it) and,    │
+│      docked below/beside it (NOT overlapping), the redesigned camera    │
+│      tiles + chat + room chrome                                         │
+│    → useSyncPlay drives an MpvBackend (HTMLMediaElement duck-type) for   │
+│      REMOTE sync corrections; LOCAL user transport now mostly happens   │
+│      natively (clicking mpv's OSC), relayed back via property-observe   │
 │                          │ Tauri IPC (commands + events)                 │
 │  Rust core (src-tauri)   ▼                                               │
-│    → mpv module: libmpv instance rendering into the window BEHIND the    │
-│      transparent webview (the "hole"); property-observe → JS events      │
+│    → mpv module: libmpv instance in its own native (child) window,      │
+│      positioned/sized via mpv_set_region to track the video-stage div;  │
+│      property-observe (time-pos/pause/seeking) → Tauri events           │
 │    → downloader: resumable Range fetch → Offline dir + manifest          │
 │    → offline store: manifest of downloaded titles                        │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -70,9 +90,22 @@ side where needed.
   **`MpvBackend` class implementing that exact surface over IPC is a drop-in** —
   the entire host-authority sync engine (`syncCore.js`, transport intent,
   buffer-aware seek) is reused verbatim. This is the linchpin.
-- The redesigned minimal player controls (Player.jsx) already author transport
-  through `requestPlay/Pause/Seek` and read `localPhase`/scrubber state from the
-  media backend — they don't care whether the backend is `<HlsVideo>` or mpv.
+- **The player itself is native — mpv's own OSC, not React.** Camera tiles/
+  chat/room chrome are React, but render in a region that never overlaps the
+  video, so there is no DOM-over-video compositing problem at all. `Player.jsx`
+  in native mode only has to (a) render an opaque placeholder div reporting its
+  screen rect so Rust can position the mpv window over it, and (b) render the
+  non-video chrome (top bar toggles, camera strip, chat) beside/below it. This
+  is a much smaller surface than the web player.
+- Local transport (the user clicking play/pause or dragging mpv's own seek bar)
+  happens **inside mpv itself**, not via a React click handler. Rust observes
+  the resulting mpv property changes (`pause`, `seeking`/`seeked`, `time-pos`)
+  the same way it already had to for remote-sync corrections, and forwards them
+  as `mpv:*` Tauri events. `MpvBackend` turns those into the exact
+  `play`/`pause`/`seeking`/`seeked` events `useSyncPlay` already listens for on
+  a real `<video>` element — so **the sync/authoring code needs zero changes**;
+  from its point of view, a native OSC click and a web scrubber drag look
+  identical (both are "the media backend fired an event").
 - Source: instead of the HLS transcode proxy, native fetches a signed URL to the
   **original file** and hands it to mpv (which decodes anything). Zero transcode
   ⇒ zero buffering from CPU. Offline downloader uses the same signed URL.
@@ -81,25 +114,45 @@ side where needed.
 
 ## 2. The crux risk (read before planning any work)
 
-The watch party renders **camera tiles, chat, and controls as DOM elements
-layered OVER the video**. With mpv playing in a native surface (not an
-`<video>` element), those DOM overlays must still composite on top. This is the
-single hard problem and it can sink the naive approach.
+**This section is rewritten — the original transparent-webview-over-mpv
+compositing plan is superseded by decision §0.6 (native player).** Phase 0's
+spike still proved useful groundwork (Tauri/webkit2gtk/React boot correctly on
+Linux — see SPIKE-NOTES.md) but the specific compositing risk it targeted no
+longer exists, since the mpv surface is **opaque** and never has DOM drawn over
+it. The remaining hard problems are different and smaller:
 
-**Chosen approach:** mpv renders into the Tauri window; the webview is made
-**transparent** and sits *in front*; the video shows through a transparent
-"hole" (a positioned div whose screen rect the frontend reports to Rust, which
-sizes/places the mpv render region to match). DOM overlays over the rest of the
-webview composite normally. Pointer events over the hole are handled by the
-webview (controls) and only "click-through" when needed.
+1. **Embedding a foreign native window inside the Tauri window.** mpv needs its
+   own OS-level window (it renders via GL/vulkan through libmpv's render API or
+   owns a raw window handle) positioned/sized to exactly cover the React "video
+   stage" placeholder, staying aligned through resize, camera-strip toggling,
+   and fullscreen. On Linux this is GTK child-window/socket embedding
+   (reparenting an mpv-owned `GtkWidget`/X11 window under the Tauri window's
+   GTK container, or using `wl_subsurface` on native Wayland); Windows uses
+   `SetParent`; macOS uses `NSView` subview addition. **Dev/verify target is
+   Linux only** (per §0.4) — N1 only needs to prove the Linux path.
+2. **Gating guest transport on the native controls.** A host or
+   collaborative-control guest legitimately drives playback by clicking mpv's
+   OSC directly. A plain guest should NOT be able to — but mpv's OSC has no
+   built-in per-user permission concept. N1 must make the OSC's seek bar/
+   play-pause either (a) hidden/disabled via mpv's Lua scripting API when a
+   Rust-set custom property (e.g. `user-data/can-control`) is false, or (b)
+   left interactive but treated as a no-op sync-wise, with the existing
+   correction loop (already tolerant of a guest's local scrubbing on the web
+   player) snapping it back. Prefer (a) — a guest shouldn't be able to
+   perceptibly disrupt their own playback even transiently. This is a real,
+   scoped Rust/Lua task, not a research spike.
+3. **OSC visual skin.** mpv's OSC is configured via `osc.conf` (built-in Lua
+   script) or a replacement Lua script; matching the redesign's monochrome look
+   exactly may not be fully achievable with the stock OSC's styling knobs. This
+   is a polish risk, not a functional one — acceptable to ship v1 with mpv's OSC
+   close-but-not-pixel-perfect to the React design (this was explicitly chosen
+   over building a custom Rust-drawn overlay, see §0.6).
 
-**Phase 0 MUST prove this on Linux** (WebKitGTK transparency + an mpv render
-region behind it, with a DOM element visibly composited on top, resize +
-fullscreen working). If transparent-webview compositing proves unworkable on a
-target, the documented fallback is a **second always-on-top transparent overlay
-webview** for controls/overlays above a full mpv window. Do not fan out Phase 1
-until Phase 0 has demonstrated one working compositing path and frozen the
-contracts.
+N1 owns all three (Agent Card N1 updated accordingly). None of them block
+Phase 1 fan-out the way the old compositing risk did — the region-tracking IPC
+(`mpv_set_region`, unchanged) and the event contract (`mpv:*`, unchanged) are
+the same either way, so N2–N7 can start immediately once Phase 0's contracts
+are frozen; N1 carries the embedding + gating risk as its own first task.
 
 Secondary risks to keep in mind: libmpv packaging per-OS (bundle vs system lib),
 signed-URL auth for a process outside the cookie jar, and seek latency over IPC
@@ -169,15 +222,28 @@ export interface MediaBackend {
 
 ### 4.2 Tauri IPC — Rust `#[tauri::command]` names + payloads (contract in `ipc.rs`)
 
-Playback (N1 implements):
+Playback (N1 implements). Note the player UI itself is native (§0.6/§2) — mpv's
+own OSC renders play/pause/scrubber/volume/settings directly on the video
+surface. These commands exist for (a) `load`/lifecycle, (b) **remote**
+sync corrections (the server told this client to jump to a position), and
+(c) region/fullscreen/permission plumbing — NOT for a React-drawn control bar:
 - `mpv_load({ url: string, startSec: number, paused: boolean })`
 - `mpv_play()` · `mpv_pause()` · `mpv_seek({ sec: number })`
 - `mpv_set_speed({ rate: number })` · `mpv_set_volume({ vol: number })` · `mpv_set_muted({ muted: boolean })`
-- `mpv_set_region({ x, y, w, h, dpr })` — position the video "hole" (device px)
+- `mpv_set_region({ x, y, w, h, dpr })` — position the embedded mpv window
+  (device px) to exactly cover the React "video stage" placeholder div
 - `mpv_set_fullscreen({ on: boolean })`
+- `mpv_set_can_control({ canControl: boolean })` — gates whether mpv's OSC
+  seek bar / play-pause are interactive (§2, risk 2): host and
+  collaborative-control guests get `true`, plain guests `false`. Frontend calls
+  this whenever `canControl` changes (mirrors the web player's existing
+  `canControl` prop threading).
 - `mpv_teardown()`
 
-Events Rust→JS (Tauri `emit`, N1):
+Events Rust→JS (Tauri `emit`, N1) — fired both for remote-command-driven state
+changes AND for local user interaction with mpv's own OSC (a native OSC click
+and a remote sync correction produce the same property change, hence the same
+event — this is what lets `useSyncPlay` stay unmodified, see §1):
 - `mpv:timepos` `{ sec }` (~4–10Hz) · `mpv:pause` `{ paused }` · `mpv:duration` `{ sec }`
 - `mpv:seeking` · `mpv:seeked` `{ sec }` · `mpv:buffering` `{ active }` (cache underrun)
 - `mpv:eof` · `mpv:loadedmetadata` `{ durationSec }` · `mpv:speed` `{ rate }`
@@ -235,33 +301,54 @@ git branch native-v1 main
 git worktree add ../wt-<id> -b native/<id> native-v1   # per agent
 ```
 
-### Phase 0 — `spike-contracts` (BLOCKING; likely needs interactive/human help for GUI)
-**Owns:** new `desktop/**` scaffold, `app/client/src/native/{contract.ts,env.js,ipc.js-stub}`, an empty `app/server/native.js` stub + its route mount.
-**Do:**
-1. Scaffold Tauri v2 in `desktop/`, frontend pointed at `app/client` (dev: vite
-   dev server; prod: `app/client/dist`). App boots showing the existing React UI.
-2. **Prove the crux (§2)** on Linux: libmpv plays a local test file in a region
-   behind a transparent WebKitGTK webview, with a visible DOM element composited
-   on top, and `mpv_pause`/`mpv_seek` working over IPC. Resize + fullscreen ok.
-   Document the working compositing path (or the overlay-webview fallback).
-3. Write the FROZEN §4 contracts as code: the TS `MediaBackend` interface + IPC
-   name/event constants, the Rust `ipc.rs` command signatures (bodies may be
-   `todo!()`/stub), and the backend endpoint signatures (stub 501). 
-**Acceptance:** `cargo build` + `tauri dev` launch on Linux; test video visibly
-plays with a DOM overlay on top; contracts committed. A short SPIKE-NOTES.md
-records the compositing approach and any per-OS caveats.
+### Phase 0 — `spike-contracts` (BLOCKING) — DONE, see SPIKE-NOTES.md
+**Owns:** `desktop/**` scaffold, `app/client/src/native/{contract.ts,env.js,ipc.js}`, `app/server/native.js` stub + its route mount.
+**Did:**
+1. Scaffolded Tauri v2 in `desktop/`, frontend pointed at `app/client` (dev:
+   its own vite dev server on a dedicated port via `beforeDevCommand`; prod:
+   `app/client/dist`). Proven live: `cargo tauri dev` launches a window
+   rendering the actual redesigned React Login screen (screenshotted).
+2. Wrote the FROZEN §4 contracts as code: the TS `MediaBackend` interface + IPC
+   name/event constants (incl. `mpv_set_can_control`), the Rust `ipc.rs`
+   command signatures (bodies are `todo!()`), and the backend endpoint (real
+   HMAC sign/verify, the Jellyfin proxy body stubbed 501 for N3).
+**Acceptance:** met — see SPIKE-NOTES.md. The original compositing spike
+(step 2 in the old version of this card) is superseded by §0.6/§2 — N1 now
+owns proving the (different, smaller) native-embedding risk as its first
+Phase-1 task rather than as a Phase-0 gate.
 
 ### Phase 1 — parallel (branch from merged `native-v1`)
 
 **N1 — `rust-mpv`** · owns `desktop/src-tauri/src/mpv.rs`, `window.rs`, and the
-mpv parts of `ipc.rs`/`main.rs` registration.
-Implement libmpv lifecycle + all `mpv_*` commands + all `mpv:*` events + the
-video-region/fullscreen/transparency handling from the Phase-0 approach. Map
-mpv `demuxer-cache-state` → `mpv:cache` for `buffered`. Enable disk cache
-(`cache=yes`, `cache-on-disk=yes`, `demuxer-cache-dir=<app cache dir>`) — this
-delivers the "progressive watch cache" feature for free.
-**Acceptance:** `cargo build`; manual smoke via `tauri dev` — load/play/pause/
-seek/speed/volume/fullscreen all work; events fire; cache dir fills on playback.
+mpv parts of `ipc.rs`/`main.rs` registration. **Carries the native-embedding
+risk (§2) as its first task** — this is the highest-risk agent card; spend the
+first work-block on the embedding spike below before building out every command.
+1. **Embedding spike (Linux only, per §0.4):** get libmpv to render into its
+   own native window, then GTK-child-window-embed (or `wl_subsurface` on native
+   Wayland) that window into the Tauri window at an arbitrary rect, and confirm
+   it tracks `mpv_set_region` updates live (resize, and the camera-strip
+   toggling/fullscreen cases described in Agent Card N5). Report back if the
+   Linux path is NOT workable so the plan can be revisited — do not silently
+   fall back to a worse UX without flagging it.
+2. **OSC + permission gating (§2 risk 2):** enable mpv's built-in OSC, skin it
+   via `osc.conf`/a small Lua override toward the redesign's monochrome look
+   (best-effort, not pixel-perfect — see §2 risk 3), and implement
+   `mpv_set_can_control` such that when `canControl` is false, the OSC's
+   seek-bar/play-pause become non-interactive (hidden or ignored) — a plain
+   guest must not be able to perceptibly disrupt their own playback via mpv's
+   own controls.
+3. Implement the rest of libmpv lifecycle + all remaining `mpv_*` commands +
+   all `mpv:*` events (fired identically whether the state change came from a
+   remote sync command or a local OSC interaction — see §1/§4.2). Map mpv
+   `demuxer-cache-state` → `mpv:cache` for `buffered`. Enable disk cache
+   (`cache=yes`, `cache-on-disk=yes`, `demuxer-cache-dir=<app cache dir>`) —
+   this delivers the "progressive watch cache" feature for free.
+**Acceptance:** `cargo build`; manual smoke via `tauri dev` — the mpv window is
+visibly embedded at the video-stage rect (not a separate OS window), tracks
+resize/fullscreen; OSC is visible and skinned; toggling `mpv_set_can_control`
+to false disables OSC interactivity; load/play/pause/seek/speed/volume all
+work; events fire on BOTH a JS-invoked command and a direct OSC click; cache
+dir fills on playback.
 
 **N2 — `rust-downloader`** · owns `desktop/src-tauri/src/download.rs`, `offline.rs`,
 and their `ipc.rs` command registration.
@@ -312,16 +399,22 @@ behavior (e.g. a `mpv:seeked` fires a `seeked` event and updates `currentTime`).
 **Acceptance:** `vite build`; `node --test` on the adapter's tests passes.
 
 **N5 — `player-native-branch`** · owns `app/client/src/components/Player.jsx`.
-When `IS_NATIVE`: render a transparent "video hole" stage (report its rect to
-`mpv_set_region` on layout/resize/scroll) instead of `<HlsVideo>`, and pass an
-`MpvBackend` instance as the `playerRef` to `useSyncPlay`. Keep the redesigned
-minimal controls, party overlays, transport authoring, and prop signature
-**identical** — the web (`<HlsVideo>`) path stays byte-compatible when not
-native. Do NOT alter the sync/transport wiring. Build against N4's `MpvBackend`
-public API (frozen in contract).
+Smaller scope than it sounds, now that the player controls are native (§0.6):
+when `IS_NATIVE`, render an **opaque** "video stage" placeholder div (report
+its screen rect to `mpv_set_region` on layout/resize/scroll/fullscreen — no
+transparency needed), pass an `MpvBackend` instance as the `playerRef` to
+`useSyncPlay` (for remote-correction plumbing only — do not build a custom
+scrubber/play-pause/volume UI for native, mpv's OSC already provides it), call
+`mpv_set_can_control` whenever the `canControl` prop changes, and render the
+**non-video** chrome (top-bar toggles, camera strip, chat) in the docked
+region beside/below the video stage per §1's layout — never overlapping it.
+Keep the web (`<HlsVideo>` + the full custom minimal-control-bar UI) path
+byte-compatible when not native. Do NOT alter the sync/transport wiring. Build
+against N4's `MpvBackend` public API (frozen in contract).
 **Acceptance:** `vite build`; web mode renders exactly as today (no behavior
-change when `!IS_NATIVE`); native branch is structurally wired (full runtime
-verify happens in Phase 2 with real Rust).
+change when `!IS_NATIVE`); native branch renders the video-stage placeholder +
+docked camera/chat chrome with no overlap, structurally wired (full runtime
+verify happens in Phase 2 with real Rust, once N1's embedding is real).
 
 **N6 — `offline-ui`** · owns `app/client/src/native/offline/**` + a small hook.
 "Download" affordance on a title (native only), an Offline library view listing
@@ -373,8 +466,10 @@ documented.
 ## 6. Definition of done (v1)
 - Desktop app launches, shows the existing (redesigned) UI, logs in via the
   same session.
-- Plays any codec directly (HEVC/AV1/etc) with no server transcode; seeking
-  back reuses the on-disk cache.
+- Plays any codec directly (HEVC/AV1/etc) with no server transcode via a
+  **native mpv player** (mpv's own OSC for transport), embedded in the window
+  beside — never under — the React camera/chat chrome; seeking back reuses the
+  on-disk cache. A plain guest cannot drive playback via the OSC.
 - Download-for-offline is multi-part (parallel connections), continues while
   the window is closed (tray-resident), and resumes from persisted offsets after
   a full quit/crash; offline titles play with the backend unreachable.

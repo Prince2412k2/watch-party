@@ -18,6 +18,7 @@ pub fn run() {
             ipc::mpv_set_muted,
             ipc::mpv_set_region,
             ipc::mpv_set_fullscreen,
+            ipc::mpv_set_can_control,
             ipc::mpv_teardown,
             // download.rs / offline.rs (N2)
             ipc::dl_start,

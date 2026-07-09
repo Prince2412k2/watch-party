@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 // ── mpv.rs (agent N1) ────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MpvLoadArgs {
     pub url: String,
     pub start_sec: f64,
@@ -35,9 +36,10 @@ pub struct MpvSetMutedArgs {
     pub muted: bool,
 }
 
-/// Positions the mpv render region behind the transparent webview (the "video
-/// hole") in DEVICE pixels — the frontend reports its stage element's rect via
-/// ResizeObserver and calls this on every change (including fullscreen).
+/// Positions the embedded (opaque) mpv window to cover the React "video stage"
+/// placeholder, in DEVICE pixels — the frontend reports its stage element's
+/// rect via ResizeObserver and calls this on every change (including
+/// fullscreen). No transparency involved: the player is native (PLAN.md §0.6).
 #[derive(Deserialize)]
 pub struct MpvSetRegionArgs {
     pub x: f64,
@@ -50,6 +52,15 @@ pub struct MpvSetRegionArgs {
 #[derive(Deserialize)]
 pub struct MpvSetFullscreenArgs {
     pub on: bool,
+}
+
+/// Gates whether mpv's own OSC (seek bar / play-pause) is interactive.
+/// Host + collaborative-control guests → true; plain guests → false, so a
+/// guest can't disrupt their own playback via the native controls (§2 risk 2).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MpvSetCanControlArgs {
+    pub can_control: bool,
 }
 
 #[tauri::command]
@@ -106,6 +117,12 @@ pub async fn mpv_set_fullscreen(args: MpvSetFullscreenArgs) -> Result<(), String
 }
 
 #[tauri::command]
+pub async fn mpv_set_can_control(args: MpvSetCanControlArgs) -> Result<(), String> {
+    let _ = args;
+    todo!("agent N1: implement mpv_set_can_control (gate mpv OSC interactivity)")
+}
+
+#[tauri::command]
 pub async fn mpv_teardown() -> Result<(), String> {
     todo!("agent N1: implement mpv_teardown")
 }
@@ -113,6 +130,7 @@ pub async fn mpv_teardown() -> Result<(), String> {
 // ── download.rs / offline.rs (agent N2) ─────────────────────────────────────
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DlStartArgs {
     pub item_id: String,
     pub url: String,
@@ -184,6 +202,7 @@ pub async fn dl_list() -> Result<Vec<DownloadRecord>, String> {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OfflinePathArgs {
     pub item_id: String,
 }
