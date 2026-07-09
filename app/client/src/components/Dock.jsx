@@ -16,19 +16,18 @@ export default function Dock({ localParticipant, participants, isHost, removedCa
   return (
     <div style={{
       position: 'absolute', left: 18, top: 76, bottom: 108, width: 180,
-      zIndex: 15, borderRadius: 20, padding: 10,
+      zIndex: 15, borderRadius: 16, padding: 10,
       background: 'var(--glass)',
-      backdropFilter: 'var(--blur)', WebkitBackdropFilter: 'var(--blur)',
       border: '1px solid var(--stroke)',
-      boxShadow: 'var(--shadow), inset 0 1px 0 var(--hi)',
+      boxShadow: 'var(--shadow)',
       overflowY: 'auto',
       display: 'flex', flexDirection: 'column', gap: 10,
     }}>
       {all.filter(p => !hidden.has(p.identity)).map(p => (
         <div key={p.identity} style={{
           position: 'relative', width: '100%', aspectRatio: '4/3',
-          borderRadius: 13, overflow: 'hidden', flexShrink: 0,
-          border: '1px solid rgba(255,255,255,.12)',
+          borderRadius: 12, overflow: 'hidden', flexShrink: 0,
+          border: '1px solid var(--stroke)',
         }}>
           <CameraTile
             participant={p}
