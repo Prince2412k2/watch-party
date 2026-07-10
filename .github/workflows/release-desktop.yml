@@ -15,6 +15,9 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - main # build (artifacts only) on PRs into main; the release job stays tag-gated
   workflow_dispatch:
     inputs:
       version:
@@ -56,6 +59,11 @@ jobs:
             v="${GITHUB_REF_NAME#v}"
           else
             v="${INPUT_VERSION#v}"
+          fi
+          # PR / push / default dispatch: derive a label from pubspec + run number.
+          if [ -z "$v" ] || [ "$v" = "dev" ]; then
+            base="$(grep -m1 '^version:' flutter_app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+            v="${base}-ci${GITHUB_RUN_NUMBER}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
@@ -129,6 +137,11 @@ jobs:
             v="${GITHUB_REF_NAME#v}"
           else
             v="${INPUT_VERSION#v}"
+          fi
+          # PR / push / default dispatch: derive a label from pubspec + run number.
+          if [ -z "$v" ] || [ "$v" = "dev" ]; then
+            base="$(grep -m1 '^version:' flutter_app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+            v="${base}-ci${GITHUB_RUN_NUMBER}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
