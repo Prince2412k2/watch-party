@@ -123,10 +123,7 @@ class _CameraTile extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (track.videoTrack != null && !track.videoMuted)
-            lk.VideoTrackRenderer(track.videoTrack!)
-          else
-            const _CamOffPlaceholder(),
+          CameraVideoView(track: track),
           Positioned(
             left: AppSpacing.xs,
             bottom: AppSpacing.xs,
@@ -148,6 +145,38 @@ class _CameraTile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Just the video surface for one participant: the live [lk.VideoTrackRenderer]
+/// when a camera track is present and unmuted, otherwise the camera-off
+/// placeholder. Shared by [CameraGrid]'s docked tiles and the floating PiP
+/// tiles ([FloatingCameraTile]) so both render identical video.
+class CameraVideoView extends StatelessWidget {
+  const CameraVideoView({super.key, required this.track});
+
+  final ParticipantTrack track;
+
+  @override
+  Widget build(BuildContext context) {
+    // Keep the VideoTrackRenderer MOUNTED for the whole life of the track, and
+    // just overlay the cam-off placeholder when muted. Swapping the renderer
+    // out on mute (the old behaviour) destroyed and recreated the native
+    // RTCVideoRenderer/texture on every toggle — that init runs on the
+    // platform thread (UI freeze) and churns the peer-connection event channel
+    // (the recurring "No active stream to cancel"). A stable ValueKey keeps the
+    // renderer's State across parent rebuilds so it is never re-initialised.
+    final videoTrack = track.videoTrack;
+    if (videoTrack != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          lk.VideoTrackRenderer(videoTrack, key: ValueKey(videoTrack.sid)),
+          if (track.videoMuted) const _CamOffPlaceholder(),
+        ],
+      );
+    }
+    return const _CamOffPlaceholder();
   }
 }
 

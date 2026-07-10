@@ -176,6 +176,43 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     }).where((p) => p.userId.isNotEmpty).toList());
 
     _syncRoleToEngine();
+    _syncPlayerToMedia();
+  }
+
+  /// The media currently opened into the shared player, so we only re-open when
+  /// the selection actually changes (guards the per-update `party:state` churn).
+  String? _openedMediaId;
+
+  /// Loads the party's selected movie into the shared [PlayerController] — for
+  /// BOTH a local pick and a remote one (the server broadcasts `party:state`
+  /// with `mediaItemId`/`stage` to the whole room, so a web host's pick lands
+  /// here too and a Flutter guest opens the same title). The sync engine then
+  /// drives position/play from `sync:schedule`. On back-to-lobby it clears.
+  Future<void> _syncPlayerToMedia() async {
+    final s = state;
+    if (s == null) return;
+    final controller = _ref.read(playerControllerProvider);
+    final mediaId = s.mediaItemId;
+    final watching = s.stage == 'watching' && (mediaId ?? '').isNotEmpty;
+
+    if (watching) {
+      if (mediaId == _openedMediaId) return; // already open
+      _openedMediaId = mediaId;
+      try {
+        final stream =
+            await _ref.read(apiClientProvider).nativeStreamUrl(mediaId!);
+        // autoplay:false — the sync engine starts/positions playback from the
+        // authoritative schedule, so playback stays in sync across clients.
+        await controller.open(stream.url, autoplay: false);
+      } catch (_) {
+        _openedMediaId = null; // allow a retry on the next party:state
+      }
+    } else if (_openedMediaId != null) {
+      // Back to lobby / media cleared — stop local playback.
+      _openedMediaId = null;
+      await controller.pause();
+      await controller.seek(Duration.zero);
+    }
   }
 
   // ── Create / join ─────────────────────────────────────────────────────────
