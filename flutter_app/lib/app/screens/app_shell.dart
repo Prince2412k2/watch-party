@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../state/state.dart';
 import '../../ui/ui.dart';
 
 /// The persistent shell (nav rail + content area) that wraps the primary
@@ -74,22 +76,39 @@ class AppShell extends StatelessWidget {
 /// window-manager package is wired yet — that's E10 packaging), but gives the
 /// shell a desktop-app top edge with the current section name, matching the
 /// "content is the interface" rule — no gradient, no elevation shadow.
-class _WindowChrome extends StatelessWidget {
+class _WindowChrome extends ConsumerWidget {
   const _WindowChrome({required this.title});
   final String title;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       height: 44,
       color: AppColors.bg,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      padding: const EdgeInsets.only(left: AppSpacing.lg, right: AppSpacing.sm),
       child: Row(
         children: [
           Text(title,
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.dim)),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: () => _confirmLogout(context, ref),
+            icon: const Icon(Icons.logout, size: 15, color: AppColors.dim),
+            label: const Text('Sign out',
+                style: TextStyle(color: AppColors.dim, fontSize: 12.5)),
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
+    final ok = await showConfirm(
+      context,
+      title: 'Sign out?',
+      body: 'You will need to pick your server and sign in again.',
+      confirmLabel: 'Sign out',
+    );
+    if (ok) await ref.read(authProvider.notifier).logout();
   }
 }

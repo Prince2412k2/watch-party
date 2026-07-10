@@ -65,6 +65,12 @@ extension on ImageType {
 /// FROZEN CONTRACT (PLAN §3.2). The full surface the app uses to talk to the
 /// backend. `DioApiClient` is the real impl; `MockApiClient` backs tests/gallery.
 abstract class ApiClient {
+  // ── Server ────────────────────────────────────────────────────────────
+  /// The backend origin this client talks to. Runtime-settable so the app can
+  /// point at a pasted server URL without being rebuilt.
+  String get baseUrl;
+  set baseUrl(String value);
+
   // ── Auth ──────────────────────────────────────────────────────────────
   Future<User> login(String username, String password);
   Future<User> me();
@@ -123,6 +129,15 @@ class DioApiClient implements ApiClient {
   final CookieJar _cookieJar;
 
   String get _base => _dio.options.baseUrl;
+
+  @override
+  String get baseUrl => _dio.options.baseUrl;
+
+  /// Repoint this client at a new backend origin (all `/api/...`, image, and
+  /// native-stream URLs derive from [_base], so this switches everything).
+  @override
+  set baseUrl(String value) => _dio.options.baseUrl = value;
+
   Dio get raw => _dio;
   CookieJar get cookieJar => _cookieJar;
 
