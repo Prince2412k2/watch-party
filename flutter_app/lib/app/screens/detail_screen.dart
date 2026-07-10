@@ -4,7 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/api_client.dart';
 import '../../models/models.dart';
-import '../../player/video_view.dart';
+import '../../player/offline_playback.dart';
+import '../../player/player_view.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 
@@ -104,18 +105,18 @@ class _DetailBody extends StatelessWidget {
                       icon: Icons.play_arrow,
                       variant: AppButtonVariant.primary,
                       onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => PlayerView(itemId: item.id)),
+                        MaterialPageRoute(
+                          builder: (_) => _SoloPlayer(itemId: item.id, title: item.name),
+                        ),
                       ),
                     ),
                     const SizedBox(width: AppSpacing.md),
-                    // Mount point for E8's real DownloadButton (resumable
-                    // downloader + progress UI). Left as a disabled affordance
-                    // so the layout is final; E8 swaps this widget in place.
-                    const AppButton(
-                      label: 'Download',
-                      icon: Icons.download_outlined,
-                      variant: AppButtonVariant.secondary,
-                      onPressed: null,
+                    // E8's real resumable-download affordance (progress bar,
+                    // pause/resume/cancel, "Downloaded" chip once complete).
+                    DownloadButton(
+                      itemId: item.id,
+                      title: item.name,
+                      runTimeTicks: item.runTimeTicks,
                     ),
                   ],
                 ),
@@ -154,23 +155,24 @@ class _DetailSkeleton extends StatelessWidget {
       );
 }
 
-/// Local stand-in for E4.2's `lib/player/player_view.dart` `PlayerView`. That
-/// widget does not exist yet in this worktree; once it lands, swap this
-/// import/usage for the real one (same `itemId` constructor param expected).
-/// It mints a signed native stream URL (frozen `ApiClient.nativeStreamUrl`)
-/// and renders it through the real `MediaKitPlayerController` + `VideoView`
-/// so Play is fully wired end-to-end even before the player chrome (E4.2)
-/// exists.
-class PlayerView extends ConsumerStatefulWidget {
-  const PlayerView({super.key, required this.itemId});
+/// Solo playback launcher for the detail screen. Opens the shared
+/// [playerControllerProvider] preferring a locally-downloaded copy over the
+/// network stream (E8.3 `openPreferringOffline`), then mounts the real E4.2
+/// [PlayerView] chrome. The controller is owned by the provider, so this hands
+/// it to `PlayerView(controller:)` (which never disposes a controller it
+/// didn't create).
+class _SoloPlayer extends ConsumerStatefulWidget {
+  const _SoloPlayer({required this.itemId, required this.title});
   final String itemId;
+  final String title;
 
   @override
-  ConsumerState<PlayerView> createState() => _PlayerViewState();
+  ConsumerState<_SoloPlayer> createState() => _SoloPlayerState();
 }
 
-class _PlayerViewState extends ConsumerState<PlayerView> {
-  String? _error;
+class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
+  Object? _error;
+  bool _ready = false;
 
   @override
   void initState() {
@@ -179,38 +181,52 @@ class _PlayerViewState extends ConsumerState<PlayerView> {
   }
 
   Future<void> _open() async {
+    setState(() {
+      _error = null;
+      _ready = false;
+    });
     try {
       final api = ref.read(apiClientProvider);
       final stream = await api.nativeStreamUrl(widget.itemId, purpose: 'stream');
       final controller = ref.read(playerControllerProvider);
-      await controller.open(stream.url, autoplay: true);
+      await openPreferringOffline(
+        ref,
+        controller,
+        itemId: widget.itemId,
+        streamUrl: stream.url,
+        autoplay: true,
+      );
+      if (mounted) setState(() => _ready = true);
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = e);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final controller = ref.watch(playerControllerProvider);
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(child: VideoView(controller: controller)),
-          if (_error != null)
-            Center(
-              child: ErrorState(title: 'Playback failed', message: _error),
-            ),
-          Positioned(
-            top: AppSpacing.lg,
-            left: AppSpacing.lg,
-            child: IconButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.close, color: Colors.white),
-            ),
-          ),
-        ],
-      ),
+      body: _error != null
+          ? Center(
+              child: ErrorState(
+                title: 'Playback failed',
+                message: '$_error',
+                onRetry: _open,
+              ),
+            )
+          : !_ready
+              ? const Center(
+                  child: SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.text),
+                  ),
+                )
+              : PlayerView(
+                  controller: ref.watch(playerControllerProvider),
+                  title: widget.title,
+                  onBack: () => Navigator.of(context).maybePop(),
+                ),
     );
   }
 }

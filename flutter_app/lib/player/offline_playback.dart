@@ -30,14 +30,22 @@ import 'player_controller.dart';
 /// opening a controller — e.g. to decide whether "Play" should work with no
 /// network.
 Future<bool> openPreferringOffline(
-  Ref ref,
+  WidgetRef ref,
   PlayerController controller, {
   required String itemId,
   required String streamUrl,
   Duration startAt = Duration.zero,
   bool autoplay = false,
 }) async {
-  final resolved = resolveOfflinePlayback(ref, itemId, streamUrl);
-  await controller.open(resolved.url, startAt: startAt, autoplay: autoplay);
-  return resolved.offline;
+  // Same rule as [resolveOfflinePlayback], resolved from a widget's [WidgetRef]
+  // (the detail/party playback path is a Consumer, not a provider): prefer the
+  // downloaded file over the network stream when the title is fully offline.
+  final offline = ref.read(offlineProvider);
+  final localPath = offline
+      .where((r) => r.itemId == itemId)
+      .map((r) => r.filePath)
+      .cast<String?>()
+      .firstWhere((_) => true, orElse: () => null);
+  await controller.open(localPath ?? streamUrl, startAt: startAt, autoplay: autoplay);
+  return localPath != null;
 }
