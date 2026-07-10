@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:window_manager/window_manager.dart';
 
 import '../ui/ui.dart';
@@ -46,14 +47,39 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
       routerConfig: _router,
       builder: (context, child) {
         final content = child ?? const SizedBox.shrink();
-        if (!_isDesktop || !widget.enableWindowFrame) return content;
-        return VirtualWindowFrame(
-          child: Column(
-            children: [
-              const _WindowBar(),
-              Expanded(child: content),
-            ],
-          ),
+        final Widget framed;
+        if (!_isDesktop || !widget.enableWindowFrame) {
+          framed = content;
+        } else {
+          // The title bar + content live ABOVE the router's Navigator, so they
+          // have no Overlay ancestor of their own. Give them one here (a single
+          // full-window Overlay entry) so the window-bar's shadcn tooltips —
+          // whose PopoverOverlayHandler calls Overlay.of — resolve an Overlay
+          // instead of asserting "No Overlay widget found". This also tightens
+          // the previously unbounded _WindowBar Row cascade.
+          framed = VirtualWindowFrame(
+            child: Overlay(
+              initialEntries: [
+                OverlayEntry(
+                  builder: (context) => Column(
+                    children: [
+                      const _WindowBar(),
+                      Expanded(child: content),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        // ShadcnLayer wraps the ENTIRE frame (title bar + content) so shadcn
+        // components everywhere — including the window-bar tooltips — resolve
+        // their theme and overlay/tooltip infrastructure. PKG-E owns the
+        // title-bar region below; this wrapper stays out of its way.
+        return sc.ShadcnLayer(
+          theme: AppShadcnTheme.dark,
+          themeMode: sc.ThemeMode.dark,
+          child: framed,
         );
       },
     );
@@ -150,9 +176,12 @@ class _WindowButtonState extends State<_WindowButton> {
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      child: Tooltip(
-        message: widget.tooltip,
+      // shadcn's tooltip renders through ShadcnLayer's overlay handler, so it
+      // works here in MaterialApp.router's builder (above the router's
+      // Navigator) where a Material Tooltip has no Overlay ancestor.
+      child: sc.Tooltip(
         waitDuration: const Duration(milliseconds: 600),
+        tooltip: (context) => sc.TooltipContainer(child: Text(widget.tooltip)),
         child: GestureDetector(
           onTap: widget.onPressed,
           child: Container(

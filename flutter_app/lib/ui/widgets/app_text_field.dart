@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../tokens.dart';
 
-/// FROZEN CONTRACT (PLAN §3.6). Minimal text input on a solid surface.
+/// FROZEN CONTRACT (PLAN §3.6). Rebuilt on `sc.TextField` (animated focus ring
+/// comes for free); the label/error scaffolding around it is preserved so the
+/// public signature and the cinematic layout are unchanged.
 class AppTextField extends StatelessWidget {
   const AppTextField({
     super.key,
@@ -29,44 +32,39 @@ class AppTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasError = errorText != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         if (label != null) ...[
-          Text(label!, style: const TextStyle(color: AppColors.dim, fontSize: 12.5, fontWeight: FontWeight.w600)),
+          Text(
+            label!,
+            style: const TextStyle(
+              color: AppColors.dim,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
           const SizedBox(height: AppSpacing.sm),
         ],
-        TextField(
+        sc.TextField(
           controller: controller,
           obscureText: obscureText,
           autofocus: autofocus,
           enabled: enabled,
           onSubmitted: onSubmitted,
           onChanged: onChanged,
-          style: const TextStyle(color: AppColors.text, fontSize: 14.5),
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: const TextStyle(color: AppColors.faint),
-            errorText: errorText,
-            filled: true,
-            fillColor: AppColors.surface,
-            contentPadding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg, vertical: AppSpacing.md),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radius),
-              borderSide: const BorderSide(color: AppColors.line),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radius),
-              borderSide: const BorderSide(color: AppColors.line2),
-            ),
-            errorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radius),
-              borderSide: const BorderSide(color: AppColors.red),
-            ),
-          ),
+          placeholder: hint != null ? Text(hint!) : null,
+          border: hasError ? Border.all(color: AppColors.red) : null,
         ),
+        if (hasError) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            errorText!,
+            style: const TextStyle(color: AppColors.red, fontSize: 12.5),
+          ),
+        ],
       ],
     );
   }
