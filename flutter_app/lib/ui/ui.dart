@@ -1,6 +1,8 @@
 /// Barrel for the design system (PLAN §3.6): tokens, theme, and core widgets.
 library;
 
+export 'motion.dart';
+export 'shadcn_theme.dart';
 export 'theme.dart';
 export 'tokens.dart';
 export 'widgets/app_button.dart';

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../../models/models.dart';
 import '../../player/player_view.dart';
@@ -23,7 +24,10 @@ import '../../ui/widgets/floating_camera_tile.dart';
 /// Lobby vs watching are distinct stages, like the web: `stage == 'lobby'`
 /// shows a "waiting for a title" stage; `stage == 'watching'` mounts the real
 /// [PlayerView]. Every provider/feature from the previous docked design is
-/// preserved — only the composition changed.
+/// preserved — the composition and (now) the presentation changed: the bespoke
+/// chrome is rebuilt on shadcn primitives (acrylic surfaces, `sc.IconButton` +
+/// `sc.Tooltip`, `sc.Badge`, `sc.Switch`, a toggle-group, a participant context
+/// menu, and toasts), with calm entrance motion on the lobby + roster.
 ///
 /// `partyId == null` is the pre-join entry point (create or join by id); once
 /// joined the same widget renders the immersive in-party layout.
@@ -123,7 +127,8 @@ class _PartyScreenState extends ConsumerState<PartyScreen> {
 }
 
 /// Pre-join entry: create a new party or join one by id. Also surfaces the
-/// "waiting for host approval" state returned by `join()`.
+/// "waiting for host approval" state returned by `join()`. The card fades +
+/// slides in on mount ([Reveal]) for a calm, cinematic entrance.
 class _PartyLobby extends StatelessWidget {
   const _PartyLobby({
     required this.joinController,
@@ -149,21 +154,36 @@ class _PartyLobby extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 380),
           child: const Padding(
             padding: EdgeInsets.all(AppSpacing.xxl),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-                SizedBox(height: AppSpacing.xl),
-                Text('Waiting to be let in',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.text)),
-                SizedBox(height: AppSpacing.sm),
-                Text('The host has to approve your request. Hang tight — this screen updates the moment you are let in.',
-                    textAlign: TextAlign.center, style: TextStyle(color: AppColors.dim, fontSize: 13.5, height: 1.4)),
-              ],
+            child: Reveal(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: CircularProgressIndicator(strokeWidth: 3),
+                  ),
+                  SizedBox(height: AppSpacing.xl),
+                  Text(
+                    'Waiting to be let in',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.text,
+                    ),
+                  ),
+                  SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'The host has to approve your request. Hang tight — this screen updates the moment you are let in.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.dim,
+                      fontSize: 13.5,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -175,52 +195,72 @@ class _PartyLobby extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 380),
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xxl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('Watch Party',
+          child: Reveal(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Watch Party',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.text)),
-              const SizedBox(height: AppSpacing.sm),
-              const Text('Host a session or join one already running.',
-                  textAlign: TextAlign.center, style: TextStyle(color: AppColors.dim, fontSize: 13.5)),
-              const SizedBox(height: AppSpacing.xxl),
-              AppButton(
-                label: 'Start a party',
-                variant: AppButtonVariant.primary,
-                expand: true,
-                busy: busy,
-                onPressed: busy ? null : onCreate,
-              ),
-              const SizedBox(height: AppSpacing.xl),
-              const Row(children: [
-                Expanded(child: Divider(color: AppColors.line)),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                  child: Text('or', style: TextStyle(color: AppColors.faint, fontSize: 12)),
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.text,
+                  ),
                 ),
-                Expanded(child: Divider(color: AppColors.line)),
-              ]),
-              const SizedBox(height: AppSpacing.xl),
-              AppTextField(
-                controller: joinController,
-                hint: 'Party ID',
-                onSubmitted: (_) => onJoin(),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              AppButton(
-                label: 'Join party',
-                variant: AppButtonVariant.secondary,
-                expand: true,
-                busy: busy,
-                onPressed: busy ? null : onJoin,
-              ),
-              if (error != null) ...[
-                const SizedBox(height: AppSpacing.lg),
-                Text(error!, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.red, fontSize: 13)),
+                const SizedBox(height: AppSpacing.sm),
+                const Text(
+                  'Host a session or join one already running.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.dim, fontSize: 13.5),
+                ),
+                const SizedBox(height: AppSpacing.xxl),
+                AppButton(
+                  label: 'Start a party',
+                  variant: AppButtonVariant.primary,
+                  expand: true,
+                  busy: busy,
+                  onPressed: busy ? null : onCreate,
+                ),
+                const SizedBox(height: AppSpacing.xl),
+                const Row(
+                  children: [
+                    Expanded(child: Divider(color: AppColors.line)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                      child: Text(
+                        'or',
+                        style: TextStyle(color: AppColors.faint, fontSize: 12),
+                      ),
+                    ),
+                    Expanded(child: Divider(color: AppColors.line)),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.xl),
+                AppTextField(
+                  controller: joinController,
+                  hint: 'Party ID',
+                  onSubmitted: (_) => onJoin(),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                AppButton(
+                  label: 'Join party',
+                  variant: AppButtonVariant.secondary,
+                  expand: true,
+                  busy: busy,
+                  onPressed: busy ? null : onJoin,
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: AppSpacing.lg),
+                  Text(
+                    error!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.red, fontSize: 13),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -234,7 +274,7 @@ class _PartyLobby extends StatelessWidget {
 ///   1  floating camera tiles ([FloatingCameraLayer])
 ///   2  the auto-hiding party control chrome (top-right cluster + room pill +
 ///      join-request notifications)
-///   3  the chat slide-over + its scrim
+///   3  the chat slide-over + its (acrylic) scrim
 /// The host-controls modal opens above everything via [showDialog].
 class _ImmersiveParty extends ConsumerStatefulWidget {
   const _ImmersiveParty();
@@ -327,13 +367,13 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
               ),
             ),
 
-            // 3 — chat slide-over + scrim.
+            // 3 — chat slide-over + acrylic scrim.
             if (_chatOpen)
               Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
+                child: Scrim(
+                  opacity: 0.5,
+                  blur: true,
                   onTap: () => setState(() => _chatOpen = false),
-                  child: const ColoredBox(color: Color(0x80040508)),
                 ),
               ),
             _ChatSlideOver(
@@ -354,7 +394,10 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     );
   }
 
-  Future<void> _confirmLeave(BuildContext context, {required bool isHost}) async {
+  Future<void> _confirmLeave(
+    BuildContext context, {
+    required bool isHost,
+  }) async {
     final ok = await showConfirm(
       context,
       title: isHost ? 'End the party?' : 'Leave the party?',
@@ -377,7 +420,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
 /// The lobby stage: shown before a title is selected. Distinct from the
 /// watching stage (which is the movie), mirroring the web's lobby screen. Shows
 /// the room code + count and a status line; cameras still float and chat still
-/// works on top of it.
+/// works on top of it. Content fades in on mount ([Reveal]).
 class _LobbyStage extends ConsumerWidget {
   const _LobbyStage({required this.party});
   final PartyState party;
@@ -391,33 +434,49 @@ class _LobbyStage extends ConsumerWidget {
         constraints: const BoxConstraints(maxWidth: 420),
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xxl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.weekend_outlined, color: AppColors.faint, size: 40),
-              const SizedBox(height: AppSpacing.lg),
-              const Text('In the lobby',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.text)),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                isHost
-                    ? 'Pick a movie and everyone in the party watches it together, in sync.'
-                    : 'Waiting for the host to pick something to watch.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: AppColors.dim, fontSize: 13.5, height: 1.4),
-              ),
-              if (isHost) ...[
-                const SizedBox(height: AppSpacing.xl),
-                AppButton(
-                  label: 'Choose a movie',
-                  icon: Icons.movie_outlined,
-                  variant: AppButtonVariant.primary,
-                  onPressed: () => _openPicker(context, ref),
+          child: Reveal(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.weekend_outlined,
+                  color: AppColors.faint,
+                  size: 40,
                 ),
+                const SizedBox(height: AppSpacing.lg),
+                const Text(
+                  'In the lobby',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.text,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  isHost
+                      ? 'Pick a movie and everyone in the party watches it together, in sync.'
+                      : 'Waiting for the host to pick something to watch.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppColors.dim,
+                    fontSize: 13.5,
+                    height: 1.4,
+                  ),
+                ),
+                if (isHost) ...[
+                  const SizedBox(height: AppSpacing.xl),
+                  AppButton(
+                    label: 'Choose a movie',
+                    icon: Icons.movie_outlined,
+                    variant: AppButtonVariant.primary,
+                    onPressed: () => _openPicker(context, ref),
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.xl),
+                _RoomCodePill(code: party.id, count: count),
               ],
-              const SizedBox(height: AppSpacing.xl),
-              _RoomCodePill(code: party.id, count: count),
-            ],
+            ),
           ),
         ),
       ),
@@ -444,8 +503,22 @@ class _LobbyStage extends ConsumerWidget {
 /// with a search box; tapping a poster returns its id, which the lobby feeds to
 /// [PartyNotifier.selectMedia] → the server broadcasts the pick to everyone
 /// (web + Flutter) and playback starts in sync.
+///
+/// Kept as a Material [showModalBottomSheet] (per the redesign plan); only the
+/// CONTENTS are restyled onto the design system (shadcn close button, skeleton
+/// loading grid, and the frozen [PosterCard]/[ErrorState]/[EmptyState]).
 class _MediaPickerSheet extends ConsumerWidget {
   const _MediaPickerSheet();
+
+  static const _gridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
+    maxCrossAxisExtent: 160,
+    mainAxisSpacing: AppSpacing.xl,
+    crossAxisSpacing: AppSpacing.lg,
+    // Poster is 2:3 plus a title + subtitle line below, so the cell must be
+    // taller than the poster itself (a higher ratio overflows the PosterCard's
+    // Column).
+    childAspectRatio: 0.52,
+  );
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -463,9 +536,17 @@ class _MediaPickerSheet extends ConsumerWidget {
               children: [
                 const Text('Choose a movie', style: AppTheme.titleLarge),
                 const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.close, color: AppColors.dim),
-                  onPressed: () => Navigator.of(context).pop(),
+                sc.Tooltip(
+                  tooltip: (context) =>
+                      const sc.TooltipContainer(child: Text('Close')),
+                  child: sc.IconButton.ghost(
+                    icon: const Icon(
+                      Icons.close,
+                      color: AppColors.dim,
+                      size: 20,
+                    ),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
                 ),
               ],
             ),
@@ -478,8 +559,11 @@ class _MediaPickerSheet extends ConsumerWidget {
             const SizedBox(height: AppSpacing.lg),
             Expanded(
               child: items.when(
-                loading: () => const Center(
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.text)),
+                loading: () => GridView.builder(
+                  gridDelegate: _gridDelegate,
+                  itemCount: 12,
+                  itemBuilder: (_, _) => const _PickerSkeletonCell(),
+                ),
                 error: (e, _) => ErrorState(
                   title: 'Couldn\'t load your library',
                   message: '$e',
@@ -492,15 +576,7 @@ class _MediaPickerSheet extends ConsumerWidget {
                         message: 'Try a different search.',
                       )
                     : GridView.builder(
-                        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 160,
-                          mainAxisSpacing: AppSpacing.xl,
-                          crossAxisSpacing: AppSpacing.lg,
-                          // Poster is 2:3 plus a title + subtitle line below, so
-                          // the cell must be taller than the poster itself (a
-                          // higher ratio overflows the PosterCard's Column).
-                          childAspectRatio: 0.52,
-                        ),
+                        gridDelegate: _gridDelegate,
                         itemCount: list.length,
                         itemBuilder: (context, i) {
                           final item = list[i];
@@ -521,11 +597,35 @@ class _MediaPickerSheet extends ConsumerWidget {
   }
 }
 
+/// A poster-shaped shimmer placeholder for the media-picker loading grid,
+/// composed from the frozen [LoadingSkeleton].
+class _PickerSkeletonCell extends StatelessWidget {
+  const _PickerSkeletonCell();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AspectRatio(
+          aspectRatio: 2 / 3,
+          child: LoadingSkeleton(borderRadius: AppSpacing.radius),
+        ),
+        SizedBox(height: AppSpacing.sm),
+        LoadingSkeleton(width: 96, height: 12),
+        SizedBox(height: 6),
+        LoadingSkeleton(width: 52, height: 10),
+      ],
+    );
+  }
+}
+
 /// The floating party-control chrome: room-code pill (top-left) + a top-right
 /// cluster of mic/cam/hide-self/chat toggles, host controls (host only, with a
 /// waiting badge), and leave. Below the cluster, a host-only join-request card
 /// with approve/reject. Consolidated at the top so it never collides with the
-/// [PlayerView]'s own bottom transport bar.
+/// [PlayerView]'s own bottom transport bar. Rebuilt on shadcn: acrylic surfaces,
+/// `sc.IconButton` + `sc.Tooltip`, `sc.Badge`.
 class _PartyChrome extends ConsumerWidget {
   const _PartyChrome({
     required this.party,
@@ -559,49 +659,59 @@ class _PartyChrome extends ConsumerWidget {
               children: [
                 _RoomCodePill(code: party.id, count: party.participants.length),
                 const Spacer(),
-                _ChromeCluster(children: [
-                  _PendingToggle(
-                    iconOn: Icons.mic,
-                    iconOff: Icons.mic_off,
-                    on: lkState.micEnabled,
-                    tooltip: lkState.micEnabled ? 'Mute microphone' : 'Unmute microphone',
-                    onToggle: () => lk.setMic(!lkState.micEnabled),
-                  ),
-                  _PendingToggle(
-                    iconOn: Icons.videocam,
-                    iconOff: Icons.videocam_off,
-                    on: lkState.cameraEnabled,
-                    tooltip: lkState.cameraEnabled ? 'Turn camera off' : 'Turn camera on',
-                    onToggle: () => lk.setCamera(!lkState.cameraEnabled),
-                  ),
-                  _ChromeIconButton(
-                    icon: lkState.hideSelf ? Icons.visibility_off : Icons.visibility,
-                    active: !lkState.hideSelf,
-                    tooltip: lkState.hideSelf ? 'Show my tile' : 'Hide my tile',
-                    onTap: () => lk.setHideSelf(!lkState.hideSelf),
-                  ),
-                  _ChromeIconButton(
-                    icon: Icons.chat_bubble_outline,
-                    active: chatOpen,
-                    tooltip: 'Chat',
-                    onTap: onToggleChat,
-                  ),
-                  if (isHost)
-                    _ChromeIconButton(
-                      icon: Icons.manage_accounts_outlined,
-                      active: false,
-                      tooltip: 'Host controls',
-                      badge: waiting.isNotEmpty ? waiting.length : null,
-                      onTap: onOpenHostControls,
+                _ChromeCluster(
+                  children: [
+                    _PendingToggle(
+                      iconOn: Icons.mic,
+                      iconOff: Icons.mic_off,
+                      on: lkState.micEnabled,
+                      tooltip: lkState.micEnabled
+                          ? 'Mute microphone'
+                          : 'Unmute microphone',
+                      onToggle: () => lk.setMic(!lkState.micEnabled),
                     ),
-                  _ChromeIconButton(
-                    icon: Icons.close,
-                    active: false,
-                    danger: true,
-                    tooltip: isHost ? 'End party' : 'Leave',
-                    onTap: onLeave,
-                  ),
-                ]),
+                    _PendingToggle(
+                      iconOn: Icons.videocam,
+                      iconOff: Icons.videocam_off,
+                      on: lkState.cameraEnabled,
+                      tooltip: lkState.cameraEnabled
+                          ? 'Turn camera off'
+                          : 'Turn camera on',
+                      onToggle: () => lk.setCamera(!lkState.cameraEnabled),
+                    ),
+                    _ChromeIconButton(
+                      icon: lkState.hideSelf
+                          ? Icons.visibility_off
+                          : Icons.visibility,
+                      active: !lkState.hideSelf,
+                      tooltip: lkState.hideSelf
+                          ? 'Show my tile'
+                          : 'Hide my tile',
+                      onTap: () => lk.setHideSelf(!lkState.hideSelf),
+                    ),
+                    _ChromeIconButton(
+                      icon: Icons.chat_bubble_outline,
+                      active: chatOpen,
+                      tooltip: 'Chat',
+                      onTap: onToggleChat,
+                    ),
+                    if (isHost)
+                      _ChromeIconButton(
+                        icon: Icons.manage_accounts_outlined,
+                        active: false,
+                        tooltip: 'Host controls',
+                        badge: waiting.isNotEmpty ? waiting.length : null,
+                        onTap: onOpenHostControls,
+                      ),
+                    _ChromeIconButton(
+                      icon: Icons.close,
+                      active: false,
+                      danger: true,
+                      tooltip: isHost ? 'End party' : 'Leave',
+                      onTap: onLeave,
+                    ),
+                  ],
+                ),
               ],
             ),
             // Host-only join-request notification (stays visible while shown).
@@ -616,24 +726,24 @@ class _PartyChrome extends ConsumerWidget {
   }
 }
 
+/// The acrylic container that groups the chrome's icon-buttons.
 class _ChromeCluster extends StatelessWidget {
   const _ChromeCluster({required this.children});
   final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return sc.SurfaceCard(
+      surfaceBlur: AppBlur.overlay,
+      surfaceOpacity: 0.9,
+      borderColor: AppColors.line2,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
       padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-        border: Border.all(color: AppColors.line),
-      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           for (var i = 0; i < children.length; i++) ...[
-            if (i > 0) const SizedBox(width: 4),
+            if (i > 0) const SizedBox(width: 2),
             children[i],
           ],
         ],
@@ -642,6 +752,10 @@ class _ChromeCluster extends StatelessWidget {
   }
 }
 
+/// A single chrome control — a shadcn icon-button (ghost when idle, secondary
+/// when active) with a hover [sc.Tooltip], an optional red count badge, and a
+/// busy spinner. Public signature is unchanged so [_PendingToggle] still wraps
+/// it.
 class _ChromeIconButton extends StatelessWidget {
   const _ChromeIconButton({
     required this.icon,
@@ -663,51 +777,57 @@ class _ChromeIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? AppColors.red : (active ? AppColors.text : AppColors.dim);
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: active ? AppColors.surface2 : Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppSpacing.radius)),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppSpacing.radius),
-          onTap: busy ? null : onTap,
-          child: SizedBox(
-            width: 40,
-            height: 40,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                if (busy)
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.dim),
-                  )
-                else
-                  Icon(icon, size: 19, color: color),
-                if (badge != null && badge! > 0)
-                  Positioned(
-                    top: 3,
-                    right: 3,
-                    child: Container(
-                      constraints: const BoxConstraints(minWidth: 15, minHeight: 15),
-                      padding: const EdgeInsets.symmetric(horizontal: 3),
-                      decoration: BoxDecoration(
-                        color: AppColors.red,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: AppColors.surface, width: 1.5),
-                      ),
-                      child: Text('$badge',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: AppColors.text, fontSize: 9, fontWeight: FontWeight.w700)),
-                    ),
+    final color = danger
+        ? AppColors.red
+        : (active ? AppColors.text : AppColors.dim);
+    final Widget iconWidget = busy
+        ? const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppColors.dim,
+            ),
+          )
+        : Icon(icon, size: 19, color: color);
+
+    final Widget button = active
+        ? sc.IconButton.secondary(
+            icon: iconWidget,
+            onPressed: busy ? null : onTap,
+          )
+        : sc.IconButton.ghost(icon: iconWidget, onPressed: busy ? null : onTap);
+
+    Widget content = button;
+    if (badge != null && badge! > 0) {
+      content = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          button,
+          Positioned(
+            top: -3,
+            right: -3,
+            // The badge is decorative — never let it swallow taps meant for the
+            // button beneath it.
+            child: IgnorePointer(
+              child: sc.DestructiveBadge(
+                child: Text(
+                  '$badge',
+                  style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
                   ),
-              ],
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        ],
+      );
+    }
+
+    return sc.Tooltip(
+      tooltip: (context) => sc.TooltipContainer(child: Text(tooltip)),
+      child: content,
     );
   }
 }
@@ -759,6 +879,8 @@ class _PendingToggleState extends State<_PendingToggle> {
   }
 }
 
+/// The shareable room code + participant count, on an acrylic surface with an
+/// `sc.SecondaryBadge` count.
 class _RoomCodePill extends StatelessWidget {
   const _RoomCodePill({required this.code, required this.count});
   final String code;
@@ -766,44 +888,48 @@ class _RoomCodePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-        border: Border.all(color: AppColors.line),
+    return sc.SurfaceCard(
+      surfaceBlur: AppBlur.overlay,
+      surfaceOpacity: 0.9,
+      borderColor: AppColors.line2,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.sm,
+        AppSpacing.sm,
+        AppSpacing.sm,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('Code', style: TextStyle(color: AppColors.dim, fontSize: 12)),
+          const Text(
+            'Code',
+            style: TextStyle(color: AppColors.dim, fontSize: 12),
+          ),
           const SizedBox(width: AppSpacing.sm),
-          Text(code,
-              style: const TextStyle(
-                  fontFamily: AppFonts.mono,
-                  color: AppColors.text,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.2)),
-          const SizedBox(width: AppSpacing.md),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppColors.surface2,
-              borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+          Text(
+            code,
+            style: const TextStyle(
+              fontFamily: AppFonts.mono,
+              color: AppColors.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.2,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  margin: const EdgeInsets.only(right: 5),
-                  decoration: const BoxDecoration(color: AppColors.text, shape: BoxShape.circle),
-                ),
-                Text('$count',
-                    style: const TextStyle(color: AppColors.text, fontSize: 12, fontWeight: FontWeight.w600)),
-              ],
+          ),
+          const SizedBox(width: AppSpacing.md),
+          sc.SecondaryBadge(
+            leading: Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                color: AppColors.text,
+                shape: BoxShape.circle,
+              ),
+            ),
+            child: Text(
+              '$count',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -812,7 +938,8 @@ class _RoomCodePill extends StatelessWidget {
   }
 }
 
-/// Host-only "wants to join" notification card with approve/reject.
+/// Host-only "wants to join" notification card with approve/reject. Fades in on
+/// appear ([Reveal]) and sits on an acrylic surface.
 class _JoinRequests extends ConsumerWidget {
   const _JoinRequests({required this.waiting});
   final List<Participant> waiting;
@@ -820,50 +947,89 @@ class _JoinRequests extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(partyProvider.notifier);
-    return Container(
-      width: 268,
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-        border: Border.all(color: AppColors.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm + 3, AppSpacing.md, AppSpacing.sm + 3),
-            child: Text('Wants to join · ${waiting.length}',
-                style: const TextStyle(
-                    color: AppColors.dim, fontSize: 11.5, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-          ),
-          const Divider(height: 1, color: AppColors.line),
-          for (final w in waiting)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(w.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: AppColors.text, fontSize: 13.5, fontWeight: FontWeight.w600)),
+    return Reveal(
+      child: SizedBox(
+        width: 268,
+        child: sc.SurfaceCard(
+          surfaceBlur: AppBlur.overlay,
+          surfaceOpacity: 0.9,
+          borderColor: AppColors.line2,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+          padding: EdgeInsets.zero,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.sm + 3,
+                  AppSpacing.md,
+                  AppSpacing.sm + 3,
+                ),
+                child: Text(
+                  'Wants to join · ${waiting.length}',
+                  style: const TextStyle(
+                    color: AppColors.dim,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
                   ),
-                  IconButton(
-                    tooltip: 'Reject',
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.close, color: AppColors.red, size: 18),
-                    onPressed: () => notifier.reject(w.userId),
-                  ),
-                  IconButton(
-                    tooltip: 'Approve',
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.check, color: AppColors.green, size: 18),
-                    onPressed: () => notifier.approve(w.userId),
-                  ),
-                ],
+                ),
               ),
-            ),
-        ],
+              const Divider(height: 1, color: AppColors.line),
+              for (final w in waiting)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm,
+                    vertical: AppSpacing.xs,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: AppSpacing.xs),
+                          child: Text(
+                            w.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.text,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      sc.Tooltip(
+                        tooltip: (context) =>
+                            const sc.TooltipContainer(child: Text('Reject')),
+                        child: sc.IconButton.ghost(
+                          icon: const Icon(
+                            Icons.close,
+                            color: AppColors.red,
+                            size: 18,
+                          ),
+                          onPressed: () => notifier.reject(w.userId),
+                        ),
+                      ),
+                      sc.Tooltip(
+                        tooltip: (context) =>
+                            const sc.TooltipContainer(child: Text('Approve')),
+                        child: sc.IconButton.ghost(
+                          icon: const Icon(
+                            Icons.check,
+                            color: AppColors.green,
+                            size: 18,
+                          ),
+                          onPressed: () => notifier.approve(w.userId),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -871,7 +1037,9 @@ class _JoinRequests extends ConsumerWidget {
 
 /// Right-side chat slide-over — animates in/out, never permanently docked
 /// (mirrors the web's dismissible chat panel). Wraps the existing [ChatPanel]
-/// so all send/receive/rate-limit behavior is preserved.
+/// so all send/receive/rate-limit behavior is preserved. The good
+/// [AnimatedPositioned] slide is intentionally kept; only the surface is
+/// restyled acrylic and the close affordance moved to a shadcn icon-button.
 class _ChatSlideOver extends StatelessWidget {
   const _ChatSlideOver({required this.open, required this.onClose});
   final bool open;
@@ -890,38 +1058,52 @@ class _ChatSlideOver extends StatelessWidget {
         left: false,
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.sm),
-          child: Material(
-            color: AppColors.surface,
-            elevation: 0,
+          child: sc.SurfaceCard(
+            surfaceBlur: AppBlur.overlay,
+            surfaceOpacity: 0.9,
+            borderColor: AppColors.line2,
             borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
             clipBehavior: Clip.antiAlias,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-                border: Border.all(color: AppColors.line),
-              ),
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),
-                    child: Row(
-                      children: [
-                        const Text('Chat',
-                            style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w700)),
-                        const Spacer(),
-                        IconButton(
-                          tooltip: 'Close chat',
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.close, color: AppColors.dim, size: 18),
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                    AppSpacing.sm,
+                    AppSpacing.sm,
+                  ),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Chat',
+                        style: TextStyle(
+                          color: AppColors.text,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Spacer(),
+                      sc.Tooltip(
+                        tooltip: (context) => const sc.TooltipContainer(
+                          child: Text('Close chat'),
+                        ),
+                        child: sc.IconButton.ghost(
+                          icon: const Icon(
+                            Icons.close,
+                            color: AppColors.dim,
+                            size: 18,
+                          ),
                           onPressed: onClose,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  const Divider(height: 1, color: AppColors.line),
-                  const Expanded(child: ChatPanel()),
-                ],
-              ),
+                ),
+                const Divider(height: 1, color: AppColors.line),
+                const Expanded(child: ChatPanel()),
+              ],
             ),
           ),
         ),
@@ -934,6 +1116,10 @@ class _ChatSlideOver extends StatelessWidget {
 /// roster with transfer-host + kick, collaborative-control toggle, sync-mode
 /// picker (watching only), back-to-lobby (host + watching), the shareable room
 /// code, and the danger-zone end-party action.
+///
+/// Kept as a Material [showDialog] shell (per the redesign plan); the CONTENTS
+/// are rebuilt on the design system: `sc.Switch`, a shadcn toggle-group, a
+/// per-participant `sc.ContextMenu`, `sc.Badge`s, and a toast on copy.
 class _HostControlsDialog extends ConsumerWidget {
   const _HostControlsDialog();
 
@@ -957,16 +1143,34 @@ class _HostControlsDialog extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.xl, AppSpacing.lg, AppSpacing.md, AppSpacing.md),
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.xl,
+                AppSpacing.lg,
+                AppSpacing.md,
+                AppSpacing.md,
+              ),
               child: Row(
                 children: [
-                  const Text('Host controls',
-                      style: TextStyle(color: AppColors.text, fontSize: 17, fontWeight: FontWeight.w700)),
+                  const Text(
+                    'Host controls',
+                    style: TextStyle(
+                      color: AppColors.text,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   const Spacer(),
-                  IconButton(
-                    tooltip: 'Close',
-                    icon: const Icon(Icons.close, color: AppColors.dim, size: 18),
-                    onPressed: () => Navigator.of(context).pop(),
+                  sc.Tooltip(
+                    tooltip: (context) =>
+                        const sc.TooltipContainer(child: Text('Close')),
+                    child: sc.IconButton.ghost(
+                      icon: const Icon(
+                        Icons.close,
+                        color: AppColors.dim,
+                        size: 18,
+                      ),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
                   ),
                 ],
               ),
@@ -979,62 +1183,50 @@ class _HostControlsDialog extends ConsumerWidget {
                 children: [
                   _sectionLabel('In the party · ${party.participants.length}'),
                   const SizedBox(height: AppSpacing.sm),
-                  for (final p in party.participants)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                      child: Row(
-                        children: [
-                          if (p.isHost)
-                            const Padding(
-                              padding: EdgeInsets.only(right: AppSpacing.xs),
-                              child: Icon(Icons.star, color: AppColors.text, size: 15),
-                            ),
-                          Expanded(
-                            child: Text(p.name,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w600)),
-                          ),
-                          if (p.isHost)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppColors.surface2,
-                                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                  StaggeredList(
+                    spacing: AppSpacing.xs,
+                    children: [
+                      for (final p in party.participants)
+                        _RosterRow(
+                          key: ValueKey(p.userId),
+                          participant: p,
+                          notifier: notifier,
+                        ),
+                    ],
+                  ),
+                  const Divider(color: AppColors.line, height: AppSpacing.xl),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Collaborative control',
+                              style: TextStyle(
+                                color: AppColors.text,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
                               ),
-                              child: const Text('HOST',
-                                  style: TextStyle(color: AppColors.text, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-                            )
-                          else ...[
-                            IconButton(
-                              tooltip: 'Make host',
-                              visualDensity: VisualDensity.compact,
-                              icon: const Icon(Icons.swap_horiz, color: AppColors.faint, size: 18),
-                              onPressed: () => notifier.transferHost(p.userId),
                             ),
-                            IconButton(
-                              tooltip: 'Kick',
-                              visualDensity: VisualDensity.compact,
-                              icon: const Icon(Icons.logout, color: AppColors.red, size: 18),
-                              onPressed: () => notifier.kick(p.userId),
+                            SizedBox(height: 2),
+                            Text(
+                              'Let guests play, pause & seek',
+                              style: TextStyle(
+                                color: AppColors.dim,
+                                fontSize: 12.5,
+                              ),
                             ),
                           ],
-                        ],
+                        ),
                       ),
-                    ),
-                  const Divider(color: AppColors.line, height: AppSpacing.xl),
-                  Material(
-                    type: MaterialType.transparency,
-                    child: SwitchListTile.adaptive(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      activeThumbColor: AppColors.text,
-                      title: const Text('Collaborative control',
-                          style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w600)),
-                      subtitle: const Text('Let guests play, pause & seek',
-                          style: TextStyle(color: AppColors.dim, fontSize: 12.5)),
-                      value: party.collaborativeControl,
-                      onChanged: (v) => notifier.setCollaborative(v),
-                    ),
+                      const SizedBox(width: AppSpacing.md),
+                      sc.Switch(
+                        value: party.collaborativeControl,
+                        onChanged: (v) => notifier.setCollaborative(v),
+                      ),
+                    ],
                   ),
                   if (watching) ...[
                     const Divider(color: AppColors.line, height: AppSpacing.xl),
@@ -1061,24 +1253,27 @@ class _HostControlsDialog extends ConsumerWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: SelectableText(party.id,
-                            style: const TextStyle(
-                                fontFamily: AppFonts.mono,
-                                color: AppColors.text,
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 2)),
+                        child: SelectableText(
+                          party.id,
+                          style: const TextStyle(
+                            fontFamily: AppFonts.mono,
+                            color: AppColors.text,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 2,
+                          ),
+                        ),
                       ),
                       AppButton(
                         label: 'Copy',
                         variant: AppButtonVariant.secondary,
                         icon: Icons.copy,
                         onPressed: () async {
-                          await Clipboard.setData(ClipboardData(text: party.id));
+                          await Clipboard.setData(
+                            ClipboardData(text: party.id),
+                          );
                           if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Party code copied'), duration: Duration(seconds: 2)),
-                            );
+                            _showPartyToast(context, 'Party code copied');
                           }
                         },
                       ),
@@ -1096,7 +1291,8 @@ class _HostControlsDialog extends ConsumerWidget {
                       final ok = await showConfirm(
                         context,
                         title: 'End party for everyone?',
-                        body: 'Everyone will be disconnected and returned to the lobby. This can\'t be undone.',
+                        body:
+                            'Everyone will be disconnected and returned to the lobby. This can\'t be undone.',
                         confirmLabel: 'End party',
                         danger: true,
                       );
@@ -1115,16 +1311,110 @@ class _HostControlsDialog extends ConsumerWidget {
   }
 
   static Widget _sectionLabel(String text, {bool danger = false}) => Text(
-        text.toUpperCase(),
-        style: TextStyle(
-          color: danger ? AppColors.red : AppColors.faint,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1,
-        ),
-      );
+    text.toUpperCase(),
+    style: TextStyle(
+      color: danger ? AppColors.red : AppColors.faint,
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 1,
+    ),
+  );
 }
 
+/// One participant in the host-controls roster. Non-host rows carry both the
+/// inline make-host / kick affordances AND a right-click ([sc.ContextMenu])
+/// wired to the same [PartyNotifier] actions.
+class _RosterRow extends StatelessWidget {
+  const _RosterRow({
+    super.key,
+    required this.participant,
+    required this.notifier,
+  });
+
+  final Participant participant;
+  final PartyNotifier notifier;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = participant;
+    final row = Row(
+      children: [
+        if (p.isHost)
+          const Padding(
+            padding: EdgeInsets.only(right: AppSpacing.xs),
+            child: Icon(Icons.star, color: AppColors.text, size: 15),
+          ),
+        Expanded(
+          child: Text(
+            p.name,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppColors.text,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        if (p.isHost)
+          const sc.SecondaryBadge(
+            child: Text(
+              'HOST',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+            ),
+          )
+        else ...[
+          sc.Tooltip(
+            tooltip: (context) =>
+                const sc.TooltipContainer(child: Text('Make host')),
+            child: sc.IconButton.ghost(
+              icon: const Icon(
+                Icons.swap_horiz,
+                color: AppColors.faint,
+                size: 18,
+              ),
+              onPressed: () => notifier.transferHost(p.userId),
+            ),
+          ),
+          sc.Tooltip(
+            tooltip: (context) =>
+                const sc.TooltipContainer(child: Text('Kick')),
+            child: sc.IconButton.ghost(
+              icon: const Icon(Icons.logout, color: AppColors.red, size: 18),
+              onPressed: () => notifier.kick(p.userId),
+            ),
+          ),
+        ],
+      ],
+    );
+
+    if (p.isHost) return row;
+
+    return sc.ContextMenu(
+      items: [
+        sc.MenuButton(
+          leading: const Icon(Icons.swap_horiz, size: 16),
+          onPressed: (_) => notifier.transferHost(p.userId),
+          child: const Text('Make host'),
+        ),
+        sc.MenuButton(
+          leading: const Icon(Icons.logout, color: AppColors.red, size: 16),
+          onPressed: (_) => notifier.kick(p.userId),
+          child: const Text('Kick', style: TextStyle(color: AppColors.red)),
+        ),
+      ],
+      child: row,
+    );
+  }
+}
+
+/// The sync-mode segmented control, rebuilt as a shadcn toggle-group
+/// (`sc.ButtonGroup` of `sc.Toggle`s). Public signature is unchanged. Tapping
+/// the already-selected segment is a no-op (radio semantics), so a mode can
+/// never be deselected into an invalid empty state.
 class _SyncModeToggle extends StatelessWidget {
   const _SyncModeToggle({required this.value, required this.onChanged});
   final String value;
@@ -1132,36 +1422,54 @@ class _SyncModeToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget seg(String id, String label) {
-      final active = value == id;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onChanged(id),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm + 1),
-            decoration: BoxDecoration(
-              color: active ? AppColors.surface3 : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-            ),
-            child: Text(label,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: active ? AppColors.text : AppColors.dim,
-                    fontSize: 13,
-                    fontWeight: active ? FontWeight.w700 : FontWeight.w600)),
-          ),
-        ),
-      );
-    }
+    sc.Toggle seg(String id, String label) => sc.Toggle(
+      value: value == id,
+      style: const sc.ButtonStyle.outline(),
+      onChanged: (on) {
+        if (on) onChanged(id);
+      },
+      child: Text(label),
+    );
 
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: AppColors.surface2,
-        borderRadius: BorderRadius.circular(AppSpacing.radius),
-        border: Border.all(color: AppColors.line),
-      ),
-      child: Row(children: [seg('hopping', 'Hopping'), const SizedBox(width: 4), seg('dragging', 'Dragging')]),
+    return sc.ButtonGroup(
+      children: [seg('hopping', 'Hopping'), seg('dragging', 'Dragging')],
     );
   }
+}
+
+/// Shows a transient shadcn toast through the app-wide `ToastLayer` (provided by
+/// the root `ShadcnLayer`), replacing the old `ScaffoldMessenger`/`SnackBar`.
+void _showPartyToast(BuildContext context, String message) {
+  sc.showToast(
+    context: context,
+    location: sc.ToastLocation.topCenter,
+    builder: (context, overlay) => sc.SurfaceCard(
+      surfaceBlur: AppBlur.overlay,
+      surfaceOpacity: 0.9,
+      borderColor: AppColors.line2,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.check_circle_outline,
+            size: 16,
+            color: AppColors.green,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            message,
+            style: const TextStyle(
+              color: AppColors.text,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

@@ -33,29 +33,34 @@ abstract final class FloatingTileGeometry {
   static const double defaultWidth = 168;
 
   /// Full pixel size of a tile given its width and collapsed state.
-  static Size tileSize(double width, {required bool collapsed}) => Size(
-        width,
-        collapsed ? headerHeight : headerHeight + width / aspect,
-      );
+  static Size tileSize(double width, {required bool collapsed}) =>
+      Size(width, collapsed ? headerHeight : headerHeight + width / aspect);
 
   /// Clamp a width to the min/max, also never wider than the stage allows.
   static double clampWidth(double width, Size stage) {
-    final cap = math.min(maxWidth, math.max(minWidth, stage.width - 2 * margin));
+    final cap = math.min(
+      maxWidth,
+      math.max(minWidth, stage.width - 2 * margin),
+    );
     return width.clamp(minWidth, cap);
   }
 
   /// Clamp a top-left [offset] so a tile of [tile] size stays within [stage].
   /// If the stage is smaller than the tile in a dimension the tile pins to 0.
   static Offset clamp(Offset offset, Size tile, Size stage) => Offset(
-        offset.dx.clamp(0.0, math.max(0.0, stage.width - tile.width)),
-        offset.dy.clamp(0.0, math.max(0.0, stage.height - tile.height)),
-      );
+    offset.dx.clamp(0.0, math.max(0.0, stage.width - tile.width)),
+    offset.dy.clamp(0.0, math.max(0.0, stage.height - tile.height)),
+  );
 
   /// Default first-show position for the tile at [index]: anchored to the
   /// bottom-right and stacked upward so tiles don't start life overlapping.
   static Offset cascadeAnchor(int index, Size tile, Size stage) {
     final left = stage.width - tile.width - margin;
-    final top = stage.height - margin - (index + 1) * tile.height - index * AppSpacing.sm;
+    final top =
+        stage.height -
+        margin -
+        (index + 1) * tile.height -
+        index * AppSpacing.sm;
     return clamp(Offset(left, top), tile, stage);
   }
 
@@ -88,17 +93,24 @@ class _TileLayout {
 ///
 /// Mount it as the top child of a [Stack] over the player (e.g. via
 /// `Positioned.fill`); it sizes itself to the stage and clamps every tile to
-/// those bounds, re-clamping on window resize.
+/// those bounds, re-clamping on window resize. Drag-end snap and collapse are
+/// animated ([AnimatedPositioned] with a spring curve); live drag/resize follow
+/// the pointer instantly.
 class FloatingCameraLayer extends ConsumerStatefulWidget {
   const FloatingCameraLayer({super.key});
 
   @override
-  ConsumerState<FloatingCameraLayer> createState() => _FloatingCameraLayerState();
+  ConsumerState<FloatingCameraLayer> createState() =>
+      _FloatingCameraLayerState();
 }
 
 class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
   final Map<String, _TileLayout> _layouts = {};
   Size _stage = Size.zero;
+
+  /// Whether position/size changes should animate. False while the pointer is
+  /// actively dragging/resizing (instant follow), true for snap + collapse.
+  bool _animate = false;
 
   @override
   Widget build(BuildContext context) {
@@ -127,33 +139,43 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
           final track = tiles[i];
           final layout = _layouts.putIfAbsent(track.identity, () {
             final w = FloatingTileGeometry.clampWidth(
-                FloatingTileGeometry.defaultWidth, _stage);
+              FloatingTileGeometry.defaultWidth,
+              _stage,
+            );
             final size = FloatingTileGeometry.tileSize(w, collapsed: false);
             return _TileLayout(
-                FloatingTileGeometry.cascadeAnchor(i, size, _stage), w);
+              FloatingTileGeometry.cascadeAnchor(i, size, _stage),
+              w,
+            );
           });
 
           final width = FloatingTileGeometry.clampWidth(layout.width, _stage);
           layout.width = width;
-          final size =
-              FloatingTileGeometry.tileSize(width, collapsed: layout.collapsed);
+          final size = FloatingTileGeometry.tileSize(
+            width,
+            collapsed: layout.collapsed,
+          );
           final pos = FloatingTileGeometry.clamp(layout.offset, size, _stage);
 
-          children.add(Positioned(
-            left: pos.dx,
-            top: pos.dy,
-            width: size.width,
-            height: size.height,
-            child: FloatingCameraTile(
-              key: ValueKey('floating-cam-${track.identity}'),
-              track: track,
-              collapsed: layout.collapsed,
-              onDrag: (delta) => _onDrag(track.identity, delta),
-              onDragEnd: () => _onDragEnd(track.identity),
-              onResize: (delta) => _onResize(track.identity, delta),
-              onToggleCollapse: () => _toggleCollapse(track.identity),
+          children.add(
+            AnimatedPositioned(
+              duration: _animate ? AppMotion.snap : Duration.zero,
+              curve: AppMotion.spring,
+              left: pos.dx,
+              top: pos.dy,
+              width: size.width,
+              height: size.height,
+              child: FloatingCameraTile(
+                key: ValueKey('floating-cam-${track.identity}'),
+                track: track,
+                collapsed: layout.collapsed,
+                onDrag: (delta) => _onDrag(track.identity, delta),
+                onDragEnd: () => _onDragEnd(track.identity),
+                onResize: (delta) => _onResize(track.identity, delta),
+                onToggleCollapse: () => _toggleCollapse(track.identity),
+              ),
             ),
-          ));
+          );
         }
 
         return Stack(children: children);
@@ -168,8 +190,12 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     final l = _layouts[id];
     if (l == null) return;
     setState(() {
-      l.offset =
-          FloatingTileGeometry.clamp(l.offset + delta, _sizeOf(l), _stage);
+      _animate = false;
+      l.offset = FloatingTileGeometry.clamp(
+        l.offset + delta,
+        _sizeOf(l),
+        _stage,
+      );
     });
   }
 
@@ -177,8 +203,8 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     final l = _layouts[id];
     if (l == null) return;
     setState(() {
-      l.offset =
-          FloatingTileGeometry.snapToEdges(l.offset, _sizeOf(l), _stage);
+      _animate = true;
+      l.offset = FloatingTileGeometry.snapToEdges(l.offset, _sizeOf(l), _stage);
     });
   }
 
@@ -186,9 +212,9 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     final l = _layouts[id];
     if (l == null) return;
     setState(() {
+      _animate = false;
       l.width = FloatingTileGeometry.clampWidth(l.width + delta.dx, _stage);
-      l.offset =
-          FloatingTileGeometry.clamp(l.offset, _sizeOf(l), _stage);
+      l.offset = FloatingTileGeometry.clamp(l.offset, _sizeOf(l), _stage);
     });
   }
 
@@ -196,19 +222,24 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     final l = _layouts[id];
     if (l == null) return;
     setState(() {
+      _animate = true;
       l.collapsed = !l.collapsed;
-      l.offset =
-          FloatingTileGeometry.clamp(l.offset, _sizeOf(l), _stage);
+      l.offset = FloatingTileGeometry.clamp(l.offset, _sizeOf(l), _stage);
     });
   }
 }
 
-/// A single floating PiP camera window: a draggable chrome header (name +
-/// mute/talking indicators + collapse), the participant's video, per-tile
-/// mic/cam/hide-self controls for the local tile, and a bottom-right resize
-/// handle. Position/size are owned by the parent [FloatingCameraLayer]; this
-/// widget just reports drag/resize deltas via callbacks.
-class FloatingCameraTile extends StatelessWidget {
+/// A single **frameless** floating PiP camera window. The participant's video
+/// fills the whole tile (rounded corners only) and the ENTIRE tile is draggable.
+/// Chrome — a subtle top scrim with the name + mic/speaking indicator, the
+/// local mic/cam/hide mini-controls, the collapse toggle and the bottom-right
+/// resize handle — fades in only on hover (or while speaking) and fades out
+/// otherwise. Speaking shows a subtle [AppColors.live] glow ring, not a plate.
+///
+/// Position/size are owned by the parent [FloatingCameraLayer]; this widget
+/// just reports drag/resize deltas via callbacks. The public constructor
+/// signature is frozen.
+class FloatingCameraTile extends StatefulWidget {
   const FloatingCameraTile({
     super.key,
     required this.track,
@@ -227,127 +258,186 @@ class FloatingCameraTile extends StatelessWidget {
   final VoidCallback onToggleCollapse;
 
   @override
+  State<FloatingCameraTile> createState() => _FloatingCameraTileState();
+}
+
+class _FloatingCameraTileState extends State<FloatingCameraTile> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
+    final track = widget.track;
     final speaking = track.isSpeaking;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radius),
-        border: Border.all(
-          color: speaking ? AppColors.live : AppColors.line,
-          width: speaking ? 1.5 : 1,
-        ),
-        boxShadow: const [
-          BoxShadow(color: Color(0x66000000), blurRadius: 12, offset: Offset(0, 4)),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppSpacing.radius),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _DragHeader(
+    final showChrome = _hover || speaking || widget.collapsed;
+    final radius = BorderRadius.circular(AppSpacing.radius);
+
+    final body = widget.collapsed
+        // Collapsed: no video, just a compact strip carrying the chrome
+        // (name + expand toggle). The whole strip still drags.
+        ? ColoredBox(
+            color: AppColors.surface,
+            child: _TopChrome(
               track: track,
-              collapsed: collapsed,
-              onDrag: onDrag,
-              onDragEnd: onDragEnd,
-              onToggleCollapse: onToggleCollapse,
+              collapsed: true,
+              onToggleCollapse: widget.onToggleCollapse,
             ),
-            if (!collapsed)
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    CameraVideoView(track: track),
-                    if (track.isLocal)
-                      const Positioned(
-                        left: AppSpacing.xs,
-                        bottom: AppSpacing.xs,
-                        child: _LocalTileControls(),
-                      ),
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: _ResizeHandle(onResize: onResize),
-                    ),
-                  ],
+          )
+        : Stack(
+            fit: StackFit.expand,
+            children: [
+              CameraVideoView(track: track),
+              // Top scrim + name/indicators/collapse — hover/speaking only.
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                child: AnimatedOpacity(
+                  opacity: showChrome ? 1 : 0,
+                  duration: AppMotion.hover,
+                  child: _TopChrome(
+                    track: track,
+                    collapsed: false,
+                    onToggleCollapse: widget.onToggleCollapse,
+                  ),
                 ),
               ),
-          ],
+              if (track.isLocal)
+                Positioned(
+                  left: AppSpacing.xs,
+                  bottom: AppSpacing.xs,
+                  child: AnimatedOpacity(
+                    opacity: showChrome ? 1 : 0,
+                    duration: AppMotion.hover,
+                    child: const _LocalTileControls(),
+                  ),
+                ),
+            ],
+          );
+
+    // The whole tile drags (frameless — no header bar). The resize handle is a
+    // sibling STACKED ABOVE this drag layer, not a descendant, so its pan wins
+    // the gesture arena when the pointer starts on it.
+    final draggable = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: (d) => widget.onDrag(d.delta),
+      onPanEnd: (_) => widget.onDragEnd(),
+      child: AnimatedContainer(
+        duration: AppMotion.hover,
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          // Subtle glow ring when speaking (no heavy border/plate).
+          boxShadow: speaking
+              ? [
+                  BoxShadow(
+                    color: AppColors.live.withValues(alpha: 0.55),
+                    blurRadius: 12,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : AppElevation.high,
         ),
+        child: ClipRRect(borderRadius: radius, child: body),
+      ),
+    );
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.move,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Stack(
+        children: [
+          Positioned.fill(child: draggable),
+          if (!widget.collapsed)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: AnimatedOpacity(
+                opacity: showChrome ? 1 : 0,
+                duration: AppMotion.hover,
+                child: _ResizeHandle(onResize: widget.onResize),
+              ),
+            ),
+        ],
       ),
     );
   }
 }
 
-class _DragHeader extends StatelessWidget {
-  const _DragHeader({
+/// The top hover-chrome: a soft gradient scrim carrying a drag affordance, mic/
+/// speaking indicators, the participant name, and the collapse/expand toggle.
+class _TopChrome extends StatelessWidget {
+  const _TopChrome({
     required this.track,
     required this.collapsed,
-    required this.onDrag,
-    required this.onDragEnd,
     required this.onToggleCollapse,
   });
 
   final ParticipantTrack track;
   final bool collapsed;
-  final ValueChanged<Offset> onDrag;
-  final VoidCallback onDragEnd;
   final VoidCallback onToggleCollapse;
 
   @override
   Widget build(BuildContext context) {
     final label = track.isLocal ? '${track.name} (you)' : track.name;
-    return MouseRegion(
-      cursor: SystemMouseCursors.move,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanUpdate: (d) => onDrag(d.delta),
-        onPanEnd: (_) => onDragEnd(),
-        child: Container(
-          height: FloatingTileGeometry.headerHeight,
-          padding: const EdgeInsets.only(left: 4, right: 2),
-          color: const Color(0xB3000000),
-          child: Row(
-            children: [
-              const Icon(Icons.drag_indicator, size: 14, color: AppColors.faint),
-              const SizedBox(width: 2),
-              if (track.audioMuted)
-                const Padding(
-                  padding: EdgeInsets.only(right: 3),
-                  child: Icon(Icons.mic_off, size: 12, color: AppColors.dim),
-                ),
-              if (track.isSpeaking)
-                Container(
-                  width: 7,
-                  height: 7,
-                  margin: const EdgeInsets.only(right: 4),
-                  decoration:
-                      const BoxDecoration(color: AppColors.live, shape: BoxShape.circle),
-                ),
-              Expanded(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: AppColors.text, fontSize: 11, fontWeight: FontWeight.w600),
-                ),
+    return Container(
+      height: FloatingTileGeometry.headerHeight,
+      padding: const EdgeInsets.only(left: 4, right: 2),
+      decoration: collapsed
+          ? null
+          : const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xB3000000), Color(0x00000000)],
               ),
-              _HeaderButton(
-                icon: collapsed ? Icons.open_in_full : Icons.minimize,
-                tooltip: collapsed ? 'Expand tile' : 'Collapse tile',
-                onTap: onToggleCollapse,
+            ),
+      child: Row(
+        children: [
+          const Icon(Icons.drag_indicator, size: 14, color: AppColors.faint),
+          const SizedBox(width: 2),
+          if (track.audioMuted)
+            const Padding(
+              padding: EdgeInsets.only(right: 3),
+              child: Icon(Icons.mic_off, size: 12, color: AppColors.dim),
+            ),
+          if (track.isSpeaking)
+            Container(
+              width: 7,
+              height: 7,
+              margin: const EdgeInsets.only(right: 4),
+              decoration: const BoxDecoration(
+                color: AppColors.live,
+                shape: BoxShape.circle,
               ),
-            ],
+            ),
+          Expanded(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.text,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-        ),
+          _HeaderButton(
+            icon: collapsed ? Icons.open_in_full : Icons.minimize,
+            tooltip: collapsed ? 'Expand tile' : 'Collapse tile',
+            onTap: onToggleCollapse,
+          ),
+        ],
       ),
     );
   }
 }
 
 class _HeaderButton extends StatelessWidget {
-  const _HeaderButton({required this.icon, required this.tooltip, required this.onTap});
+  const _HeaderButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
 
   final IconData icon;
   final String tooltip;
@@ -392,13 +482,17 @@ class _LocalTileControls extends ConsumerWidget {
             _MiniToggle(
               icon: lkState.micEnabled ? Icons.mic : Icons.mic_off,
               active: lkState.micEnabled,
-              tooltip: lkState.micEnabled ? 'Mute microphone' : 'Unmute microphone',
+              tooltip: lkState.micEnabled
+                  ? 'Mute microphone'
+                  : 'Unmute microphone',
               onTap: () => notifier.setMic(!lkState.micEnabled),
             ),
             _MiniToggle(
               icon: lkState.cameraEnabled ? Icons.videocam : Icons.videocam_off,
               active: lkState.cameraEnabled,
-              tooltip: lkState.cameraEnabled ? 'Turn camera off' : 'Turn camera on',
+              tooltip: lkState.cameraEnabled
+                  ? 'Turn camera off'
+                  : 'Turn camera on',
               onTap: () => notifier.setCamera(!lkState.cameraEnabled),
             ),
             _MiniToggle(
@@ -436,7 +530,11 @@ class _MiniToggle extends StatelessWidget {
         radius: 16,
         child: Padding(
           padding: const EdgeInsets.all(4),
-          child: Icon(icon, size: 15, color: active ? AppColors.text : AppColors.faint),
+          child: Icon(
+            icon,
+            size: 15,
+            color: active ? AppColors.text : AppColors.faint,
+          ),
         ),
       ),
     );

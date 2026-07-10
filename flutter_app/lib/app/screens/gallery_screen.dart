@@ -34,8 +34,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
           children: [
             const Text('Design system gallery', style: AppTheme.displaySmall),
             const SizedBox(height: AppSpacing.sm),
-            const Text('Every core widget + the cinematic-minimal token set, in one place.',
-                style: AppTheme.dim),
+            const Text(
+              'Every core widget + the cinematic-minimal token set, in one place.',
+              style: AppTheme.dim,
+            ),
             const SizedBox(height: AppSpacing.xxl),
 
             const SectionHeader(title: 'Color'),
@@ -47,7 +49,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
             const SizedBox(height: AppSpacing.xxl),
 
             const SectionHeader(title: 'Buttons'),
-            _ButtonsShowcase(busy: _busy, onToggleBusy: () => setState(() => _busy = !_busy)),
+            _ButtonsShowcase(
+              busy: _busy,
+              onToggleBusy: () => setState(() => _busy = !_busy),
+            ),
             const SizedBox(height: AppSpacing.xxl),
 
             const SectionHeader(title: 'Chips'),
@@ -62,8 +67,16 @@ class _GalleryScreenState extends State<GalleryScreen> {
                     onTap: () => setState(() => _selectedChip = g),
                   ),
                 const AppChip(label: 'LIVE', tone: AppChipTone.live),
-                const AppChip(label: 'Failed', tone: AppChipTone.danger, icon: Icons.error_outline),
-                const AppChip(label: 'Downloaded', tone: AppChipTone.success, icon: Icons.check),
+                const AppChip(
+                  label: 'Failed',
+                  tone: AppChipTone.danger,
+                  icon: Icons.error_outline,
+                ),
+                const AppChip(
+                  label: 'Downloaded',
+                  tone: AppChipTone.success,
+                  icon: Icons.check,
+                ),
               ],
             ),
             const SizedBox(height: AppSpacing.xxl),
@@ -74,13 +87,28 @@ class _GalleryScreenState extends State<GalleryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  AppTextField(controller: _textController, label: 'Username', hint: 'root'),
+                  AppTextField(
+                    controller: _textController,
+                    label: 'Username',
+                    hint: 'root',
+                  ),
                   const SizedBox(height: AppSpacing.lg),
-                  const AppTextField(label: 'Password', obscureText: true, hint: '••••••••'),
+                  const AppTextField(
+                    label: 'Password',
+                    obscureText: true,
+                    hint: '••••••••',
+                  ),
                   const SizedBox(height: AppSpacing.lg),
-                  const AppTextField(label: 'Disabled', enabled: false, hint: 'Not editable'),
+                  const AppTextField(
+                    label: 'Disabled',
+                    enabled: false,
+                    hint: 'Not editable',
+                  ),
                   const SizedBox(height: AppSpacing.lg),
-                  const AppTextField(label: 'With error', errorText: 'Invalid credentials'),
+                  const AppTextField(
+                    label: 'With error',
+                    errorText: 'Invalid credentials',
+                  ),
                 ],
               ),
             ),
@@ -92,9 +120,18 @@ class _GalleryScreenState extends State<GalleryScreen> {
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
-                  PosterCard(title: 'Arrival', subtitle: '2016', progress: 0.4, onTap: () {}),
+                  PosterCard(
+                    title: 'Arrival',
+                    subtitle: '2016',
+                    progress: 0.4,
+                    onTap: () {},
+                  ),
                   const SizedBox(width: AppSpacing.lg),
-                  PosterCard(title: 'The Matrix', subtitle: '1999', onTap: () {}),
+                  PosterCard(
+                    title: 'The Matrix',
+                    subtitle: '1999',
+                    onTap: () {},
+                  ),
                   const SizedBox(width: AppSpacing.lg),
                   const PosterCard(title: 'Untitled', subtitle: null),
                 ],
@@ -109,7 +146,11 @@ class _GalleryScreenState extends State<GalleryScreen> {
               children: [
                 LoadingSkeleton(width: 120, height: 16),
                 LoadingSkeleton(width: 200, height: 16),
-                LoadingSkeleton(width: 160, height: 220, borderRadius: AppSpacing.radius),
+                LoadingSkeleton(
+                  width: 160,
+                  height: 220,
+                  borderRadius: AppSpacing.radius,
+                ),
               ],
             ),
             const SizedBox(height: AppSpacing.xxl),
@@ -124,9 +165,22 @@ class _GalleryScreenState extends State<GalleryScreen> {
                     color: AppColors.surface,
                     child: NavRail(
                       destinations: const [
-                        NavDestination(icon: Icons.home_outlined, label: 'Home', route: '/home'),
-                        NavDestination(icon: Icons.explore_outlined, label: 'Browse', route: '/browse'),
-                        NavDestination(icon: Icons.download_outlined, label: 'Downloads', route: '/downloads', badge: 2),
+                        NavDestination(
+                          icon: Icons.home_outlined,
+                          label: 'Home',
+                          route: '/home',
+                        ),
+                        NavDestination(
+                          icon: Icons.explore_outlined,
+                          label: 'Browse',
+                          route: '/browse',
+                        ),
+                        NavDestination(
+                          icon: Icons.download_outlined,
+                          label: 'Downloads',
+                          route: '/downloads',
+                          badge: 2,
+                        ),
                       ],
                       currentRoute: '/home',
                       onSelect: (_) {},
@@ -138,9 +192,22 @@ class _GalleryScreenState extends State<GalleryScreen> {
                     child: NavRail(
                       compact: true,
                       destinations: const [
-                        NavDestination(icon: Icons.home_outlined, label: 'Home', route: '/home'),
-                        NavDestination(icon: Icons.explore_outlined, label: 'Browse', route: '/browse'),
-                        NavDestination(icon: Icons.download_outlined, label: 'Downloads', route: '/downloads', badge: 2),
+                        NavDestination(
+                          icon: Icons.home_outlined,
+                          label: 'Home',
+                          route: '/home',
+                        ),
+                        NavDestination(
+                          icon: Icons.explore_outlined,
+                          label: 'Browse',
+                          route: '/browse',
+                        ),
+                        NavDestination(
+                          icon: Icons.download_outlined,
+                          label: 'Downloads',
+                          route: '/downloads',
+                          badge: 2,
+                        ),
                       ],
                       currentRoute: '/browse',
                       onSelect: (_) {},
@@ -159,10 +226,19 @@ class _GalleryScreenState extends State<GalleryScreen> {
                   onPressed: () => AppDialog.show(
                     context,
                     title: 'Leave party?',
-                    body: 'Playback will stop for everyone if you are the host.',
+                    body:
+                        'Playback will stop for everyone if you are the host.',
                     actions: [
-                      AppButton(label: 'Cancel', variant: AppButtonVariant.ghost, onPressed: () => Navigator.of(context).pop()),
-                      AppButton(label: 'Leave', variant: AppButtonVariant.danger, onPressed: () => Navigator.of(context).pop()),
+                      AppButton(
+                        label: 'Cancel',
+                        variant: AppButtonVariant.ghost,
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      AppButton(
+                        label: 'Leave',
+                        variant: AppButtonVariant.danger,
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
                     ],
                   ),
                 ),
@@ -170,7 +246,11 @@ class _GalleryScreenState extends State<GalleryScreen> {
                 AppButton(
                   label: 'Confirm helper',
                   variant: AppButtonVariant.secondary,
-                  onPressed: () => showConfirm(context, title: 'Delete download?', danger: true),
+                  onPressed: () => showConfirm(
+                    context,
+                    title: 'Delete download?',
+                    danger: true,
+                  ),
                 ),
               ],
             ),
@@ -184,10 +264,14 @@ class _GalleryScreenState extends State<GalleryScreen> {
                   width: 320,
                   height: 320,
                   child: DecoratedBox(
-                    decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(AppSpacing.radius)),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(AppSpacing.radius),
+                    ),
                     child: const EmptyState(
                       title: 'No downloads yet',
-                      message: 'Titles you download for offline playback show up here.',
+                      message:
+                          'Titles you download for offline playback show up here.',
                     ),
                   ),
                 ),
@@ -196,7 +280,10 @@ class _GalleryScreenState extends State<GalleryScreen> {
                   width: 320,
                   height: 320,
                   child: DecoratedBox(
-                    decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(AppSpacing.radius)),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(AppSpacing.radius),
+                    ),
                     child: ErrorState(
                       title: 'Couldn\'t load library',
                       message: 'Check your connection and try again.',
@@ -205,6 +292,55 @@ class _GalleryScreenState extends State<GalleryScreen> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: AppSpacing.xxl),
+
+            const SectionHeader(
+              title: 'Motion & surfaces',
+              subtitle: 'Staggered reveal · acrylic scrim',
+            ),
+            StaggeredList(
+              spacing: AppSpacing.sm,
+              children: [
+                for (final s in const [
+                  'Fade-through routes (180ms)',
+                  'Staggered list entrance (8px slide-up)',
+                  'Hover scale + animated nav highlight',
+                  'Acrylic overlays (blur 16)',
+                ])
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.bolt_outlined,
+                        size: 16,
+                        color: AppColors.dim,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(s, style: AppTheme.body),
+                    ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            SizedBox(
+              height: 120,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(AppSpacing.radius),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const _ColorSwatches(),
+                    Scrim(
+                      blur: true,
+                      opacity: 0.35,
+                      child: const Text(
+                        'Acrylic scrim',
+                        style: AppTheme.titleMedium,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: AppSpacing.xxl),
           ],
@@ -251,7 +387,10 @@ class _ColorSwatches extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(name, style: const TextStyle(color: AppColors.dim, fontSize: 11.5)),
+                Text(
+                  name,
+                  style: const TextStyle(color: AppColors.dim, fontSize: 11.5),
+                ),
               ],
             ),
           ),
@@ -297,12 +436,30 @@ class _ButtonsShowcase extends StatelessWidget {
       runSpacing: AppSpacing.md,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        AppButton(label: 'Play', variant: AppButtonVariant.primary, icon: Icons.play_arrow, onPressed: () {}),
+        AppButton(
+          label: 'Play',
+          variant: AppButtonVariant.primary,
+          icon: Icons.play_arrow,
+          onPressed: () {},
+        ),
         AppButton(label: 'Secondary', onPressed: () {}),
-        AppButton(label: 'Ghost', variant: AppButtonVariant.ghost, onPressed: () {}),
-        AppButton(label: 'Delete', variant: AppButtonVariant.danger, icon: Icons.delete_outline, onPressed: () {}),
+        AppButton(
+          label: 'Ghost',
+          variant: AppButtonVariant.ghost,
+          onPressed: () {},
+        ),
+        AppButton(
+          label: 'Delete',
+          variant: AppButtonVariant.danger,
+          icon: Icons.delete_outline,
+          onPressed: () {},
+        ),
         AppButton(label: 'Disabled', onPressed: null),
-        AppButton(label: busy ? 'Working…' : 'Toggle busy', busy: busy, onPressed: onToggleBusy),
+        AppButton(
+          label: busy ? 'Working…' : 'Toggle busy',
+          busy: busy,
+          onPressed: onToggleBusy,
+        ),
       ],
     );
   }

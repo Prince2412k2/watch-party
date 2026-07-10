@@ -35,6 +35,9 @@ dependencies:
   # Resumable, background, restart-surviving downloads.
   background_downloader: ^9.2.0
 
+  # Design-system primitives (theme bridge in lib/ui/shadcn_theme.dart).
+  shadcn_flutter: ^0.0.52
+
   # Immutable models + JSON.
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0

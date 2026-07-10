@@ -112,22 +112,66 @@ media_kit-based AppImage packaging guide uses.
 - Icons live in `assets/icons/` (`app_icon.png` for the window/app icon,
   `tray_icon.png` — a smaller variant — for the tray).
 
-## Windows / macOS (not built yet — sketch only)
+## Windows / macOS — CI builds + releases
 
-Not implemented in this pass; noted here so a future E10 follow-up doesn't
-have to start from scratch.
+Built in CI by `.github/workflows/release-desktop.yml` (Linux is still built
+locally via `build-linux.sh` above — add it to the workflow later if you want
+all three in one release).
 
-- **macOS**: `flutter build macos --release`, then `create-dmg` (or
-  `hdiutil`) for a `.dmg`. Bundle id/name already set
-  (`com.watchparty.desktop` / Watchparty) in `AppInfo.xcconfig`. media_kit
-  and livekit_client both publish prebuilt macOS frameworks (no manual
-  native-lib bundling needed, unlike Linux) — signing/notarization is the
-  main remaining gap (needs an Apple Developer ID + `codesign`/`notarytool`,
-  not available in this environment).
-- **Windows**: `flutter build windows --release`, then either an NSIS/Inno
-  Setup installer or an MSIX package. `window_manager`/`tray_manager` both
-  support Windows already (no new packages needed). Single-instance would
-  need a Win32-specific approach (named mutex check in `windows/runner/main.cpp`
-  before creating the window) since there's no GApplication-equivalent —
-  that C++ change is the one piece of native work Windows needs that Linux
-  didn't.
+### How to cut a release
+
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow builds macOS + Windows on GitHub-hosted runners and publishes a
+GitHub Release named after the tag with:
+
+- `Watchparty-<version>-macos.dmg` — universal (Intel + Apple Silicon) `.app`
+  in a drag-to-Applications `.dmg`.
+- `Watchparty-<version>-windows-x64.zip` — extracts to a single `Watchparty/`
+  folder (exe + plugin DLLs + the bundled MSVC runtime + `data/`); run
+  `Watchparty/watchparty.exe`.
+- `SHA256SUMS` — verify with `sha256sum -c SHA256SUMS` (or `Get-FileHash` on
+  Windows) before running the unsigned artifacts.
+
+You can also trigger it manually (Actions → **Release Desktop** → Run workflow)
+to produce build artifacts without publishing a release.
+
+### Signing (not done — artifacts are unsigned)
+
+There is no Apple Developer ID or Windows Authenticode cert in this repo, so
+artifacts are **unsigned**:
+
+- **macOS**: the `.app` is ad-hoc signed (`codesign --sign -`) so Apple Silicon
+  doesn't reject it as "damaged", but it is **not notarized**. macOS 15+ removed
+  the old right-click → Open bypass, so on first launch either open **System
+  Settings → Privacy & Security → Open Anyway**, or strip the quarantine bit:
+  `xattr -dr com.apple.quarantine /Applications/Watchparty.app`.
+- **Windows**: SmartScreen will warn on first run → **More info → Run anyway**.
+
+To sign later: add the cert/key as repo secrets and insert a `codesign
+--options runtime` + `notarytool` step (macOS) / `signtool` step (Windows)
+before packaging.
+
+### macOS entitlements / privacy (why the release build was fixed)
+
+`Release.entitlements` disables the App Sandbox for self-distribution — a stock
+sandboxed release has no `network.client` entitlement and cannot reach any
+backend at all. `Info.plist` carries `NSCameraUsageDescription` /
+`NSMicrophoneUsageDescription` / `NSLocalNetworkUsageDescription` so the
+watch-party A/V (flutter_webrtc) and LAN server connections work instead of
+crashing on first access. For a Mac App Store build, re-enable the sandbox and
+add the corresponding device/network entitlements (see the comment in
+`Release.entitlements`).
+
+### Remaining native follow-ups (not blockers for a build/release)
+
+- **Windows single-instance**: no GApplication equivalent — needs a named-mutex
+  check in `windows/runner/main.cpp` before creating the window (Linux gets this
+  from `GApplication`). Without it, a second launch opens a second window.
+- **Frameless/rounded window on macOS & Windows**: the Linux runner
+  (`my_application.cc`) was customized for the transparent RGBA window; the
+  macOS `MainFlutterWindow.swift` and the Windows runner are still stock, so the
+  `VirtualWindowFrame` rounding/shadow may not render identically there yet.
