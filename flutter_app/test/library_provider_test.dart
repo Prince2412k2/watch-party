@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:watchparty/data/api_client.dart';
 import 'package:watchparty/state/state.dart';
 
@@ -12,6 +13,10 @@ import 'package:watchparty/state/state.dart';
 /// Skips rather than fails if the backend is unreachable, so `flutter test`
 /// stays green offline.
 void main() {
+  // logout() clears the persisted server config, which reads SharedPreferences.
+  TestWidgetsFlutterBinding.ensureInitialized();
+  SharedPreferences.setMockInitialValues({});
+
   const base = String.fromEnvironment('API_BASE', defaultValue: 'http://localhost:3005');
 
   Future<bool> backendUp() async {
