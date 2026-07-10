@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../../data/api_client.dart';
 import '../../models/models.dart';
@@ -38,6 +39,11 @@ class DetailScreen extends ConsumerWidget {
   }
 }
 
+/// Below this content width the poster + metadata stack vertically instead of
+/// sitting side by side, so the fixed-width poster never overflows a narrow
+/// window.
+const double _kStackBreakpoint = 640;
+
 class _DetailBody extends StatelessWidget {
   const _DetailBody({required this.item, required this.api});
   final LibraryItem item;
@@ -49,84 +55,149 @@ class _DetailBody extends StatelessWidget {
         ? (item.runTimeTicks! / 600000000).round()
         : null;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppSpacing.xxl),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 260,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-              child: AspectRatio(
-                aspectRatio: 2 / 3,
-                child: Image.network(
-                  api.imageUrl(item.id),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const ColoredBox(
-                    color: AppColors.surface2,
-                    child: Icon(Icons.movie_outlined, color: AppColors.faint, size: 40),
-                  ),
+    final back = sc.IconButton.ghost(
+      onPressed: () => context.canPop() ? context.pop() : context.go('/home'),
+      icon: const Icon(Icons.arrow_back, color: AppColors.dim),
+    );
+
+    final meta = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(item.name, style: AppTheme.displaySmall),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            if (item.productionYear != null)
+              AppChip(label: '${item.productionYear}'),
+            if (runtimeMinutes != null) AppChip(label: '${runtimeMinutes}m'),
+            if (item.officialRating != null)
+              AppChip(label: item.officialRating!),
+            if (item.communityRating != null)
+              AppChip(
+                label: item.communityRating!.toStringAsFixed(1),
+                icon: Icons.star_outline,
+              ),
+            for (final genre in item.genres) AppChip(label: genre),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.xl),
+        if (item.overview != null)
+          Text(item.overview!, style: AppTheme.body.copyWith(height: 1.5)),
+        const SizedBox(height: AppSpacing.xxl),
+        Row(
+          children: [
+            AppButton(
+              label: 'Play',
+              icon: Icons.play_arrow,
+              variant: AppButtonVariant.primary,
+              onPressed: () => Navigator.of(context).push(_playerRoute(item)),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            // E8's real resumable-download affordance (progress bar,
+            // pause/resume/cancel, "Downloaded" chip once complete).
+            DownloadButton(
+              itemId: item.id,
+              title: item.name,
+              runTimeTicks: item.runTimeTicks,
+            ),
+          ],
+        ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= _kStackBreakpoint;
+        final posterWidth = wide
+            ? 260.0
+            : (constraints.maxWidth - AppSpacing.xxl * 2).clamp(0.0, 260.0);
+        final poster = _Poster(item: item, api: api, width: posterWidth);
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpacing.xxl),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              back,
+              const SizedBox(height: AppSpacing.md),
+              if (wide)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    poster,
+                    const SizedBox(width: AppSpacing.xxl),
+                    Expanded(child: meta),
+                  ],
+                )
+              else ...[
+                poster,
+                const SizedBox(height: AppSpacing.xl),
+                meta,
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Poster art with a [Hero] so it flies from the browsing grid's `PosterCard`
+/// (matching `heroTag: 'poster-<id>'`) into this screen on push.
+class _Poster extends StatelessWidget {
+  const _Poster({required this.item, required this.api, required this.width});
+  final LibraryItem item;
+  final ApiClient api;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: Hero(
+        tag: 'poster-${item.id}',
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+          child: AspectRatio(
+            aspectRatio: 2 / 3,
+            child: Image.network(
+              api.imageUrl(item.id),
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const ColoredBox(
+                color: AppColors.surface2,
+                child: Icon(
+                  Icons.movie_outlined,
+                  color: AppColors.faint,
+                  size: 40,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: AppSpacing.xxl),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                IconButton(
-                  onPressed: () => context.canPop() ? context.pop() : context.go('/home'),
-                  icon: const Icon(Icons.arrow_back, color: AppColors.dim),
-                ),
-                Text(item.name, style: AppTheme.displaySmall),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.sm,
-                  runSpacing: AppSpacing.sm,
-                  children: [
-                    if (item.productionYear != null) AppChip(label: '${item.productionYear}'),
-                    if (runtimeMinutes != null) AppChip(label: '${runtimeMinutes}m'),
-                    if (item.officialRating != null) AppChip(label: item.officialRating!),
-                    if (item.communityRating != null)
-                      AppChip(label: item.communityRating!.toStringAsFixed(1), icon: Icons.star_outline),
-                    for (final genre in item.genres) AppChip(label: genre),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.xl),
-                if (item.overview != null)
-                  Text(item.overview!, style: AppTheme.body.copyWith(height: 1.5)),
-                const SizedBox(height: AppSpacing.xxl),
-                Row(
-                  children: [
-                    AppButton(
-                      label: 'Play',
-                      icon: Icons.play_arrow,
-                      variant: AppButtonVariant.primary,
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => _SoloPlayer(itemId: item.id, title: item.name),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    // E8's real resumable-download affordance (progress bar,
-                    // pause/resume/cancel, "Downloaded" chip once complete).
-                    DownloadButton(
-                      itemId: item.id,
-                      title: item.name,
-                      runTimeTicks: item.runTimeTicks,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
+}
+
+/// Fade transition into the solo player (per the redesign's motion system),
+/// replacing the hard-cut `MaterialPageRoute`.
+Route<void> _playerRoute(LibraryItem item) {
+  return PageRouteBuilder<void>(
+    transitionDuration: AppMotion.page,
+    reverseTransitionDuration: AppMotion.page,
+    pageBuilder: (context, animation, secondaryAnimation) =>
+        _SoloPlayer(itemId: item.id, title: item.name),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+        FadeTransition(
+          opacity: CurvedAnimation(
+            parent: animation,
+            curve: AppMotion.emphasized,
+          ),
+          child: child,
+        ),
+  );
 }
 
 class _DetailSkeleton extends StatelessWidget {
@@ -134,25 +205,29 @@ class _DetailSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Padding(
-        padding: EdgeInsets.all(AppSpacing.xxl),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            LoadingSkeleton(width: 260, height: 390, borderRadius: AppSpacing.radiusLg),
-            SizedBox(width: AppSpacing.xxl),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  LoadingSkeleton(width: 240, height: 32),
-                  SizedBox(height: AppSpacing.lg),
-                  LoadingSkeleton(width: 400, height: 16),
-                ],
-              ),
-            ),
-          ],
+    padding: EdgeInsets.all(AppSpacing.xxl),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        LoadingSkeleton(
+          width: 260,
+          height: 390,
+          borderRadius: AppSpacing.radiusLg,
         ),
-      );
+        SizedBox(width: AppSpacing.xxl),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LoadingSkeleton(width: 240, height: 32),
+              SizedBox(height: AppSpacing.lg),
+              LoadingSkeleton(width: 400, height: 16),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 /// Solo playback launcher for the detail screen. Opens the shared
@@ -187,7 +262,10 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
     });
     try {
       final api = ref.read(apiClientProvider);
-      final stream = await api.nativeStreamUrl(widget.itemId, purpose: 'stream');
+      final stream = await api.nativeStreamUrl(
+        widget.itemId,
+        purpose: 'stream',
+      );
       final controller = ref.read(playerControllerProvider);
       await openPreferringOffline(
         ref,
@@ -215,18 +293,21 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
               ),
             )
           : !_ready
-              ? const Center(
-                  child: SizedBox(
-                    width: 32,
-                    height: 32,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.text),
-                  ),
-                )
-              : PlayerView(
-                  controller: ref.watch(playerControllerProvider),
-                  title: widget.title,
-                  onBack: () => Navigator.of(context).maybePop(),
+          ? const Center(
+              child: SizedBox(
+                width: 32,
+                height: 32,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.text,
                 ),
+              ),
+            )
+          : PlayerView(
+              controller: ref.watch(playerControllerProvider),
+              title: widget.title,
+              onBack: () => Navigator.of(context).maybePop(),
+            ),
     );
   }
 }
