@@ -54,12 +54,12 @@ class _DetailBody extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-            child: AspectRatio(
-              aspectRatio: 2 / 3,
-              child: SizedBox(
-                width: 260,
+          SizedBox(
+            width: 260,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+              child: AspectRatio(
+                aspectRatio: 2 / 3,
                 child: Image.network(
                   api.imageUrl(item.id),
                   fit: BoxFit.cover,
