@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart' as mkv;
@@ -16,9 +17,20 @@ import 'player_controller.dart';
 /// [setAudioTrack]/[setSubtitle] can resolve a `PlayerTrack.id` back to the
 /// libmpv track object.
 class MediaKitPlayerController implements PlayerController {
-  MediaKitPlayerController({bool enableHardwareAcceleration = true})
+  // Hardware *rendering* is OFF by default: on this class of GPU/driver
+  // media_kit's HW VideoOutput takes the "isolated EGL context" path and
+  // hard-crashes the process (SIGSEGV → "Lost connection to device"). Software
+  // rendering is stable. It can be re-enabled with WP_HWACCEL=1 to test GPUs
+  // where HW rendering works (Mac/Windows, or a Linux box that doesn't crash).
+  //
+  // Hardware *decoding* is a SEPARATE concern and stays ON regardless (see
+  // [videoController]'s `hwdec`): the GPU decodes, frames are copied back to
+  // system memory, and the CPU only does the cheap final blit. Without this,
+  // pure-software decode can't keep realtime and playback runs in slow-motion.
+  MediaKitPlayerController({bool? enableHardwareAcceleration})
       : _player = mk.Player(),
-        _enableHwAccel = enableHardwareAcceleration {
+        _enableHwAccel = enableHardwareAcceleration ??
+            (Platform.environment['WP_HWACCEL'] == '1') {
     _wire();
   }
 
@@ -35,13 +47,18 @@ class MediaKitPlayerController implements PlayerController {
   /// access — it needs a real render surface, so it is only instantiated when a
   /// widget actually mounts the video (never during headless/audio-only use).
   ///
-  /// enableHardwareAcceleration:true → libmpv hwdec=auto-safe (GPU decode with a
-  /// safe software fallback), which is the "auto-safe" requirement. Not part of
-  /// the frozen contract — additive.
+  /// `hwdec: 'auto-safe'` forces GPU decode using only methods that copy frames
+  /// back to system memory — so it works even with software rendering (the
+  /// default here) and keeps playback at realtime instead of slow-motion.
+  /// (media_kit's default `hwdec` is `'auto'`, which can pick a GPU-surface
+  /// method that doesn't copy back and effectively falls back to slow software
+  /// decode under a software VO.) When HW rendering is enabled, `'auto'` lets
+  /// libmpv keep frames on the GPU. Not part of the frozen contract — additive.
   mkv.VideoController get videoController => _videoController ??= mkv.VideoController(
         _player,
         configuration: mkv.VideoControllerConfiguration(
           enableHardwareAcceleration: _enableHwAccel,
+          hwdec: _enableHwAccel ? 'auto' : 'auto-safe',
         ),
       );
 
@@ -62,6 +79,34 @@ class MediaKitPlayerController implements PlayerController {
 
   /// Error text stream. Additive.
   Stream<String> get errors => _errorCtrl.stream;
+
+  // ── Current selection / mixer snapshots (additive) ────────────────────────
+  // The frozen contract expresses track *availability* via [tracks] and lets
+  // callers *set* a selection, but never surfaces what libmpv currently has
+  // selected. The chrome needs that to render an accurate checkmark, so it is
+  // exposed here (read off `player.state.track`). Pseudo picks (`auto`/`no`)
+  // map to null, matching how the contract represents "auto/none".
+
+  /// Currently-selected audio track id, or null when libmpv's pick is the
+  /// pseudo `auto` track (no explicit selection). Additive.
+  String? get currentAudioTrackId {
+    final id = _player.state.track.audio.id;
+    return _isPseudo(id) ? null : id;
+  }
+
+  /// Currently-selected subtitle track id, or null when subtitles are off
+  /// (libmpv `no`) or unset (`auto`). Additive.
+  String? get currentSubtitleTrackId {
+    final id = _player.state.track.subtitle.id;
+    return _isPseudo(id) ? null : id;
+  }
+
+  /// Current output volume on media_kit's 0–100 scale. Additive — lets the
+  /// chrome initialise its slider to the real level instead of assuming 100.
+  double get volumeNow => _player.state.volume;
+
+  /// Current playback rate (1.0 = normal). Additive.
+  double get rateNow => _player.state.rate;
 
   void _wire() {
     _subs.add(_player.stream.tracks.listen(_onTracks));

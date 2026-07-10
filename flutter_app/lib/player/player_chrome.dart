@@ -20,6 +20,12 @@ import 'player_controller.dart';
 /// [canControl] gates interactivity: a `false` value (E5's no-control guest)
 /// renders the same bar read-only — no thumb drag, no button taps — mirroring
 /// `canControl` gating in the web player.
+/// Near-black translucent scrims for the chrome edges (design system: flat,
+/// no gradients/glass). Both are [AppColors.bg] at different opacities.
+const Color _kChromeScrim = Color(0xB30A0A0B); // top bar (~70%)
+const Color _kChromeBar = Color(0xD90A0A0B); // transport bar (~85%)
+const Color _kBufferingScrim = Color(0x8C0A0A0B); // centered spinner backdrop
+
 class PlayerChrome extends StatefulWidget {
   const PlayerChrome({
     super.key,
@@ -30,12 +36,19 @@ class PlayerChrome extends StatefulWidget {
     this.onToggleFullscreen,
     this.isFullscreen = false,
     this.idleTimeout = const Duration(seconds: 3),
+    this.onSeek,
   });
 
   final PlayerController controller;
   final bool canControl;
   final String? title;
   final VoidCallback? onBack;
+
+  /// Fired (in addition to the local seek) whenever the user scrubs or uses a
+  /// keyboard seek. In a watch party this is wired to the sync engine's
+  /// `requestSeek` so the host's seek is authored to the server and mirrored to
+  /// every other client (web + Flutter). Null for solo playback (local only).
+  final ValueChanged<Duration>? onSeek;
 
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
@@ -61,6 +74,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
   PlayerTracks _tracks = const PlayerTracks();
 
   double _volume = 100;
+
+  /// Volume to restore when unmuting (last non-zero level the user chose).
+  double _preMuteVolume = 100;
   double _rate = 1.0;
   String? _selectedAudio;
   String? _selectedSubtitle;
@@ -79,6 +95,16 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _playing = c.isPlayingNow;
     _buffering = c.isBufferingNow;
 
+    // Seed the mixer/track UI from the real player state so the controls match
+    // what's actually playing (rather than assuming 100% / 1.0× / no track).
+    if (c is MediaKitPlayerController) {
+      _volume = c.volumeNow;
+      _preMuteVolume = _volume > 0 ? _volume : 100;
+      _rate = c.rateNow;
+      _selectedAudio = c.currentAudioTrackId;
+      _selectedSubtitle = c.currentSubtitleTrackId;
+    }
+
     _subs.add(c.position.listen((p) => setState(() => _position = p)));
     _subs.add(c.duration.listen((d) => setState(() => _duration = d)));
     _subs.add(c.playing.listen((p) {
@@ -87,7 +113,17 @@ class _PlayerChromeState extends State<PlayerChrome> {
     }));
     _subs.add(c.buffering.listen((b) => setState(() => _buffering = b)));
     _subs.add(c.completed.listen((v) => setState(() => _completed = v)));
-    _subs.add(c.tracks.listen((t) => setState(() => _tracks = t)));
+    _subs.add(c.tracks.listen((t) {
+      setState(() {
+        _tracks = t;
+        // Re-read the real selection each time the track set changes (a fresh
+        // file resets libmpv's default audio/subtitle pick).
+        if (c is MediaKitPlayerController) {
+          _selectedAudio = c.currentAudioTrackId;
+          _selectedSubtitle = c.currentSubtitleTrackId;
+        }
+      });
+    }));
 
     // media_kit surfaces decode/network errors on an additive `errors` stream
     // (not part of the frozen contract) — drive the E4.3 error overlay off it
@@ -143,19 +179,37 @@ class _PlayerChromeState extends State<PlayerChrome> {
         ? Duration.zero
         : (_duration > Duration.zero && target > _duration ? _duration : target);
     await widget.controller.seek(clamped);
+    widget.onSeek?.call(clamped);
     _wake();
   }
 
   Future<void> _seekTo(Duration position) async {
     if (!widget.canControl) return;
     await widget.controller.seek(position);
+    widget.onSeek?.call(position);
     _wake();
   }
 
   Future<void> _setVolume(double v) async {
-    setState(() => _volume = v);
+    setState(() {
+      _volume = v;
+      // Remember the last audible level so a later mute can restore it.
+      if (v > 0) _preMuteVolume = v;
+    });
     await widget.controller.setVolume(v);
     _wake();
+  }
+
+  /// Toggle mute, restoring the pre-mute level on unmute (not a hard jump to
+  /// 100). Volume is a personal, per-viewer setting, so it stays available even
+  /// when [PlayerChrome.canControl] is false.
+  Future<void> _toggleMute() async {
+    if (_volume > 0) {
+      _preMuteVolume = _volume;
+      await _setVolume(0);
+    } else {
+      await _setVolume(_preMuteVolume > 0 ? _preMuteVolume : 100);
+    }
   }
 
   Future<void> _setRate(double r) async {
@@ -210,7 +264,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
         widget.onToggleFullscreen?.call();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyM:
-        _setVolume(_volume > 0 ? 0 : 100);
+        _toggleMute();
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -269,6 +323,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
                     _seekTo(p);
                   },
                   onVolume: _setVolume,
+                  onToggleMute: _toggleMute,
                   onRate: _setRate,
                   onAudio: _setAudio,
                   onSubtitle: _setSubtitle,
@@ -316,13 +371,8 @@ class _TopBar extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xB3000000), Color(0x00000000)],
-        ),
-      ),
+      // Flat near-black translucent bar — no gradients per the design system.
+      decoration: const BoxDecoration(color: _kChromeScrim),
       child: Row(
         children: [
           if (onBack != null)
@@ -360,6 +410,7 @@ class _TransportBar extends StatelessWidget {
     required this.onSeekPreview,
     required this.onSeekCommit,
     required this.onVolume,
+    required this.onToggleMute,
     required this.onRate,
     required this.onAudio,
     required this.onSubtitle,
@@ -380,6 +431,7 @@ class _TransportBar extends StatelessWidget {
   final ValueChanged<Duration> onSeekPreview;
   final ValueChanged<Duration> onSeekCommit;
   final ValueChanged<double> onVolume;
+  final VoidCallback onToggleMute;
   final ValueChanged<double> onRate;
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onSubtitle;
@@ -390,13 +442,8 @@ class _TransportBar extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Color(0xCC000000), Color(0x00000000)],
-        ),
-      ),
+      // Flat near-black translucent bar — no gradients per the design system.
+      decoration: const BoxDecoration(color: _kChromeBar),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -420,7 +467,7 @@ class _TransportBar extends StatelessWidget {
                 style: AppTheme.mono.copyWith(color: AppColors.dim, fontSize: 12),
               ),
               const Spacer(),
-              _VolumeControl(volume: volume, onChanged: onVolume),
+              _VolumeControl(volume: volume, onChanged: onVolume, onToggleMute: onToggleMute),
               _RateMenu(rate: rate, enabled: canControl, onChanged: onRate),
               if (tracks.audio.isNotEmpty)
                 _TrackMenu(
@@ -514,55 +561,55 @@ class _Scrubber extends StatelessWidget {
   }
 }
 
+/// Inline mute-toggle icon + always-visible volume slider. Kept inline (rather
+/// than in a popover behind a disabled button) so the control is obviously live
+/// and directly wired to `setVolume`. Volume is a personal setting, so it stays
+/// enabled regardless of `canControl`.
 class _VolumeControl extends StatelessWidget {
-  const _VolumeControl({required this.volume, required this.onChanged});
+  const _VolumeControl({
+    required this.volume,
+    required this.onChanged,
+    required this.onToggleMute,
+  });
+
   final double volume;
   final ValueChanged<double> onChanged;
+  final VoidCallback onToggleMute;
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<void>(
-      tooltip: 'Volume',
-      offset: const Offset(0, -140),
-      itemBuilder: (context) => [
-        PopupMenuItem<void>(
-          enabled: false,
-          child: StatefulBuilder(
-            builder: (context, setLocal) => SizedBox(
-              height: 120,
-              width: 40,
-              child: RotatedBox(
-                quarterTurns: 3,
-                child: SliderTheme(
-                  data: SliderThemeData(
-                    trackHeight: 3,
-                    activeTrackColor: AppColors.accent,
-                    inactiveTrackColor: AppColors.line2,
-                    thumbColor: AppColors.accent,
-                  ),
-                  child: Slider(
-                    value: volume,
-                    min: 0,
-                    max: 100,
-                    onChanged: (v) {
-                      setLocal(() {});
-                      onChanged(v);
-                    },
-                  ),
-                ),
-              ),
+    final muted = volume <= 0;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ChromeIconButton(
+          icon: muted
+              ? Icons.volume_off
+              : (volume < 50 ? Icons.volume_down : Icons.volume_up),
+          tooltip: muted ? 'Unmute' : 'Mute',
+          onPressed: onToggleMute,
+        ),
+        SizedBox(
+          width: 76,
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 3,
+              activeTrackColor: AppColors.accent,
+              inactiveTrackColor: AppColors.line2,
+              thumbColor: AppColors.accent,
+              overlayShape: SliderComponentShape.noOverlay,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+            ),
+            child: Slider(
+              key: const Key('volumeSlider'),
+              value: volume.clamp(0, 100),
+              min: 0,
+              max: 100,
+              onChanged: onChanged,
             ),
           ),
         ),
       ],
-      child: _ChromeIconButton(
-        icon: volume <= 0
-            ? Icons.volume_off
-            : (volume < 50 ? Icons.volume_down : Icons.volume_up),
-        tooltip: 'Volume',
-        onPressed: null,
-        forceEnabled: true,
-      ),
     );
   }
 }
@@ -588,7 +635,7 @@ class _RateMenu extends StatelessWidget {
                   children: [
                     if (r == rate) const Icon(Icons.check, size: 16, color: AppColors.accent),
                     if (r == rate) const SizedBox(width: AppSpacing.xs),
-                    Text('${r}x', style: AppTheme.body),
+                    Text(_fmtRate(r), style: AppTheme.body),
                   ],
                 ),
               ))
@@ -598,9 +645,15 @@ class _RateMenu extends StatelessWidget {
         tooltip: 'Playback speed',
         onPressed: null,
         forceEnabled: enabled,
-        label: rate == 1.0 ? null : '${rate}x',
+        label: rate == 1.0 ? null : _fmtRate(rate),
       ),
     );
+  }
+
+  /// "0.5×", "1×", "1.25×" — drop the trailing ".0" and use a true multiply sign.
+  static String _fmtRate(double r) {
+    final s = r == r.roundToDouble() ? r.toStringAsFixed(0) : r.toString();
+    return '$s×';
   }
 }
 
@@ -629,16 +682,21 @@ class _TrackMenu extends StatelessWidget {
   final bool allowNone;
   final ValueChanged<String?> onChanged;
 
+  /// Sentinel for the "Off"/auto entry. Real track ids are used verbatim;
+  /// `PopupMenuButton` treats a `null` menu value as a *cancel* (it never fires
+  /// `onSelected`), so the disable option cannot use `value: null` directly.
+  static const _none = ' none';
+
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String?>(
+    return PopupMenuButton<String>(
       tooltip: tooltip,
       enabled: enabled,
-      onSelected: onChanged,
+      onSelected: (v) => onChanged(v == _none ? null : v),
       itemBuilder: (context) => [
         if (allowNone)
-          PopupMenuItem<String?>(
-            value: null,
+          PopupMenuItem<String>(
+            value: _none,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -649,7 +707,7 @@ class _TrackMenu extends StatelessWidget {
             ),
           ),
         for (final t in tracks)
-          PopupMenuItem<String?>(
+          PopupMenuItem<String>(
             value: t.id,
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -713,7 +771,7 @@ class _BufferingSpinner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0x8C000000),
+      color: _kBufferingScrim,
       child: const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
