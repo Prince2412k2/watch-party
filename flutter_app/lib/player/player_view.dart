@@ -32,6 +32,7 @@ class PlayerView extends StatefulWidget {
     this.onBack,
     this.onToggleFullscreen,
     this.isFullscreen = false,
+    this.onSeek,
   })  : _controller = controller,
         _itemId = null,
         _apiClient = null,
@@ -60,7 +61,8 @@ class PlayerView extends StatefulWidget {
         _apiClient = apiClient,
         _purpose = purpose,
         _startAt = startAt,
-        _autoplay = autoplay;
+        _autoplay = autoplay,
+        onSeek = null;
 
   /// Ready-made controller supplied by the caller (party/detail inject one).
   /// Null when using [PlayerView.item].
@@ -86,6 +88,10 @@ class PlayerView extends StatefulWidget {
   /// renders the affordance and calls this.
   final VoidCallback? onToggleFullscreen;
   final bool isFullscreen;
+
+  /// Authors a seek to an external owner (the party's sync engine). Only set on
+  /// the party path; null for solo playback. Passed straight to [PlayerChrome].
+  final ValueChanged<Duration>? onSeek;
 
   @override
   State<PlayerView> createState() => _PlayerViewState();
@@ -186,6 +192,7 @@ class _PlayerViewState extends State<PlayerView> {
           PlayerChrome(
             controller: controller,
             canControl: widget.canControl,
+            onSeek: widget.onSeek,
             title: widget.title,
             onBack: widget.onBack,
             onToggleFullscreen: widget.onToggleFullscreen,
