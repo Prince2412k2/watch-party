@@ -1,0 +1,36 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:watchparty/app/screens/detail_screen.dart';
+import 'package:watchparty/data/mock_api_client.dart';
+import 'package:watchparty/state/state.dart';
+
+void main() {
+  testWidgets('detail screen lays out without unbounded-constraint errors',
+      (tester) async {
+    final errors = <String>[];
+    final prev = FlutterError.onError;
+    FlutterError.onError = (d) => errors.add(d.exceptionAsString());
+
+    final semantics = tester.ensureSemantics();
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [apiClientProvider.overrideWithValue(MockApiClient())],
+        child: const MaterialApp(home: DetailScreen(itemId: 'mock-item-0')),
+      ),
+    );
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    // Nudge relayout so semantics recompile (parentDataDirty fired here before).
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    for (var i = 0; i < 3; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    FlutterError.onError = prev;
+    semantics.dispose();
+
+    expect(errors, isEmpty, reason: 'layout/semantics errors: ${errors.take(2)}');
+  });
+}
