@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
+import 'media_row.dart';
 
 /// E9 T9.2 — Acquisition queue monitor: active torrents/usenet the servarr
 /// stack (Radarr/Sonarr → qBittorrent) is pulling down, plus anything stuck
@@ -28,20 +29,27 @@ class ServarrQueueScreen extends ConsumerWidget {
         children: [
           const SectionHeader(
             title: 'Downloads',
-            subtitle: 'Everything currently downloading, plus anything stuck along the way.',
+            subtitle:
+                'Everything currently downloading, plus anything stuck along the way.',
           ),
           const SizedBox(height: AppSpacing.md),
           Expanded(
             child: health.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => ErrorState(title: 'Could not check service status', message: e.toString()),
+              loading: () => const _QueueSkeleton(),
+              error: (e, _) => ErrorState(
+                title: 'Could not check service status',
+                message: e.toString(),
+              ),
               data: (h) {
                 final qbitReady = servarrServiceReady(h, 'qbittorrent');
-                final arrReady = servarrServiceReady(h, 'radarr') || servarrServiceReady(h, 'sonarr');
+                final arrReady =
+                    servarrServiceReady(h, 'radarr') ||
+                    servarrServiceReady(h, 'sonarr');
                 if (!qbitReady && !arrReady) {
                   return const EmptyState(
                     title: 'Downloads are unavailable',
-                    message: 'No acquisition service is configured or reachable right now.',
+                    message:
+                        'No acquisition service is configured or reachable right now.',
                     icon: Icons.cloud_off_outlined,
                   );
                 }
@@ -52,7 +60,10 @@ class ServarrQueueScreen extends ConsumerWidget {
                     if (qbitReady)
                       _ActiveDownloads()
                     else
-                      const EmptyState(title: 'qBittorrent unavailable', icon: Icons.cloud_off_outlined),
+                      const EmptyState(
+                        title: 'qBittorrent unavailable',
+                        icon: Icons.cloud_off_outlined,
+                      ),
                   ],
                 );
               },
@@ -74,8 +85,8 @@ class _NeedsAttention extends ConsumerWidget {
 
     return failing.when(
       loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        child: MediaRowSkeleton(),
       ),
       error: (_, _) => const SizedBox.shrink(),
       data: (items) {
@@ -84,30 +95,33 @@ class _NeedsAttention extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SectionHeader(title: 'Needs attention'),
-            for (final item in items)
-              Card(
-                color: AppColors.surface,
-                margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppSpacing.radius),
-                  side: const BorderSide(color: AppColors.line),
-                ),
-                child: ListTile(
-                  leading: const Icon(Icons.error_outline, color: AppColors.red),
-                  title: Text(item.title, style: AppTheme.body, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(
-                    item.errorMessage ?? item.statusMessages.join(' · '),
-                    style: AppTheme.dim,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+            StaggeredList(
+              spacing: AppSpacing.sm,
+              children: [
+                for (final item in items)
+                  MediaRow(
+                    key: ValueKey('attn-${item.service}-${item.id}'),
+                    leading: const MediaRowIcon(
+                      icon: Icons.error_outline,
+                      color: AppColors.red,
+                    ),
+                    title: item.title,
+                    badge: const AppChip(
+                      label: 'Stuck',
+                      tone: AppChipTone.danger,
+                    ),
+                    subtitle:
+                        item.errorMessage ?? item.statusMessages.join(' · '),
+                    subtitleMaxLines: 2,
+                    trailing: MediaRowIconButton(
+                      icon: Icons.close,
+                      tooltip: 'Remove',
+                      color: AppColors.dim,
+                      onPressed: () => actions.removeQueueItem(item),
+                    ),
                   ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close, color: AppColors.dim),
-                    tooltip: 'Remove',
-                    onPressed: () => actions.removeQueueItem(item),
-                  ),
-                ),
-              ),
+              ],
+            ),
           ],
         );
       },
@@ -124,11 +138,19 @@ class _ActiveDownloads extends ConsumerWidget {
     final actions = ref.read(servarrQueueActionsProvider);
 
     return downloads.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
-        child: Center(child: CircularProgressIndicator()),
+      loading: () => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          SectionHeader(title: 'Active'),
+          MediaRowSkeleton(withThumb: true),
+          SizedBox(height: AppSpacing.sm),
+          MediaRowSkeleton(withThumb: true),
+          SizedBox(height: AppSpacing.sm),
+          MediaRowSkeleton(withThumb: true),
+        ],
       ),
-      error: (e, _) => ErrorState(title: 'Could not load downloads', message: e.toString()),
+      error: (e, _) =>
+          ErrorState(title: 'Could not load downloads', message: e.toString()),
       data: (items) {
         if (items.isEmpty) {
           return const EmptyState(
@@ -141,7 +163,17 @@ class _ActiveDownloads extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SectionHeader(title: 'Active'),
-            for (final d in items) _DownloadRow(item: d, actions: actions),
+            StaggeredList(
+              spacing: AppSpacing.sm,
+              children: [
+                for (final d in items)
+                  _DownloadRow(
+                    key: ValueKey('dl-${d.hash}'),
+                    item: d,
+                    actions: actions,
+                  ),
+              ],
+            ),
           ],
         );
       },
@@ -150,78 +182,58 @@ class _ActiveDownloads extends ConsumerWidget {
 }
 
 class _DownloadRow extends StatelessWidget {
-  const _DownloadRow({required this.item, required this.actions});
+  const _DownloadRow({super.key, required this.item, required this.actions});
   final ServarrDownload item;
   final ServarrQueueActions actions;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: AppColors.surface,
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radius),
-        side: const BorderSide(color: AppColors.line),
+    return MediaRow(
+      leading: MediaThumb(posterUrl: item.posterUrl),
+      title: item.name.isEmpty ? '—' : item.name,
+      subtitle: item.subtitle,
+      showProgress: true,
+      progress: item.progress.clamp(0.0, 1.0),
+      meta:
+          '${item.percent}% · ${_fmtSpeed(item.dlspeed)} · seeds ${item.numSeeds}',
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          MediaRowIconButton(
+            icon: item.isPaused ? Icons.play_arrow : Icons.pause,
+            tooltip: item.isPaused ? 'Resume' : 'Pause',
+            color: AppColors.dim,
+            onPressed: () => item.isPaused
+                ? actions.resume(item.hash)
+                : actions.pause(item.hash),
+          ),
+          MediaRowIconButton(
+            icon: Icons.delete_outline,
+            tooltip: 'Remove',
+            color: AppColors.red,
+            onPressed: () =>
+                actions.deleteTorrent(item.hash, deleteFiles: true),
+          ),
+        ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-              child: SizedBox(
-                width: 46, height: 69,
-                child: item.posterUrl != null
-                    ? Image.network(item.posterUrl!, fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => const ColoredBox(color: AppColors.surface2))
-                    : const ColoredBox(
-                        color: AppColors.surface2,
-                        child: Icon(Icons.movie_outlined, color: AppColors.faint, size: 20),
-                      ),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(item.name.isEmpty ? '—' : item.name,
-                      style: AppTheme.body, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  if (item.subtitle != null)
-                    Text(item.subtitle!, style: AppTheme.caption, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: AppSpacing.sm),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-                    child: LinearProgressIndicator(
-                      value: item.progress.clamp(0, 1),
-                      minHeight: 5,
-                      backgroundColor: AppColors.line2,
-                      color: AppColors.accent,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    '${item.percent}% · ${_fmtSpeed(item.dlspeed)} · seeds ${item.numSeeds}',
-                    style: AppTheme.mono,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            IconButton(
-              icon: Icon(item.isPaused ? Icons.play_arrow : Icons.pause, color: AppColors.dim),
-              tooltip: item.isPaused ? 'Resume' : 'Pause',
-              onPressed: () =>
-                  item.isPaused ? actions.resume(item.hash) : actions.pause(item.hash),
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: AppColors.red),
-              tooltip: 'Remove',
-              onPressed: () => actions.deleteTorrent(item.hash, deleteFiles: true),
-            ),
-          ],
-        ),
-      ),
+    );
+  }
+}
+
+/// Skeleton shown while the one-time service health check resolves.
+class _QueueSkeleton extends StatelessWidget {
+  const _QueueSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: const [
+        MediaRowSkeleton(withThumb: true),
+        SizedBox(height: AppSpacing.sm),
+        MediaRowSkeleton(withThumb: true),
+        SizedBox(height: AppSpacing.sm),
+        MediaRowSkeleton(withThumb: true),
+      ],
     );
   }
 }
