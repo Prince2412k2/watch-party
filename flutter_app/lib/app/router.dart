@@ -82,13 +82,48 @@ GoRouter buildRouter(WidgetRef ref) {
         builder: (context, state, child) =>
             AppShell(location: state.uri.path, child: child),
         routes: [
-          GoRoute(path: Routes.home, builder: (_, _) => const HomeScreen()),
-          GoRoute(path: Routes.browse, builder: (_, _) => const BrowseScreen()),
-          GoRoute(path: Routes.party, builder: (_, _) => const PartyScreen()),
-          GoRoute(path: Routes.downloads, builder: (_, _) => const DownloadsScreen()),
-          GoRoute(path: Routes.offline, builder: (_, _) => const OfflineScreen()),
-          GoRoute(path: Routes.servarr, builder: (_, _) => const ServarrScreen()),
-          GoRoute(path: '${Routes.servarr}/queue', builder: (_, _) => const ServarrQueueScreen()),
+          // Shelled destinations use NoTransitionPage: switching a ShellRoute's
+          // child with the default animated page cross-fades the old tab over
+          // the new one on every switch (a visible flicker on desktop). An
+          // instant swap matches the cinematic-minimal "content is the
+          // interface" rule — no cross-fade of stale content. `state.pageKey`
+          // gives each destination a distinct page identity so the Navigator
+          // replaces rather than reuses the previous subtree.
+          GoRoute(
+            path: Routes.home,
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const HomeScreen()),
+          ),
+          GoRoute(
+            path: Routes.browse,
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const BrowseScreen()),
+          ),
+          GoRoute(
+            path: Routes.party,
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const PartyScreen()),
+          ),
+          GoRoute(
+            path: Routes.downloads,
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const DownloadsScreen()),
+          ),
+          GoRoute(
+            path: Routes.offline,
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const OfflineScreen()),
+          ),
+          GoRoute(
+            path: Routes.servarr,
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const ServarrScreen()),
+          ),
+          GoRoute(
+            path: '${Routes.servarr}/queue',
+            pageBuilder: (_, state) => NoTransitionPage(
+                key: state.pageKey, child: const ServarrQueueScreen()),
+          ),
         ],
       ),
     ],
