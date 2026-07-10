@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../state/state.dart';
+import '../ui/motion.dart';
 import 'screens/app_shell.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
@@ -13,7 +14,14 @@ import 'screens/downloads_screen.dart';
 import 'screens/offline_screen.dart';
 import 'screens/servarr_screen.dart';
 import 'screens/servarr_queue_screen.dart';
-import 'screens/placeholder_screens.dart';
+import 'screens/party_screen.dart';
+
+/// The root Navigator's key. Exposed because the unified title bar in
+/// `app.dart` lives ABOVE the router (it wraps `MaterialApp.router`'s Navigator
+/// in the window frame), so its command-palette + sign-out actions have no
+/// Navigator ancestor of their own. Routing/dialogs from there resolve a
+/// below-router context via `rootNavigatorKey.currentContext`.
+final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'rootNavigator');
 
 /// FROZEN CONTRACT (PLAN §3.7). Route names + go_router config. The primary
 /// destinations live inside a persistent [AppShell]; login and the immersive
@@ -45,6 +53,7 @@ class _AuthRefresh extends ChangeNotifier {
 /// bounced through the login screen.
 GoRouter buildRouter(WidgetRef ref) {
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: Routes.home,
     refreshListenable: _AuthRefresh(ref),
     redirect: (context, state) {
@@ -57,7 +66,9 @@ GoRouter buildRouter(WidgetRef ref) {
       }
       if (loggingIn) {
         final redirectTo = state.uri.queryParameters['from'];
-        return (redirectTo != null && redirectTo.isNotEmpty) ? redirectTo : Routes.home;
+        return (redirectTo != null && redirectTo.isNotEmpty)
+            ? redirectTo
+            : Routes.home;
       }
       return null;
     },
@@ -65,16 +76,25 @@ GoRouter buildRouter(WidgetRef ref) {
       GoRoute(path: Routes.login, builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/gallery', builder: (_, _) => const GalleryScreen()),
 
-      // Immersive party screen — full-window, outside the nav shell.
+      // Immersive party screen — full-window, outside the nav shell. As a
+      // top-level PUSH route (not a shelled tab) it gets the ~180ms
+      // fade-through from motion.dart; the deliberate NoTransitionPage
+      // anti-flicker rule applies only to the shelled tabs below.
       GoRoute(
         path: '${Routes.party}/:id',
-        builder: (_, state) => PartyScreen(partyId: state.pathParameters['id']),
+        pageBuilder: (_, state) => fadeThroughPage(
+          key: state.pageKey,
+          child: PartyScreen(partyId: state.pathParameters['id']),
+        ),
       ),
 
-      // Detail is full-window too (leads into the player).
+      // Detail is full-window too (leads into the player) — same fade-through.
       GoRoute(
         path: '${Routes.detail}/:id',
-        builder: (_, state) => DetailScreen(itemId: state.pathParameters['id']!),
+        pageBuilder: (_, state) => fadeThroughPage(
+          key: state.pageKey,
+          child: DetailScreen(itemId: state.pathParameters['id']!),
+        ),
       ),
 
       // The shelled destinations.
@@ -96,39 +116,50 @@ GoRouter buildRouter(WidgetRef ref) {
           ),
           GoRoute(
             path: Routes.browse,
-            pageBuilder: (_, state) =>
-                NoTransitionPage(key: state.pageKey, child: const BrowseScreen()),
+            pageBuilder: (_, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const BrowseScreen(),
+            ),
           ),
           GoRoute(
             path: Routes.party,
-            pageBuilder: (_, state) =>
-                NoTransitionPage(key: state.pageKey, child: const PartyScreen()),
+            pageBuilder: (_, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const PartyScreen(),
+            ),
           ),
           GoRoute(
             path: Routes.downloads,
-            pageBuilder: (_, state) =>
-                NoTransitionPage(key: state.pageKey, child: const DownloadsScreen()),
+            pageBuilder: (_, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const DownloadsScreen(),
+            ),
           ),
           GoRoute(
             path: Routes.offline,
-            pageBuilder: (_, state) =>
-                NoTransitionPage(key: state.pageKey, child: const OfflineScreen()),
+            pageBuilder: (_, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const OfflineScreen(),
+            ),
           ),
           GoRoute(
             path: Routes.servarr,
-            pageBuilder: (_, state) =>
-                NoTransitionPage(key: state.pageKey, child: const ServarrScreen()),
+            pageBuilder: (_, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: const ServarrScreen(),
+            ),
           ),
           GoRoute(
             path: '${Routes.servarr}/queue',
             pageBuilder: (_, state) => NoTransitionPage(
-                key: state.pageKey, child: const ServarrQueueScreen()),
+              key: state.pageKey,
+              child: const ServarrQueueScreen(),
+            ),
           ),
         ],
       ),
     ],
-    errorBuilder: (_, state) => Scaffold(
-      body: Center(child: Text('No route for ${state.uri}')),
-    ),
+    errorBuilder: (_, state) =>
+        Scaffold(body: Center(child: Text('No route for ${state.uri}'))),
   );
 }

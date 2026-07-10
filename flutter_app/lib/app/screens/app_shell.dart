@@ -1,14 +1,58 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../state/state.dart';
 import '../../ui/ui.dart';
+import '../shortcuts.dart';
+
+/// The primary navigation destinations, in tab order. This is the single
+/// source of truth reused by [AppShell]'s rail, the app-wide keyboard layer
+/// (`shortcuts.dart`, keys 1–6), the command palette's quick-nav, and the
+/// unified title bar's section-title lookup (`shellSectionTitle`).
+const List<NavDestination> kShellDestinations = [
+  NavDestination(icon: Icons.home_outlined, label: 'Home', route: '/home'),
+  NavDestination(
+    icon: Icons.explore_outlined,
+    label: 'Browse',
+    route: '/browse',
+  ),
+  NavDestination(icon: Icons.groups_outlined, label: 'Party', route: '/party'),
+  NavDestination(
+    icon: Icons.download_outlined,
+    label: 'Downloads',
+    route: '/downloads',
+  ),
+  NavDestination(
+    icon: Icons.wifi_off_outlined,
+    label: 'Offline',
+    route: '/offline',
+  ),
+  NavDestination(
+    icon: Icons.cloud_download_outlined,
+    label: 'Find',
+    route: '/servarr',
+  ),
+];
+
+/// The section name shown in the unified title bar (app.dart) for a given
+/// router [location]. Off the shell (login, detail, gallery) it falls back to
+/// the app name. Pure + dependency-free so the title-bar text stays unit
+/// testable without the window-manager chrome.
+String shellSectionTitle(String location) {
+  for (final d in kShellDestinations) {
+    if (location.startsWith(d.route)) return d.label;
+  }
+  return 'Watchparty';
+}
 
 /// The persistent shell (nav rail + content area) that wraps the primary
-/// destinations. Below `_compactBreakpoint` the rail collapses to icons only
+/// destinations. Below [_compactBreakpoint] the rail collapses to icons only
 /// so the window stays usable when snapped narrow; there is no separate
 /// mobile layout in scope for v1 (desktop-first, PLAN §0).
+///
+/// The title bar (section name + command palette + sign out + window controls)
+/// no longer lives here — it was consolidated into the single app-wide bar in
+/// `app.dart`, above this shell. The shell now owns only the rail + content and
+/// the app-wide keyboard layer ([AppShortcuts]).
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.child, required this.location});
 
@@ -17,98 +61,57 @@ class AppShell extends StatelessWidget {
 
   static const _compactBreakpoint = 720.0;
 
-  static const _destinations = [
-    NavDestination(icon: Icons.home_outlined, label: 'Home', route: '/home'),
-    NavDestination(icon: Icons.explore_outlined, label: 'Browse', route: '/browse'),
-    NavDestination(icon: Icons.groups_outlined, label: 'Party', route: '/party'),
-    NavDestination(icon: Icons.download_outlined, label: 'Downloads', route: '/downloads'),
-    NavDestination(icon: Icons.wifi_off_outlined, label: 'Offline', route: '/offline'),
-    NavDestination(icon: Icons.cloud_download_outlined, label: 'Find', route: '/servarr'),
-  ];
-
   String get _current {
-    for (final d in _destinations) {
+    for (final d in kShellDestinations) {
       if (location.startsWith(d.route)) return d.route;
     }
     return '/home';
   }
 
-  String get _title {
-    for (final d in _destinations) {
-      if (d.route == _current) return d.label;
-    }
-    return 'Watchparty';
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
-        children: [
-          _WindowChrome(title: _title),
-          const Divider(height: 1, color: AppColors.line),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final compact = constraints.maxWidth < _compactBreakpoint;
-                return Row(
-                  children: [
-                    NavRail(
-                      destinations: _destinations,
-                      currentRoute: _current,
-                      compact: compact,
-                      onSelect: (route) => context.go(route),
-                    ),
-                    const VerticalDivider(width: 1, color: AppColors.line),
-                    Expanded(child: child),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// A flat, chrome-only title bar: it doesn't own real OS window controls (no
-/// window-manager package is wired yet — that's E10 packaging), but gives the
-/// shell a desktop-app top edge with the current section name, matching the
-/// "content is the interface" rule — no gradient, no elevation shadow.
-class _WindowChrome extends ConsumerWidget {
-  const _WindowChrome({required this.title});
-  final String title;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
-      height: 44,
-      color: AppColors.bg,
-      padding: const EdgeInsets.only(left: AppSpacing.lg, right: AppSpacing.sm),
-      child: Row(
-        children: [
-          Text(title,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.dim)),
-          const Spacer(),
-          TextButton.icon(
-            onPressed: () => _confirmLogout(context, ref),
-            icon: const Icon(Icons.logout, size: 15, color: AppColors.dim),
-            label: const Text('Sign out',
-                style: TextStyle(color: AppColors.dim, fontSize: 12.5)),
-          ),
-        ],
+      body: AppShortcuts(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < _compactBreakpoint;
+            return Row(
+              children: [
+                _collapsibleRail(context, compact),
+                const VerticalDivider(width: 1, color: AppColors.line),
+                Expanded(child: child),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 
-  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
-    final ok = await showConfirm(
-      context,
-      title: 'Sign out?',
-      body: 'You will need to pick your server and sign in again.',
-      confirmLabel: 'Sign out',
+  /// Animates the 720px collapse at the shell level (per PLAN — `nav_rail.dart`
+  /// stays untouched): [AnimatedSize] morphs the rail width (240 ⇄ 72) while
+  /// [AnimatedSwitcher] cross-fades the swapped-in variant (opacity). Keying on
+  /// `compact` triggers both when the breakpoint is crossed.
+  Widget _collapsibleRail(BuildContext context, bool compact) {
+    return AnimatedSize(
+      duration: AppMotion.reveal,
+      curve: AppMotion.emphasized,
+      alignment: Alignment.centerLeft,
+      child: AnimatedSwitcher(
+        duration: AppMotion.reveal,
+        switchInCurve: AppMotion.emphasized,
+        // Size to the incoming rail only, so AnimatedSize animates straight to
+        // the new width instead of first ballooning to the union of both.
+        layoutBuilder: (currentChild, _) =>
+            currentChild ?? const SizedBox.shrink(),
+        child: NavRail(
+          key: ValueKey(compact),
+          destinations: kShellDestinations,
+          currentRoute: _current,
+          compact: compact,
+          onSelect: (route) => context.go(route),
+        ),
+      ),
     );
-    if (ok) await ref.read(authProvider.notifier).logout();
   }
 }
