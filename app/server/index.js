@@ -24,6 +24,7 @@ import { join } from 'path'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 import { login, me, logout, testLogin, requireAuth } from './auth.js'
 import { registerLibraryRoutes } from './library.js'
+import { registerNativeRoutes } from './native.js'
 import { registerLiveKitRoutes } from './livekit.js'
 import { registerServarrRoutes } from './servarr/index.js'
 import {
@@ -183,6 +184,7 @@ app.post('/api/auth/logout', logout)
 registerLibraryRoutes(app)
 registerLiveKitRoutes(app)
 registerServarrRoutes(app)
+registerNativeRoutes(app)
 
 // ── Dev-only observability (gated: 404 unless WP_TEST_MODE=1) ───────────────
 // Exposes session internals for the sync test harness. MUST stay off in prod.
