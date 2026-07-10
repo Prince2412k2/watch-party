@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/api_client.dart';
 import '../models/models.dart';
 import 'providers.dart';
+import 'server_provider.dart';
 
 /// Authentication lifecycle (PLAN §3.8, E2). Backed by the real
 /// [ApiClient.login]/[ApiClient.me]/[ApiClient.logout] on [DioApiClient].
@@ -67,9 +68,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       await _ref.read(apiClientProvider).logout();
     } finally {
+      // The configured server is kept only while signed in — clear it on
+      // logout so the next login starts from the server picker.
+      await _ref.read(serverConfigProvider.notifier).clear();
       state = const AuthState(initialized: true);
     }
   }
+
+  /// Boot-time initialization when no server is configured yet: mark the auth
+  /// layer initialized (unauthenticated) without a network probe, so the router
+  /// shows the login screen immediately instead of hanging on a dead default.
+  void markUnauthenticated() => state = const AuthState(initialized: true);
 
   String _message(Object e) {
     if (e is ApiException) {

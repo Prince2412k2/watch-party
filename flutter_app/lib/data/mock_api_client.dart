@@ -6,7 +6,8 @@ import 'api_client.dart';
 class MockApiClient implements ApiClient {
   MockApiClient({this.baseUrl = 'http://mock.local'});
 
-  final String baseUrl;
+  @override
+  String baseUrl;
 
   static const _user = User(userId: 'mock-user', name: 'root', isAdmin: true);
 

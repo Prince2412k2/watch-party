@@ -9,6 +9,10 @@ import '../app/config.dart';
 /// sync engine, party controls, and chat on top of this. The mock impl lets the
 /// UI and those engines be developed offline.
 abstract class SocketClient {
+  /// Repoint at a new origin before [connect]. Runtime-settable so the app can
+  /// follow a pasted server URL without being rebuilt.
+  set url(String value);
+
   /// Establish the connection (session cookie carried on the handshake).
   Future<void> connect();
 
@@ -40,7 +44,10 @@ class IoSocketClient implements SocketClient {
   IoSocketClient({String? url, this.cookieHeader, this.cookieHeaderProvider})
       : _url = url ?? AppConfig.socketUrl;
 
-  final String _url;
+  String _url;
+
+  @override
+  set url(String value) => _url = value;
 
   /// Full `Cookie:` header value (e.g. `connect.sid=s%3A...`).
   final String? cookieHeader;
@@ -124,6 +131,9 @@ class MockSocketClient implements SocketClient {
 
   /// Everything emitted, for assertions.
   final List<(String, Object?)> emitted = [];
+
+  @override
+  set url(String value) {}
 
   @override
   Future<void> connect() async {

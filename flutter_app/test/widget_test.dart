@@ -1,10 +1,21 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/app/app.dart';
+import 'package:watchparty/state/state.dart';
 
 void main() {
   testWidgets('app boots to the mock home screen', (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: WatchpartyApp()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          // A server must be configured for the app to move past the setup
+          // gate; the mock clients don't care about the actual URL.
+          serverConfigProvider
+              .overrideWith((ref) => ServerConfigNotifier(ref, 'http://mock.local')),
+        ],
+        child: const WatchpartyApp(enableWindowFrame: false),
+      ),
+    );
     // Let the mock homeProvider future resolve and the rails render.
     await tester.pumpAndSettle();
 
