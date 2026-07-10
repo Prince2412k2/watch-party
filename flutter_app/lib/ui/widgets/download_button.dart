@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../../models/models.dart';
 import '../../state/downloads_provider.dart';
@@ -46,12 +47,20 @@ class DownloadButton extends ConsumerWidget {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const AppChip(label: 'Downloaded', tone: AppChipTone.success, icon: Icons.check),
+          const AppChip(
+            label: 'Downloaded',
+            tone: AppChipTone.success,
+            icon: Icons.check,
+          ),
           const SizedBox(width: AppSpacing.sm),
-          IconButton(
-            tooltip: 'Remove download',
-            icon: const Icon(Icons.delete_outline, color: AppColors.faint),
-            onPressed: () => ref.read(offlineProvider.notifier).remove(itemId),
+          sc.Tooltip(
+            tooltip: (context) =>
+                const sc.TooltipContainer(child: Text('Remove download')),
+            child: sc.IconButton.ghost(
+              icon: const Icon(Icons.delete_outline, color: AppColors.faint),
+              onPressed: () =>
+                  ref.read(offlineProvider.notifier).remove(itemId),
+            ),
           ),
         ],
       );
@@ -83,20 +92,29 @@ class DownloadButton extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          AppButton(label: 'Retry', icon: Icons.refresh, onPressed: () => _start(ref)),
+          AppButton(
+            label: 'Retry',
+            icon: Icons.refresh,
+            onPressed: () => _start(ref),
+          ),
         ],
       );
     }
 
     return _ProgressRow(
       record: download,
-      onPause: () => ref.read(downloadsProvider.notifier).pause(download.taskId),
-      onResume: () => ref.read(downloadsProvider.notifier).resume(download.taskId),
-      onCancel: () => ref.read(downloadsProvider.notifier).cancel(download.taskId),
+      onPause: () =>
+          ref.read(downloadsProvider.notifier).pause(download.taskId),
+      onResume: () =>
+          ref.read(downloadsProvider.notifier).resume(download.taskId),
+      onCancel: () =>
+          ref.read(downloadsProvider.notifier).cancel(download.taskId),
     );
   }
 
-  Future<void> _start(WidgetRef ref) => ref.read(downloadsProvider.notifier).start(
+  Future<void> _start(WidgetRef ref) => ref
+      .read(downloadsProvider.notifier)
+      .start(
         api: ref.read(apiClientProvider),
         itemId: itemId,
         title: title,
@@ -105,14 +123,20 @@ class DownloadButton extends ConsumerWidget {
         container: container,
       );
 
-  static OfflineRecord? _findOffline(List<OfflineRecord> records, String itemId) {
+  static OfflineRecord? _findOffline(
+    List<OfflineRecord> records,
+    String itemId,
+  ) {
     for (final r in records) {
       if (r.itemId == itemId) return r;
     }
     return null;
   }
 
-  static DownloadRecord? _findDownload(List<DownloadRecord> records, String itemId) {
+  static DownloadRecord? _findDownload(
+    List<DownloadRecord> records,
+    String itemId,
+  ) {
     for (final r in records) {
       if (r.itemId == itemId) return r;
     }
@@ -145,37 +169,49 @@ class _ProgressRow extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                  child: LinearProgressIndicator(
-                    value: record.progress > 0 ? record.progress.clamp(0, 1) : null,
-                    minHeight: 4,
-                    backgroundColor: AppColors.line2,
-                    color: paused ? AppColors.faint : AppColors.accent,
-                  ),
+                child: sc.Progress(
+                  progress: record.progress > 0
+                      ? record.progress.clamp(0.0, 1.0)
+                      : null,
+                  color: paused ? AppColors.faint : AppColors.accent,
+                  backgroundColor: AppColors.line2,
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              Text('${(record.progress * 100).round()}%', style: AppTheme.caption),
+              Text(
+                '${(record.progress * 100).round()}%',
+                style: AppTheme.caption,
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton(
-                tooltip: paused ? 'Resume' : 'Pause',
-                iconSize: 18,
-                visualDensity: VisualDensity.compact,
-                icon: Icon(paused ? Icons.play_arrow : Icons.pause, color: AppColors.text),
-                onPressed: paused ? onResume : onPause,
+              sc.Tooltip(
+                tooltip: (context) => sc.TooltipContainer(
+                  child: Text(paused ? 'Resume' : 'Pause'),
+                ),
+                child: sc.IconButton.ghost(
+                  icon: Icon(
+                    paused ? Icons.play_arrow : Icons.pause,
+                    color: AppColors.text,
+                    size: 18,
+                  ),
+                  onPressed: paused ? onResume : onPause,
+                ),
               ),
-              IconButton(
-                tooltip: 'Cancel',
-                iconSize: 18,
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.close, color: AppColors.faint),
-                onPressed: onCancel,
+              sc.Tooltip(
+                tooltip: (context) =>
+                    const sc.TooltipContainer(child: Text('Cancel')),
+                child: sc.IconButton.ghost(
+                  icon: const Icon(
+                    Icons.close,
+                    color: AppColors.faint,
+                    size: 18,
+                  ),
+                  onPressed: onCancel,
+                ),
               ),
             ],
           ),
