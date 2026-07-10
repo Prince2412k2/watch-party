@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../../state/state.dart';
 import '../../ui/ui.dart';
@@ -37,38 +38,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _configureServer() async {
     final current = ref.read(serverConfigProvider) ?? '';
     final controller = TextEditingController(text: current);
-    final saved = await showDialog<bool>(
+    // Design-system dialog (acrylic shadcn surface) with AppButton actions,
+    // replacing the raw Material AlertDialog + TextButtons. The builder context
+    // (`ctx`) owns the dialog route, so popping it closes the dialog.
+    final saved = await sc.showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text('Server URL', style: TextStyle(color: AppColors.text, fontSize: 16)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Where your Watchparty backend lives. https:// is assumed.',
-              style: TextStyle(color: AppColors.dim, fontSize: 12.5),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            AppTextField(
-              controller: controller,
-              hint: 'e.g. dsk-4161.tail0a3558.ts.net',
-              autofocus: true,
-              onSubmitted: (_) => Navigator.of(ctx).pop(true),
-            ),
-          ],
-        ),
+      builder: (ctx) => AppDialog(
+        title: 'Server URL',
+        body: 'Where your Watchparty backend lives. https:// is assumed.',
         actions: [
-          TextButton(
+          AppButton(
+            label: 'Cancel',
+            variant: AppButtonVariant.ghost,
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel', style: TextStyle(color: AppColors.dim)),
           ),
-          TextButton(
+          AppButton(
+            label: 'Save',
+            variant: AppButtonVariant.primary,
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Save', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w700)),
           ),
         ],
+        child: AppTextField(
+          controller: controller,
+          hint: 'e.g. dsk-4161.tail0a3558.ts.net',
+          autofocus: true,
+          onSubmitted: (_) => Navigator.of(ctx).pop(true),
+        ),
       ),
     );
     final text = controller.text;
@@ -89,89 +84,105 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         children: [
           Center(
             child: SingleChildScrollView(
-              child: Container(
+              child: SizedBox(
                 width: 380,
-                constraints: const BoxConstraints(maxWidth: 380),
-                padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 48),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.line),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'Watchparty',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AppColors.text,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.1,
-                      ),
-                    ),
-                    const SizedBox(height: 44),
-                    const Text(
-                      'Welcome back',
-                      style: TextStyle(
-                        color: AppColors.text,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.3,
-                        height: 1.15,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Sign in with your Jellyfin account',
-                      style: TextStyle(
-                        color: AppColors.dim,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    AppTextField(
-                      controller: _user,
-                      label: 'Username',
-                      autofocus: true,
-                      enabled: !auth.loading,
-                      onSubmitted: (_) => _submit(),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    AppTextField(
-                      controller: _pass,
-                      label: 'Password',
-                      obscureText: true,
-                      enabled: !auth.loading,
-                      onSubmitted: (_) => _submit(),
-                    ),
-                    if (auth.error != null) ...[
-                      const SizedBox(height: AppSpacing.md),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: const Color(0x1FE0655E),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0x59E0655E)),
+                child: sc.Card(
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  borderColor: AppColors.line,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 36,
+                    vertical: 48,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Watchparty',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppColors.text,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.1,
                         ),
-                        child: Text(
-                          auth.error!,
-                          style: const TextStyle(color: AppColors.red, fontSize: 13.5, fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 44),
+                      const Text(
+                        'Welcome back',
+                        style: TextStyle(
+                          color: AppColors.text,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.3,
+                          height: 1.15,
                         ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Sign in with your Jellyfin account',
+                        style: TextStyle(
+                          color: AppColors.dim,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      AppTextField(
+                        controller: _user,
+                        label: 'Username',
+                        autofocus: true,
+                        enabled: !auth.loading,
+                        onSubmitted: (_) => _submit(),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      AppTextField(
+                        controller: _pass,
+                        label: 'Password',
+                        obscureText: true,
+                        enabled: !auth.loading,
+                        onSubmitted: (_) => _submit(),
+                      ),
+                      if (auth.error != null) ...[
+                        const SizedBox(height: AppSpacing.md),
+                        // Animate the error in each time it appears/changes.
+                        Reveal(
+                          key: ValueKey(auth.error),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0x1FE0655E),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: const Color(0x59E0655E),
+                              ),
+                            ),
+                            child: Text(
+                              auth.error!,
+                              style: const TextStyle(
+                                color: AppColors.red,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: AppSpacing.xl),
+                      AppButton(
+                        label: auth.loading ? 'Signing in…' : 'Sign in',
+                        variant: AppButtonVariant.primary,
+                        expand: true,
+                        busy: auth.loading,
+                        onPressed: auth.loading ? null : _submit,
                       ),
                     ],
-                    const SizedBox(height: AppSpacing.xl),
-                    AppButton(
-                      label: auth.loading ? 'Signing in…' : 'Sign in',
-                      variant: AppButtonVariant.primary,
-                      expand: true,
-                      busy: auth.loading,
-                      onPressed: auth.loading ? null : _submit,
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -197,7 +208,8 @@ String _hostOf(String? url) {
 }
 
 /// Top-right server control: a gear plus the current host (if set), so the user
-/// always knows which backend they're signing in to and can change it.
+/// always knows which backend they're signing in to and can change it. Ported
+/// from a raw `TextButton.icon` to a shadcn ghost button (icon + host label).
 class _ServerConfigButton extends StatelessWidget {
   const _ServerConfigButton({required this.host, required this.onTap});
   final String host;
@@ -205,10 +217,10 @@ class _ServerConfigButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
+    return sc.Button.ghost(
       onPressed: onTap,
-      icon: const Icon(Icons.dns_outlined, size: 16, color: AppColors.faint),
-      label: Text(
+      leading: const Icon(Icons.dns_outlined, size: 16, color: AppColors.faint),
+      child: Text(
         host.isEmpty ? 'Set server' : host,
         style: const TextStyle(color: AppColors.faint, fontSize: 12),
       ),

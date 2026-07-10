@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../tokens.dart';
 
@@ -8,7 +9,10 @@ import '../tokens.dart';
 enum AppChipTone { neutral, live, danger, success }
 
 /// A small flat label pill — genre tags, quality badges, the LIVE/REC dot,
-/// filter toggles. No gradients; selection is communicated by fill contrast.
+/// filter toggles. Rebuilt on shadcn: interactive/neutral chips use `sc.Chip`
+/// (outline when idle, secondary fill when selected); status tones render as an
+/// `sc.OutlineBadge` so the monochrome frame stays and only the reserved
+/// red/green shows through the dot + label. Signature is frozen.
 class AppChip extends StatelessWidget {
   const AppChip({
     super.key,
@@ -33,39 +37,35 @@ class AppChip extends StatelessWidget {
       AppChipTone.danger => (AppColors.red, null),
       AppChipTone.success => (AppColors.green, null),
     };
-    final bg = selected ? AppColors.surface3 : AppColors.surface;
-    final border = selected ? AppColors.line2 : AppColors.line;
 
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 6),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-            border: Border.all(color: border),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (dot != null) ...[
-                Container(
-                  width: 6, height: 6,
-                  decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 6),
-              ] else if (icon != null) ...[
-                Icon(icon, size: 13, color: fg),
-                const SizedBox(width: 6),
-              ],
-              Text(label, style: TextStyle(color: fg, fontSize: 12, fontWeight: FontWeight.w600)),
-            ],
-          ),
-        ),
-      ),
+    Widget? leading;
+    if (dot != null) {
+      leading = Container(
+        width: 6,
+        height: 6,
+        decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+      );
+    } else if (icon != null) {
+      leading = Icon(icon, size: 13, color: fg);
+    }
+
+    final content = Text(
+      label,
+      style: TextStyle(color: fg, fontSize: 12, fontWeight: FontWeight.w600),
     );
+
+    if (tone == AppChipTone.neutral) {
+      return sc.Chip(
+        onPressed: onTap,
+        style: selected
+            ? sc.ButtonVariance.secondary
+            : sc.ButtonVariance.outline,
+        leading: leading,
+        child: content,
+      );
+    }
+
+    // Status tones are non-interactive labels.
+    return sc.OutlineBadge(leading: leading, child: content);
   }
 }
