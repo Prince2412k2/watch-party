@@ -1,9 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/models.dart';
 import '../../state/downloads_provider.dart';
 import '../../ui/ui.dart';
+import 'media_row.dart';
 
 /// Active downloads (PLAN §4 E8.2) — replaces the E0 placeholder at
 /// `/downloads`. Router wiring (already frozen, `lib/app/router.dart`):
@@ -19,10 +22,16 @@ class DownloadsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final downloads = ref.watch(downloadsProvider)
-        .where((d) => d.status != DownloadStatus.complete && d.status != DownloadStatus.canceled)
-        .toList()
-      ..sort((a, b) => (b.updatedAt ?? 0).compareTo(a.updatedAt ?? 0));
+    final downloads =
+        ref
+            .watch(downloadsProvider)
+            .where(
+              (d) =>
+                  d.status != DownloadStatus.complete &&
+                  d.status != DownloadStatus.canceled,
+            )
+            .toList()
+          ..sort((a, b) => (b.updatedAt ?? 0).compareTo(a.updatedAt ?? 0));
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -34,20 +43,29 @@ class DownloadsScreen extends ConsumerWidget {
             children: [
               const Text('Downloads', style: AppTheme.displaySmall),
               const SizedBox(height: AppSpacing.sm),
-              const Text('Resumable, survives a restart — kill and reopen the app mid-download.',
-                  style: AppTheme.dim),
+              const Text(
+                'Resumable, survives a restart — kill and reopen the app mid-download.',
+                style: AppTheme.dim,
+              ),
               const SizedBox(height: AppSpacing.xl),
               Expanded(
                 child: downloads.isEmpty
                     ? const EmptyState(
                         icon: Icons.download_outlined,
                         title: 'Nothing downloading',
-                        message: 'Start a download from a title\'s detail page.',
+                        message:
+                            'Start a download from a title\'s detail page.',
                       )
                     : ListView.separated(
                         itemCount: downloads.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
-                        itemBuilder: (context, i) => _DownloadRow(record: downloads[i]),
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(height: AppSpacing.md),
+                        itemBuilder: (context, i) => Reveal(
+                          // Index-delayed cascade in; capped so a long queue
+                          // doesn't animate for seconds.
+                          delay: AppMotion.stagger * math.min(i, 8),
+                          child: _DownloadRow(record: downloads[i]),
+                        ),
                       ),
               ),
             ],
@@ -68,76 +86,45 @@ class _DownloadRow extends ConsumerWidget {
     final paused = record.status == DownloadStatus.paused;
     final failed = record.status == DownloadStatus.failed;
 
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radius),
-        border: Border.all(color: AppColors.line),
-      ),
-      child: Row(
+    if (failed) {
+      return MediaRow(
+        title: record.title,
+        badge: _StatusChip(status: record.status),
+        subtitle: record.error ?? 'Download failed',
+        subtitleIsError: true,
+        trailing: AppButton(
+          label: 'Retry',
+          icon: Icons.refresh,
+          onPressed: () => notifier.resume(record.taskId),
+        ),
+      );
+    }
+
+    return MediaRow(
+      title: record.title,
+      badge: _StatusChip(status: record.status),
+      showProgress: true,
+      progress: record.progress > 0 ? record.progress.clamp(0.0, 1.0) : null,
+      progressColor: paused ? AppColors.faint : AppColors.accent,
+      meta:
+          '${(record.progress * 100).round()}%'
+          '${record.totalBytes > 0 ? ' · ${_fmtBytes(record.bytesDownloaded)} / ${_fmtBytes(record.totalBytes)}' : ''}',
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(record.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: AppColors.text, fontSize: 14.5, fontWeight: FontWeight.w600)),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    _StatusChip(status: record.status),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                if (failed)
-                  Text(record.error ?? 'Download failed',
-                      style: const TextStyle(color: AppColors.red, fontSize: 12.5))
-                else
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                    child: LinearProgressIndicator(
-                      value: record.progress > 0 ? record.progress.clamp(0, 1) : null,
-                      minHeight: 5,
-                      backgroundColor: AppColors.line2,
-                      color: paused ? AppColors.faint : AppColors.accent,
-                    ),
-                  ),
-                if (!failed) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '${(record.progress * 100).round()}%'
-                    '${record.totalBytes > 0 ? ' · ${_fmtBytes(record.bytesDownloaded)} / ${_fmtBytes(record.totalBytes)}' : ''}',
-                    style: AppTheme.caption,
-                  ),
-                ],
-              ],
-            ),
+          MediaRowIconButton(
+            icon: paused ? Icons.play_arrow : Icons.pause,
+            tooltip: paused ? 'Resume' : 'Pause',
+            onPressed: () => paused
+                ? notifier.resume(record.taskId)
+                : notifier.pause(record.taskId),
           ),
-          const SizedBox(width: AppSpacing.lg),
-          if (failed)
-            AppButton(
-              label: 'Retry',
-              icon: Icons.refresh,
-              onPressed: () => notifier.resume(record.taskId),
-            )
-          else ...[
-            IconButton(
-              tooltip: paused ? 'Resume' : 'Pause',
-              icon: Icon(paused ? Icons.play_arrow : Icons.pause, color: AppColors.text),
-              onPressed: () => paused ? notifier.resume(record.taskId) : notifier.pause(record.taskId),
-            ),
-            IconButton(
-              tooltip: 'Cancel',
-              icon: const Icon(Icons.close, color: AppColors.faint),
-              onPressed: () => notifier.cancel(record.taskId),
-            ),
-          ],
+          MediaRowIconButton(
+            icon: Icons.close,
+            tooltip: 'Cancel',
+            color: AppColors.faint,
+            onPressed: () => notifier.cancel(record.taskId),
+          ),
         ],
       ),
     );
