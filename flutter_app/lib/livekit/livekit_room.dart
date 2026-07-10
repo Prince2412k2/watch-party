@@ -105,12 +105,30 @@ class LiveKitRoomService {
   Future<void> connect(
     String url,
     String token, {
-    bool enableMic = true,
-    bool enableCamera = true,
+    // Join with devices OFF. Auto-enabling the mic on connect creates a
+    // libwebrtc audio track immediately; on machines with no working audio
+    // capture device (headless/server-class hosts) that hard-crashes the
+    // native layer (SIGSEGV → "Lost connection to device"). Let the user opt
+    // in via the mic/cam toggles instead — also the expected watch-party UX.
+    bool enableMic = false,
+    bool enableCamera = false,
   }) async {
     await disconnect();
 
-    final room = lk.Room();
+    // Keep the capture device OPEN across mute toggles. By default livekit
+    // stops the mic/camera on mute and re-opens (getUserMedia) on unmute — and
+    // that native device open runs on the platform thread, freezing the UI on
+    // EVERY toggle. With stop*CaptureOnMute:false, muting just flips the
+    // enabled flag (instant); only the very first enable pays the device-open
+    // cost (once per session, behind the pending spinner).
+    final room = lk.Room(
+      roomOptions: const lk.RoomOptions(
+        defaultAudioCaptureOptions:
+            lk.AudioCaptureOptions(stopAudioCaptureOnMute: false),
+        defaultCameraCaptureOptions:
+            lk.CameraCaptureOptions(stopCameraCaptureOnMute: false),
+      ),
+    );
     _room = room;
     _emit(_snapshot.copyWith(connectionState: lk.ConnectionState.connecting));
 
@@ -171,18 +189,41 @@ class LiveKitRoomService {
   }
 
   /// Toggle the local microphone.
+  ///
+  /// The capture options are passed on EVERY call because livekit reads
+  /// `stopAudioCaptureOnMute` from this argument (not the room default) when
+  /// deciding whether to mute or stop/re-open the device — and it falls back
+  /// to `true` when omitted. Passing `false` keeps the device open so a toggle
+  /// is an instant mute/unmute instead of a slow (UI-blocking) device re-open.
   Future<void> setMicEnabled(bool enabled) async {
     final lp = _room?.localParticipant;
     if (lp == null) return;
-    await lp.setMicrophoneEnabled(enabled);
+    await lp.setMicrophoneEnabled(
+      enabled,
+      audioCaptureOptions:
+          const lk.AudioCaptureOptions(stopAudioCaptureOnMute: false),
+    );
     _refresh();
   }
 
-  /// Toggle the local camera.
+  /// Toggle the local camera. See [setMicEnabled] for why the capture options
+  /// are passed on every call (livekit reads `stopCameraCaptureOnMute` from
+  /// this argument, defaulting to `true`, i.e. stop/re-open on each toggle).
   Future<void> setCameraEnabled(bool enabled) async {
     final lp = _room?.localParticipant;
     if (lp == null) return;
-    await lp.setCameraEnabled(enabled);
+    await lp.setCameraEnabled(
+      enabled,
+      cameraCaptureOptions: const lk.CameraCaptureOptions(
+        stopCameraCaptureOnMute: false,
+        // Capture at 360p. The camera only ever shows in a small floating PiP
+        // tile, so HD is wasted — and requesting 720p makes the (UI-thread)
+        // v4l2 device open + format negotiation much slower, and the ongoing
+        // encode heavier. 360p opens faster (shorter first-enable freeze) and
+        // encodes lighter.
+        params: lk.VideoParametersPresets.h360_169,
+      ),
+    );
     _refresh();
   }
 
