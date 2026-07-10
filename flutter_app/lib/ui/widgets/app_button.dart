@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-
-import '../tokens.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 /// Button variants in the cinematic-minimal system.
 /// - [primary]: near-white pill, dark text (the "Play" affordance).
@@ -9,8 +8,10 @@ import '../tokens.dart';
 /// - [danger]: red-tinted, for destructive actions.
 enum AppButtonVariant { primary, secondary, ghost, danger }
 
-/// FROZEN CONTRACT (PLAN §3.6). E1 makes it pretty; the signature is fixed.
-class AppButton extends StatefulWidget {
+/// FROZEN CONTRACT (PLAN §3.6). Rebuilt on `sc.Button` variants; the public
+/// signature (label/onPressed/variant/icon/busy/expand) is unchanged. shadcn
+/// owns the hover/press/focus states now, themed by [AppShadcnTheme].
+class AppButton extends StatelessWidget {
   const AppButton({
     super.key,
     required this.label,
@@ -29,80 +30,44 @@ class AppButton extends StatefulWidget {
   final bool expand;
 
   @override
-  State<AppButton> createState() => _AppButtonState();
-}
-
-class _AppButtonState extends State<AppButton> {
-  bool _hover = false;
-
-  @override
   Widget build(BuildContext context) {
-    final disabled = widget.onPressed == null && !widget.busy;
-    var (bg, fg, border) = switch (widget.variant) {
-      AppButtonVariant.primary => (AppColors.accent, AppColors.onAccent, null as Color?),
-      AppButtonVariant.secondary => (AppColors.surface, AppColors.text, AppColors.line),
-      AppButtonVariant.ghost => (Colors.transparent, AppColors.dim, null),
-      AppButtonVariant.danger => (const Color(0x1AE0655E), AppColors.red, const Color(0x4DE0655E)),
+    final onTap = busy ? null : onPressed;
+    final Widget? leading = busy
+        ? const SizedBox(
+            width: 15,
+            height: 15,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : (icon != null ? Icon(icon, size: 18) : null);
+
+    final child = Text(label);
+
+    final button = switch (variant) {
+      AppButtonVariant.primary => sc.Button.primary(
+        onPressed: onTap,
+        leading: leading,
+        child: child,
+      ),
+      AppButtonVariant.secondary => sc.Button.secondary(
+        onPressed: onTap,
+        leading: leading,
+        child: child,
+      ),
+      AppButtonVariant.ghost => sc.Button.ghost(
+        onPressed: onTap,
+        leading: leading,
+        child: child,
+      ),
+      AppButtonVariant.danger => sc.Button.destructive(
+        onPressed: onTap,
+        leading: leading,
+        child: child,
+      ),
     };
 
-    if (_hover && !disabled) {
-      bg = switch (widget.variant) {
-        AppButtonVariant.primary => AppColors.accentDim,
-        AppButtonVariant.secondary => AppColors.surface2,
-        AppButtonVariant.ghost => Colors.transparent,
-        AppButtonVariant.danger => const Color(0x2AE0655E),
-      };
-      if (widget.variant == AppButtonVariant.ghost) fg = AppColors.text;
+    if (expand) {
+      return SizedBox(width: double.infinity, child: button);
     }
-
-    if (disabled) {
-      fg = AppColors.faint;
-    }
-
-    final child = Row(
-      mainAxisSize: widget.expand ? MainAxisSize.max : MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        if (widget.busy)
-          SizedBox(
-            width: 16, height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2, color: fg),
-          )
-        else if (widget.icon != null) ...[
-          Icon(widget.icon, size: 18, color: fg),
-          const SizedBox(width: AppSpacing.sm),
-        ],
-        Text(widget.label,
-            style: TextStyle(
-                color: fg, fontSize: 13.5, fontWeight: FontWeight.w600)),
-      ],
-    );
-
-    return MouseRegion(
-      cursor: disabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: Material(
-        color: bg,
-        borderRadius: BorderRadius.circular(AppSpacing.radius),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(AppSpacing.radius),
-          onTap: widget.busy ? null : widget.onPressed,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-            decoration: border == null
-                ? null
-                : BoxDecoration(
-                    borderRadius: BorderRadius.circular(AppSpacing.radius),
-                    border: Border.all(color: border),
-                  ),
-            alignment: Alignment.center,
-            child: child,
-          ),
-        ),
-      ),
-    );
+    return button;
   }
 }

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../tokens.dart';
 import 'app_button.dart';
 
-/// FROZEN CONTRACT (PLAN §3.6). A minimal modal surface. E1 refines visuals;
-/// [show] is the stable entry point.
+/// FROZEN CONTRACT (PLAN §3.6). A modal surface, rebuilt on shadcn's
+/// `sc.AlertDialog` + `sc.showDialog` (scale+fade in, acrylic backdrop). [show]
+/// stays the stable entry point and keeps returning a `Future<T?>`.
 class AppDialog extends StatelessWidget {
   const AppDialog({
     super.key,
@@ -19,7 +21,8 @@ class AppDialog extends StatelessWidget {
   final List<Widget> actions;
   final Widget? child;
 
-  /// Convenience presenter.
+  /// Convenience presenter — now routes through shadcn's dialog so it inherits
+  /// the acrylic backdrop + theme.
   static Future<T?> show<T>(
     BuildContext context, {
     required String title,
@@ -27,47 +30,41 @@ class AppDialog extends StatelessWidget {
     List<Widget> actions = const [],
     Widget? child,
   }) {
-    return showDialog<T>(
+    return sc.showDialog<T>(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.6),
-      builder: (_) => AppDialog(title: title, body: body, actions: actions, child: child),
+      builder: (_) =>
+          AppDialog(title: title, body: body, actions: actions, child: child),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        width: 420,
-        margin: const EdgeInsets.all(AppSpacing.xl),
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-          border: Border.all(color: AppColors.line),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: kDialogTitleStyle),
-            if (body != null) ...[
-              const SizedBox(height: AppSpacing.md),
-              Text(body!, style: const TextStyle(color: AppColors.dim, fontSize: 14, height: 1.5)),
-            ],
-            if (child != null) ...[const SizedBox(height: AppSpacing.lg), child!],
-            if (actions.isNotEmpty) ...[
-              const SizedBox(height: AppSpacing.xl),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  for (final a in actions) ...[a, const SizedBox(width: AppSpacing.sm)],
+    return sc.AlertDialog(
+      surfaceBlur: AppBlur.overlay,
+      surfaceOpacity: 0.9,
+      title: Text(title, style: kDialogTitleStyle),
+      content: (body != null || child != null)
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (body != null)
+                  Text(
+                    body!,
+                    style: const TextStyle(
+                      color: AppColors.dim,
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                if (child != null) ...[
+                  const SizedBox(height: AppSpacing.lg),
+                  child!,
                 ],
-              ),
-            ],
-          ],
-        ),
-      ),
+              ],
+            )
+          : null,
+      actions: actions.isEmpty ? null : actions,
     );
   }
 }
@@ -93,7 +90,11 @@ Future<bool> showConfirm(
     title: title,
     body: body,
     actions: [
-      AppButton(label: 'Cancel', variant: AppButtonVariant.ghost, onPressed: () => Navigator.of(context).pop(false)),
+      AppButton(
+        label: 'Cancel',
+        variant: AppButtonVariant.ghost,
+        onPressed: () => Navigator.of(context).pop(false),
+      ),
       AppButton(
         label: confirmLabel,
         variant: danger ? AppButtonVariant.danger : AppButtonVariant.primary,

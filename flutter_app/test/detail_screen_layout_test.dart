@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/detail_screen.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/state/state.dart';
+import 'package:watchparty/ui/ui.dart';
 
 void main() {
-  testWidgets('detail screen lays out without unbounded-constraint errors',
-      (tester) async {
+  testWidgets('detail screen lays out without unbounded-constraint errors', (
+    tester,
+  ) async {
     final errors = <String>[];
     final prev = FlutterError.onError;
     FlutterError.onError = (d) => errors.add(d.exceptionAsString());
@@ -17,7 +20,14 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [apiClientProvider.overrideWithValue(MockApiClient())],
-        child: const MaterialApp(home: DetailScreen(itemId: 'mock-item-0')),
+        child: MaterialApp(
+          builder: (context, child) => sc.ShadcnLayer(
+            theme: AppShadcnTheme.dark,
+            themeMode: sc.ThemeMode.dark,
+            child: child!,
+          ),
+          home: const DetailScreen(itemId: 'mock-item-0'),
+        ),
       ),
     );
     for (var i = 0; i < 5; i++) {
@@ -31,6 +41,10 @@ void main() {
     FlutterError.onError = prev;
     semantics.dispose();
 
-    expect(errors, isEmpty, reason: 'layout/semantics errors: ${errors.take(2)}');
+    expect(
+      errors,
+      isEmpty,
+      reason: 'layout/semantics errors: ${errors.take(2)}',
+    );
   });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../../livekit/livekit_room.dart';
 import '../../state/livekit_provider.dart';
@@ -22,10 +23,7 @@ enum CameraGridLayout {
 /// `CameraGrid` and mount it with `ProviderScope` already in the tree (it
 /// reads [livekitProvider]; it does not connect the room itself).
 class CameraGrid extends ConsumerWidget {
-  const CameraGrid({
-    super.key,
-    this.layout = CameraGridLayout.grid,
-  });
+  const CameraGrid({super.key, this.layout = CameraGridLayout.grid});
 
   final CameraGridLayout layout;
 
@@ -62,8 +60,8 @@ class CameraGrid extends ConsumerWidget {
         final columns = tiles.length <= 1
             ? 1
             : tiles.length <= 4
-                ? 2
-                : 3;
+            ? 2
+            : 3;
         return GridView.builder(
           padding: const EdgeInsets.all(AppSpacing.sm),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -91,8 +89,8 @@ class _EmptyGrid extends StatelessWidget {
     final label = error != null
         ? 'A/V error: $error'
         : connecting
-            ? 'Connecting…'
-            : 'Not connected';
+        ? 'Connecting…'
+        : 'Not connected';
     return Center(
       child: Text(
         label,
@@ -188,7 +186,11 @@ class _CamOffPlaceholder extends StatelessWidget {
     return const ColoredBox(
       color: AppColors.surface2,
       child: Center(
-        child: Icon(Icons.videocam_off_outlined, color: AppColors.faint, size: 22),
+        child: Icon(
+          Icons.videocam_off_outlined,
+          color: AppColors.faint,
+          size: 22,
+        ),
       ),
     );
   }
@@ -217,7 +219,11 @@ class _NameTag extends StatelessWidget {
             ),
           Text(
             track.isLocal ? '${track.name} (you)' : track.name,
-            style: const TextStyle(color: AppColors.text, fontSize: 11, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: AppColors.text,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -279,26 +285,16 @@ class _ToggleIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: active ? AppColors.surface2 : AppColors.surface,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: Container(
-            width: 36,
-            height: 36,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Icon(icon, size: 18, color: active ? AppColors.text : AppColors.faint),
-          ),
-        ),
-      ),
+    final iconWidget = Icon(
+      icon,
+      size: 18,
+      color: active ? AppColors.text : AppColors.faint,
+    );
+    return sc.Tooltip(
+      tooltip: (context) => sc.TooltipContainer(child: Text(tooltip)),
+      child: active
+          ? sc.IconButton.secondary(icon: iconWidget, onPressed: onTap)
+          : sc.IconButton.outline(icon: iconWidget, onPressed: onTap),
     );
   }
 }
@@ -310,25 +306,12 @@ class _DevicePickerButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Choose devices',
-      child: Material(
-        color: AppColors.surface,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: () => _openDevicePicker(context),
-          child: Container(
-            width: 36,
-            height: 36,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: AppColors.line),
-            ),
-            child: const Icon(Icons.tune, size: 18, color: AppColors.faint),
-          ),
-        ),
+    return sc.Tooltip(
+      tooltip: (context) =>
+          const sc.TooltipContainer(child: Text('Choose devices')),
+      child: sc.IconButton.outline(
+        icon: const Icon(Icons.tune, size: 18, color: AppColors.faint),
+        onPressed: () => _openDevicePicker(context),
       ),
     );
   }
@@ -347,19 +330,37 @@ class _DevicePickerButton extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Camera', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w600)),
+              const Text(
+                'Camera',
+                style: TextStyle(
+                  color: AppColors.text,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               for (final d in cameras)
                 ListTile(
                   dense: true,
-                  title: Text(d.label, style: const TextStyle(color: AppColors.text)),
+                  title: Text(
+                    d.label,
+                    style: const TextStyle(color: AppColors.text),
+                  ),
                   onTap: () => notifier.selectCamera(d.deviceId),
                 ),
               const SizedBox(height: AppSpacing.md),
-              const Text('Microphone', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w600)),
+              const Text(
+                'Microphone',
+                style: TextStyle(
+                  color: AppColors.text,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               for (final d in mics)
                 ListTile(
                   dense: true,
-                  title: Text(d.label, style: const TextStyle(color: AppColors.text)),
+                  title: Text(
+                    d.label,
+                    style: const TextStyle(color: AppColors.text),
+                  ),
                   onTap: () => notifier.selectMicrophone(d.deviceId),
                 ),
             ],

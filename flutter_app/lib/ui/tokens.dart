@@ -50,3 +50,47 @@ abstract final class AppFonts {
   /// Matches the web `MONO` stack.
   static const mono = 'JetBrains Mono';
 }
+
+/// Motion system (PLAN PKG-0 §Motion). Durations/curves the redesign reads for
+/// route transitions, list stagger, hover, and micro-interactions. ADDITIVE —
+/// no existing token values change. Kept short and calm to match the cinematic,
+/// content-first identity (no bouncy overshoot except the floating-tile snap).
+abstract final class AppMotion {
+  /// Fade-through page transition (route push).
+  static const Duration page = Duration(milliseconds: 180);
+
+  /// Reveal / staggered list-item entrance.
+  static const Duration reveal = Duration(milliseconds: 220);
+
+  /// Per-index delay between staggered items.
+  static const Duration stagger = Duration(milliseconds: 40);
+
+  /// Hover / active-state cross-fades (poster scale, nav highlight).
+  static const Duration hover = Duration(milliseconds: 140);
+
+  /// Floating camera-tile drag-end snap + collapse.
+  static const Duration snap = Duration(milliseconds: 260);
+
+  static const Curve emphasized = Curves.easeOutCubic;
+  static const Curve standard = Curves.easeOut;
+
+  /// Spring-ish curve for the floating-tile snap/collapse.
+  static const Curve spring = Curves.easeOutBack;
+}
+
+/// Blur radii for acrylic overlay surfaces (menus/dialogs/toasts/scrim). The
+/// RGBA-transparent, Skia-rendered window makes blur viable; keep radii modest.
+abstract final class AppBlur {
+  static const double overlay = 16;
+  static const double scrim = 8;
+}
+
+/// Elevation shadow presets for floating surfaces (poster hover, PiP tiles).
+abstract final class AppElevation {
+  static const List<BoxShadow> low = [
+    BoxShadow(color: Color(0x40000000), blurRadius: 8, offset: Offset(0, 2)),
+  ];
+  static const List<BoxShadow> high = [
+    BoxShadow(color: Color(0x66000000), blurRadius: 20, offset: Offset(0, 8)),
+  ];
+}

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../../models/models.dart';
 import '../../state/chat_provider.dart';
@@ -118,8 +119,9 @@ class _ChatBubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Column(
-        crossAxisAlignment:
-            isOwn ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isOwn
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -140,19 +142,23 @@ class _ChatBubble extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 2),
-          Container(
+          ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 260),
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-            decoration: BoxDecoration(
-              color: isOwn ? AppColors.surface2 : AppColors.surface,
-              borderRadius: BorderRadius.circular(AppSpacing.radius),
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Text(
-              message.text,
-              style: const TextStyle(
-                  color: AppColors.text, fontSize: 13.5, height: 1.35),
+            child: sc.Card(
+              filled: true,
+              fillColor: isOwn ? AppColors.surface2 : AppColors.surface,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: Text(
+                message.text,
+                style: const TextStyle(
+                  color: AppColors.text,
+                  fontSize: 13.5,
+                  height: 1.35,
+                ),
+              ),
             ),
           ),
         ],
@@ -195,35 +201,15 @@ class _ChatInput extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: TextField(
+                child: sc.TextField(
                   controller: controller,
                   enabled: !busy,
                   onSubmitted: (_) => onSend(),
-                  style: const TextStyle(color: AppColors.text, fontSize: 14),
-                  decoration: InputDecoration(
-                    hintText: 'Message the room…',
-                    hintStyle: const TextStyle(color: AppColors.faint),
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.lg, vertical: AppSpacing.md),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSpacing.radius),
-                      borderSide: const BorderSide(color: AppColors.line),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSpacing.radius),
-                      borderSide: const BorderSide(color: AppColors.line),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSpacing.radius),
-                      borderSide: const BorderSide(color: AppColors.line2),
-                    ),
-                  ),
+                  placeholder: const Text('Message the room…'),
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              IconButton(
+              sc.IconButton.ghost(
                 onPressed: busy ? null : onSend,
                 icon: Icon(
                   Icons.send_rounded,
