@@ -2,7 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  Self-distributed (non-App-Store) build: the App Sandbox is disabled so the
+	  client can reach an arbitrary user-supplied backend URL, open sockets to
+	  LiveKit, and write offline downloads. A stock `app-sandbox=true` release
+	  (the Flutter default) has NO network.client entitlement, so it cannot make
+	  ANY outbound connection — the app would launch but never reach the server.
+	  Camera/mic are gated by the TCC usage strings in Info.plist, not by
+	  sandbox entitlements, when unsandboxed.
+	  If you ever target the Mac App Store, flip this back to true and add
+	  network.client / network.server / device.camera / device.microphone /
+	  files.user-selected.read-write instead.
+	-->
 	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<!-- Kept so the app still works if the sandbox is re-enabled for MAS. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
 	<true/>
 </dict>
 </plist>

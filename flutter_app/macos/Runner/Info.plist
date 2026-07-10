@@ -28,5 +28,11 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Watchparty uses your camera for watch-party video chat.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Watchparty uses your microphone for watch-party voice chat.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Watchparty connects to your media and watch-party servers, which may be on your local network.</string>
 </dict>
 </plist>
