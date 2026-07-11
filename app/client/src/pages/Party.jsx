@@ -23,7 +23,7 @@ export default function Party({ partyId, isNew, itemId }) {
   const party = useParty()
   const {
     session, role, layoutMode, chatOpen, chatRipple, alertMode,
-    setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia,
+    setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks,
   } = party
 
   const lk = useLiveKit({ partyId: session?.id ?? null, enabled: role === 'host' || role === 'guest' })
@@ -405,6 +405,7 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
       <div style={{ position: 'absolute', inset: 0, marginLeft: (!phone && layoutMode === 'dock') ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
         <HlsPlayer
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
+          onSetPlaybackTracks={setPlaybackTracks}
           micOn={lk.micOn} camOn={lk.camOn}
           onToggleMic={() => guardedToggle(() => lk.enableMic(!lk.micOn))}
           onToggleCam={() => guardedToggle(() => lk.enableCamera(!lk.camOn))}
@@ -678,8 +679,11 @@ function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }) 
   )
 }
 
-function HlsPlayer({ session, isHost, collaborativeControl, ...rest }) {
+function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, ...rest }) {
   const [hlsUrl, setHlsUrl] = useState(null)
+  const audioStreamIndex = session?.playback?.selectedAudioIndex
+  const subtitleStreamIndex = session?.playback?.selectedSubtitleIndex
+  const mediaSourceId = session?.playback?.mediaSourceId ?? session?.mediaSourceId ?? session?.mediaItemId
 
   // Phase 1.2: fetch the ADAPTIVE (ABR) master playlist ONCE per media item.
   // The URL carries no bitrate pin, so hls.js loads a multi-variant ladder and
@@ -688,10 +692,14 @@ function HlsPlayer({ session, isHost, collaborativeControl, ...rest }) {
   // so this effect intentionally does NOT depend on the selected quality.
   useEffect(() => {
     if (!session?.mediaItemId) return
-    fetch(`/api/library/hls-url?itemId=${session.mediaItemId}&abr=1`, { credentials: 'include' })
+    const qs = new URLSearchParams({ itemId: session.mediaItemId, abr: '1' })
+    if (mediaSourceId) qs.set('mediaSourceId', mediaSourceId)
+    if (Number.isInteger(audioStreamIndex)) qs.set('audioStreamIndex', String(audioStreamIndex))
+    if (Number.isInteger(subtitleStreamIndex)) qs.set('subtitleStreamIndex', String(subtitleStreamIndex))
+    fetch(`/api/library/hls-url?${qs}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.url) setHlsUrl(d.url) })
-  }, [session?.mediaItemId])
+  }, [session?.mediaItemId, mediaSourceId, audioStreamIndex, subtitleStreamIndex])
 
   if (!hlsUrl) return (
     <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: '#000' }}>
@@ -702,5 +710,16 @@ function HlsPlayer({ session, isHost, collaborativeControl, ...rest }) {
     </div>
   )
 
-  return <Player hlsUrl={hlsUrl} mediaItemId={session.mediaItemId} isHost={isHost} collaborativeControl={collaborativeControl} syncMode={session.syncMode} {...rest} />
+  return (
+    <Player
+      hlsUrl={hlsUrl}
+      mediaItemId={session.mediaItemId}
+      playback={session.playback}
+      isHost={isHost}
+      collaborativeControl={collaborativeControl}
+      syncMode={session.syncMode}
+      onSetPlaybackTracks={onSetPlaybackTracks}
+      {...rest}
+    />
+  )
 }

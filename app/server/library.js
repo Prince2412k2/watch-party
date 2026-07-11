@@ -2,6 +2,7 @@ import { requireAuth, getJellyfin } from './auth.js'
 import {
   getItems, getItemChildren, buildHlsUrl, BASE,
   getViews, getResumeItems, getNextUp, getLatest, getItemDetail,
+  getPlaybackInfo, normalizePlaybackInfo,
 } from './jellyfin.js'
 
 // Jellyfin item ids are 32-char hex GUIDs (dashless), though the dashed form is
@@ -74,6 +75,27 @@ export function registerLibraryRoutes(app) {
     }
   })
 
+  app.post('/api/library/playback-info/:id', requireAuth, async (req, res) => {
+    const { token, userId } = getJellyfin(req)
+    const { id } = req.params
+    try {
+      const response = await getPlaybackInfo(token, userId, id, {
+        mediaSourceId: req.body?.mediaSourceId,
+        audioStreamIndex: Number.isInteger(req.body?.audioStreamIndex) ? req.body.audioStreamIndex : undefined,
+        subtitleStreamIndex: Number.isInteger(req.body?.subtitleStreamIndex) ? req.body.subtitleStreamIndex : undefined,
+        playSessionId: req.body?.playSessionId,
+      })
+      res.json(normalizePlaybackInfo(response, {
+        itemId: id,
+        selectedAudioIndex: Number.isInteger(req.body?.audioStreamIndex) ? req.body.audioStreamIndex : null,
+        selectedSubtitleIndex: Number.isInteger(req.body?.subtitleStreamIndex) ? req.body.subtitleStreamIndex : null,
+      }))
+    } catch (err) {
+      console.error('library/playback-info', err.message)
+      res.status(502).json({ error: 'Failed to fetch playback info' })
+    }
+  })
+
   app.get('/api/library/items', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
     try {
@@ -124,14 +146,33 @@ export function registerLibraryRoutes(app) {
   //                   selects the rung by bandwidth). This is the default path.
   //   &maxBitrate=N → single-bitrate transcode (legacy fixed-tier / src-swap).
   app.get('/api/library/hls-url', requireAuth, (req, res) => {
-    const { token } = getJellyfin(req)
-    const { itemId, maxBitrate, abr } = req.query
+    const { token, userId } = getJellyfin(req)
+    const { itemId, mediaSourceId, audioStreamIndex, subtitleStreamIndex, playSessionId, maxBitrate, abr } = req.query
     if (!itemId) return res.status(400).json({ error: 'itemId required' })
-    if (abr === '1' || abr === 'true') {
-      return res.json({ url: buildHlsUrl(itemId, { abr: true }) })
-    }
-    const cap = maxBitrate ? parseInt(maxBitrate, 10) : undefined
-    res.json({ url: buildHlsUrl(itemId, { maxBitrate: cap }) })
+    const parsedAudio = audioStreamIndex != null && audioStreamIndex !== '' ? parseInt(audioStreamIndex, 10) : undefined
+    const parsedSubtitle = subtitleStreamIndex != null && subtitleStreamIndex !== '' ? parseInt(subtitleStreamIndex, 10) : undefined
+    ;(async () => {
+      try {
+        const response = await getPlaybackInfo(token, userId, itemId, {
+          mediaSourceId,
+          audioStreamIndex: Number.isInteger(parsedAudio) ? parsedAudio : undefined,
+          subtitleStreamIndex: Number.isInteger(parsedSubtitle) ? parsedSubtitle : undefined,
+          playSessionId,
+        })
+        const playback = normalizePlaybackInfo(response, {
+          itemId,
+          selectedAudioIndex: Number.isInteger(parsedAudio) ? parsedAudio : null,
+          selectedSubtitleIndex: Number.isInteger(parsedSubtitle) ? parsedSubtitle : null,
+        })
+        res.json({ url: playback.transcodingUrl || playback.directStreamUrl || buildHlsUrl(itemId, { mediaSourceId, audioStreamIndex: parsedAudio, subtitleStreamIndex: parsedSubtitle, abr: true }) })
+      } catch {
+        const cap = maxBitrate ? parseInt(maxBitrate, 10) : undefined
+        res.json({ url: buildHlsUrl(itemId, { mediaSourceId, audioStreamIndex: parsedAudio, subtitleStreamIndex: parsedSubtitle, maxBitrate: cap, abr: abr === '1' || abr === 'true' }) })
+      }
+    })().catch(() => {
+      const cap = maxBitrate ? parseInt(maxBitrate, 10) : undefined
+      res.json({ url: buildHlsUrl(itemId, { mediaSourceId, audioStreamIndex: parsedAudio, subtitleStreamIndex: parsedSubtitle, maxBitrate: cap, abr: abr === '1' || abr === 'true' }) })
+    })
   })
 
   // Authenticated HLS proxy. buildHlsUrl points hls.js here instead of straight

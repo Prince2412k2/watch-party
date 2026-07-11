@@ -23,30 +23,14 @@ const VPlayer = createPlayer({ features: videoFeatures })
 
 const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
 
-function isMediaElement(value) {
-  return typeof HTMLMediaElement !== 'undefined' && value instanceof HTMLMediaElement
-}
-
-function resolveMediaElement(value, ref) {
-  const candidates = [
-    value,
-    value?.target,
-    typeof value?.el === 'function' ? value.el() : value?.el,
-    value?.media,
-    value?.mediaElement,
-    ref?.current,
-  ]
-  return candidates.find(isMediaElement) || null
-}
-
 export default function Player({
-  hlsUrl, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
+  hlsUrl, playback, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
   onToggleMic, onToggleCam, micOn, camOn,
   talking, onTalkStart, onTalkEnd,
   onToggleLayout, onOpenChat, layoutMode,
   hideSelf, onToggleHideSelf,
   visible = true, immersive, enterImmersive, exitImmersive,
-  phone = false, camStripOpen, onToggleCamStrip, seekBridgeRef,
+  phone = false, camStripOpen, onToggleCamStrip, seekBridgeRef, onSetPlaybackTracks,
 }) {
   const canControl = isHost || collaborativeControl
   const videoRef = useRef(null)
@@ -131,6 +115,8 @@ export default function Player({
             <MobileBottomBar
             mediaItemId={mediaItemId}
             mediaElementRef={videoRef}
+            playback={playback}
+            onSetPlaybackTracks={onSetPlaybackTracks}
             canControl={canControl} localPhase={localPhase}
             micOn={micOn} camOn={camOn}
             talking={talking} onTalkStart={onTalkStart} onTalkEnd={onTalkEnd}
@@ -157,6 +143,8 @@ export default function Player({
             <DesktopControlBar
               mediaItemId={mediaItemId}
               mediaElementRef={videoRef}
+              playback={playback}
+              onSetPlaybackTracks={onSetPlaybackTracks}
               visible={visible} canControl={canControl}
               immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
               userMuted={userMuted} onToggleMuted={toggleMuted}
@@ -1065,7 +1053,7 @@ function VolumeControl({ userMuted, onToggleMuted }) {
 // The single pinned-bottom row: play/pause, current time, scrubber, duration,
 // volume, settings, fullscreen — over the one allowed black-alpha scrim. No
 // box, no border around the row itself.
-function DesktopControlBar({ mediaItemId, mediaElementRef, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }) {
+function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlaybackTracks, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }) {
   const media = VPlayer.useMedia()
   const quality = useQualityLevels(media)
   const { cur, dur } = useMediaClock(media)
@@ -1125,7 +1113,7 @@ function DesktopControlBar({ mediaItemId, mediaElementRef, visible, canControl, 
           <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </IconBtn>
-          {settingsOpen && <SettingsMenu media={media} mediaElementRef={mediaElementRef} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
+          {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={isHost} onSetPlaybackTracks={onSetPlaybackTracks} onClose={() => setSettingsOpen(false)} />}
         </div>
 
         <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
@@ -1151,7 +1139,9 @@ function DesktopControlBar({ mediaItemId, mediaElementRef, visible, canControl, 
 // auto-hide `visible` layer. Touch targets are 44px with ≥8px gaps.
 function MobileBottomBar({
   mediaItemId,
+  playback,
   mediaElementRef,
+  onSetPlaybackTracks,
   canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
   hideSelf, onToggleHideSelf, camStripOpen, onToggleCamStrip, visible, immersive, enterImmersive, exitImmersive,
 }) {
@@ -1227,7 +1217,7 @@ function MobileBottomBar({
       <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </BarBtn>
-      {settingsOpen && <SettingsMenu media={media} mediaElementRef={mediaElementRef} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={isHost} onSetPlaybackTracks={onSetPlaybackTracks} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
   const secondary = [talkControl, hideSelfControl, camStripControl, settingsControl].filter(Boolean)
@@ -1416,68 +1406,35 @@ function TalkBtn({ talking, onStart, onStop }) {
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
 // Flat solid surface, hairline border, radius 12 — no blur, no gradient.
-function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose }) {
+function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybackTracks, onClose }) {
   const [view, setView] = useState('main')     // main | quality | subs | audio
   const [q, setQ] = useState('')
-  const [subs, setSubs] = useState([])
-  const [subActive, setSubActive] = useState(-1)
-  const [audios, setAudios] = useState([])
-  const [audioActive, setAudioActive] = useState(0)
   const [uploadingSub, setUploadingSub] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const uploadInputRef = useRef(null)
-  const getMediaElement = () => resolveMediaElement(media, mediaElementRef)
 
-  const refreshSubs = () => {
-    const mediaElement = getMediaElement()
-    const tt = mediaElement?.textTracks || media?.textTracks
-    const list = tt ? Array.from(tt).filter(t => t.kind === 'subtitles' || t.kind === 'captions') : []
-    setSubs(list)
-    setSubActive(list.findIndex(t => t.mode === 'showing'))
-  }
-
-  useEffect(() => {
-    if (!media) return
-    refreshSubs()
-    const mediaElement = getMediaElement()
-    const at = mediaElement?.audioTracks || media.audioTracks
-    const alist = at ? Array.from(at) : []
-    setAudios(alist); setAudioActive(Math.max(0, alist.findIndex(t => t.enabled)))
-  }, [media])
-
-  useEffect(() => {
-    const mediaElement = getMediaElement()
-    if (!mediaElement) return
-
-    const syncTracks = () => refreshSubs()
-    syncTracks()
-
-    const textTracks = mediaElement.textTracks
-    const audioTracks = mediaElement.audioTracks
-    textTracks?.addEventListener?.('addtrack', syncTracks)
-    textTracks?.addEventListener?.('removetrack', syncTracks)
-    textTracks?.addEventListener?.('change', syncTracks)
-    audioTracks?.addEventListener?.('addtrack', syncTracks)
-    audioTracks?.addEventListener?.('removetrack', syncTracks)
-    audioTracks?.addEventListener?.('change', syncTracks)
-    mediaElement.addEventListener?.('loadedmetadata', syncTracks)
-
-    return () => {
-      textTracks?.removeEventListener?.('addtrack', syncTracks)
-      textTracks?.removeEventListener?.('removetrack', syncTracks)
-      textTracks?.removeEventListener?.('change', syncTracks)
-      audioTracks?.removeEventListener?.('addtrack', syncTracks)
-      audioTracks?.removeEventListener?.('removetrack', syncTracks)
-      audioTracks?.removeEventListener?.('change', syncTracks)
-      mediaElement.removeEventListener?.('loadedmetadata', syncTracks)
-    }
-  }, [media, mediaElementRef])
+  const audioStreams = playback?.audioStreams ?? []
+  const subtitleStreams = playback?.subtitleStreams ?? []
+  const selectedAudioIndex = playback?.selectedAudioIndex ?? audioStreams.find(t => t.isDefault)?.index ?? audioStreams[0]?.index ?? null
+  const selectedSubtitleIndex = playback?.selectedSubtitleIndex ?? null
+  const trackName = (t, i) => t?.displayTitle || t?.title || t?.language || `${t?.codec || 'Track'} ${t?.index ?? (i + 1)}`
 
   useEffect(() => { setQ('') }, [view])
 
-  function chooseSub(i) { subs.forEach((t, idx) => { t.mode = idx === i ? 'showing' : 'disabled' }); setSubActive(i) }
+  function chooseAudio(index) {
+    if (!canControl) return
+    onSetPlaybackTracks?.({ audioStreamIndex: index, subtitleStreamIndex: selectedSubtitleIndex })
+    setView('main')
+  }
+
+  function chooseSub(index) {
+    if (!canControl) return
+    onSetPlaybackTracks?.({ audioStreamIndex: selectedAudioIndex, subtitleStreamIndex: index })
+    setView('main')
+  }
+
   async function uploadSubtitle(file) {
-    if (!file || !mediaItemId || !media) return
+    if (!file || !mediaItemId || !canControl) return
     setUploadingSub(true); setUploadError('')
     try {
       const params = new URLSearchParams({ mediaItemId })
@@ -1485,33 +1442,11 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
         method: 'POST', credentials: 'include', body: file,
         headers: {
           'Content-Type': file.type || 'application/octet-stream',
-          // Header values must be ByteStrings in browsers; URI encoding keeps
-          // non-ASCII filenames valid and the server decodes them for display.
           'X-Subtitle-Filename': encodeURIComponent(file.name),
         },
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed')
-
-      // A real <track> element is required: adding only a TextTrack does not
-      // make the browser fetch cues from the uploaded WebVTT URL.
-      const track = document.createElement('track')
-      track.kind = 'subtitles'
-      track.label = data.label || file.name.replace(/\.[^.]+$/, '')
-      track.srclang = data.language || 'und'
-      track.src = data.url
-      track.addEventListener('load', () => {
-        refreshSubs()
-        const mediaElement = getMediaElement()
-        const list = Array.from(mediaElement?.textTracks || media.textTracks || []).filter(t => t.kind === 'subtitles' || t.kind === 'captions')
-        list.forEach(t => { t.mode = t === track.track ? 'showing' : 'disabled' })
-        setSubActive(list.indexOf(track.track))
-      }, { once: true })
-      const mediaElement = getMediaElement()
-      if (!mediaElement?.appendChild) throw new Error('Could not attach subtitle track')
-      mediaElement.appendChild(track)
-      track.track.mode = 'showing'
-      refreshSubs()
+      if (!res.ok) throw new Error(data.error || 'Upload failed')
     } catch (err) {
       setUploadError(err.message || 'Could not upload subtitle')
     } finally {
@@ -1519,8 +1454,6 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
       if (uploadInputRef.current) uploadInputRef.current.value = ''
     }
   }
-  function chooseAudio(i) { audios.forEach((t, idx) => { t.enabled = idx === i }); setAudioActive(i) }
-  const trackName = (t, i) => t.label || t.language || `Track ${i + 1}`
 
   // Quality summary: in Auto, show the level hls.js is actually playing
   // ("Auto (1080p)"); pinned, show the chosen rung's label.
@@ -1532,8 +1465,8 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
   const curQuality = !hasLevels
     ? 'Auto'
     : (quality.selected === -1 ? autoLabel : levelLabel(qLevels[quality.selected]))
-  const curSub = subActive === -1 ? 'Off' : trackName(subs[subActive] || {}, subActive)
-  const curAudio = audios.length ? trackName(audios[audioActive] || {}, audioActive) : '—'
+  const curSub = selectedSubtitleIndex == null || selectedSubtitleIndex < 0 ? 'Off' : trackName(subtitleStreams.find(s => s.index === selectedSubtitleIndex) || {}, 0)
+  const curAudio = audioStreams.length ? trackName(audioStreams.find(s => s.index === selectedAudioIndex) || {}, 0) : '—'
 
   const panel = {
     backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
@@ -1570,7 +1503,7 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
         style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', color: '#f4f4f5', fontSize: 13, outline: 'none' }} />
     </div>
   )
-  const filtered = (arr) => arr.map((t, i) => [t, i]).filter(([t, i]) => trackName(t, i).toLowerCase().includes(q.toLowerCase()))
+  const filtered = (arr) => arr.filter((t, i) => trackName(t, i).toLowerCase().includes(q.toLowerCase()))
 
   return (
     <>
@@ -1580,7 +1513,7 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
           <div style={{ padding: '6px 0' }}>
             {navRow('Quality', curQuality, () => setView('quality'))}
             {navRow('Subtitles', curSub, () => setView('subs'))}
-            {audios.length > 1 && navRow('Audio', curAudio, () => setView('audio'))}
+            {audioStreams.length > 1 && navRow('Audio', curAudio, () => setView('audio'))}
           </div>
         )}
 
@@ -1603,18 +1536,18 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
         {view === 'subs' && (
           <>
             {subHeader('Subtitles')}
-            {subs.length > 8 && searchBox}
+            {subtitleStreams.length > 8 && searchBox}
             <div style={{ overflowY: 'auto', padding: '6px 0' }}>
-              {optRow('Off', subActive === -1, () => { chooseSub(-1); setView('main') }, 'off')}
-              {subs.length === 0 && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(244,244,245,.36)' }}>None available in this stream</div>}
-              {filtered(subs).map(([t, i]) => optRow(trackName(t, i), subActive === i, () => { chooseSub(i); setView('main') }, i))}
+              {optRow('Off', selectedSubtitleIndex == null || selectedSubtitleIndex < 0, () => chooseSub(null), 'off')}
+              {subtitleStreams.length === 0 && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(244,244,245,.36)' }}>None available in this stream</div>}
+              {filtered(subtitleStreams).map((t, i) => optRow(trackName(t, i), selectedSubtitleIndex === t.index, () => chooseSub(t.index), t.index))}
               <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 6, padding: '10px 14px 6px' }}>
                 <input ref={uploadInputRef} type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden
                   onChange={(e) => uploadSubtitle(e.target.files?.[0])} />
-                <button disabled={uploadingSub || !mediaItemId} onClick={() => uploadInputRef.current?.click()} style={{
+                <button disabled={uploadingSub || !mediaItemId || !canControl} onClick={() => uploadInputRef.current?.click()} style={{
                   width: '100%', padding: '9px 12px', borderRadius: 9, cursor: uploadingSub ? 'wait' : 'pointer',
                   border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.06)',
-                  color: '#f4f4f5', fontSize: 13, fontWeight: 600, opacity: mediaItemId ? 1 : .45,
+                  color: '#f4f4f5', fontSize: 13, fontWeight: 600, opacity: (mediaItemId && canControl) ? 1 : .45,
                 }}>{uploadingSub ? 'Uploading…' : 'Upload subtitle file'}</button>
                 {uploadError && <div role="alert" style={{ color: '#e0655e', fontSize: 11.5, marginTop: 7 }}>{uploadError}</div>}
                 <div style={{ color: 'rgba(244,244,245,.36)', fontSize: 11, marginTop: 6 }}>SRT or WebVTT · 5 MB max</div>
@@ -1626,9 +1559,9 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
         {view === 'audio' && (
           <>
             {subHeader('Audio')}
-            {audios.length > 8 && searchBox}
+            {audioStreams.length > 8 && searchBox}
             <div style={{ overflowY: 'auto', padding: '6px 0' }}>
-              {filtered(audios).map(([t, i]) => optRow(trackName(t, i), audioActive === i, () => { chooseAudio(i); setView('main') }, i))}
+              {filtered(audioStreams).map((t, i) => optRow(trackName(t, i), selectedAudioIndex === t.index, () => chooseAudio(t.index), t.index))}
             </div>
           </>
         )}

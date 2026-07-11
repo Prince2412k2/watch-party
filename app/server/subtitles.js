@@ -1,28 +1,25 @@
-import { randomUUID } from 'crypto'
-import { mkdir, writeFile } from 'fs/promises'
-import { dirname, join, resolve } from 'path'
-import { fileURLToPath } from 'url'
-
 import express from 'express'
 
-import { requireAuth } from './auth.js'
-import { findSessionForMember, getSession, isMember } from './session.js'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const STORE_DIR = process.env.SUBTITLE_STORE_DIR || resolve(__dirname, '../../data/subtitles')
-export const MAX_SUBTITLE_BYTES = 5 * 1024 * 1024
+import { requireAuth, getJellyfin } from './auth.js'
+import { BASE } from './jellyfin.js'
+import { findSessionForMember, publicSession } from './session.js'
+import { refreshPlayback } from './playback.js'
 
 const ITEM_ID = /^[A-Za-z0-9-]{1,128}$/
-const PARTY_ID = /^[A-F0-9]{8}$/
-const UPLOAD_ID = /^[a-f0-9-]{36}$/
 const ALLOWED_CONTENT_TYPES = new Set([
   '', 'application/octet-stream', 'application/x-subrip', 'text/plain',
   'text/srt', 'text/vtt', 'text/webvtt',
 ])
 
+const MAX_SUBTITLE_BYTES = 5 * 1024 * 1024
+
 function filenameFrom(req) {
   const raw = req.get('X-Subtitle-Filename') || ''
   try { return decodeURIComponent(raw) } catch { return raw }
+}
+
+function subtitleLanguageFrom(req) {
+  return (req.get('X-Subtitle-Language') || 'eng').trim() || 'eng'
 }
 
 function cleanLabel(filename) {
@@ -46,19 +43,52 @@ function rawSubtitle(req, res, next) {
   })
 }
 
-export function registerSubtitleRoutes(app) {
+async function refreshSessionPlayback(io, session, { token, userId, subtitleStreamIndex = null }) {
+  const selectedAudioIndex = session.playback?.selectedAudioIndex ?? null
+  const playback = await refreshPlayback(session, {
+    token,
+    userId,
+    itemId: session.mediaItemId,
+    mediaSourceId: session.mediaSourceId,
+    audioStreamIndex: Number.isInteger(selectedAudioIndex) ? selectedAudioIndex : null,
+    subtitleStreamIndex,
+    playSessionId: session.playback?.playSessionId ?? null,
+  })
+  io?.to(session.id).emit('party:state', publicSession(session))
+  return playback
+}
+
+async function jellyfinSubtitleMutation({ token, deviceId, itemId, method, body, subtitleIndex = null }) {
+  const path = subtitleIndex == null
+    ? `/Videos/${encodeURIComponent(itemId)}/Subtitles`
+    : `/Videos/${encodeURIComponent(itemId)}/Subtitles/${encodeURIComponent(String(subtitleIndex))}`
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Emby-Authorization': `MediaBrowser Client="Watchparty", Device="Server", DeviceId="${deviceId || 'watchparty-server'}", Version="1.0.0", Token="${token}"`,
+    },
+    body,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw Object.assign(new Error(`Jellyfin ${method} subtitles → ${res.status}`), { status: res.status, body: text })
+  }
+  return res
+}
+
+export function registerSubtitleRoutes(app, io) {
   app.post('/api/library/subtitles/upload', requireAuth, rawSubtitle, async (req, res) => {
     const userId = req.session.jellyfin.userId
-    const mediaItemId = String(req.query.mediaItemId || '')
-    const requestedPartyId = String(req.query.partyId || '').toUpperCase()
-    const session = requestedPartyId ? getSession(requestedPartyId) : findSessionForMember(userId)
+    const { token, deviceId } = getJellyfin(req)
+    const session = findSessionForMember(userId)
     if (!session) return res.status(404).json({ error: 'Party not found' })
-    if (!isMember(session, userId)) return res.status(403).json({ error: 'You are not a member of this party' })
-    const partyId = session.id
+    if (session.hostId !== userId) return res.status(403).json({ error: 'Only the host can manage subtitles' })
+
+    const mediaItemId = String(req.query.mediaItemId || '')
     if (!ITEM_ID.test(mediaItemId) || session.mediaItemId !== mediaItemId) {
       return res.status(409).json({ error: 'Subtitle does not match the party’s current media' })
     }
-
     const filename = filenameFrom(req)
     const ext = filename.match(/\.([^.]+)$/)?.[1]?.toLowerCase()
     const contentType = (req.get('content-type') || '').split(';', 1)[0].trim().toLowerCase()
@@ -70,17 +100,32 @@ export function registerSubtitleRoutes(app) {
 
     const text = req.body.toString('utf8')
     if (text.includes('\uFFFD')) return res.status(400).json({ error: 'Subtitle file must use UTF-8 encoding' })
-    const vtt = ext === 'srt' ? srtToVtt(text) : text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
-    if (!/^WEBVTT(?:\s|$)/.test(vtt)) return res.status(400).json({ error: 'Invalid WebVTT subtitle file' })
+    const data = Buffer.from(text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'), 'utf8').toString('base64')
 
-    const uploadId = randomUUID()
-    const directory = join(STORE_DIR, partyId)
     try {
-      await mkdir(directory, { recursive: true })
-      await writeFile(join(directory, `${uploadId}.vtt`), vtt, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      await jellyfinSubtitleMutation({
+        token,
+        deviceId,
+        itemId: mediaItemId,
+        method: 'POST',
+        body: JSON.stringify({
+          Language: subtitleLanguageFrom(req),
+          Format: ext,
+          IsForced: false,
+          IsHearingImpaired: false,
+          Data: data,
+        }),
+      })
+      await refreshSessionPlayback(io, session, {
+        token,
+        userId,
+        subtitleStreamIndex: session.playback?.selectedSubtitleIndex ?? null,
+      })
       res.status(201).json({
-        url: `/api/library/subtitles/${partyId}/${uploadId}.vtt`,
+        ok: true,
         label: cleanLabel(filename),
+        session: publicSession(session),
+        playback: session.playback,
       })
     } catch (err) {
       console.error('subtitle upload', err.message)
@@ -88,16 +133,35 @@ export function registerSubtitleRoutes(app) {
     }
   })
 
-  app.get('/api/library/subtitles/:partyId/:uploadId.vtt', requireAuth, (req, res) => {
-    const partyId = String(req.params.partyId || '').toUpperCase()
-    const uploadId = String(req.params.uploadId || '').toLowerCase()
-    const session = getSession(partyId)
-    if (!PARTY_ID.test(partyId) || !UPLOAD_ID.test(uploadId) || !session) return res.status(404).end()
-    if (!isMember(session, req.session.jellyfin.userId)) return res.status(403).end()
-    res.set('Content-Type', 'text/vtt; charset=utf-8')
-    res.set('Cache-Control', 'private, max-age=3600')
-    res.sendFile(join(STORE_DIR, partyId, `${uploadId}.vtt`), (err) => {
-      if (err && !res.headersSent) res.status(err.statusCode || 404).end()
-    })
+  app.delete('/api/library/subtitles/:itemId/:index', requireAuth, async (req, res) => {
+    const userId = req.session.jellyfin.userId
+    const { token, deviceId } = getJellyfin(req)
+    const session = findSessionForMember(userId)
+    if (!session) return res.status(404).json({ error: 'Party not found' })
+    if (session.hostId !== userId) return res.status(403).json({ error: 'Only the host can manage subtitles' })
+
+    const mediaItemId = String(req.params.itemId || '')
+    const index = Number.parseInt(String(req.params.index || ''), 10)
+    if (!ITEM_ID.test(mediaItemId) || !Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid subtitle index' })
+    if (session.mediaItemId !== mediaItemId) return res.status(409).json({ error: 'Subtitle does not match the party’s current media' })
+
+    try {
+      await jellyfinSubtitleMutation({
+        token,
+        deviceId,
+        itemId: mediaItemId,
+        method: 'DELETE',
+        subtitleIndex: index,
+      })
+      await refreshSessionPlayback(io, session, {
+        token,
+        userId,
+        subtitleStreamIndex: null,
+      })
+      res.json({ ok: true, session: publicSession(session), playback: session.playback })
+    } catch (err) {
+      console.error('subtitle delete', err.message)
+      res.status(500).json({ error: 'Could not delete subtitle file' })
+    }
   })
 }

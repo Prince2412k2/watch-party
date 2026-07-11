@@ -14,6 +14,7 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     hostSocketId,
     mediaItemId,      // null until a title is chosen in the lobby
     mediaSourceId,
+    playback: null,   // normalized PlaybackInfo for the current title
     // 'lobby'    = everyone's in, browsing the library together, no title yet
     // 'watching' = a title is selected, playback sync engine is live
     stage: mediaItemId ? 'watching' : 'lobby',
