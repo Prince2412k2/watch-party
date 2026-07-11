@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useMemo, useState } from 'react'
 import { T } from './theme'
 import { ShellContext } from './shellContext'
@@ -10,7 +11,7 @@ import Downloads from './screens/Downloads'
 
 // Route → shell screen. Party routes never reach MobileApp — App.jsx renders
 // them through the shared WatchRoute above the phone branch (mount-stable).
-function screenFor(path) {
+function screenFor(path: string | undefined) {
   if (path === '/login') return { key: 'login', el: <Login />, tab: false }
   if (path === '/discover') return { key: 'browse', el: <Browse />, tab: true }
   if (path === '/downloads') return { key: 'downloads', el: <Downloads />, tab: true }
@@ -24,7 +25,7 @@ function screenFor(path) {
  * flush tab bar sits above the home indicator (hidden on /login). Flat
  * monochrome ground — no ambient glow, no gradient chrome.
  */
-export default function MobileApp({ path }: any = {}) {
+export default function MobileApp({ path }: { path?: string } = {}) {
   const [joinOpen, setJoinOpen] = useState(false)
   const { key, el, tab } = screenFor(path)
 

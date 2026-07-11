@@ -18,7 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 //    focus leaves mid-hold (alt-tab, clicking a devtools panel, etc.).
 //  • Ignores keystrokes while typing in an input/textarea/contentEditable, the
 //    same guard the transport-key handler uses.
-export function usePushToTalk({ micOn, enableMic, enabled = true }: any = {}) {
+export function usePushToTalk({ micOn, enableMic, enabled = true }: { micOn: boolean; enableMic: (on: boolean) => void; enabled?: boolean } = { micOn: false, enableMic: () => {} }) {
   const [talking, setTalking] = useState(false)
   // Refs so the window listeners always read fresh values without re-binding.
   const micOnRef = useRef(micOn)
@@ -47,15 +47,18 @@ export function usePushToTalk({ micOn, enableMic, enabled = true }: any = {}) {
 
   useEffect(() => {
     if (!enabled) return
-    const isTyping = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-    const onKeyDown = (e) => {
+    const isTyping = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return                                    // key-repeat guard
       if (e.key.toLowerCase() !== 't') return
       if (e.ctrlKey || e.metaKey || e.altKey) return          // don't hijack shortcuts
       if (isTyping(e.target)) return
       start()
     }
-    const onKeyUp = (e) => { if (e.key.toLowerCase() === 't') stop() }
+    const onKeyUp = (e: KeyboardEvent) => { if (e.key.toLowerCase() === 't') stop() }
     // Losing focus mid-hold means we'll never see keyup — force-release so the
     // mic can't get stuck open.
     const onBlur = () => stop()

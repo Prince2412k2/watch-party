@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
-import { io } from 'socket.io-client'
+import { useEffect, useState } from 'react'
+import { io, type Socket } from 'socket.io-client'
 
-let socketSingleton = null
+let socketSingleton: Socket | null = null
 
-function getSocket() {
+function getSocket(): Socket {
   if (!socketSingleton) {
     socketSingleton = io({ withCredentials: true, autoConnect: true })
   }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { PointerEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { T, R, EASE, Z, TYPE } from '../theme'
 
@@ -12,7 +13,7 @@ import { T, R, EASE, Z, TYPE } from '../theme'
  *
  * Props: open, onClose, title?, children, maxHeight? ('85dvh' default).
  */
-export function Sheet({ open, onClose, title, children, maxHeight = '85dvh' }: any = {}) {
+export function Sheet({ open = false, onClose, title, children, maxHeight = '85dvh' }: { open?: boolean; onClose?: () => void; title?: string; children?: ReactNode; maxHeight?: string } = {}) {
   const [mounted, setMounted] = useState(open)
   const [dragY, setDragY] = useState(0)
   const startRef = useRef(0)
@@ -20,15 +21,15 @@ export function Sheet({ open, onClose, title, children, maxHeight = '85dvh' }: a
   useEffect(() => { if (open) setMounted(true) }, [open])
   useEffect(() => {
     if (!open) return
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.() }
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose?.() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
   if (!mounted && !open) return null
 
-  const onPointerDown = (e) => { startRef.current = e.clientY; e.currentTarget.setPointerCapture?.(e.pointerId) }
-  const onPointerMove = (e) => { if (startRef.current) setDragY(Math.max(0, e.clientY - startRef.current)) }
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => { startRef.current = e.clientY; e.currentTarget.setPointerCapture?.(e.pointerId) }
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => { if (startRef.current) setDragY(Math.max(0, e.clientY - startRef.current)) }
   const onPointerUp = () => {
     if (dragY > 90) onClose?.()
     setDragY(0); startRef.current = 0

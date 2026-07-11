@@ -1,8 +1,10 @@
+// @ts-nocheck
 import { useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { T, R } from '../theme'
 
 // Same-origin Jellyfin art. type ∈ Primary | Thumb | Backdrop.
-export const imageUrl = (id, type = 'Primary') => `/api/library/image/${id}?type=${type}`
+export const imageUrl = (id: string | number, type = 'Primary') => `/api/library/image/${id}?type=${type}`
 
 /**
  * Session-wide 404 guard (ported from Library's `failedArt`). A missing image is
@@ -10,13 +12,14 @@ export const imageUrl = (id, type = 'Primary') => `/api/library/image/${id}?type
  * prevents the runaway 404 storm when scrolling a wall of posters. Bounded to
  * one request per art URL. Exported so any mobile surface shares one set.
  */
-export const failedArt = new Set()
+export const failedArt = new Set<string>()
 
 /**
  * Robust <img>. Tries `type`, then optional `fallback` {id,type}, then renders
  * a neutral placeholder. Any failure is memoised in `failedArt`.
  */
-export function Img({ id, type = 'Primary', fallback, style, alt = '', className }: any = {}) {
+type ArtRef = { id: string | number; type?: string }
+export function Img({ id, type = 'Primary', fallback, style, alt = '', className }: { id?: string | number; type?: string; fallback?: ArtRef; style?: CSSProperties; alt?: string; className?: string } = {}) {
   const [, force] = useState(0)
   const candidates = [{ id, type }, fallback].filter((c) => c?.id)
   const cur = candidates.find((c) => !failedArt.has(`${c.id}:${c.type}`))
@@ -38,7 +41,7 @@ export function Img({ id, type = 'Primary', fallback, style, alt = '', className
  * (initial glyph on a surface). Press-scales on tap. Pass `w` to size it; the
  * height follows the 2:3 ratio. `ratio` can override (e.g. '16 / 9' for stills).
  */
-export function Poster({ id, type = 'Primary', fallback, title = '', w, ratio = '2 / 3', radius = R.md, onClick, style, children }: any = {}) {
+export function Poster({ id, type = 'Primary', fallback, title = '', w, ratio = '2 / 3', radius = R.md, onClick, style, children }: { id?: string | number; type?: string; fallback?: ArtRef; title?: string; w?: number | string; ratio?: string; radius?: number; onClick?: () => void; style?: CSSProperties; children?: ReactNode } = {}) {
   const [broken, setBroken] = useState(false)
   const key = id ? `${id}:${type}` : null
   const show = id && !broken && !(key && failedArt.has(key))

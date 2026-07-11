@@ -25,12 +25,15 @@ const DANGER_BG = 'rgba(224,101,94,.12)'
 const DANGER_BORDER = 'rgba(224,101,94,.35)'
 const FLAT = { backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)', boxShadow: 'none' }
 
-const clampPct = (progress) => Math.max(0, Math.min(100, Math.round((progress || 0) * 100)))
+const clampPct = (progress: number | null | undefined) => Math.max(0, Math.min(100, Math.round((progress || 0) * 100)))
+type DownloadRingProps = { pct?: number; size?: number; stroke?: number; color?: string; track?: string; labelColor?: string; labelSize?: number }
+type DownloadPosterProps = { posterUrl?: string | null; kind?: string; pct?: number; paused?: boolean; width?: number | string; radius?: number; ringSize?: number }
+type Torrent = { hash: string; progress?: number; state?: string; kind?: string; displayTitle?: string; name?: string; subtitle?: string; posterUrl?: string; dlspeed?: number; eta?: number; numSeeds?: number; numLeechs?: number; size?: number }
 
 /* ── Circular progress ring (SVG donut: track circle + progress arc via
    stroke-dasharray/stroke-dashoffset, NN% centered). Neutral white by default —
    no phase color. ────────────────────────────────────────────────────────── */
-export function DownloadRing({ pct = 0, size = 72, stroke = 6, color = WHITE, track = TRACK, labelColor = '#fff', labelSize }: any = {}) {
+export function DownloadRing({ pct = 0, size = 72, stroke = 6, color = WHITE, track = TRACK, labelColor = '#fff', labelSize }: DownloadRingProps = {}) {
   const clamped = Math.max(0, Math.min(100, Math.round(pct)))
   const r = (size - stroke) / 2
   const circ = 2 * Math.PI * r
@@ -54,10 +57,10 @@ export function DownloadRing({ pct = 0, size = 72, stroke = 6, color = WHITE, tr
    DARK placeholder (film/tv icon on the dark surface) when there's no poster or
    it 404s — never a blank white square. A single small "live" red dot sits
    top-left while actively downloading — the only color on the tile. ──────── */
-export function DownloadPoster({ posterUrl, kind, pct = 0, paused = false, width = 170, radius = 14, ringSize }: any = {}) {
+export function DownloadPoster({ posterUrl, kind, pct = 0, paused = false, width = 170, radius = 14, ringSize }: DownloadPosterProps = {}) {
   const [ok, setOk] = useState(true)
   const show = posterUrl && ok
-  const rs = ringSize ?? Math.round(Math.min(width, 200) * 0.46)
+  const rs = ringSize ?? Math.round(Math.min(typeof width === 'number' ? width : 200, 200) * 0.46)
   return (
     <div style={{ position: 'relative', width: width === '100%' ? '100%' : width, aspectRatio: '2/3', borderRadius: radius,
       overflow: 'hidden', background: C.surface, display: 'grid', placeItems: 'center' }}>
@@ -83,8 +86,8 @@ export function DownloadPoster({ posterUrl, kind, pct = 0, paused = false, width
 // Fetch the rich metadata for a download by hash. Falls back silently to the
 // torrent's own enriched fields (displayTitle/subtitle/posterUrl/kind) if the
 // lookup can't resolve or Radarr/Sonarr are unreachable.
-function useDownloadDetail(hash) {
-  const [detail, setDetail] = useState(null)
+function useDownloadDetail(hash: string | null | undefined) {
+  const [detail, setDetail] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     if (!hash) return
@@ -104,7 +107,7 @@ function useDownloadDetail(hash) {
    `torrent` is the live enriched item the page already polls (kept fresh so the
    ring + stats update in place). Actions POST straight to the qBittorrent proxy
    and let the page's poller reconcile; a delete closes the overlay. */
-export function DownloadDetail({ torrent, onClose }: any = {}) {
+export function DownloadDetail({ torrent, onClose }: { torrent?: Torrent | null; onClose?: () => void } = {}) {
   const mobile = useIsMobile()
   const { detail, loading } = useDownloadDetail(torrent?.hash)
   const [busy, setBusy] = useState(false)
@@ -127,14 +130,14 @@ export function DownloadDetail({ torrent, onClose }: any = {}) {
   const runtime = fmtRuntimeFromMinutes(detail?.runtime)
   const infoLine = [detail?.year, runtime, detail?.certification, detail?.network, detail?.status].filter(Boolean)
 
-  const doAction = (endpoint, body) => {
+  const doAction = (endpoint: string, body: unknown) => {
     setBusy(true)
-    jpost(`/api/servarr/qbittorrent/${endpoint}`, { hashes: torrent.hash, ...body })
+    jpost(`/api/servarr/qbittorrent/${endpoint}`, { hashes: torrent.hash, ...(body as Record<string, unknown>) })
       .catch(() => {})
       .finally(() => setBusy(false))
   }
   const onPauseResume = () => doAction(paused ? 'resume' : 'pause', {})
-  const onDelete = (deleteFiles) => {
+  const onDelete = (deleteFiles: boolean) => {
     setConfirmDel(false)
     setBusy(true)
     jpost('/api/servarr/qbittorrent/delete', { hashes: torrent.hash, deleteFiles })
@@ -190,7 +193,7 @@ export function DownloadDetail({ torrent, onClose }: any = {}) {
                     <Icon path={Ic.star} size={16} fill={C.text} stroke="none" />{rating.toFixed(1)}
                   </span>
                 )}
-                {genres.slice(0, 3).map((g) => <span key={g} style={{ color: C.dim }}>{g}</span>)}
+                {genres.slice(0, 3).map((g: string) => <span key={g} style={{ color: C.dim }}>{g}</span>)}
               </div>
             )}
 

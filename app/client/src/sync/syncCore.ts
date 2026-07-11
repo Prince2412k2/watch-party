@@ -106,7 +106,26 @@ export const BUFFER_TIMEOUT_MS = 8000
 // that uses this never calls play(); it just fetches + renders the frozen frame.
 export const PAUSED_BUFFER_AHEAD_SEC = 2.0
 
-export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+export interface SyncSchedule {
+  positionTicks: number
+  t0: number
+  phase: 'playing' | 'paused' | 'stalled' | string
+  rate?: number
+  paused?: boolean
+  version?: number
+}
+
+export interface SyncIntent {
+  seekTo?: number
+  rate?: number
+  play?: boolean
+  pause?: boolean
+  hardSeek?: boolean
+  pausedSeek?: boolean
+  drift?: number
+}
 
 /**
  * Predicted shared-timeline position (seconds) at a given server time. Pure.
@@ -117,7 +136,7 @@ export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
  * @param {object} s            schedule { positionTicks, t0, phase, ... }
  * @param {number} serverNowMs  server-aligned now in ms (a value, not a fn)
  */
-export function predictPosition(s, serverNowMs) {
+export function predictPosition(s: SyncSchedule | null | undefined, serverNowMs: number) {
   if (!s) return 0
   const P0 = s.positionTicks / TICKS
   if (s.phase !== 'playing') return P0
@@ -156,8 +175,22 @@ export function predictPosition(s, serverNowMs) {
 export function decideSyncAction({
   schedule: s, serverNowMs, clockReady, currentTime, paused, isHost, mode, userSeeking,
   suppressHardSeek = false, correctionState = null,
-}: any = {}): any {
+}: {
+  schedule?: SyncSchedule | null
+  serverNowMs?: () => number
+  clockReady?: () => boolean
+  currentTime?: number
+  paused?: boolean
+  isHost?: boolean
+  mode?: 'hopping' | 'dragging' | string
+  userSeeking?: boolean
+  suppressHardSeek?: boolean
+  correctionState?: { correcting: boolean } | null
+} = {}): SyncIntent | null {
   if (!s) return null
+  const ct = currentTime ?? 0
+  const now = serverNowMs ?? (() => 0)
+  const clockOk = clockReady ?? (() => false)
   // A hopping host plays natively and never runs the correction loop.
   if (isHost && mode !== 'dragging') return null
   if (userSeeking) return null
@@ -166,24 +199,24 @@ export function decideSyncAction({
 
   // paused OR stalled → everyone holds at the frozen position
   if (s.phase !== 'playing') {
-    const intent: any = { rate: 1 }
+    const intent: SyncIntent = { rate: 1 }
     if (!paused) intent.pause = true
     // A guest that isn't already at the frozen position must jump there AND make
     // hls.js actually fetch/decode/render the frame while staying paused (a bare
     // seek while paused doesn't reliably load the segment on HLS — the loader is
     // never kicked by a play()). pausedSeek routes this through the buffer-aware
     // paused-seek in the caller instead of a bare currentTime write.
-    if (Math.abs(currentTime - P0) > HOLD_TOLERANCE) { intent.seekTo = P0; intent.pausedSeek = true }
+    if (Math.abs(ct - P0) > HOLD_TOLERANCE) { intent.seekTo = P0; intent.pausedSeek = true }
     return intent
   }
 
-  if (!clockReady()) return null
-  const expected = predictPosition(s, serverNowMs())   // === P0 + (now - t0)/1000 while playing
+  if (!clockOk()) return null
+  const expected = predictPosition(s, now())   // === P0 + (now - t0)/1000 while playing
   if (expected < 0) return null
 
   if (paused) {
-    const drift = expected - currentTime
-    const intent: any = { seekTo: expected, rate: 1, play: true, drift }
+    const drift = expected - ct
+    const intent: SyncIntent = { seekTo: expected, rate: 1, play: true, drift }
     // A paused hopping guest is commonly a late joiner. Large initial drift
     // needs the same buffered rendezvous as a playing guest's hard correction;
     // seek+play directly into unbuffered HLS creates a stall/re-seek loop.
@@ -191,12 +224,12 @@ export function decideSyncAction({
     return intent
   }
 
-  const err = expected - currentTime
+  const err = expected - ct
   const ae = Math.abs(err)
 
   if (isHost) {
     // dragging host: obey the timeline, correct only gross drift, no nudge
-    const intent: any = { rate: 1, drift: err }
+    const intent: SyncIntent = { rate: 1, drift: err }
     if (ae > HOST_DRAG_SEEK_SEC) intent.seekTo = expected
     return intent
   }

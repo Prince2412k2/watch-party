@@ -7,12 +7,12 @@ import { useEffect, useState } from 'react'
  * something needs your attention" without pulling in the whole queue. Polls
  * only while the tab is visible; a failed/unconfigured service silently
  * contributes 0 rather than surfacing an error. */
-export function useFailingCount(enabled) {
+export function useFailingCount(enabled: boolean) {
   const [count, setCount] = useState(0)
   useEffect(() => {
     if (!enabled) { setCount(0); return }
-    let timer = null
-    let ctrl = null
+    let timer: ReturnType<typeof setInterval> | null = null
+    let ctrl: AbortController | null = null
     const poll = () => {
       ctrl?.abort()
       // Capture this run's controller locally so a slower earlier response can't

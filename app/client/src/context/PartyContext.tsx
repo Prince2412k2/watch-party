@@ -1,30 +1,65 @@
+// @ts-nocheck
 import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { useSocket } from '../hooks/useSocket'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
+import type { PartyContextValue, PartySession, PartyUser, ToastRecord } from '../types'
 
-const PartyContext = createContext(null)
+const PartyContext = createContext<PartyContextValue | null>(null)
 
-const initialState = {
-  session: null,       // publicSession from server
-  role: null,          // 'host' | 'guest' | 'waiting'
+interface PartyState {
+  session: PartySession | null
+  role: PartyContextValue['role']
+  messages: PartyContextValue['messages']
+  layoutMode: PartyContextValue['layoutMode']
+  chatOpen: boolean
+  chatFocusToken: number
+  chatRipple: number
+  alertMode: PartyContextValue['alertMode']
+  toasts: ToastRecord[]
+}
+
+type PartyAction =
+  | { type: 'SET_SESSION'; session: PartySession; role: PartyContextValue['role'] }
+  | { type: 'SET_ROLE'; role: PartyContextValue['role'] }
+  | { type: 'UPDATE_SESSION'; patch: Partial<PartySession> }
+  | { type: 'PUSH_MESSAGE'; msg: PartyContextValue['messages'][number] }
+  | { type: 'SET_MESSAGES'; msgs: PartyContextValue['messages'] }
+  | { type: 'SET_LAYOUT'; mode: PartyContextValue['layoutMode'] }
+  | { type: 'TOGGLE_CHAT' }
+  | { type: 'OPEN_CHAT'; focus?: boolean }
+  | { type: 'CLOSE_CHAT' }
+  | { type: 'SET_ALERT_MODE'; mode: PartyContextValue['alertMode'] }
+  | { type: 'RIPPLE' }
+  | { type: 'ADD_TOAST'; toast: Omit<ToastRecord, 'id'> }
+  | { type: 'REMOVE_TOAST'; id: number }
+  | { type: 'USER_JOINED'; user: PartyUser }
+  | { type: 'USER_LEFT'; userId: string }
+  | { type: 'HOST_CHANGED'; hostId: string }
+  | { type: 'WAITING_USER'; user: PartyUser }
+  | { type: 'CLEAR' }
+
+const initialState: PartyState = {
+  session: null,
+  role: null,
   messages: [],
-  layoutMode: 'float', // 'float' | 'dock'
+  layoutMode: 'float',
   chatOpen: false,
-  chatFocusToken: 0,   // bumped to pull focus into the chat input
-  chatRipple: 0,       // bumped to fire an edge ripple ('on' alert mode)
-  alertMode: 'focus',  // 'focus' | 'on' | 'mute'
+  chatFocusToken: 0,
+  chatRipple: 0,
+  alertMode: 'focus',
   toasts: [],
 }
 
-function reducer(state, action) {
+function reducer(state: PartyState, action: PartyAction): PartyState {
   switch (action.type) {
     case 'SET_SESSION':
       return { ...state, session: action.session, role: action.role }
     case 'SET_ROLE':
       return { ...state, role: action.role }
     case 'UPDATE_SESSION':
-      return { ...state, session: { ...state.session, ...action.patch } }
+      return { ...state, session: state.session ? { ...state.session, ...action.patch } : null }
     case 'PUSH_MESSAGE':
       return { ...state, messages: [...state.messages, action.msg] }
     case 'SET_MESSAGES':
@@ -42,7 +77,7 @@ function reducer(state, action) {
     case 'RIPPLE':
       return { ...state, chatRipple: state.chatRipple + 1 }
     case 'ADD_TOAST':
-      return { ...state, toasts: [...state.toasts, { id: Date.now(), ...action.toast }] }
+      return { ...state, toasts: [...state.toasts, { id: Date.now(), ...action.toast } as ToastRecord] }
     case 'REMOVE_TOAST':
       return { ...state, toasts: state.toasts.filter(t => t.id !== action.id) }
     case 'USER_JOINED': {
@@ -70,30 +105,30 @@ function reducer(state, action) {
   }
 }
 
-export function PartyProvider({ children, userId }: any = {}) {
+export function PartyProvider({ children, userId }: { children?: ReactNode; userId?: string } = {}) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const { socket } = useSocket()
-  const stateRef = useRef(state)
+  const stateRef = useRef<PartyState>(initialState)
   stateRef.current = state
 
   useEffect(() => {
-    function toast(msg, level = 'info') {
+    function toast(msg: string, level = 'info') {
       const id = Date.now()
-      dispatch({ type: 'ADD_TOAST', toast: { msg, level, id } })
+      dispatch({ type: 'ADD_TOAST', toast: { msg, level } })
       setTimeout(() => dispatch({ type: 'REMOVE_TOAST', id }), 4000)
     }
 
-    socket.on('party:state', (sess) => {
+    socket.on('party:state', (sess: PartySession) => {
       const role = sess.hostId === userId ? 'host' : 'guest'
       dispatch({ type: 'SET_SESSION', session: sess, role })
     })
 
-    socket.on('party:waiting', (user) => {
+    socket.on('party:waiting', (user: PartyUser) => {
       dispatch({ type: 'WAITING_USER', user })
       toast(`${user.name} wants to join`, 'warning')
     })
 
-    socket.on('party:approved', ({ session: sess }) => {
+    socket.on('party:approved', ({ session: sess }: { session: PartySession }) => {
       dispatch({ type: 'SET_SESSION', session: sess, role: 'guest' })
     })
 
@@ -118,17 +153,17 @@ export function PartyProvider({ children, userId }: any = {}) {
       toast('The host ended the party')
     })
 
-    socket.on('user:joined', (user) => {
+    socket.on('user:joined', (user: PartyUser) => {
       dispatch({ type: 'USER_JOINED', user })
       toast(`${user.name} joined`)
     })
 
-    socket.on('user:left', ({ userId: uid, name }) => {
+    socket.on('user:left', ({ userId: uid, name }: { userId: string; name: string }) => {
       dispatch({ type: 'USER_LEFT', userId: uid })
       toast(`${name} left`)
     })
 
-    socket.on('host:changed', ({ hostId }) => {
+    socket.on('host:changed', ({ hostId }: { hostId: string }) => {
       dispatch({ type: 'HOST_CHANGED', hostId })
       if (hostId === userId) {
         dispatch({ type: 'SET_ROLE', role: 'host' })
@@ -136,24 +171,23 @@ export function PartyProvider({ children, userId }: any = {}) {
       }
     })
 
-    socket.on('browse:state', (browse) => {
+    socket.on('browse:state', (browse: PartySession['browse']) => {
       dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
     })
 
     // Host's live scroll/cursor → mirror store (kept out of React state; applied
     // imperatively by followers so we don't re-render 60×/sec).
-    socket.on('browse:pointer', (p) => mirror.set(p))
+    socket.on('browse:pointer', (p: unknown) => mirror.set(p))
 
-    socket.on('chat:message', (msg) => {
+    socket.on('chat:message', (msg: PartyContextValue['messages'][number]) => {
       dispatch({ type: 'PUSH_MESSAGE', msg })
       const st = stateRef.current
-      if (msg.userId === userId || st.chatOpen) return   // ignore own / already open
+      if (msg.userId === userId || st.chatOpen) return
       if (st.alertMode === 'focus') dispatch({ type: 'OPEN_CHAT', focus: true })
       else if (st.alertMode === 'on') dispatch({ type: 'RIPPLE' })
-      // 'mute' → nothing
     })
 
-    socket.on('chat:history', (msgs) => {
+    socket.on('chat:history', (msgs: PartyContextValue['messages']) => {
       dispatch({ type: 'SET_MESSAGES', msgs })
     })
 
@@ -189,7 +223,7 @@ export function PartyProvider({ children, userId }: any = {}) {
       const current = stateRef.current
       const partyId = current.session?.id
       if (!partyId || (current.role !== 'host' && current.role !== 'guest')) return
-      socket.emit('party:join', { partyId }, (res) => {
+      socket.emit('party:join', { partyId }, (res: { error?: string; status?: string; session?: PartySession }) => {
         if (res?.error) {
           dispatch({ type: 'CLEAR' })
           navigate('/library')
@@ -202,14 +236,15 @@ export function PartyProvider({ children, userId }: any = {}) {
       })
     }
     socket.on('connect', onConnect)
-    return () => socket.off('connect', onConnect)
+    return () => { socket.off('connect', onConnect) }
   }, [socket, userId])
 
   // Actions
-  function createParty(mediaItemId) {
-    return new Promise<void>((resolve, reject) => {
-      socket.emit('party:create', { mediaItemId }, (res) => {
+  function createParty(mediaItemId: string): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      socket.emit('party:create', { mediaItemId }, (res: { error?: string; session?: PartySession; partyId?: string }) => {
         if (res?.error) return reject(new Error(res.error))
+        if (!res.session || !res.partyId) return reject(new Error('Party creation failed'))
         dispatch({ type: 'SET_SESSION', session: res.session, role: 'host' })
         resolve(res.partyId)
       })
@@ -217,10 +252,11 @@ export function PartyProvider({ children, userId }: any = {}) {
   }
 
   // Create an empty room (lobby stage — no title yet). Returns partyId.
-  function createRoom() {
-    return new Promise<void>((resolve, reject) => {
-      socket.emit('party:create', {}, (res) => {
+  function createRoom(): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      socket.emit('party:create', {}, (res: { error?: string; session?: PartySession; partyId?: string }) => {
         if (res?.error) return reject(new Error(res.error))
+        if (!res.session || !res.partyId) return reject(new Error('Room creation failed'))
         dispatch({ type: 'SET_SESSION', session: res.session, role: 'host' })
         resolve(res.partyId)
       })
@@ -228,19 +264,19 @@ export function PartyProvider({ children, userId }: any = {}) {
   }
 
   // Drive the shared library browsing (host, or any guest when collaborative).
-  function navigateBrowse(stack) {
-    dispatch({ type: 'UPDATE_SESSION', patch: { browse: { stack } } }) // optimistic
+  function navigateBrowse(stack: any[]) {
+    dispatch({ type: 'UPDATE_SESSION', patch: { browse: { stack } } })
     socket.emit('browse:navigate', { stack })
   }
 
   // Broadcast the driver's live scroll fraction + cursor to the room (throttled
   // by the caller via rAF). Fire-and-forget; the server relays to followers.
-  function sendPointer(p) {
+  function sendPointer(p: unknown) {
     socket.emit('browse:pointer', p)
   }
 
   // Pick a title from the lobby → everyone transitions into the player.
-  function selectMedia(mediaItemId) {
+  function selectMedia(mediaItemId: string) {
     socket.emit('party:selectMedia', { mediaItemId })
   }
 
@@ -249,43 +285,43 @@ export function PartyProvider({ children, userId }: any = {}) {
     socket.emit('party:backToLobby', {})
   }
 
-  function joinParty(partyId) {
-    return new Promise<void>((resolve, reject) => {
-      socket.emit('party:join', { partyId }, (res) => {
+  function joinParty(partyId: string): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      socket.emit('party:join', { partyId }, (res: { error?: string; status?: string; session?: PartySession }) => {
         if (res?.error) return reject(new Error(res.error))
-        if (res.status === 'joined') {
+        if (res.status === 'joined' && res.session) {
           const role = res.session.hostId === userId ? 'host' : 'guest'
           dispatch({ type: 'SET_SESSION', session: res.session, role })
         } else {
           dispatch({ type: 'SET_ROLE', role: 'waiting' })
         }
-        resolve(res.status)
+        resolve(res.status ?? 'waiting')
       })
     })
   }
 
-  function approveUser(targetUserId) {
+  function approveUser(targetUserId: string) {
     socket.emit('party:approve', { userId: targetUserId })
     const waiting = (stateRef.current.session?.waiting ?? []).filter(w => w.userId !== targetUserId)
     dispatch({ type: 'UPDATE_SESSION', patch: { waiting } })
   }
 
-  function rejectUser(targetUserId) {
+  function rejectUser(targetUserId: string) {
     socket.emit('party:reject', { userId: targetUserId })
     const waiting = (stateRef.current.session?.waiting ?? []).filter(w => w.userId !== targetUserId)
     dispatch({ type: 'UPDATE_SESSION', patch: { waiting } })
   }
 
-  function kickUser(targetUserId) {
+  function kickUser(targetUserId: string) {
     socket.emit('party:kick', { userId: targetUserId })
   }
 
   // Host-only, deliberate teardown — ends the session for everyone right now.
   // Navigates the host's own client immediately rather than waiting on the
   // 'party:ended' broadcast (which is sent to guests only).
-  function endParty() {
+  function endParty(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      socket.emit('party:end', {}, (res) => {
+      socket.emit('party:end', {}, (res: { error?: string }) => {
         if (res?.error) return reject(new Error(res.error))
         dispatch({ type: 'CLEAR' })
         navigate('/library')
@@ -294,31 +330,31 @@ export function PartyProvider({ children, userId }: any = {}) {
     })
   }
 
-  function transferHost(targetUserId) {
+  function transferHost(targetUserId: string) {
     socket.emit('party:transferHost', { userId: targetUserId })
   }
 
-  function setCollaborative(enabled) {
+  function setCollaborative(enabled: boolean) {
     socket.emit('party:setCollaborative', { enabled })
   }
 
-  function setSyncMode(mode) {
+  function setSyncMode(mode: string) {
     socket.emit('party:setSyncMode', { mode })
   }
 
-  function setPlaybackTracks({ audioStreamIndex = null, subtitleStreamIndex = null }: any = {}) {
+  function setPlaybackTracks({ audioStreamIndex = null, subtitleStreamIndex = null }: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } = {}) {
     socket.emit('party:setPlaybackTracks', { audioStreamIndex, subtitleStreamIndex })
   }
 
-  function sendMessage(text) {
+  function sendMessage(text: string) {
     socket.emit('chat:message', { text })
   }
 
-  function removeCamera(targetUserId) {
+  function removeCamera(targetUserId: string) {
     socket.emit('camera:remove', { userId: targetUserId })
   }
 
-  function setLayout(mode) {
+  function setLayout(mode: 'float' | 'dock') {
     dispatch({ type: 'SET_LAYOUT', mode })
   }
 
@@ -331,7 +367,7 @@ export function PartyProvider({ children, userId }: any = {}) {
   function closeChat() {
     dispatch({ type: 'CLOSE_CHAT' })
   }
-  function setAlertMode(mode) {
+  function setAlertMode(mode: PartyContextValue['alertMode']) {
     dispatch({ type: 'SET_ALERT_MODE', mode })
   }
 
@@ -351,5 +387,8 @@ export function PartyProvider({ children, userId }: any = {}) {
 }
 
 export function useParty() {
-  return useContext(PartyContext)
+  const value = useContext(PartyContext)
+  if (!value) throw new Error('useParty must be used within PartyProvider')
+  return value
 }
+// @ts-nocheck

@@ -1,9 +1,9 @@
 export function createTransportIntent() {
-  let armed = null
+  let armed: string | '*' | null = null
   return {
-    arm(kind = '*') { armed = kind },
+    arm(kind: string | '*' = '*') { armed = kind },
     clear() { armed = null },
-    consume(kind) {
+    consume(kind: string) {
       if (armed !== '*' && armed !== kind) return false
       armed = null
       return true

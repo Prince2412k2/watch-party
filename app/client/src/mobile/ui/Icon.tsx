@@ -42,7 +42,8 @@ export const Ic = {
  * Single-path stroke icon. `path` is an entry from `Ic`.
  * `fill` lets a glyph render solid (e.g. the play triangle).
  */
-export function Icon({ path, size = 22, stroke = 'currentColor', fill = 'none', sw = 1.7, style }: any = {}) {
+import type { CSSProperties } from 'react'
+export function Icon({ path = '', size = 22, stroke = 'currentColor', fill = 'none', sw = 1.7, style }: { path?: string; size?: number; stroke?: string; fill?: string; sw?: number; style?: CSSProperties } = {}) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={stroke}
       strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={style} aria-hidden="true">
@@ -52,7 +53,7 @@ export function Icon({ path, size = 22, stroke = 'currentColor', fill = 'none', 
 }
 
 // Pick a nav glyph from a Jellyfin view's CollectionType.
-export function viewIcon(v) {
+export function viewIcon(v: { CollectionType?: string } | null | undefined) {
   const t = (v?.CollectionType || '').toLowerCase()
   if (t.includes('movie')) return Ic.film
   if (t.includes('tv') || t.includes('show')) return Ic.tv

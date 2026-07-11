@@ -2,9 +2,20 @@ import { useState } from 'react'
 import { Rnd } from 'react-rnd'
 import CameraTile from './CameraTile'
 
-export default function CameraGrid({ localParticipant, participants, isHost, removedCameras, onRemove, hideSelf }: any = {}) {
-  const [hidden, setHidden] = useState(new Set())
-  const [positions, setPositions] = useState({})
+type CameraParticipant = { identity: string; name?: string; videoTrack?: unknown; isLocal?: boolean }
+
+export default function CameraGrid({
+  localParticipant, participants, isHost, removedCameras, onRemove, hideSelf,
+}: {
+  localParticipant?: CameraParticipant | null
+  participants?: CameraParticipant[]
+  isHost?: boolean
+  removedCameras?: Set<string>
+  onRemove?: (identity: string) => void
+  hideSelf?: boolean
+} = {}) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number; width: number; height: number }>>({})
   const [hiddenMenuOpen, setHiddenMenuOpen] = useState(false)
 
   const localId = localParticipant?.identity
@@ -12,7 +23,7 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
     // `hideSelf` is a purely-local render toggle — the camera keeps publishing,
     // we just drop our own tile from the grid to declutter our screen.
     ...(localParticipant && !hideSelf ? [{ ...localParticipant, isLocal: true }] : []),
-    ...participants.filter(p => p.identity !== localId && !removedCameras.has(p.identity)),
+    ...(participants ?? []).filter(p => p.identity !== localId && !(removedCameras ?? new Set()).has(p.identity)),
   ]
     // Bug 5: only render tiles for feeds whose camera is actually ON. A missing
     // videoTrack means the participant isn't publishing camera — no blank/avatar
@@ -24,11 +35,11 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
   // these are the ones an "unhide" control can bring back.
   const hiddenList = all.filter(p => hidden.has(p.identity))
 
-  function hide(identity) { setHidden(s => new Set([...s, identity])) }
-  function unhide(identity) { setHidden(s => { const n = new Set(s); n.delete(identity); return n }) }
+  function hide(identity: string) { setHidden(s => new Set([...s, identity])) }
+  function unhide(identity: string) { setHidden(s => { const n = new Set(s); n.delete(identity); return n }) }
   function showAll() { setHidden(new Set()); setHiddenMenuOpen(false) }
 
-  function getPos(identity, i) {
+  function getPos(identity: string, i: number) {
     return positions[identity] ?? { x: 16 + i * 20, y: 80 + i * 20, width: 196, height: 148 }
   }
 
@@ -61,7 +72,7 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
                 isLocal={p.isLocal}
                 isHost={isHost}
                 onHide={() => hide(p.identity)}
-                onRemove={() => onRemove(p.identity)}
+                onRemove={() => onRemove?.(p.identity)}
               />
 
               {/* Action buttons (top right) */}
@@ -71,7 +82,7 @@ export default function CameraGrid({ localParticipant, participants, isHost, rem
               }}>
                 {isHost && !p.isLocal && (
                   <button
-                    onClick={() => onRemove(p.identity)}
+                    onClick={() => onRemove?.(p.identity)}
                     title="Remove camera for everyone"
                     style={{
                       width: 24, height: 24, borderRadius: 7, border: 'none',

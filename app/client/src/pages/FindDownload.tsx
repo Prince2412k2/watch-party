@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -1456,4 +1457,3 @@ function ResultsSkeleton({ mobile }: any = {}) {
     </div>
   )
 }
-

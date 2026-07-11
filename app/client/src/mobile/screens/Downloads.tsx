@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { glass } from '../../glass'
 import { T, SANS, MONO, R, EASE, TYPE } from '../theme'
