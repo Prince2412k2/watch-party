@@ -981,61 +981,101 @@ function useAudioTrack(media: MediaLike | null | undefined, playback?: PlayerPla
 
 // ── In-stream subtitle track switching (no reload) ──────────────────────────
 // Same pattern as useAudioTrack but also enables the browser's native text track
-// display mode so subtitles actually render on screen. The @videojs/core mixin
-// creates all subtitle <track> elements with mode="disabled"; we flip the
-// matching one to "showing" after hls.js switches.
+// display mode so subtitles actually render on screen.
+//
+// The @videojs/core text-tracks mixin has a cue-delivery bug: it creates
+// <track> elements with mode="disabled" and tries to forward hls.js CUES_PARSED
+// cues via getTrackById(). However the ID it assigns to the <track> (computed
+// via findIndex on lang/name/type) doesn't always match the ID hls.js sends in
+// CUES_PARSED (which is 'subtitles' + fragLevel). When the IDs don't match the
+// mixin silently discards every cue. Even when they DO match, line 55 resets the
+// track mode back to "disabled" after adding cues, so nothing renders.
+//
+// Fix: we listen for hlsCuesParsed directly and deliver cues ourselves using
+// language/name matching instead of the mixin's broken ID lookup.
 interface SubtitleTrackState { choose: (jellyfinIndex: number | null) => void }
 function useSubtitleTrack(media: MediaLike | null | undefined, playback?: PlayerPlayback): SubtitleTrackState {
-  const enableSubtitle = useCallback((hls: HlsLike, hlsIdx: number) => {
-    hls.subtitleTrack = hlsIdx
-    // The @videojs/core text-tracks mixin creates <track> elements with
-    // mode="disabled". We need to flip the matching one to "showing" so the
-    // browser renders the cues as an overlay on the video.
+  const resolveHlsIdx = useCallback((hls: HlsLike, jellyfinIndex: number | null | undefined) => {
+    if (jellyfinIndex == null || jellyfinIndex < 0) return -1
+    return hlsIndexForJellyfin(hls.subtitleTracks, jellyfinIndex, 'SubtitleStreamIndex')
+  }, [])
+
+  const applySubtitle = useCallback((hls: HlsLike, target: number | null | undefined) => {
     const video = media as unknown as { textTracks?: TextTrackList }
     const tracks = video?.textTracks
+    const hlsIdx = resolveHlsIdx(hls, target)
+    const hlsTrack = hlsIdx >= 0 ? hls.subtitleTracks[hlsIdx] : null
+
+    // Tell hls.js which subtitle track to load (or -1 to disable)
+    hls.subtitleTrack = hlsIdx
+
+    // Sync DOM text track modes
     if (!tracks) return
-    const hlsTrack = hls.subtitleTracks[hlsIdx]
     for (let i = 0; i < tracks.length; i++) {
       const tt = tracks[i]
       if (tt.kind !== 'subtitles' && tt.kind !== 'captions') continue
-      const matches = (hlsTrack.lang && tt.language === hlsTrack.lang) || tt.label === hlsTrack.name
-      tt.mode = matches ? 'showing' : 'disabled'
+      if (hlsTrack) {
+        const matches = (hlsTrack.lang && tt.language === hlsTrack.lang) || tt.label === hlsTrack.name
+        tt.mode = matches ? 'showing' : 'disabled'
+      } else {
+        tt.mode = 'disabled'
+      }
     }
-  }, [media])
+  }, [media, resolveHlsIdx])
 
   const disableSubtitles = useCallback((hls: HlsLike) => {
-    hls.subtitleTrack = -1
-    const video = media as unknown as { textTracks?: TextTrackList }
-    const tracks = video?.textTracks
-    if (!tracks) return
-    for (let i = 0; i < tracks.length; i++) {
-      const tt = tracks[i]
-      if (tt.kind === 'subtitles' || tt.kind === 'captions') tt.mode = 'disabled'
-    }
-  }, [media])
+    applySubtitle(hls, null)
+  }, [applySubtitle])
 
   useEffect(() => {
     const hls = media?.engine
     if (!hls) return
     const target = playback?.selectedSubtitleIndex
-    const apply = () => {
-      if (target == null || target < 0) { disableSubtitles(hls); return }
-      const idx = hlsIndexForJellyfin(hls.subtitleTracks, target, 'SubtitleStreamIndex')
-      if (idx >= 0) enableSubtitle(hls, idx)
+
+    // Deliver cues from hlsCuesParsed directly to the correct DOM track,
+    // bypassing the mixin's broken getTrackById-based cue delivery.
+    const onCuesParsed = (...args: unknown[]) => {
+      const data = args[1] as { track: string; cues: unknown[] }
+      const hlsIdx = resolveHlsIdx(hls, target)
+      if (hlsIdx < 0) return
+      const hlsTrack = hls.subtitleTracks[hlsIdx]
+      if (!hlsTrack) return
+      const video = media as unknown as { textTracks?: TextTrackList }
+      const tracks = video?.textTracks
+      if (!tracks) return
+      for (let i = 0; i < tracks.length; i++) {
+        const tt = tracks[i]
+        if (tt.kind !== 'subtitles' && tt.kind !== 'captions') continue
+        const matches = (hlsTrack.lang && tt.language === hlsTrack.lang) || tt.label === hlsTrack.name
+        if (!matches) continue
+        // Temporarily set mode to "hidden" so the browser accepts new cues
+        const wasDisabled = tt.mode === 'disabled'
+        if (wasDisabled) tt.mode = 'hidden'
+        for (const cue of data.cues) {
+          if (tt.cues?.getCueById((cue as VTTCue).id)) continue
+          tt.addCue(cue as VTTCue)
+        }
+        // Restore to "showing" — the applySubtitle call below finalises the mode
+        if (wasDisabled) tt.mode = 'showing'
+        break
+      }
     }
-    apply()
-    const onManifest = () => apply()
+
+    applySubtitle(hls, target)
+    hls.on('hlsCuesParsed', onCuesParsed)
+    const onManifest = () => applySubtitle(hls, target)
     hls.on('hlsManifestParsed', onManifest)
-    return () => { hls.off('hlsManifestParsed', onManifest) }
-  }, [media, playback?.selectedSubtitleIndex, enableSubtitle, disableSubtitles])
+    return () => {
+      hls.off('hlsCuesParsed', onCuesParsed)
+      hls.off('hlsManifestParsed', onManifest)
+    }
+  }, [media, playback?.selectedSubtitleIndex, applySubtitle, resolveHlsIdx])
 
   const choose = useCallback((jellyfinIndex: number | null) => {
     const hls = media?.engine
     if (!hls) return
-    if (jellyfinIndex == null || jellyfinIndex < 0) { disableSubtitles(hls); return }
-    const idx = hlsIndexForJellyfin(hls.subtitleTracks, jellyfinIndex, 'SubtitleStreamIndex')
-    if (idx >= 0) enableSubtitle(hls, idx)
-  }, [media, enableSubtitle, disableSubtitles])
+    applySubtitle(hls, jellyfinIndex)
+  }, [media, applySubtitle])
 
   return { choose }
 }
