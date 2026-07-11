@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { useParty } from '../context/PartyContext.jsx'
 import { navigate } from '../router.js'
-import { glass } from '../glass.jsx'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 function initials(name = '') {
@@ -39,10 +38,28 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
     setTimeout(() => setCopyLabel('Copy link'), 2000)
   }
 
+  function leaveRoom() {
+    if (window.history.length > 1) {
+      window.history.back()
+      return
+    }
+    navigate('/library')
+  }
+
+  const flatPanel = {
+    background: 'var(--glass)',
+    border: '1px solid var(--stroke)',
+    boxShadow: 'var(--shadow)',
+  }
+  const elevatedPanel = {
+    background: '#141416',
+    border: '1px solid var(--stroke)',
+    boxShadow: 'var(--shadow-lg)',
+  }
   const iconBtn = (danger = false) => ({
-    ...glass('light'),
-    width: phone ? 44 : 42, height: phone ? 44 : 42, borderRadius: 12, display: 'grid', placeItems: 'center',
-    cursor: 'pointer', color: danger ? 'var(--red)' : 'var(--text)', transition: 'transform .15s',
+    width: phone ? 44 : 34, height: phone ? 44 : 34, borderRadius: 8, display: 'grid', placeItems: 'center',
+    cursor: 'pointer', color: danger ? 'var(--red)' : 'var(--text2)', transition: 'color .15s',
+    background: 'transparent', border: 'none', flexShrink: 0,
   })
 
   return (
@@ -50,7 +67,7 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
       {/* Toasts */}
       <div style={{ position: 'absolute', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', pointerEvents: 'none' }}>
         {toasts.map(t => (
-          <div key={t.id} style={{ ...glass('medium'), display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 12, animation: 'in .22s cubic-bezier(.2,0,.1,1)' }}>
+          <div key={t.id} style={{ ...flatPanel, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 12, animation: 'in .22s cubic-bezier(.2,0,.1,1)' }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: (t.level === 'success') ? 'var(--green)' : (t.level === 'warning' || t.level === 'error') ? 'var(--red)' : 'var(--text3)' }} />
             <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)' }}>{t.msg}</span>
           </div>
@@ -63,7 +80,7 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
         <div style={{
           position: 'absolute', top: 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 8px)', zIndex: 40,
           display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px 7px 13px', borderRadius: 999,
-          ...glass('light'), opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
+          ...flatPanel, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
         }}>
           <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>Code</span>
           <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, letterSpacing: '.1em', color: 'var(--text)' }}>{session.id}</span>
@@ -73,29 +90,33 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
         </div>
       )}
 
-      {/* Top-right icon cluster (fades with auto-hide) */}
-      <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 8px)' : top, right: phone ? 'calc(var(--sa-r) + 8px)' : 18, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 10, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
-        {phone && watching && onOpenChat && (
-          <button onClick={(e) => { e.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: 44, height: 44, ...(chatOpen ? { background: 'var(--glass2)' } : {}) }}>
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-          </button>
-        )}
+      {/* Top-left room controls (fades with auto-hide) */}
+      <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 58px)' : top, left: phone ? 'calc(var(--sa-l) + 8px)' : 14, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 4, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
+        <button onClick={leaveRoom} title="Back" aria-label="Back" style={iconBtn(true)} onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)' }} onMouseLeave={e => { e.currentTarget.style.color = 'var(--red)' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /><path d="M9 12h12" /></svg>
+        </button>
         {isHost && (
-          <button onClick={() => setOpen(true)} title="Host controls" style={{ ...iconBtn(), position: 'relative' }}>
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+          <button onClick={() => setOpen(true)} title="Host controls" aria-label="Host controls" style={{ ...iconBtn(), position: 'relative' }} onMouseEnter={e => { e.currentTarget.style.color = 'var(--text)' }} onMouseLeave={e => { e.currentTarget.style.color = 'var(--text2)' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
             {waiting.length > 0 && (
-              <span style={{ position: 'absolute', top: -6, right: -6, minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: 'var(--red)', color: 'var(--text)', fontSize: 11, fontWeight: 700, display: 'grid', placeItems: 'center', border: '2px solid var(--bg)' }}>{waiting.length}</span>
+              <span style={{ position: 'absolute', top: phone ? 3 : -2, right: phone ? 3 : -2, minWidth: 16, height: 16, padding: '0 5px', borderRadius: 999, background: 'var(--red)', color: 'var(--text)', fontSize: 10, fontWeight: 700, display: 'grid', placeItems: 'center' }}>{waiting.length}</span>
             )}
           </button>
         )}
-        <button onClick={() => navigate('/library')} title="Leave" style={iconBtn(true)}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12" /></svg>
-        </button>
+      </div>
+
+      {/* Top-right icon cluster (fades with auto-hide) */}
+      <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 8px)' : top, right: phone ? 'calc(var(--sa-r) + 8px)' : 18, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 10, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
+        {phone && watching && onOpenChat && (
+          <button onClick={(e) => { e.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: 44, height: 44, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+          </button>
+        )}
       </div>
 
       {/* Join-request sidebar (host only) — stays visible; it's a notification */}
       {isHost && waiting.length > 0 && (
-        <div style={{ ...glass('medium'), position: 'absolute', top: phone ? 'calc(var(--sa-t) + 60px)' : top + 54, right: phone ? 'calc(var(--sa-r) + 8px)' : 12, zIndex: 41, width: 'min(268px, calc(100vw - 24px))', borderRadius: 16, overflow: 'hidden', animation: 'up .25s cubic-bezier(.2,0,.1,1)' }}>
+        <div style={{ ...flatPanel, position: 'absolute', top: phone ? 'calc(var(--sa-t) + 60px)' : top + 54, right: phone ? 'calc(var(--sa-r) + 8px)' : 12, zIndex: 41, width: 'min(268px, calc(100vw - 24px))', borderRadius: 16, overflow: 'hidden', animation: 'up .25s cubic-bezier(.2,0,.1,1)' }}>
           <div style={{ padding: '11px 15px', borderBottom: '1px solid var(--stroke)', fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text2)' }}>
             Wants to join · {waiting.length}
           </div>
@@ -117,11 +138,11 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
       {/* Host modal */}
       {open && (
         <>
-          <div onClick={() => setOpen(false)} style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }} />
-          <div style={{ ...glass('heavy'), position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 51, width: 400, maxWidth: '92vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', animation: 'in .25s cubic-bezier(.2,0,.1,1)', color: 'var(--text)' }}>
+          <div onClick={() => setOpen(false)} style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.72)' }} />
+          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 51, width: 420, maxWidth: 'calc(100vw - 28px)', maxHeight: 'min(680px, calc(100vh - 40px))', display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', animation: 'in .25s cubic-bezier(.2,0,.1,1)', color: 'var(--text)' }}>
             <div style={{ padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--stroke)' }}>
               <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Host controls</span>
-              <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 9, border: 'none', background: 'var(--glass2)', color: 'var(--text2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
+              <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12" /></svg>
               </button>
             </div>
@@ -213,8 +234,8 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
           host-disconnect path). Every guest gets kicked back to login/lobby. */}
       {confirmEnd && (
         <>
-          <div onClick={() => setConfirmEnd(false)} style={{ position: 'absolute', inset: 0, zIndex: 52, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }} />
-          <div style={{ ...glass('heavy'), position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 53, width: 360, maxWidth: '90vw', borderRadius: 16, padding: 22, color: 'var(--text)', animation: 'in .2s cubic-bezier(.2,0,.1,1)' }}>
+          <div onClick={() => setConfirmEnd(false)} style={{ position: 'absolute', inset: 0, zIndex: 52, background: 'rgba(0,0,0,.72)' }} />
+          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 53, width: 360, maxWidth: '90vw', borderRadius: 16, padding: 22, color: 'var(--text)', animation: 'in .2s cubic-bezier(.2,0,.1,1)' }}>
             <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.01em', marginBottom: 8 }}>End party for everyone?</div>
             <p style={{ fontSize: 13.5, color: 'var(--text2)', lineHeight: 1.5, margin: '0 0 20px' }}>
               Everyone in the party will be disconnected immediately and returned to the lobby. This can't be undone.

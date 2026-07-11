@@ -15,6 +15,9 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - main # build (artifacts only) on PRs into main; the release job stays tag-gated
   workflow_dispatch:
     inputs:
       version:
@@ -56,6 +59,11 @@ jobs:
             v="${GITHUB_REF_NAME#v}"
           else
             v="${INPUT_VERSION#v}"
+          fi
+          # PR / push / default dispatch: derive a label from pubspec + run number.
+          if [ -z "$v" ] || [ "$v" = "dev" ]; then
+            base="$(grep -m1 '^version:' flutter_app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+            v="${base}-ci${GITHUB_RUN_NUMBER}"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
@@ -130,7 +138,46 @@ jobs:
           else
             v="${INPUT_VERSION#v}"
           fi
+          # PR / push / default dispatch: derive a label from pubspec + run number.
+          if [ -z "$v" ] || [ "$v" = "dev" ]; then
+            base="$(grep -m1 '^version:' flutter_app/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+            v="${base}-ci${GITHUB_RUN_NUMBER}"
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare (pub get + libwebrtc symlink workaround)
+        working-directory: flutter_app
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+          # flutter_webrtc 1.4.0 (hard-pinned by livekit_client) downloads
+          # libwebrtc and extracts it THROUGH Flutter's plugin symlink, which
+          # newer CMake refuses ("Cannot extract through symlink"). Pre-extract
+          # it into the package's REAL pub-cache dir so CMake's ARCHIVE_EXTRACT
+          # step is skipped (reading through the symlink is fine — only writing
+          # through it is blocked).
+          $roots = @($env:PUB_CACHE, "$env:LOCALAPPDATA\Pub\Cache", "$env:APPDATA\Pub\Cache") |
+            Where-Object { $_ -and (Test-Path (Join-Path $_ 'hosted\pub.dev')) }
+          $fw = $null
+          foreach ($r in $roots) {
+            $c = Get-ChildItem (Join-Path $r 'hosted\pub.dev') -Directory -Filter 'flutter_webrtc-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($c) { $fw = $c; break }
+          }
+          if (-not $fw) { throw 'flutter_webrtc not found in pub cache' }
+          $ver = $fw.Name -replace '^flutter_webrtc-',''
+          $tp  = Join-Path $fw.FullName 'third_party'
+          if (-not (Test-Path (Join-Path $tp 'libwebrtc'))) {
+            $dl = Join-Path $tp 'downloads'
+            New-Item -ItemType Directory -Force -Path $dl | Out-Null
+            $zip = Join-Path $dl 'libwebrtc.zip'
+            $url = "https://github.com/flutter-webrtc/flutter-webrtc/releases/download/v$ver/libwebrtc.zip"
+            Write-Host "Pre-seeding libwebrtc from $url"
+            Invoke-WebRequest -Uri $url -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath $tp -Force
+          }
+          if (-not (Test-Path (Join-Path $tp 'libwebrtc'))) { throw 'libwebrtc pre-seed failed' }
+          Write-Host 'libwebrtc pre-seeded OK'
 
       - name: Build
         working-directory: flutter_app
@@ -139,8 +186,6 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           IS_TAG: ${{ github.ref_type == 'tag' }}
         run: |
-          flutter config --enable-windows-desktop
-          flutter pub get
           ARGS=()
           if [ "$IS_TAG" = "true" ]; then
             ARGS+=(--build-name="${VERSION%%-*}" --build-number="${GITHUB_RUN_NUMBER}")
