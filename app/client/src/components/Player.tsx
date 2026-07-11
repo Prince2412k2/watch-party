@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState, useCallback, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
 import { createPlayer } from '@videojs/react'
 import { VideoSkin, videoFeatures } from '@videojs/react/video'
 import { HlsVideo } from '@videojs/react/media/hls-video'
@@ -27,7 +27,8 @@ interface MediaLike {
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
 }
 interface HlsLevel { height?: number; width?: number; bitrate?: number }
-interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number; autoLevelEnabled?: boolean; on: (event: string, fn: () => void) => void; off: (event: string, fn: () => void) => void }
+interface HlsTrack { id: number; name: string; lang?: string; url: string }
+interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number; autoLevelEnabled?: boolean; audioTrack: number; audioTracks: HlsTrack[]; subtitleTrack: number; subtitleTracks: HlsTrack[]; on: (event: string, fn: (...a: unknown[]) => void) => void; off: (event: string, fn: (...a: unknown[]) => void) => void }
 interface QualityState { levels: HlsLevel[]; current: number; selected: number; choose: (index: number) => void }
 type TrackSelection = { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
 export interface PlayerTrack { index: number; displayTitle?: string; title?: string; language?: string; codec?: string; isDefault?: boolean }
@@ -931,6 +932,114 @@ function useQualityLevels(media: MediaLike | null | undefined): QualityState {
   return { levels, current, selected, choose }
 }
 
+// ── Jellyfin ↔ hls.js track index mapping ───────────────────────────────────
+// Jellyfin embeds AudioStreamIndex / SubtitleStreamIndex as query params in each
+// rendition URI inside the HLS master playlist. hls.js assigns its own 0-based
+// indices to audioTracks[] / subtitleTracks[]. We need to map between them.
+function jellyfinStreamIndex(url: string, param: string): number | null {
+  try {
+    const u = new URL(url, window.location.origin)
+    const v = u.searchParams.get(param)
+    return v != null && !isNaN(Number(v)) ? Number(v) : null
+  } catch { return null }
+}
+
+function hlsIndexForJellyfin(tracks: HlsTrack[], jellyfinIndex: number, param: string): number {
+  return tracks.findIndex(t => jellyfinStreamIndex(t.url, param) === jellyfinIndex)
+}
+
+// ── In-stream audio track switching (no reload) ─────────────────────────────
+// Mirrors useQualityLevels: reads playback.selectedAudioIndex from the session,
+// maps it to hls.js's audioTracks[], and sets hls.audioTrack. This avoids the
+// full HLS teardown + rebuild that a src-swap causes.
+interface AudioTrackState { choose: (jellyfinIndex: number) => void }
+function useAudioTrack(media: MediaLike | null | undefined, playback?: PlayerPlayback): AudioTrackState {
+  useEffect(() => {
+    const hls = media?.engine
+    if (!hls) return
+    const target = playback?.selectedAudioIndex
+    if (target == null) return
+    const apply = () => {
+      const idx = hlsIndexForJellyfin(hls.audioTracks, target, 'AudioStreamIndex')
+      if (idx >= 0 && hls.audioTrack !== idx) hls.audioTrack = idx
+    }
+    apply()
+    const onManifest = () => apply()
+    hls.on('hlsManifestParsed', onManifest)
+    return () => { hls.off('hlsManifestParsed', onManifest) }
+  }, [media, playback?.selectedAudioIndex])
+
+  const choose = useCallback((jellyfinIndex: number) => {
+    const hls = media?.engine
+    if (!hls) return
+    const idx = hlsIndexForJellyfin(hls.audioTracks, jellyfinIndex, 'AudioStreamIndex')
+    if (idx >= 0) hls.audioTrack = idx
+  }, [media])
+
+  return { choose }
+}
+
+// ── In-stream subtitle track switching (no reload) ──────────────────────────
+// Same pattern as useAudioTrack but also enables the browser's native text track
+// display mode so subtitles actually render on screen. The @videojs/core mixin
+// creates all subtitle <track> elements with mode="disabled"; we flip the
+// matching one to "showing" after hls.js switches.
+interface SubtitleTrackState { choose: (jellyfinIndex: number | null) => void }
+function useSubtitleTrack(media: MediaLike | null | undefined, playback?: PlayerPlayback): SubtitleTrackState {
+  const enableSubtitle = useCallback((hls: HlsLike, hlsIdx: number) => {
+    hls.subtitleTrack = hlsIdx
+    // The @videojs/core text-tracks mixin creates <track> elements with
+    // mode="disabled". We need to flip the matching one to "showing" so the
+    // browser renders the cues as an overlay on the video.
+    const video = media as unknown as { textTracks?: TextTrackList }
+    const tracks = video?.textTracks
+    if (!tracks) return
+    const hlsTrack = hls.subtitleTracks[hlsIdx]
+    for (let i = 0; i < tracks.length; i++) {
+      const tt = tracks[i]
+      if (tt.kind !== 'subtitles' && tt.kind !== 'captions') continue
+      const matches = (hlsTrack.lang && tt.language === hlsTrack.lang) || tt.label === hlsTrack.name
+      tt.mode = matches ? 'showing' : 'disabled'
+    }
+  }, [media])
+
+  const disableSubtitles = useCallback((hls: HlsLike) => {
+    hls.subtitleTrack = -1
+    const video = media as unknown as { textTracks?: TextTrackList }
+    const tracks = video?.textTracks
+    if (!tracks) return
+    for (let i = 0; i < tracks.length; i++) {
+      const tt = tracks[i]
+      if (tt.kind === 'subtitles' || tt.kind === 'captions') tt.mode = 'disabled'
+    }
+  }, [media])
+
+  useEffect(() => {
+    const hls = media?.engine
+    if (!hls) return
+    const target = playback?.selectedSubtitleIndex
+    const apply = () => {
+      if (target == null || target < 0) { disableSubtitles(hls); return }
+      const idx = hlsIndexForJellyfin(hls.subtitleTracks, target, 'SubtitleStreamIndex')
+      if (idx >= 0) enableSubtitle(hls, idx)
+    }
+    apply()
+    const onManifest = () => apply()
+    hls.on('hlsManifestParsed', onManifest)
+    return () => { hls.off('hlsManifestParsed', onManifest) }
+  }, [media, playback?.selectedSubtitleIndex, enableSubtitle, disableSubtitles])
+
+  const choose = useCallback((jellyfinIndex: number | null) => {
+    const hls = media?.engine
+    if (!hls) return
+    if (jellyfinIndex == null || jellyfinIndex < 0) { disableSubtitles(hls); return }
+    const idx = hlsIndexForJellyfin(hls.subtitleTracks, jellyfinIndex, 'SubtitleStreamIndex')
+    if (idx >= 0) enableSubtitle(hls, idx)
+  }, [media, enableSubtitle, disableSubtitles])
+
+  return { choose }
+}
+
 function levelLabel(l: HlsLevel | null | undefined) {
   if (!l) return ''
   const h = l.height ? `${l.height}p` : (l.width ? `${l.width}w` : '')
@@ -1095,6 +1204,8 @@ interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' |
 function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlaybackTracks, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase = 'ready' }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
+  const audioTrack = useAudioTrack(media, playback)
+  const subtitleTrack = useSubtitleTrack(media, playback)
   const { cur, dur } = useMediaClock(media)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paused, setPaused] = useState(true)
@@ -1152,7 +1263,7 @@ function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlayba
           <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </IconBtn>
-          {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onClose={() => setSettingsOpen(false)} />}
+          {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} onClose={() => setSettingsOpen(false)} />}
         </div>
 
         <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
@@ -1186,6 +1297,8 @@ function MobileBottomBar({
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
+  const audioTrack = useAudioTrack(media, playback)
+  const subtitleTrack = useSubtitleTrack(media, playback)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [paused, setPaused] = useState(true)
@@ -1256,7 +1369,7 @@ function MobileBottomBar({
       <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </BarBtn>
-      {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
   const secondary = [talkControl, hideSelfControl, camStripControl, settingsControl].filter(Boolean)
@@ -1445,8 +1558,8 @@ function TalkBtn({ talking, onStart, onStop }: { talking?: boolean; onStart?: Vo
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
 // Flat solid surface, hairline border, radius 12 — no blur, no gradient.
-interface SettingsMenuProps { playback?: PlayerPlayback; mediaItemId?: string; quality: QualityState; canControl?: boolean; onSetPlaybackTracks?: (tracks: TrackSelection) => void; onClose?: VoidCallback }
-function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybackTracks, onClose }: SettingsMenuProps) {
+interface SettingsMenuProps { playback?: PlayerPlayback; mediaItemId?: string; quality: QualityState; canControl?: boolean; onSetPlaybackTracks?: (tracks: TrackSelection) => void; onChooseAudio?: (jellyfinIndex: number) => void; onChooseSubtitle?: (jellyfinIndex: number | null) => void; onClose?: VoidCallback }
+function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, onClose }: SettingsMenuProps) {
   const [view, setView] = useState<'main' | 'quality' | 'subs' | 'audio'>('main')
   const [q, setQ] = useState('')
   const [uploadingSub, setUploadingSub] = useState(false)
@@ -1463,12 +1576,14 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
 
   function chooseAudio(index: number) {
     if (!canControl) return
+    onChooseAudio?.(index)
     onSetPlaybackTracks?.({ audioStreamIndex: index, subtitleStreamIndex: selectedSubtitleIndex })
     setView('main')
   }
 
   function chooseSub(index: number | null) {
     if (!canControl) return
+    onChooseSubtitle?.(index)
     onSetPlaybackTracks?.({ audioStreamIndex: selectedAudioIndex, subtitleStreamIndex: index })
     setView('main')
   }

@@ -767,7 +767,11 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
     fetch(`/api/library/hls-url?${qs}`, { credentials: 'include' })
       .then(r => r.ok ? apiJson(r) : null)
       .then(d => { const url = stringField(d, 'url'); if (url) setHlsUrl(url) })
-  }, [session?.mediaItemId, mediaSourceId, audioStreamIndex, subtitleStreamIndex])
+  // Track indices are intentionally excluded from deps: audio/subtitle switching
+  // is handled client-side via hls.audioTrack / hls.subtitleTrack (no src reload).
+  // The initial URL still carries the session's starting indices for the first load.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.mediaItemId, mediaSourceId])
 
   if (!hlsUrl) return (
     <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: '#000' }}>
