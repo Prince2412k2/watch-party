@@ -68,6 +68,7 @@ services:
       # everyone out — express-session's default MemoryStore is wiped on every
       # container recreate. See app/server/index.js's sessionStoreDir.
       - ./data/sessions:/data/sessions
+      - ./data/subtitles:/data/subtitles
     env_file:
       # .env  = base (internal URLs, LiveKit keys, SESSION_SECRET)
       # .env.local = optional real secrets (servarr API keys, LiveKit keys).

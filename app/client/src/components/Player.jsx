@@ -24,7 +24,7 @@ const VPlayer = createPlayer({ features: videoFeatures })
 const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
 
 export default function Player({
-  hlsUrl, isHost, collaborativeControl, syncMode, onStruggle,
+  hlsUrl, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
   onToggleMic, onToggleCam, micOn, camOn,
   talking, onTalkStart, onTalkEnd,
   onToggleLayout, onOpenChat, layoutMode,
@@ -111,7 +111,8 @@ export default function Player({
         {phone ? (
           /* Phones: a single consolidated bottom bar — transport + call + settings
              + fullscreen — replacing the three floating desktop clusters. */
-          <MobileBottomBar
+            <MobileBottomBar
+            mediaItemId={mediaItemId}
             canControl={canControl} localPhase={localPhase}
             micOn={micOn} camOn={camOn}
             talking={talking} onTalkStart={onTalkStart} onTalkEnd={onTalkEnd}
@@ -136,6 +137,7 @@ export default function Player({
                 scrim. Read-only for guests (no thumb, no pointer events on the
                 scrubber) — canControl gates interactivity throughout. */}
             <DesktopControlBar
+              mediaItemId={mediaItemId}
               visible={visible} canControl={canControl}
               immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
               userMuted={userMuted} onToggleMuted={toggleMuted}
@@ -1044,7 +1046,7 @@ function VolumeControl({ userMuted, onToggleMuted }) {
 // The single pinned-bottom row: play/pause, current time, scrubber, duration,
 // volume, settings, fullscreen — over the one allowed black-alpha scrim. No
 // box, no border around the row itself.
-function DesktopControlBar({ visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }) {
+function DesktopControlBar({ mediaItemId, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }) {
   const media = VPlayer.useMedia()
   const quality = useQualityLevels(media)
   const { cur, dur } = useMediaClock(media)
@@ -1104,7 +1106,7 @@ function DesktopControlBar({ visible, canControl, immersive, enterImmersive, exi
           <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </IconBtn>
-          {settingsOpen && <SettingsMenu media={media} quality={quality} onClose={() => setSettingsOpen(false)} />}
+          {settingsOpen && <SettingsMenu media={media} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
         </div>
 
         <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
@@ -1129,6 +1131,7 @@ function DesktopControlBar({ visible, canControl, immersive, enterImmersive, exi
 // back into the bar. Fullscreen is NEVER in the overflow. Fades with the
 // auto-hide `visible` layer. Touch targets are 44px with ≥8px gaps.
 function MobileBottomBar({
+  mediaItemId,
   canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
   hideSelf, onToggleHideSelf, camStripOpen, onToggleCamStrip, visible, immersive, enterImmersive, exitImmersive,
 }) {
@@ -1204,7 +1207,7 @@ function MobileBottomBar({
       <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </BarBtn>
-      {settingsOpen && <SettingsMenu media={media} quality={quality} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsMenu media={media} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
   const secondary = [talkControl, hideSelfControl, camStripControl, settingsControl].filter(Boolean)
@@ -1393,19 +1396,27 @@ function TalkBtn({ talking, onStart, onStop }) {
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
 // Flat solid surface, hairline border, radius 12 — no blur, no gradient.
-function SettingsMenu({ media, quality, onClose }) {
+function SettingsMenu({ media, mediaItemId, quality, onClose }) {
   const [view, setView] = useState('main')     // main | quality | subs | audio
   const [q, setQ] = useState('')
   const [subs, setSubs] = useState([])
   const [subActive, setSubActive] = useState(-1)
   const [audios, setAudios] = useState([])
   const [audioActive, setAudioActive] = useState(0)
+  const [uploadingSub, setUploadingSub] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const uploadInputRef = useRef(null)
+
+  const refreshSubs = () => {
+    const tt = media?.textTracks
+    const list = tt ? Array.from(tt).filter(t => t.kind === 'subtitles' || t.kind === 'captions') : []
+    setSubs(list)
+    setSubActive(list.findIndex(t => t.mode === 'showing'))
+  }
 
   useEffect(() => {
     if (!media) return
-    const tt = media.textTracks
-    const list = tt ? Array.from(tt).filter(t => t.kind === 'subtitles' || t.kind === 'captions') : []
-    setSubs(list); setSubActive(list.findIndex(t => t.mode === 'showing'))
+    refreshSubs()
     const at = media.audioTracks
     const alist = at ? Array.from(at) : []
     setAudios(alist); setAudioActive(Math.max(0, alist.findIndex(t => t.enabled)))
@@ -1413,6 +1424,46 @@ function SettingsMenu({ media, quality, onClose }) {
   useEffect(() => { setQ('') }, [view])
 
   function chooseSub(i) { subs.forEach((t, idx) => { t.mode = idx === i ? 'showing' : 'disabled' }); setSubActive(i) }
+  async function uploadSubtitle(file) {
+    if (!file || !mediaItemId || !media) return
+    setUploadingSub(true); setUploadError('')
+    try {
+      const params = new URLSearchParams({ mediaItemId })
+      const res = await fetch(`/api/library/subtitles/upload?${params}`, {
+        method: 'POST', credentials: 'include', body: file,
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          // Header values must be ByteStrings in browsers; URI encoding keeps
+          // non-ASCII filenames valid and the server decodes them for display.
+          'X-Subtitle-Filename': encodeURIComponent(file.name),
+        },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed')
+
+      // A real <track> element is required: adding only a TextTrack does not
+      // make the browser fetch cues from the uploaded WebVTT URL.
+      const track = document.createElement('track')
+      track.kind = 'subtitles'
+      track.label = data.label || file.name.replace(/\.[^.]+$/, '')
+      track.srclang = data.language || 'und'
+      track.src = data.url
+      track.addEventListener('load', () => {
+        refreshSubs()
+        const list = Array.from(media.textTracks || []).filter(t => t.kind === 'subtitles' || t.kind === 'captions')
+        list.forEach(t => { t.mode = t === track.track ? 'showing' : 'disabled' })
+        setSubActive(list.indexOf(track.track))
+      }, { once: true })
+      media.appendChild(track)
+      track.track.mode = 'showing'
+      refreshSubs()
+    } catch (err) {
+      setUploadError(err.message || 'Could not upload subtitle')
+    } finally {
+      setUploadingSub(false)
+      if (uploadInputRef.current) uploadInputRef.current.value = ''
+    }
+  }
   function chooseAudio(i) { audios.forEach((t, idx) => { t.enabled = idx === i }); setAudioActive(i) }
   const trackName = (t, i) => t.label || t.language || `Track ${i + 1}`
 
@@ -1502,6 +1553,17 @@ function SettingsMenu({ media, quality, onClose }) {
               {optRow('Off', subActive === -1, () => { chooseSub(-1); setView('main') }, 'off')}
               {subs.length === 0 && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(244,244,245,.36)' }}>None available in this stream</div>}
               {filtered(subs).map(([t, i]) => optRow(trackName(t, i), subActive === i, () => { chooseSub(i); setView('main') }, i))}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 6, padding: '10px 14px 6px' }}>
+                <input ref={uploadInputRef} type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden
+                  onChange={(e) => uploadSubtitle(e.target.files?.[0])} />
+                <button disabled={uploadingSub || !mediaItemId} onClick={() => uploadInputRef.current?.click()} style={{
+                  width: '100%', padding: '9px 12px', borderRadius: 9, cursor: uploadingSub ? 'wait' : 'pointer',
+                  border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.06)',
+                  color: '#f4f4f5', fontSize: 13, fontWeight: 600, opacity: mediaItemId ? 1 : .45,
+                }}>{uploadingSub ? 'Uploading…' : 'Upload subtitle file'}</button>
+                {uploadError && <div role="alert" style={{ color: '#e0655e', fontSize: 11.5, marginTop: 7 }}>{uploadError}</div>}
+                <div style={{ color: 'rgba(244,244,245,.36)', fontSize: 11, marginTop: 6 }}>SRT or WebVTT · 5 MB max</div>
+              </div>
             </div>
           </>
         )}
