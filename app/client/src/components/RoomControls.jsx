@@ -52,9 +52,8 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
     boxShadow: 'var(--shadow)',
   }
   const elevatedPanel = {
-    background: '#141416',
+    background: 'var(--bg)',
     border: '1px solid var(--stroke)',
-    boxShadow: 'var(--shadow-lg)',
   }
   const iconBtn = (danger = false) => ({
     width: phone ? 44 : 34, height: phone ? 44 : 34, borderRadius: 8, display: 'grid', placeItems: 'center',
@@ -139,7 +138,7 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.72)' }} />
-          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 51, width: 420, maxWidth: 'calc(100vw - 28px)', maxHeight: 'min(680px, calc(100vh - 40px))', display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', animation: 'in .25s cubic-bezier(.2,0,.1,1)', color: 'var(--text)' }}>
+          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 51, width: 420, maxWidth: 'calc(100vw - 28px)', maxHeight: 'min(680px, calc(100vh - 40px))', display: 'flex', flexDirection: 'column', borderRadius: 14, overflow: 'hidden', color: 'var(--text)' }}>
             <div style={{ padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--stroke)' }}>
               <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Host controls</span>
               <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
@@ -235,7 +234,7 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
       {confirmEnd && (
         <>
           <div onClick={() => setConfirmEnd(false)} style={{ position: 'absolute', inset: 0, zIndex: 52, background: 'rgba(0,0,0,.72)' }} />
-          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 53, width: 360, maxWidth: '90vw', borderRadius: 16, padding: 22, color: 'var(--text)', animation: 'in .2s cubic-bezier(.2,0,.1,1)' }}>
+          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 53, width: 360, maxWidth: '90vw', borderRadius: 14, padding: 22, color: 'var(--text)' }}>
             <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.01em', marginBottom: 8 }}>End party for everyone?</div>
             <p style={{ fontSize: 13.5, color: 'var(--text2)', lineHeight: 1.5, margin: '0 0 20px' }}>
               Everyone in the party will be disconnected immediately and returned to the lobby. This can't be undone.
