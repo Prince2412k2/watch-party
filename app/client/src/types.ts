@@ -1,9 +1,11 @@
+import type { PlaybackTrack } from './types/media'
+
 export type PartyRole = 'host' | 'guest' | 'waiting' | null
 
 export interface AuthUser {
-  userId?: string
+  userId: string
   name?: string
-  [key: string]: any
+  username?: string
 }
 
 export interface ChatMessage {
@@ -12,27 +14,32 @@ export interface ChatMessage {
   name?: string
   text?: string
   ts?: number
-  [key: string]: any
+  timestamp?: number
 }
 
 export interface PartyUser {
   userId: string
   name: string
-  [key: string]: any
 }
 
 export interface PartyPlayback {
-  audioStreams?: any[]
-  subtitleStreams?: any[]
+  audioStreams?: PlaybackTrack[]
+  subtitleStreams?: PlaybackTrack[]
   selectedAudioIndex?: number | null
   selectedSubtitleIndex?: number | null
   mediaSourceId?: string | null
-  [key: string]: any
+}
+
+export interface BrowseEntry {
+  id?: string
+  name?: string
+  type?: string
+  // Browse stack entries carry Jellyfin navigation metadata beyond the shared keys.
+  [key: string]: unknown
 }
 
 export interface PartyBrowse {
-  stack?: any[]
-  [key: string]: any
+  stack?: BrowseEntry[]
 }
 
 export interface PartySession {
@@ -43,19 +50,17 @@ export interface PartySession {
   guests?: PartyUser[]
   waiting?: PartyUser[]
   collaborativeControl?: boolean
-  syncMode?: string
+  syncMode?: 'hopping' | 'dragging'
   browse?: PartyBrowse
   playback?: PartyPlayback
   mediaItemId?: string
   mediaSourceId?: string | null
-  [key: string]: any
 }
 
 export interface ToastRecord {
   id: number
   msg: string
   level: string
-  [key: string]: any
 }
 
 export interface AuthContextValue {
@@ -78,8 +83,8 @@ export interface PartyContextValue {
   createParty: (mediaItemId: string) => Promise<string>
   createRoom: () => Promise<string>
   joinParty: (partyId: string) => Promise<string>
-  navigateBrowse: (stack: any[]) => void
-  sendPointer: (point: any) => void
+  navigateBrowse: (stack: BrowseEntry[]) => void
+  sendPointer: (point: MirrorPoint) => void
   selectMedia: (mediaItemId: string) => void
   backToLobby: () => void
   approveUser: (userId: string) => void
@@ -101,5 +106,10 @@ export interface PartyContextValue {
   openChat: (focus?: boolean) => void
   closeChat: () => void
   setAlertMode: (mode: 'focus' | 'on' | 'mute') => void
-  [key: string]: any
+}
+
+export interface MirrorPoint {
+  scroll?: number
+  x?: number
+  y?: number
 }

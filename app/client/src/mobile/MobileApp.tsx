@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { useMemo, useState } from 'react'
+import type { ReactElement } from 'react'
 import { T } from './theme'
 import { ShellContext } from './shellContext'
 import { TabBar } from './TabBar'
@@ -11,7 +11,7 @@ import Downloads from './screens/Downloads'
 
 // Route → shell screen. Party routes never reach MobileApp — App.jsx renders
 // them through the shared WatchRoute above the phone branch (mount-stable).
-function screenFor(path: string | undefined) {
+function screenFor(path: string | undefined): { key: string; el: ReactElement; tab: boolean } {
   if (path === '/login') return { key: 'login', el: <Login />, tab: false }
   if (path === '/discover') return { key: 'browse', el: <Browse />, tab: true }
   if (path === '/downloads') return { key: 'downloads', el: <Downloads />, tab: true }

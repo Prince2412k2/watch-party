@@ -1,5 +1,6 @@
 import { T, TYPE, EASE } from '../theme'
 import { Icon, Ic } from './Icon'
+import type { ReactNode } from 'react'
 
 /**
  * Per-screen flush header. Sticks to the top of the shell's scroll region and
@@ -11,7 +12,7 @@ import { Icon, Ic } from './Icon'
  *   subtitle — small line under the title (optional)
  *   large    — bigger `display` title, left-aligned hero style
  */
-export function TopBar({ title, subtitle, onBack, left, right, large = false }: any = {}) {
+export function TopBar({ title, subtitle, onBack, left, right, large = false }: { title?: ReactNode; subtitle?: ReactNode; onBack?: () => void; left?: ReactNode; right?: ReactNode; large?: boolean } = {}) {
   return (
     <header
       style={{
@@ -48,7 +49,7 @@ export function TopBar({ title, subtitle, onBack, left, right, large = false }: 
 }
 
 // 44×44 circular flat action button for the top bar (and reusable elsewhere).
-export function TopBarButton({ children, onClick, label, active = false, badge }: any = {}) {
+export function TopBarButton({ children, onClick, label, active = false, badge }: { children?: ReactNode; onClick?: () => void; label?: string; active?: boolean; badge?: ReactNode } = {}) {
   return (
     <button
       onClick={onClick}

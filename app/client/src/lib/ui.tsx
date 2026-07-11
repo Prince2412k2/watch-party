@@ -270,7 +270,7 @@ export function Notice({
   )
 }
 
-export function Spinner({ size = 20, dark }: any = {}) {
+export function Spinner({ size = 20, dark = false }: { size?: number; dark?: boolean } = {}) {
   return (
     <span style={{ display: 'inline-block', width: size, height: size, borderRadius: '50%',
       border: `2px solid ${dark ? 'rgba(10,11,13,.25)' : 'rgba(255,255,255,.2)'}`,

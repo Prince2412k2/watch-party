@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createTransportIntent } from './transportIntent'
+import { createTransportIntent } from './transportIntent.ts'
 
 test('ignores media events that were not caused by an explicit interaction', () => {
   const intent = createTransportIntent()

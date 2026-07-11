@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiJson, arrayOf, isLibraryView, objectField, type LibraryView } from '../types/guards'
 
 /* Shared source of the Jellyfin library nav rows (e.g. "Movies", and "Series"
  * once a TV library exists). The Library page fetches /api/library/home for its
@@ -8,12 +9,12 @@ import { useEffect, useState } from 'react'
  * Degrades to [] on any error (unauthed/offline), so the sidebar simply omits the
  * library rows rather than breaking. */
 export function useLibraryViews() {
-  const [views, setViews] = useState([])
+  const [views, setViews] = useState<LibraryView[]>([])
   useEffect(() => {
     let cancel = false
     fetch('/api/library/home', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((d) => { if (!cancel) setViews(Array.isArray(d?.views) ? d.views : []) })
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+      .then((d) => { if (!cancel) setViews(arrayOf(objectField(d, 'views'), isLibraryView)) })
       .catch(() => {})
     return () => { cancel = true }
   }, [])

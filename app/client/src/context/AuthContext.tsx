@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { AuthContextValue, AuthUser } from '../types'
+import { errorMessage, isAuthUser } from '../guards'
+import { apiJson } from '../types/guards'
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
@@ -10,8 +12,12 @@ export function AuthProvider({ children }: { children?: ReactNode } = {}) {
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then((u: AuthUser | null) => setUser(u))
+      .then(async r => {
+        if (!r.ok) return null
+        const value = await apiJson(r)
+        return value
+      })
+      .then((value: unknown) => setUser(isAuthUser(value) ? value : null))
       .catch(() => setUser(null))
       .finally(() => setLoading(false))
   }, [])
@@ -23,8 +29,9 @@ export function AuthProvider({ children }: { children?: ReactNode } = {}) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Login failed')
+    const data = await apiJson(res)
+    if (!res.ok) throw new Error(errorMessage(data, 'Login failed'))
+    if (!isAuthUser(data)) throw new Error('Login returned an invalid user')
     setUser(data)
     return data
   }

@@ -8,6 +8,7 @@ import {
   HARD_SEEK_COOLDOWN_MS,
 } from '../sync/syncCore'
 import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../sync/bufferSeek'
+import type { SyncIntent, SyncSchedule } from '../sync/syncCore'
 
 const STRUGGLE_WINDOW_MS = 15_000
 const STRUGGLE_HARD_SEEKS = 3
@@ -43,7 +44,7 @@ export function useSyncPlay({
   // .current` still reads correctly as "not applying" at 0 and "applying" at
   // any positive count, so no caller (Player.jsx included) needs to change.
   const applyingRef = useRef(0)
-  const scheduleRef = useRef<any>(null)
+  const scheduleRef = useRef<SyncSchedule | null>(null)
   const userSeekRef = useRef(false)
   const userSeekTimer = useRef<number | null>(null)
   const hardSeeks = useRef<number[]>([])
@@ -59,7 +60,7 @@ export function useSyncPlay({
   // mediaGeneration changes, since that's the signal for "different media /
   // effectively a new timeline", not a version rollback.
   const lastAppliedVersionRef = useRef(-Infinity)
-  const lastMediaGenRef = useRef<any>(undefined)
+  const lastMediaGenRef = useRef<SyncSchedule['mediaGeneration'] | undefined>(undefined)
   // Local (non-shared) playback phase for this player: 'ready' during normal
   // operation, 'catchingUp' while bufferAwareSeek is chasing the live position
   // (video.pause() is an implementation detail of that routine, not a user
@@ -247,9 +248,9 @@ export function useSyncPlay({
     try {
       if (!video.paused) video.pause()
       video.playbackRate = 1
-      const target = originSchedule.positionTicks / TICKS
+      const target = (originSchedule?.positionTicks ?? 0) / TICKS
       video.currentTime = target
-      if (!isBuffered(video, target)) ensureHlsLoad(video as any, target)
+      if (!isBuffered(video, target)) ensureHlsLoad(video as HTMLVideoElement & { engine?: { startLoad?: (position: number) => void } }, target)
 
       await waitForSeeked(video, SEEK_TIMEOUT_MS)
       if (!stillCurrent()) return
@@ -274,7 +275,7 @@ export function useSyncPlay({
   }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    function onSchedule(s: any) {
+    function onSchedule(s: SyncSchedule) {
       // Reset the version baseline on a media-generation change (new media
       // selected, or back-to-lobby) — schedule.version keeps climbing across
       // generations within one party session, it does not restart at 0.
@@ -340,7 +341,7 @@ export function useSyncPlay({
       // ready (or that the host later paused out of band). No-op otherwise.
       kickHostPlay(video)
 
-      const intent: any = decideSyncAction({
+      const intent: SyncIntent | null = decideSyncAction({
         schedule: s,
         serverNowMs: serverNow,
         clockReady,

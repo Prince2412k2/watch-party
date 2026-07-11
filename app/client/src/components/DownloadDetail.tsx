@@ -13,6 +13,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import { C, SANS, MONO, Ic, Icon } from '../lib/ui'
 import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, isPausedState } from '../lib/format'
 import { jpost } from '../lib/api'
+import { apiJson, arrayOf, isRecord } from '../types/guards'
 
 /* ── Monochrome tokens local to this file. Progress is white on a white-alpha
    track; the only color is a single muted red used strictly for the "active
@@ -29,6 +30,38 @@ const clampPct = (progress: number | null | undefined) => Math.max(0, Math.min(1
 type DownloadRingProps = { pct?: number; size?: number; stroke?: number; color?: string; track?: string; labelColor?: string; labelSize?: number }
 type DownloadPosterProps = { posterUrl?: string | null; kind?: string; pct?: number; paused?: boolean; width?: number | string; radius?: number; ringSize?: number }
 type Torrent = { hash: string; progress?: number; state?: string; kind?: string; displayTitle?: string; name?: string; subtitle?: string; posterUrl?: string; dlspeed?: number; eta?: number; numSeeds?: number; numLeechs?: number; size?: number }
+type DownloadMetadata = {
+  kind?: string
+  title?: string
+  subtitle?: string
+  posterUrl?: string
+  overview?: string
+  genres?: string[]
+  rating?: number
+  runtime?: number
+  year?: number | string
+  certification?: string
+  network?: string
+  status?: string
+}
+const isString = (value: unknown): value is string => typeof value === 'string'
+function parseDownloadMetadata(value: unknown): DownloadMetadata | null {
+  if (!isRecord(value)) return null
+  return {
+    kind: typeof value.kind === 'string' ? value.kind : undefined,
+    title: typeof value.title === 'string' ? value.title : undefined,
+    subtitle: typeof value.subtitle === 'string' ? value.subtitle : undefined,
+    posterUrl: typeof value.posterUrl === 'string' ? value.posterUrl : undefined,
+    overview: typeof value.overview === 'string' ? value.overview : undefined,
+    genres: arrayOf(value.genres, isString),
+    rating: typeof value.rating === 'number' ? value.rating : undefined,
+    runtime: typeof value.runtime === 'number' ? value.runtime : undefined,
+    year: typeof value.year === 'number' || typeof value.year === 'string' ? value.year : undefined,
+    certification: typeof value.certification === 'string' ? value.certification : undefined,
+    network: typeof value.network === 'string' ? value.network : undefined,
+    status: typeof value.status === 'string' ? value.status : undefined,
+  }
+}
 
 /* ── Circular progress ring (SVG donut: track circle + progress arc via
    stroke-dasharray/stroke-dashoffset, NN% centered). Neutral white by default —
@@ -87,15 +120,15 @@ export function DownloadPoster({ posterUrl, kind, pct = 0, paused = false, width
 // torrent's own enriched fields (displayTitle/subtitle/posterUrl/kind) if the
 // lookup can't resolve or Radarr/Sonarr are unreachable.
 function useDownloadDetail(hash: string | null | undefined) {
-  const [detail, setDetail] = useState<any>(null)
+  const [detail, setDetail] = useState<DownloadMetadata | null>(null)
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     if (!hash) return
     let cancel = false
     setLoading(true); setDetail(null)
     fetch(`/api/servarr/downloads/${encodeURIComponent(hash)}/detail`, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((d) => { if (!cancel) setDetail(d) })
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+      .then((d) => { if (!cancel) setDetail(parseDownloadMetadata(d)) })
       .catch(() => {})
       .finally(() => { if (!cancel) setLoading(false) })
     return () => { cancel = true }
@@ -260,7 +293,12 @@ export function DownloadDetail({ torrent, onClose }: { torrent?: Torrent | null;
 /* Delete confirm — mirrors Downloads.jsx's DeleteDialog (with the same
    "also delete files" toggle) so the two surfaces read identically: a flat
    solid surface, no blur, sitting on a plain black-alpha scrim. */
-function DeleteConfirm({ name, mobile, onClose, onConfirm }: any = {}) {
+function DeleteConfirm({ name, mobile, onClose, onConfirm }: {
+  name?: string
+  mobile?: boolean
+  onClose?: () => void
+  onConfirm?: (deleteFiles: boolean) => void
+} = {}) {
   const [deleteFiles, setDeleteFiles] = useState(false)
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 130, display: 'grid', placeItems: 'center',
@@ -293,7 +331,7 @@ function DeleteConfirm({ name, mobile, onClose, onConfirm }: any = {}) {
         <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
           <button onClick={onClose} style={{ flex: 1, height: 46, borderRadius: 13, border: `1px solid ${C.line2}`,
             cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: C.text, background: 'rgba(255,255,255,.04)' }}>Cancel</button>
-          <button onClick={() => onConfirm(deleteFiles)} style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
+          <button onClick={() => onConfirm?.(deleteFiles)} style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
             cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: '#fff',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: DANGER }}>
             <Icon path={Ic.trash} size={16} sw={2} />Remove

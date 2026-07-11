@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { T, R } from '../theme'
@@ -21,12 +20,12 @@ export const failedArt = new Set<string>()
 type ArtRef = { id: string | number; type?: string }
 export function Img({ id, type = 'Primary', fallback, style, alt = '', className }: { id?: string | number; type?: string; fallback?: ArtRef; style?: CSSProperties; alt?: string; className?: string } = {}) {
   const [, force] = useState(0)
-  const candidates = [{ id, type }, fallback].filter((c) => c?.id)
-  const cur = candidates.find((c) => !failedArt.has(`${c.id}:${c.type}`))
+  const candidates: ArtRef[] = [{ id, type }, fallback].filter((candidate): candidate is ArtRef => candidate?.id != null)
+  const cur = candidates.find((candidate) => !failedArt.has(`${candidate.id}:${candidate.type ?? 'Primary'}`))
   if (!cur) return null
   return (
     <img
-      src={imageUrl(cur.id, cur.type)}
+      src={imageUrl(cur.id, cur.type ?? 'Primary')}
       alt={alt}
       className={className}
       style={{ objectFit: 'cover', maxWidth: '100%', ...style }}

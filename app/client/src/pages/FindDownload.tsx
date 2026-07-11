@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent, ReactNode, SelectHTMLAttributes } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useTorrents } from '../hooks/useTorrents'
@@ -8,18 +8,72 @@ import { useLibraryViews } from '../hooks/useLibraryViews'
 import { C, SANS, MONO, glassStyle, Ic, Icon, Sidebar, TopBar, Notice, Spinner } from '../lib/ui'
 import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, stateInfo, isPausedState } from '../lib/format'
 import { jget, jpost, jdelete } from '../lib/api'
+import { apiJson, arrayOf, isRecord } from '../types/guards'
+
+type Kind = 'movie' | 'series'
+type Service = 'radarr' | 'sonarr'
+type AddState = 'searching' | 'grabbed' | 'monitoring' | 'no_release' | 'search_failed' | 'added' | 'error' | undefined
+type Image = { coverType?: string; remoteUrl?: string; url?: string }
+type Rating = { value?: number; imdb?: { value?: number }; tmdb?: { value?: number } }
+type CatalogItem = {
+  id?: number; tmdbId?: number; tvdbId?: number; titleSlug?: string; title: string; originalTitle?: string
+  year?: number; network?: string; status?: string; overview?: string; images?: Image[]; ratings?: Rating
+  runtime?: number; genres?: string[]; certification?: string; seasonCount?: number; seasons?: Season[]
+  monitored?: boolean; qualityProfileId?: number; rootFolderPath?: string; languageProfileId?: number
+}
+const isCatalogItem = (value: unknown): value is CatalogItem => isRecord(value) && typeof value.title === 'string'
+const isProfile = (value: unknown): value is Profile => isRecord(value) && typeof value.id === 'number'
+const isRootFolder = (value: unknown): value is RootFolder => isRecord(value) && typeof value.path === 'string'
+const parseHealth = (value: unknown): Health => {
+  if (!isRecord(value) || !isRecord(value.services)) return { services: {} }
+  const service = (raw: unknown): HealthService | undefined => isRecord(raw) ? {
+    configured: typeof raw.configured === 'boolean' ? raw.configured : undefined,
+    reachable: typeof raw.reachable === 'boolean' ? raw.reachable : undefined,
+  } : undefined
+  return { services: { radarr: service(value.services.radarr), sonarr: service(value.services.sonarr), qbittorrent: service(value.services.qbittorrent) } }
+}
+const outcomeOf = (value: unknown): string | undefined => isRecord(value) && typeof value.outcome === 'string' ? value.outcome : undefined
+type Torrent = {
+  hash?: string; name?: string; title?: string; state?: string; progress?: number; dlspeed?: number; eta?: number
+  numSeeds?: number; numLeechs?: number
+}
+type Season = { seasonNumber: number; monitored?: boolean; totalEpisodeCount?: number; statistics?: { episodeCount?: number; totalEpisodeCount?: number; percentOfEpisodes?: number } }
+type Profile = { id: number; name?: string }
+type RootFolder = { id?: number; path: string; freeSpace?: number }
+type Metadata = { profiles: Profile[]; rootFolders: RootFolder[]; langProfiles: Profile[] }
+type HealthService = { configured?: boolean; reachable?: boolean }
+type Health = { services?: { radarr?: HealthService; sonarr?: HealthService; qbittorrent?: HealthService } }
+type RequestOutcome = { outcome?: string }
+type PopularData = { source: string; items: CatalogItem[] }
+type Release = {
+  guid: string; title?: string; indexer?: string; size?: number; age?: number; ageHours?: number
+  seeders?: number; leechers?: number; protocol?: string; quality?: string; indexerId?: number
+  rejected?: boolean; rejections?: string[]; downloadAllowed?: boolean
+}
+type OptionsResult = { ok?: boolean; outcome?: string; warn?: string; error?: string }
+type ReleaseData = { movieId: number; createdByPicker?: boolean; searchFailed?: boolean; releases?: Release[] }
+const isRelease = (value: unknown): value is Release => isRecord(value) && typeof value.guid === 'string'
+function parseReleaseData(value: unknown): ReleaseData {
+  if (!isRecord(value) || typeof value.movieId !== 'number') return { movieId: 0, releases: [] }
+  return {
+    movieId: value.movieId,
+    createdByPicker: typeof value.createdByPicker === 'boolean' ? value.createdByPicker : undefined,
+    searchFailed: typeof value.searchFailed === 'boolean' ? value.searchFailed : undefined,
+    releases: arrayOf(value.releases, isRelease),
+  }
+}
 
 /* Pick the best remote poster URL out of a catalog lookup `images` array.
  * Lookup results (not-yet-added) only have full URLs in `remoteUrl`; the local
  * `url` points at the internal instance and 404s for unadded items — so prefer
  * remoteUrl, then url. coverType 'poster' first, falling back to any image. */
-function posterUrl(images) {
+function posterUrl(images?: Image[]) {
   if (!Array.isArray(images) || images.length === 0) return null
   const poster = images.find((i) => i.coverType === 'poster') || images[0]
   return poster?.remoteUrl || poster?.url || null
 }
 // Prefer a wide fanart/backdrop for the detail hero; fall back to the poster.
-function backdropUrl(images) {
+function backdropUrl(images?: Image[]) {
   if (!Array.isArray(images) || images.length === 0) return null
   const fan = images.find((i) => i.coverType === 'fanart') || images.find((i) => i.coverType === 'banner')
   return fan?.remoteUrl || fan?.url || posterUrl(images)
@@ -28,7 +82,7 @@ function backdropUrl(images) {
 /* Remote poster with graceful fallback. These are remote catalog art URLs (not
  * the Jellyfin `Img` proxy), so we render <img> directly and swap to a
  * placeholder on error — one attempt per URL, no retry storm. */
-function Poster({ images, alt, style, useBackdrop }: any = {}) {
+function Poster({ images, alt, style, useBackdrop }: { images?: Image[]; alt?: string; style?: CSSProperties; useBackdrop?: boolean } = {}) {
   const url = (useBackdrop ? backdropUrl(images) : posterUrl(images))
   const [broken, setBroken] = useState(false)
   if (!url || broken) {
@@ -44,8 +98,8 @@ function Poster({ images, alt, style, useBackdrop }: any = {}) {
 
 /* An item is "already in the library" when the lookup echoes back a numeric id
  * (the catalog only sets `id` for titles it already tracks). */
-const isAdded = (r) => r?.id != null
-const keyOf = (kind, r) => (kind === 'movie' ? `m:${r.tmdbId}` : `s:${r.tvdbId}`)
+const isAdded = (r: CatalogItem) => r.id != null
+const keyOf = (kind: Kind, r: CatalogItem) => (kind === 'movie' ? `m:${r.tmdbId}` : `s:${r.tvdbId}`)
 
 /* Map a server request outcome → the per-item card state. The movie request flow
  * is now server-authoritative (grab-or-remove), so the server hands back exactly
@@ -55,7 +109,7 @@ const keyOf = (kind, r) => (kind === 'movie' ? `m:${r.tmdbId}` : `s:${r.tvdbId}`
  *   search_failed → couldn't check right now (transient) → offer a retry
  *   monitoring    → series only: added + Sonarr is searching/monitoring
  *   exists        → already in the library */
-function outcomeToState(outcome) {
+function outcomeToState(outcome?: string): AddState {
   switch (outcome) {
     case 'grabbed': return 'grabbed'
     case 'no_release': return 'no_release'
@@ -68,7 +122,7 @@ function outcomeToState(outcome) {
 
 /* Pull a single 0–10 rating out of the varied ratings shapes the catalog
  * returns (newer: {imdb:{value}, tmdb:{value}}, older: {value}). null if none. */
-function ratingOf(r) {
+function ratingOf(r: CatalogItem) {
   const rt = r?.ratings
   if (!rt) return null
   const v = (typeof rt.value === 'number' ? rt.value : null)
@@ -79,10 +133,11 @@ function ratingOf(r) {
  * non-alphanumeric to spaces, collapse. Torrent names look like
  * "The.Matrix.1999.1080p..." so a normalized substring match is a good
  * best-effort link between an active download and the title that spawned it. */
-const normTitle = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const normTitle = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const isAbortError = (error: unknown) => typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError'
 /* Works for both qBittorrent torrents (`.name`) and *arr queue records
  * (`.title`) — both carry the release name, e.g. "The.Matrix.1999.1080p...". */
-function matchTorrent(title, torrents) {
+function matchTorrent(title: string, torrents?: Torrent[] | null) {
   const n = normTitle(title)
   if (!n || n.length < 2 || !Array.isArray(torrents)) return null
   return torrents.find((t) => normTitle(t.name || t.title).includes(n)) || null
@@ -90,8 +145,8 @@ function matchTorrent(title, torrents) {
 
 /* Session-scoped cache of profiles + folders so the one-tap path is instant
  * after the first add. Keyed by service; a single in-flight promise is shared. */
-const metaCache = {}
-function loadMeta(service) {
+const metaCache: Partial<Record<Service, Promise<Metadata>>> = {}
+function loadMeta(service: Service): Promise<Metadata> {
   if (metaCache[service]) return metaCache[service]
   const reqs = [
     jget(`/api/servarr/${service}/quality-profiles`),
@@ -100,8 +155,8 @@ function loadMeta(service) {
   if (service === 'sonarr') reqs.push(jget('/api/servarr/sonarr/language-profiles'))
   const p = Promise.all(reqs).then(async (rs) => {
     for (const r of rs) if (!r.ok) throw new Error('meta')
-    const [profiles, rootFolders, langProfiles] = await Promise.all(rs.map((r) => r.json()))
-    return { profiles: profiles || [], rootFolders: rootFolders || [], langProfiles: langProfiles || [] }
+    const [profiles, rootFolders, langProfiles] = await Promise.all(rs.map(apiJson))
+    return { profiles: arrayOf(profiles, isProfile), rootFolders: arrayOf(rootFolders, isRootFolder), langProfiles: arrayOf(langProfiles, isProfile) }
   }).catch((e) => { delete metaCache[service]; throw e })   // don't cache a failure
   metaCache[service] = p
   return p
@@ -115,7 +170,7 @@ function loadMeta(service) {
 function readBrowseParams() {
   const p = new URLSearchParams(window.location.search)
   return {
-    kind: p.get('type') === 'series' ? 'series' : 'movie',
+    kind: (p.get('type') === 'series' ? 'series' : 'movie') as Kind,
     term: p.get('q') || '',
   }
 }
@@ -124,13 +179,14 @@ function readBrowseParams() {
  * between search and the empty state — or toggling Movies/Series and back — is
  * instant and doesn't refetch. A single in-flight promise is shared. Empty
  * results (a transient lookup outage) aren't cached, so a later visit retries. */
-const popularCache = {}
-function loadPopular(service) {
+const popularCache: Partial<Record<Service, Promise<PopularData>>> = {}
+function loadPopular(service: Service): Promise<PopularData> {
   if (popularCache[service]) return popularCache[service]
   const p = jget(`/api/servarr/${service}/popular`)
-    .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-    .then((d) => {
-      const val = { source: d?.source || 'curated', items: Array.isArray(d?.items) ? d.items : [] }
+    .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+    .then((d: unknown) => {
+      const data = d as { source?: string; items?: CatalogItem[] } | null
+      const val = { source: data?.source || 'curated', items: Array.isArray(data?.items) ? data.items : [] }
       if (!val.items.length) delete popularCache[service]   // don't pin a transient empty
       return val
     })
@@ -146,7 +202,7 @@ export default function Browse() {
 
   const [kind, setKind] = useState(() => readBrowseParams().kind)  // 'movie' | 'series'
   const [term, setTerm] = useState(() => readBrowseParams().term)
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState<CatalogItem[]>([])
   // Start in the loading state when we mount with a deep-linked query, so the
   // popular rail doesn't flash before the debounced search for it fires.
   const [loading, setLoading] = useState(() => !!readBrowseParams().term.trim())
@@ -154,17 +210,17 @@ export default function Browse() {
   const [hasSearched, setHasSearched] = useState(false)
 
   // Health drives the generic unconfigured state. null = still checking.
-  const [health, setHealth] = useState(null)
+  const [health, setHealth] = useState<Health | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
 
-  const [selected, setSelected] = useState(null)     // detail view item (or null)
-  const [optionsItem, setOptionsItem] = useState(null) // "Options" dialog target
-  const [pickerItem, setPickerItem] = useState(null)  // "Choose a release" picker target (movies)
+  const [selected, setSelected] = useState<CatalogItem | null>(null)     // detail view item (or null)
+  const [optionsItem, setOptionsItem] = useState<CatalogItem | null>(null) // "Options" dialog target
+  const [pickerItem, setPickerItem] = useState<CatalogItem | null>(null)  // "Choose a release" picker target (movies)
 
   // Per-item request state so cards/detail flip without a re-search. Keyed by
   // tmdbId/tvdbId → 'searching' | 'grabbed' | 'no_release' | 'search_failed'
   // | 'monitoring' | 'added' | 'error'.
-  const [addState, setAddState] = useState(() => ({}))
+  const [addState, setAddState] = useState<Record<string, AddState>>(() => ({}))
 
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
   const svcState = health?.services?.[service]
@@ -181,8 +237,8 @@ export default function Browse() {
   useEffect(() => {
     setHealthLoading(true)
     jget('/api/servarr/health')
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then(setHealth)
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+      .then((value: unknown) => setHealth(parseHealth(value)))
       .catch(() => setHealth({ services: {} }))
       .finally(() => setHealthLoading(false))
   }, [])
@@ -220,8 +276,8 @@ export default function Browse() {
 
   // ── Debounced search. A fresh keystroke / toggle flip cancels the in-flight
   // request (AbortController) and restarts the 400ms timer. Blank term clears. ─
-  const abortRef = useRef(null)
-  const runSearch = useCallback((q, k) => {
+  const abortRef = useRef<AbortController | null>(null)
+  const runSearch = useCallback((q: string, k: Kind) => {
     const query = q.trim()
     abortRef.current?.abort()
     if (!query) { setResults([]); setLoading(false); setHasSearched(false); setSearchError(''); return }
@@ -230,9 +286,9 @@ export default function Browse() {
     abortRef.current = ctrl
     setLoading(true); setSearchError('')
     fetch(`/api/servarr/${svc}/search?term=${encodeURIComponent(query)}`, { credentials: 'include', signal: ctrl.signal })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((data) => { setResults(Array.isArray(data) ? data : []); setHasSearched(true) })
-      .catch((e) => { if (e?.name !== 'AbortError') { setResults([]); setHasSearched(true); setSearchError('Something went wrong. Try again.') } })
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+      .then((data: unknown) => { setResults(arrayOf(data, isCatalogItem)); setHasSearched(true) })
+      .catch((e: unknown) => { if (!isAbortError(e)) { setResults([]); setHasSearched(true); setSearchError('Something went wrong. Try again.') } })
       .finally(() => { if (abortRef.current === ctrl) setLoading(false) })
   }, [])
 
@@ -244,7 +300,7 @@ export default function Browse() {
 
   const initials = user?.name?.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'
 
-  const stateFor = (r) => (isAdded(r) ? 'added' : addState[keyOf(kind, r)]) || null
+  const stateFor = (r: CatalogItem): AddState | null => (isAdded(r) ? 'added' : addState[keyOf(kind, r)]) || null
 
   // One-tap request: pull cached meta, pick sensible defaults, POST to the
   // server-authoritative request endpoint. That single call does the add + live
@@ -252,7 +308,7 @@ export default function Browse() {
   // just flip the card to whatever the server decided — no client-side polling.
   // (The request can take up to ~45s while the server searches indexers live; the
   // 'searching' state shows a "finding a release…" spinner until it resolves.)
-  const oneTapAdd = useCallback((r) => {
+  const oneTapAdd = useCallback((r: CatalogItem) => {
     const key = keyOf(kind, r)
     const svc = kind === 'movie' ? 'radarr' : 'sonarr'
     setAddState((s) => ({ ...s, [key]: 'searching' }))
@@ -265,14 +321,14 @@ export default function Browse() {
         const body = kind === 'movie'
           ? { movie: r, qualityProfileId, rootFolderPath }
           : { series: r, qualityProfileId, languageProfileId, rootFolderPath, monitor: true, searchNow: true }
-        return jpost(`/api/servarr/${svc}/request`, body).then((res) => (res.ok ? res.json() : Promise.reject(res)))
+        return jpost(`/api/servarr/${svc}/request`, body).then((res) => (res.ok ? apiJson(res) : Promise.reject(res)))
       })
-      .then((out) => setAddState((s) => ({ ...s, [key]: outcomeToState(out?.outcome) })))
+      .then((out: unknown) => setAddState((s) => ({ ...s, [key]: outcomeToState(outcomeOf(out)) })))
       .catch(() => setAddState((s) => ({ ...s, [key]: 'error' })))
   }, [kind])
 
   // Options dialog already ran the request and knows the outcome — reflect it.
-  const onOptionsAdded = (r, outcome) => {
+  const onOptionsAdded = (r: CatalogItem, outcome?: string) => {
     const key = keyOf(kind, r)
     setOptionsItem(null)
     setAddState((s) => ({ ...s, [key]: outcomeToState(outcome) }))
@@ -280,7 +336,7 @@ export default function Browse() {
 
   // Release picker grabbed a specific release → the card behaves exactly like a
   // one-tap grab from here (the live torrent match takes over the progress UI).
-  const onReleaseGrabbed = (r) => {
+  const onReleaseGrabbed = (r: CatalogItem) => {
     const key = keyOf(kind, r)
     setPickerItem(null)
     setAddState((s) => ({ ...s, [key]: 'grabbed' }))
@@ -295,7 +351,7 @@ export default function Browse() {
         left: sidebarW + (mobile ? 8 : 12), borderRadius: mobile ? 14 : 20, overflow: 'hidden auto',
       }}>
         <TopBar mobile={mobile} initials={initials} logout={logout} title="Browse"
-          detail={selected} onBack={() => setSelected(null)} />
+          detail={!!selected} onBack={() => setSelected(null)} />
 
         {selected ? (
           <DetailView
@@ -366,9 +422,12 @@ export default function Browse() {
  * honest heading: a real live list reads "Popular right now", the curated
  * fallback reads "Popular picks". Failure / empty degrades to a suggested-search
  * prompt rather than a dead end. */
-function PopularRail({ mobile, kind, torrents, stateFor, onOpen, onDownload, onPick }: any = {}) {
+function PopularRail({ mobile, kind, torrents, stateFor, onOpen, onDownload, onPick }: {
+  mobile: boolean; kind: Kind; torrents?: Torrent[] | null; stateFor: (item: CatalogItem) => AddState | null
+  onOpen: (item: CatalogItem) => void; onDownload: (item: CatalogItem) => void; onPick: (term: string) => void
+}) {
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
-  const [state, setState] = useState({ loading: true, error: false, items: [], source: 'curated' })
+  const [state, setState] = useState<{ loading: boolean; error: boolean; items: CatalogItem[]; source: string }>({ loading: true, error: false, items: [], source: 'curated' })
 
   useEffect(() => {
     let cancel = false
@@ -401,7 +460,7 @@ const SUGGESTED_SEARCHES = {
   movie: ['Inception', 'Dune', 'Parasite', 'Oppenheimer', 'The Matrix'],
   series: ['Breaking Bad', 'The Last of Us', 'Severance', 'Chernobyl', 'Arcane'],
 }
-function SuggestedSearches({ kind, onPick }: any = {}) {
+function SuggestedSearches({ kind, onPick }: { kind: Kind; onPick: (term: string) => void }) {
   const list = SUGGESTED_SEARCHES[kind] || []
   return (
     <div style={{ marginTop: 8, padding: '46px 28px', borderRadius: 18, ...glassStyle, animation: 'up .4s ease both',
@@ -426,8 +485,11 @@ function SuggestedSearches({ kind, onPick }: any = {}) {
 }
 
 /* ── Search bar with Movies / Series segmented toggle ─────────────────────── */
-function SearchBar({ mobile, kind, setKind, term, setTerm, loading, disabled, onSubmit }: any = {}) {
-  const seg = (val, label, icon) => {
+function SearchBar({ mobile, kind, setKind, term, setTerm, loading, disabled, onSubmit }: {
+  mobile: boolean; kind: Kind; setKind: (kind: Kind) => void; term: string; setTerm: (term: string) => void
+  loading: boolean; disabled?: boolean; onSubmit: () => void
+}) {
+  const seg = (val: Kind, label: string, icon: string) => {
     const active = kind === val
     return (
       <button onClick={() => setKind(val)} disabled={disabled}
@@ -468,7 +530,10 @@ function SearchBar({ mobile, kind, setKind, term, setTerm, loading, disabled, on
 }
 
 /* ── Result grid + card ───────────────────────────────────────────────────── */
-function ResultGrid({ mobile, results, kind, torrents, stateFor, onOpen, onDownload }: any = {}) {
+function ResultGrid({ mobile, results, kind, torrents, stateFor, onOpen, onDownload }: {
+  mobile: boolean; results: CatalogItem[]; kind: Kind; torrents?: Torrent[] | null
+  stateFor: (item: CatalogItem) => AddState | null; onOpen: (item: CatalogItem) => void; onDownload: (item: CatalogItem) => void
+}) {
   return (
     <div style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 150 : 200}px, 1fr))`, animation: 'up .4s ease both' }}>
       {results.map((r, i) => (
@@ -479,7 +544,9 @@ function ResultGrid({ mobile, results, kind, torrents, stateFor, onOpen, onDownl
     </div>
   )
 }
-function ResultCard({ r, state, torrent, onOpen, onDownload }: any = {}) {
+function ResultCard({ r, state, torrent, onOpen, onDownload }: {
+  r: CatalogItem; state: AddState | null; torrent?: Torrent | null; onOpen: () => void; onDownload: () => void
+}) {
   const [h, setH] = useState(false)
   const active = torrent && !isPausedState(torrent.state)
   const pct = torrent ? Math.max(0, Math.min(100, Math.round((torrent.progress || 0) * 100))) : 0
@@ -606,7 +673,10 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }: any = {}) {
 }
 
 /* ── Detail view — native title page (mirrors Library's Details layout) ─────── */
-function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions, onPickRelease, onRemove }: any = {}) {
+function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions, onPickRelease, onRemove }: {
+  mobile: boolean; kind: Kind; item: CatalogItem; state: AddState | null; torrents?: Torrent[] | null
+  onDownload: () => void; onOptions: () => void; onPickRelease: () => void; onRemove?: () => Promise<void>
+}) {
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [removing, setRemoving] = useState(false)
   const rating = ratingOf(item)
@@ -770,7 +840,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                             border: `1px solid ${C.line2}`, background: 'transparent', color: C.text, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                             Cancel
                           </button>
-                          <button onClick={async () => { setRemoving(true); try { await onRemove() } finally { setRemoving(false); setConfirmRemove(false) } }}
+                          <button onClick={async () => { setRemoving(true); try { await onRemove?.() } finally { setRemoving(false); setConfirmRemove(false) } }}
                             disabled={removing} style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
                               background: C.red, color: C.text, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                             {removing ? 'Removing…' : 'Remove'}
@@ -837,7 +907,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
  * already monitors are shown as such; "Specials" (season 0) is listed last and is
  * never part of "All seasons". Episode counts are shown only when Sonarr has them
  * (a not-yet-added series has none until it's in the library). */
-function SeasonChooser({ item, mobile, onWholeSeriesFallback }: any = {}) {
+function SeasonChooser({ item, mobile, onWholeSeriesFallback }: { item: CatalogItem; mobile: boolean; onWholeSeriesFallback: () => void }) {
   const seasons = Array.isArray(item.seasons) ? item.seasons : []
   const real = seasons.filter((s) => s.seasonNumber >= 1).sort((a, b) => a.seasonNumber - b.seasonNumber)
   const specials = seasons.filter((s) => s.seasonNumber === 0)
@@ -848,7 +918,7 @@ function SeasonChooser({ item, mobile, onWholeSeriesFallback }: any = {}) {
 
   const [meta, setMeta] = useState({ loading: true, error: '' })
   // Per-season session state: seasonNumber → 'requesting' | 'requested' | 'error'.
-  const [req, setReq] = useState({})
+  const [req, setReq] = useState<Record<number, string>>({})
 
   useEffect(() => {
     let cancel = false
@@ -863,7 +933,7 @@ function SeasonChooser({ item, mobile, onWholeSeriesFallback }: any = {}) {
     return () => { cancel = true }
   }, [])
 
-  const request = (nums) => {
+  const request = (nums: number[]) => {
     if (!nums.length) return
     setReq((s) => { const n = { ...s }; for (const k of nums) n[k] = 'requesting'; return n })
     loadMeta('sonarr')
@@ -875,12 +945,12 @@ function SeasonChooser({ item, mobile, onWholeSeriesFallback }: any = {}) {
         return jpost('/api/servarr/sonarr/request-season',
           { series: item, seasons: nums, qualityProfileId, languageProfileId, rootFolderPath })
       })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then(() => setReq((s) => { const n = { ...s }; for (const k of nums) n[k] = 'requested'; return n }))
       .catch(() => setReq((s) => { const n = { ...s }; for (const k of nums) n[k] = 'error'; return n }))
   }
 
-  const stateOf = (s) => req[s.seasonNumber] || (added && s.monitored ? 'monitored' : 'idle')
+  const stateOf = (s: Season) => req[s.seasonNumber] || (added && s.monitored ? 'monitored' : 'idle')
   const anyRequesting = Object.values(req).some((v) => v === 'requesting')
 
   // No season list at all → fall back to the whole-series request so the button
@@ -958,7 +1028,9 @@ function SeasonChooser({ item, mobile, onWholeSeriesFallback }: any = {}) {
 
 /* One season row: label + episode count on the left, a per-season Download (or
  * its current monitor/search state) on the right. Specials render dimmer. */
-function SeasonRow({ season, state, disabled, specials, onRequest }: any = {}) {
+function SeasonRow({ season, state, disabled, specials, onRequest }: {
+  season: Season; state: string; disabled?: boolean; specials?: boolean; onRequest: () => void
+}) {
   const [h, setH] = useState(false)
   const label = season.seasonNumber === 0 ? 'Specials' : `Season ${season.seasonNumber}`
   const count = season.totalEpisodeCount != null && season.totalEpisodeCount > 0
@@ -1021,23 +1093,25 @@ function SeasonRow({ season, state, disabled, specials, onRequest }: any = {}) {
 }
 
 /* ── Options dialog: change quality profile / root folder before adding ─────── */
-function OptionsDialog({ kind, item, onClose, onAdded }: any = {}) {
+function OptionsDialog({ kind, item, onClose, onAdded }: {
+  kind: Kind; item: CatalogItem; onClose: () => void; onAdded: (item: CatalogItem, outcome?: string) => void
+}) {
   const mobile = useIsMobile()
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
 
-  const [profiles, setProfiles] = useState(null)
-  const [rootFolders, setRootFolders] = useState(null)
-  const [langProfiles, setLangProfiles] = useState(null)
+  const [profiles, setProfiles] = useState<Profile[] | null>(null)
+  const [rootFolders, setRootFolders] = useState<RootFolder[] | null>(null)
+  const [langProfiles, setLangProfiles] = useState<Profile[] | null>(null)
   const [meta, setMeta] = useState({ loading: true, error: '' })
 
-  const [qualityProfileId, setQualityProfileId] = useState(null)
-  const [rootFolderPath, setRootFolderPath] = useState(null)
-  const [languageProfileId, setLanguageProfileId] = useState(null)
+  const [qualityProfileId, setQualityProfileId] = useState<number | null>(null)
+  const [rootFolderPath, setRootFolderPath] = useState<string | null>(null)
+  const [languageProfileId, setLanguageProfileId] = useState<number | null>(null)
   const [monitor, setMonitor] = useState(true)
   const [searchNow, setSearchNow] = useState(true)
 
   const [submitting, setSubmitting] = useState(false)
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState<OptionsResult | null>(null)
 
   useEffect(() => {
     let cancel = false
@@ -1064,9 +1138,9 @@ function OptionsDialog({ kind, item, onClose, onAdded }: any = {}) {
       ? { movie: item, qualityProfileId, rootFolderPath }
       : { series: item, qualityProfileId, languageProfileId, rootFolderPath, monitor, searchNow }
     jpost(`/api/servarr/${service}/request`, body)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((out) => {
-        const outcome = out?.outcome
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+      .then((out: unknown) => {
+        const outcome = outcomeOf(out)
         if (outcome === 'grabbed' || outcome === 'monitoring' || outcome === 'exists') {
           // Definitive success — reflect it on the card and close the dialog.
           setResult({ ok: true, outcome }); setTimeout(() => onAdded(item, outcome), 900)
@@ -1179,16 +1253,16 @@ function OptionsDialog({ kind, item, onClose, onAdded }: any = {}) {
  * The cancel fires on every close path (X / backdrop / Cancel) and on unmount
  * (e.g. navigating Back mid-browse), guarded so it runs at most once and never
  * after a successful grab. */
-function ReleasePicker({ item, onClose, onGrabbed }: any = {}) {
+function ReleasePicker({ item, onClose, onGrabbed }: { item: CatalogItem; onClose: () => void; onGrabbed: (item: CatalogItem) => void }) {
   const mobile = useIsMobile()
   const [meta, setMeta] = useState({ loading: true, error: '' })
-  const [data, setData] = useState(null)        // { movieId, createdByPicker, searchFailed, releases }
+  const [data, setData] = useState<ReleaseData | null>(null)        // { movieId, createdByPicker, searchFailed, releases }
   const [nonce, setNonce] = useState(0)          // bump to retry the search
-  const [grabbing, setGrabbing] = useState(null) // guid currently being grabbed
+  const [grabbing, setGrabbing] = useState<string | null>(null) // guid currently being grabbed
   const [grabError, setGrabError] = useState('')
 
   // Cleanup handle kept in a ref so an unmount can still cancel exactly once.
-  const life = useRef({ movieId: null, createdByPicker: false, settled: false })
+  const life = useRef<{ movieId: number | null; createdByPicker: boolean; settled: boolean }>({ movieId: null, createdByPicker: false, settled: false })
   const cleanup = useCallback(() => {
     const { movieId, createdByPicker, settled } = life.current
     if (settled) return
@@ -1221,7 +1295,7 @@ function ReleasePicker({ item, onClose, onGrabbed }: any = {}) {
       }
       const res = await jpost('/api/servarr/radarr/releases', body)
       if (!res.ok) throw new Error('releases')
-      const d = await res.json()
+      const d = parseReleaseData(await apiJson(res))
       // When we passed a movieId the server reports createdByPicker:false, but we
       // must keep our own flag so a retried browse still cleans up on close.
       return { d, createdByPicker: existing != null ? createdByPicker : !!d.createdByPicker }
@@ -1247,11 +1321,11 @@ function ReleasePicker({ item, onClose, onGrabbed }: any = {}) {
 
   const doClose = () => { cleanup(); onClose() }
 
-  const grab = (rel) => {
+  const grab = (rel: Release) => {
     if (grabbing) return
     setGrabbing(rel.guid); setGrabError('')
     jpost('/api/servarr/radarr/grab', { movieId: data?.movieId, guid: rel.guid, indexerId: rel.indexerId })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then(() => { life.current.settled = true; onGrabbed(item) })   // keep the entry; parent flips card to downloading
       .catch(() => { setGrabbing(null); setGrabError('Couldn’t start that download. Try another source.') })
   }
@@ -1322,7 +1396,7 @@ function ReleasePicker({ item, onClose, onGrabbed }: any = {}) {
 
 /* One source row: quality, size, prominent seeders, peers, indexer + a per-row
  * Download. Rejected releases render greyed and un-grabbable with their reason. */
-function ReleaseRow({ rel, grabbing, onGrab }: any = {}) {
+function ReleaseRow({ rel, grabbing, onGrab }: { rel: Release; grabbing: string | null; onGrab: () => void }) {
   const [h, setH] = useState(false)
   const busy = grabbing === rel.guid
   const anyBusy = !!grabbing
@@ -1377,7 +1451,7 @@ function ReleaseRow({ rel, grabbing, onGrab }: any = {}) {
   )
 }
 
-function RetryBtn({ onClick }: any = {}) {
+function RetryBtn({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 14, padding: '10px 18px',
       borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: SANS, fontSize: 14, fontWeight: 700, background: C.accent, color: C.onAccent }}>
@@ -1386,7 +1460,7 @@ function RetryBtn({ onClick }: any = {}) {
   )
 }
 
-function Field({ label, children }: any = {}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label style={{ display: 'block', marginBottom: 14 }}>
       <div style={{ fontSize: 12.5, fontWeight: 700, color: C.dim, marginBottom: 6, letterSpacing: '.01em' }}>{label}</div>
@@ -1394,7 +1468,7 @@ function Field({ label, children }: any = {}) {
     </label>
   )
 }
-function Select({ children, ...rest }: any = {}) {
+function Select({ children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select {...rest} style={{
       width: '100%', height: 44, padding: '0 14px', borderRadius: 12, color: C.text, fontFamily: SANS, fontSize: 14,
@@ -1403,7 +1477,7 @@ function Select({ children, ...rest }: any = {}) {
     </select>
   )
 }
-function Toggle({ label, hint, on, set }: any = {}) {
+function Toggle({ label, hint, on, set }: { label: string; hint?: string; on: boolean; set: (value: boolean) => void }) {
   return (
     <button onClick={() => set(!on)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12,
       padding: '11px 14px', marginBottom: 10, borderRadius: 12, border: `1px solid ${C.line}`, cursor: 'pointer',
@@ -1422,7 +1496,7 @@ function Toggle({ label, hint, on, set }: any = {}) {
 }
 
 /* ── States: unavailable, notices, skeletons, spinner ─────────────────────── */
-function NotAvailable({ kind, state }: any = {}) {
+function NotAvailable({ kind, state }: { kind: Kind; state?: HealthService }) {
   // Generic copy — never names the underlying service. `state` distinguishes
   // "not set up at all" from "set up but currently unreachable".
   const unreachable = state?.configured && !state?.reachable
@@ -1444,7 +1518,7 @@ function NotAvailable({ kind, state }: any = {}) {
     </div>
   )
 }
-function ResultsSkeleton({ mobile }: any = {}) {
+function ResultsSkeleton({ mobile }: { mobile: boolean }) {
   return (
     <div style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 150 : 200}px, 1fr))` }}>
       {Array.from({ length: 10 }).map((_, i) => (

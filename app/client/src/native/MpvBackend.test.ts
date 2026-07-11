@@ -1,23 +1,26 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { __setMockTransport } from './ipc'
+import { __setMockTransport } from './ipc.ts'
 import { IPC, EVENTS } from './contract.ts'
-import { MpvBackend } from './MpvBackend'
+import { MpvBackend } from './MpvBackend.ts'
 
 // Minimal mock transport: invoke() records calls; listen() registers a
 // handler per event name and returns an unlisten fn. emit() lets a test fire
 // a synthetic mpv:* event as Rust would via Tauri's `emit`.
 function makeMockTransport() {
-  const calls = []
-  const handlers = new Map() // eventName -> Set<fn>
-  const invoke = async (cmd, payload) => { calls.push([cmd, payload]); return undefined }
-  const listen = async (eventName, handler) => {
-    if (!handlers.has(eventName)) handlers.set(eventName, new Set())
-    handlers.get(eventName).add(handler)
+  type TransportEvent = { payload: unknown }
+  type TransportHandler = (event: TransportEvent) => void
+  const calls: Array<[string, unknown]> = []
+  const handlers = new Map<string, Set<TransportHandler>>()
+  const invoke = async (cmd: string, payload?: unknown): Promise<unknown> => { calls.push([cmd, payload]); return undefined }
+  const listen = async (eventName: string, handler: TransportHandler): Promise<() => void> => {
+    const eventHandlers = handlers.get(eventName) ?? new Set<TransportHandler>()
+    handlers.set(eventName, eventHandlers)
+    eventHandlers.add(handler)
     return () => handlers.get(eventName)?.delete(handler)
   }
-  const emit = async (eventName, payload) => {
+  const emit = async (eventName: string, payload: unknown): Promise<void> => {
     for (const h of handlers.get(eventName) || []) h({ payload })
   }
   return { invoke, listen, calls, emit }
@@ -87,7 +90,7 @@ test('mpv:pause event relays to standard play/pause events', async () => {
   const backend = new MpvBackend()
   await flush()
 
-  const seen = []
+  const seen: string[] = []
   backend.addEventListener('pause', () => seen.push('pause'))
   backend.addEventListener('play', () => seen.push('play'))
 
@@ -118,7 +121,7 @@ test('mpv:duration and mpv:loadedmetadata relay + update duration', async () => 
   const backend = new MpvBackend()
   await flush()
 
-  const seen = []
+  const seen: string[] = []
   backend.addEventListener('durationchange', () => seen.push('durationchange'))
   backend.addEventListener('loadedmetadata', () => seen.push('loadedmetadata'))
 
@@ -136,7 +139,7 @@ test('mpv:buffering relays as waiting/playing', async () => {
   const backend = new MpvBackend()
   await flush()
 
-  const seen = []
+  const seen: string[] = []
   backend.addEventListener('waiting', () => seen.push('waiting'))
   backend.addEventListener('playing', () => seen.push('playing'))
 
@@ -184,6 +187,7 @@ test('setting playbackRate invokes MPV_SET_SPEED', async () => {
   await flush()
 
   const call = t.calls.find(([cmd]) => cmd === IPC.MPV_SET_SPEED)
+  assert.ok(call)
   assert.deepEqual(call[1], { rate: 2 })
 })
 
@@ -226,6 +230,7 @@ test('load() invokes MPV_LOAD with url/startSec/paused and seeds local state', a
   await flush()
 
   const call = t.calls.find(([cmd]) => cmd === IPC.MPV_LOAD)
+  assert.ok(call)
   assert.deepEqual(call[1], { url: 'https://example.test/stream', startSec: 5, paused: true })
   assert.equal(backend.currentTime, 5)
   assert.equal(backend.paused, true)

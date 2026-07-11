@@ -13,7 +13,8 @@ import { IS_NATIVE } from '../env'
 import { useDownloads, useOfflineLibrary } from '../useOffline'
 import { formatBytes, progressPct } from './format'
 
-export default function DownloadButton({ itemId, title, url, parts }: any = {}) {
+interface DownloadButtonProps { itemId: string; title: string; url: string; parts?: number }
+export default function DownloadButton({ itemId, title, url, parts }: DownloadButtonProps) {
   const { downloads, start, pause, resume, cancel } = useDownloads()
   const { items: offlineItems, remove } = useOfflineLibrary()
   const [busy, setBusy] = useState(false)
@@ -108,4 +109,3 @@ export default function DownloadButton({ itemId, title, url, parts }: any = {}) 
     </button>
   )
 }
-// @ts-nocheck

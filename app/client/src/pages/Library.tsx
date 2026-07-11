@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { forwardRef, useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useFailingCount } from '../hooks/useFailingDownloads'
@@ -8,8 +7,33 @@ import { navigate } from '../router'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
 import { C, SANS, MONO, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui'
 import { fmtRuntimeFromTicks, fmtSpeed } from '../lib/format'
+import { apiJson, arrayOf, isLibraryItemJson, isRecord, isTorrentJson } from '../types/guards'
 
-const img = (id, type = 'Primary') => `/api/library/image/${id}?type=${type}`
+type ItemType = 'Movie' | 'Series' | 'Episode' | 'Season' | 'CollectionFolder' | 'Folder' | 'UserView' | string
+interface LibraryItem {
+  Id: string; Name: string; Type: ItemType; CollectionType?: string; SeriesId?: string; SeriesName?: string
+  ProductionYear?: number; ParentIndexNumber?: number; IndexNumber?: number
+  ChildCount?: number; RecursiveItemCount?: number; CommunityRating?: number; CriticRating?: number
+  OfficialRating?: string; Overview?: string; PremiereDate?: string; RunTimeTicks?: number
+  Genres?: string[]; People?: Person[]; ProviderIds?: { Imdb?: string; Tmdb?: string }
+  UserData?: { PlayedPercentage?: number; Played?: boolean; PlaybackPositionTicks?: number }
+  MediaSources?: Array<{ Size?: number; MediaStreams?: Array<{ Type?: string; Height?: number; VideoRange?: string }> }>
+}
+interface Person { Id: string; Name: string; Type: string; Role?: string }
+interface LibraryHome { views: LibraryItem[]; resume: LibraryItem[]; nextUp: LibraryItem[] }
+const isLibraryItem = (value: unknown): value is LibraryItem => isLibraryItemJson(value)
+const libraryItems = (value: unknown): LibraryItem[] => arrayOf(value, isLibraryItem)
+function parseLibraryHome(value: unknown): LibraryHome | null {
+  if (!isRecord(value)) return null
+  return { views: libraryItems(value.views), resume: libraryItems(value.resume), nextUp: libraryItems(value.nextUp) }
+}
+interface StackEntry { id?: string; name?: string; type?: ItemType; [key: string]: unknown }
+interface Torrent { hash: string; state?: string; progress?: number; displayTitle?: string; name?: string; subtitle?: string; posterUrl?: string; kind?: string; dlspeed?: number }
+interface MirrorPoint { scroll: number; x: number; y: number }
+type StackUpdater = StackEntry[] | ((stack: StackEntry[]) => StackEntry[])
+interface LibraryProps { embedded?: boolean; stack?: StackEntry[]; onNavigate?: (stack: StackEntry[]) => void; onPickMedia?: (item: LibraryItem) => void; canDrive?: boolean; headerRight?: ReactNode; banner?: ReactNode; onPointer?: (point: MirrorPoint) => void; mirrorSubscribe?: (listener: (point: MirrorPoint) => void) => () => void; driverName?: string }
+
+const img = (id: string, type = 'Primary') => `/api/library/image/${id}?type=${type}`
 
 /**
  * Poll active-download count from qBittorrent while the page is visible.
@@ -21,12 +45,12 @@ const img = (id, type = 'Primary') => `/api/library/image/${id}?type=${type}`
  * while the tab is visible, cancels the in-flight request on unmount/hide, and
  * clears the interval. Disabled entirely when `enabled` is false (embedded).
  */
-function useDownloads(enabled) {
-  const [torrents, setTorrents] = useState([])
+function useDownloads(enabled: boolean) {
+  const [torrents, setTorrents] = useState<Torrent[]>([])
   useEffect(() => {
     if (!enabled) { setTorrents([]); return }
-    let timer = null
-    let ctrl = null
+    let timer: ReturnType<typeof setInterval> | null = null
+    let ctrl: AbortController | null = null
     const poll = () => {
       ctrl?.abort()
       // Capture this run's controller locally so a slower earlier response can't
@@ -37,8 +61,8 @@ function useDownloads(enabled) {
       // posterUrl per item (superset of /qbittorrent/torrents), so the
       // "Downloading now" cards can show a title + poster instead of the raw name.
       fetch('/api/servarr/downloads/enriched', { credentials: 'include', signal: c.signal })
-        .then(r => r.ok ? r.json() : Promise.reject(r))
-        .then(data => { if (!c.signal.aborted) setTorrents(Array.isArray(data) ? data : []) })
+        .then(r => r.ok ? apiJson(r) : Promise.reject(r))
+        .then(data => { if (!c.signal.aborted) setTorrents(arrayOf(data, isTorrentJson)) })
         // 503 (unconfigured) / 502 (unreachable) / abort → stay empty, no throw surfaced
         .catch(() => {})
     }
@@ -52,9 +76,9 @@ function useDownloads(enabled) {
   const active = torrents.filter(t => isActiveState(t.state)).length
   return { active, torrents }
 }
-const isFolder = (t) => t === 'Series' || t === 'Season' || t === 'CollectionFolder' || t === 'Folder' || t === 'UserView'
+const isFolder = (t?: ItemType) => t === 'Series' || t === 'Season' || t === 'CollectionFolder' || t === 'Folder' || t === 'UserView'
 const DETAIL_TYPES = new Set(['Movie', 'Series', 'Episode'])
-const isDetail = (t) => DETAIL_TYPES.has(t)
+const isDetail = (t?: ItemType) => typeof t === 'string' && DETAIL_TYPES.has(t)
 
 /**
  * Robust image. Tries `type`, then an optional `fallback` {id,type}, then
@@ -62,11 +86,11 @@ const isDetail = (t) => DETAIL_TYPES.has(t)
  * is NEVER requested again — even if the component remounts repeatedly (which
  * is what caused the runaway 404 storm). Bounded to one request per art URL.
  */
-const failedArt = new Set()
-function Img({ id, type = 'Primary', fallback, style, alt = '' }: any = {}) {
+const failedArt = new Set<string>()
+function Img({ id, type = 'Primary', fallback, style, alt = '' }: { id: string; type?: string; fallback?: { id: string; type: string }; style?: CSSProperties; alt?: string }) {
   const [, force] = useState(0)
   const candidates = [{ id, type }, fallback].filter(c => c?.id)
-  const cur = candidates.find(c => !failedArt.has(`${c.id}:${c.type}`))
+  const cur = candidates.find((c): c is { id: string; type: string } => Boolean(c?.id) && !failedArt.has(`${c!.id}:${c!.type}`))
   if (!cur) return null
   return <img src={img(cur.id, cur.type)} alt={alt} style={style}
     onError={() => { failedArt.add(`${cur.id}:${cur.type}`); force(n => n + 1) }} />
@@ -81,18 +105,18 @@ export default function Library({
   embedded = false, stack: extStack, onNavigate, onPickMedia,
   canDrive = true, headerRight, banner,
   onPointer, mirrorSubscribe, driverName,
-}: any = {}) {
+}: LibraryProps = {}) {
   const { user, logout } = useAuth()
   const mobile = useIsMobile()
-  const [home, setHome] = useState(null)
+  const [home, setHome] = useState<LibraryHome | null>(null)
   const [loadingHome, setLoadingHome] = useState(true)
   const [error, setError] = useState('')
-  const [internalStack, setInternalStack] = useState([])
-  const [gridItems, setGridItems] = useState([])
+  const [internalStack, setInternalStack] = useState<StackEntry[]>([])
+  const [gridItems, setGridItems] = useState<LibraryItem[]>([])
   const [loadingGrid, setLoadingGrid] = useState(false)
   // Active-download detail overlay (standalone only). Holds the enriched torrent
   // that was clicked; kept fresh from the live poll while open (see render).
-  const [dlDetail, setDlDetail] = useState(null)
+  const [dlDetail, setDlDetail] = useState<Torrent | null>(null)
 
   // Active downloads (qBittorrent). Standalone only — the embedded lobby stays
   // lean and Servarr-agnostic. Degrades to empty when Servarr isn't configured.
@@ -100,7 +124,7 @@ export default function Library({
   const failingCount = useFailingCount(!embedded)
 
   const stack = embedded ? (extStack ?? []) : internalStack
-  const setStack = (updater) => {
+  const setStack = (updater: StackUpdater) => {
     const next = typeof updater === 'function' ? updater(stack) : updater
     if (embedded) onNavigate?.(next); else setInternalStack(next)
   }
@@ -109,8 +133,8 @@ export default function Library({
   useEffect(() => {
     setLoadingHome(true)
     fetch('/api/library/home', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-      .then(setHome).catch(() => setError('Failed to load your library'))
+      .then(r => r.ok ? apiJson(r) : Promise.reject(r))
+      .then(value => setHome(parseLibraryHome(value))).catch(() => setError('Failed to load your library'))
       .finally(() => setLoadingHome(false))
   }, [])
 
@@ -131,16 +155,16 @@ export default function Library({
     if (!current || isDetail(current.type)) return
     setLoadingGrid(true)
     fetch(`/api/library/items/${current.id}/children`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-      .then(setGridItems).catch(() => setGridItems([]))
+      .then(r => r.ok ? apiJson(r) : Promise.reject(r))
+      .then(value => setGridItems(libraryItems(value))).catch(() => setGridItems([]))
       .finally(() => setLoadingGrid(false))
   }, [current?.id])
 
   // ── Screen mirroring ────────────────────────────────────────────────────
   // scrollRef is attached to the scrollable *content pane* (right of the
   // sidebar). Its scroll fraction is what we broadcast / follow.
-  const scrollRef = useRef(null)
-  const ghostRef = useRef(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const ghostRef = useRef<HTMLDivElement>(null)
   const driving = embedded && canDrive && !!onPointer
   const following = embedded && !canDrive && !!mirrorSubscribe
 
@@ -171,7 +195,7 @@ export default function Library({
       last.scroll = sh > 0 ? el.scrollTop / sh : 0
       queue()
     }
-    const onMove = (e) => {
+    const onMove = (e: globalThis.MouseEvent) => {
       // Convert the window-level mouse position to a fraction of the pane rect.
       // (We listen on window so we still capture moves that start over the
       // sidebar, but the coordinates are always expressed pane-relative.)
@@ -221,22 +245,22 @@ export default function Library({
         g.style.transform = `translate(${x}px, ${y}px)`
       }
     }
-    const onFrame = (p) => { pending = p; if (!raf) raf = requestAnimationFrame(apply) }
-    const unsub = mirrorSubscribe(onFrame)
+    const onFrame = (p: MirrorPoint) => { pending = p; if (!raf) raf = requestAnimationFrame(apply) }
+    const unsub = mirrorSubscribe!(onFrame)
     onFrame(pending) // apply current position on mount / view change
     return () => { unsub(); cancelAnimationFrame(raf) }
   }, [following, mirrorSubscribe, current?.id])
 
-  function open(item) { if (canDrive) setStack(s => [...s, { id: item.Id, name: item.Name, type: item.Type }]) }
-  function pick(item) {
+  function open(item: LibraryItem) { if (canDrive) setStack(s => [...s, { id: item.Id, name: item.Name, type: item.Type }]) }
+  function pick(item: LibraryItem) {
     if (!canDrive) return
     if (onPickMedia) onPickMedia(item); else navigate(`/party/new?itemId=${item.Id}`)
   }
-  const openDownload = (t) => { if (canDrive) setDlDetail(t) }
+  const openDownload = (t: Torrent) => { if (canDrive) setDlDetail(t) }
   const goHome = () => { if (canDrive) setStack([]) }
   const goBack = () => { if (canDrive) setStack(s => s.slice(0, -1)) }
-  const goToDepth = (i) => { if (canDrive) setStack(s => s.slice(0, i + 1)) }
-  const openView = (v) => { if (canDrive) setStack([{ id: v.Id, name: v.Name, type: v.Type }]) }
+  const goToDepth = (i: number) => { if (canDrive) setStack(s => s.slice(0, i + 1)) }
+  const openView = (v: LibraryItem) => { if (canDrive) setStack([{ id: v.Id, name: v.Name, type: v.Type }]) }
 
   const initials = user?.name?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
   const views = home?.views ?? []
@@ -251,7 +275,7 @@ export default function Library({
     }}>
       {following && <GhostCursor ref={ghostRef} name={driverName} />}
 
-      <Sidebar mobile={mobile} width={sidebarW} views={views} activeId={current ? stack[0].id : null}
+      <Sidebar mobile={mobile} width={sidebarW} views={views} activeId={current ? (stack[0]?.id ?? null) : null}
         onHome={goHome} onView={openView} showDiscover={!embedded} downloadCount={dlActive} failingCount={failingCount} />
 
       {/* Scrollable content pane — flush to the viewport edge (no inset panel).
@@ -273,7 +297,7 @@ export default function Library({
         <div style={{ pointerEvents: canDrive ? 'auto' : 'none' }}>
           {!current && <HomeView home={home} loading={loadingHome} onOpen={open} onOpenView={openView}
             embedded={embedded} downloads={dlTorrents} onOpenDownload={openDownload} />}
-          {current && isDetail(current.type) && (
+          {current?.id && isDetail(current.type) && (
             <Details key={current.id} itemId={current.id} onWatch={pick} onOpen={open} onBack={goBack} />
           )}
           {current && !isDetail(current.type) && (
@@ -295,7 +319,7 @@ export default function Library({
 }
 
 /* ── Ghost cursor (host's pointer, mirrored to followers) ───────────────── */
-const GhostCursor = forwardRef<any, any>(function GhostCursor({ name }: any = {}, ref: any) {
+const GhostCursor = forwardRef<HTMLDivElement, { name?: string }>(function GhostCursor({ name }, ref) {
   return (
     <div ref={ref} aria-hidden style={{
       position: 'fixed', top: 0, left: 0, zIndex: 200, pointerEvents: 'none',
@@ -316,7 +340,7 @@ const GhostCursor = forwardRef<any, any>(function GhostCursor({ name }: any = {}
 })
 
 /* ── Flush sidebar (edge-to-edge, hairline border, no floating panel) ───── */
-function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover, downloadCount = 0, failingCount = 0 }: any = {}) {
+function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover, downloadCount = 0, failingCount = 0 }: { mobile: boolean; width: number; views: LibraryItem[]; activeId: string | null; onHome: () => void; onView: (view: LibraryItem) => void; showDiscover: boolean; downloadCount?: number; failingCount?: number }) {
   return (
     <aside style={{
       position: 'absolute', top: 0, left: 0, bottom: 0,
@@ -348,7 +372,7 @@ function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover,
 }
 
 
-function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBack, onHome }: any = {}) {
+function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBack, onHome }: { embedded: boolean; mobile: boolean; initials: string; logout: () => Promise<void>; headerRight?: ReactNode; current: StackEntry | null; onBack: () => void; onHome: () => void }) {
   const [joinOpen, setJoinOpen] = useState(false)
   return (
     <div style={{
@@ -398,11 +422,11 @@ function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBa
 // link) with a plain code-entry fallback for anyone who was just told the
 // code out loud. Codes are 8-char hex, matching the server's
 // randomUUID().slice(0, 8).toUpperCase() (see server/session.js createSession).
-function JoinDialog({ mobile, onClose }: any = {}) {
+function JoinDialog({ mobile, onClose }: { mobile: boolean; onClose: () => void }) {
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
 
-  function submit(e) {
+  function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const clean = code.trim().toUpperCase()
     if (!clean) return setErr('Enter a party code')
@@ -439,19 +463,19 @@ function JoinDialog({ mobile, onClose }: any = {}) {
 }
 
 /* ── HOME ───────────────────────────────────────────────────────────────── */
-function HomeView({ home, loading, onOpen, onOpenView, embedded, downloads, onOpenDownload }: any = {}) {
+function HomeView({ home, loading, onOpen, onOpenView, embedded, downloads, onOpenDownload }: { home: LibraryHome | null; loading: boolean; onOpen: (item: LibraryItem) => void; onOpenView: (item: LibraryItem) => void; embedded: boolean; downloads: Torrent[]; onOpenDownload: (torrent: Torrent) => void }) {
   const mobileHome = useIsMobile()
   const pad = mobileHome ? '0 16px' : '0 44px'
 
   // Recently added — fetched independently of /home. Jellyfin-only, so it works
   // regardless of Servarr. /api/library/latest returns a flat array; [] if empty
   // or on any error (endpoint degrades to a clean 502 which we swallow).
-  const [latest, setLatest] = useState([])
+  const [latest, setLatest] = useState<LibraryItem[]>([])
   useEffect(() => {
     let cancel = false
     fetch('/api/library/latest', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-      .then(d => { if (!cancel) setLatest(Array.isArray(d) ? d : []) })
+      .then(r => r.ok ? apiJson(r) : Promise.reject(r))
+      .then(d => { if (!cancel) setLatest(libraryItems(d)) })
       .catch(() => {})
     return () => { cancel = true }
   }, [])
@@ -502,7 +526,7 @@ function HomeView({ home, loading, onOpen, onOpenView, embedded, downloads, onOp
 }
 
 /* ── Poster card (2:3) fixed-width for the "Recently added" rail ──────────── */
-function PosterCard({ item, onClick }: any = {}) {
+function PosterCard({ item, onClick }: { item: LibraryItem; onClick: () => void }) {
   const [h, setH] = useState(false)
   return (
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} aria-label={item.Name}
@@ -526,7 +550,7 @@ function PosterCard({ item, onClick }: any = {}) {
    PosterCard) with the circular progress ring centered over a dark scrim, and a
    clean title + subtitle below. Enriched with the *arr-sourced poster/title
    (dark film/tv placeholder when none yet). Clicking opens the download detail. ── */
-function DownloadingCard({ torrent, onOpen }: any = {}) {
+function DownloadingCard({ torrent, onOpen }: { torrent: Torrent; onOpen: () => void }) {
   const [h, setH] = useState(false)
   const pct = Math.max(0, Math.min(100, Math.round((torrent.progress || 0) * 100)))
   const title = torrent.displayTitle || torrent.name
@@ -546,10 +570,10 @@ function DownloadingCard({ torrent, onOpen }: any = {}) {
 }
 
 /* ── Horizontal rail with header + hover scroll arrows (Sen Player style) ── */
-function Rail({ title, count, children }: any = {}) {
-  const trackRef = useRef(null)
+function Rail({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
+  const trackRef = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState(false)
-  const scrollBy = (dir) => {
+  const scrollBy = (dir: number) => {
     const el = trackRef.current
     if (el) el.scrollBy({ left: dir * Math.round(el.clientWidth * 0.8), behavior: 'smooth' })
   }
@@ -574,7 +598,7 @@ function Rail({ title, count, children }: any = {}) {
     </section>
   )
 }
-function RailArrow({ dir, show, onClick }: any = {}) {
+function RailArrow({ dir, show, onClick }: { dir: number; show: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} aria-label={dir < 0 ? 'Scroll left' : 'Scroll right'} style={{
       position: 'absolute', top: 'calc(50% - 34px)', [dir < 0 ? 'left' : 'right']: 6, transform: 'translateY(-50%)',
@@ -598,7 +622,7 @@ function RailSkeleton() {
 }
 
 /* ── Still card (16:9) for continue watching / next up ──────────────────── */
-function StillCard({ item, onClick, progress }: any = {}) {
+function StillCard({ item, onClick, progress }: { item: LibraryItem; onClick: () => void; progress?: boolean }) {
   const [h, setH] = useState(false)
   const pct = item.UserData?.PlayedPercentage
   const label = item.SeriesName ? (item.Name || item.SeriesName) : item.Name
@@ -613,7 +637,7 @@ function StillCard({ item, onClick, progress }: any = {}) {
         transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
         <Img id={item.Id} type="Thumb" fallback={{ id: item.SeriesId || item.Id, type: 'Backdrop' }} alt={label}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.05)' : 'scale(1)', transition: 'transform .4s' }} />
-        {progress && pct > 0 && (
+        {progress && (pct ?? 0) > 0 && (
           <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'rgba(255,255,255,.15)' }}>
             <div style={{ width: `${pct}%`, height: '100%', background: C.text }} />
           </div>
@@ -626,7 +650,7 @@ function StillCard({ item, onClick, progress }: any = {}) {
 }
 
 /* ── Library card (16:9 with label overlay) ─────────────────────────────── */
-function ViewCard({ view, onClick }: any = {}) {
+function ViewCard({ view, onClick }: { view: LibraryItem; onClick: () => void }) {
   const [h, setH] = useState(false)
   return (
     <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
@@ -646,16 +670,16 @@ function ViewCard({ view, onClick }: any = {}) {
 }
 
 /* ── Poster wall grid (inside a library / season) ───────────────────────── */
-function PosterWall({ children }: any = {}) {
+function PosterWall({ children }: { children: ReactNode }) {
   const mobile = useIsMobile()
   return <div style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 118 : 160}px, 1fr))` }}>{children}</div>
 }
-function WallPoster({ item, onClick }: any = {}) {
+function WallPoster({ item, onClick }: { item: LibraryItem; onClick: () => void }) {
   const badge = item.Type === 'Season' ? `S${item.IndexNumber}` : null
   return <div style={{ width: '100%' }}><PosterCardFluid item={item} onClick={onClick} badge={badge} /></div>
 }
 // Poster that fills its grid cell width (rail cards are fixed 170px).
-function PosterCardFluid({ item, onClick, badge }: any = {}) {
+function PosterCardFluid({ item, onClick, badge }: { item: LibraryItem; onClick: () => void; badge?: string | null }) {
   const [h, setH] = useState(false)
   const rating = item.CommunityRating
   const isSeries = item.Type === 'Series'
@@ -669,7 +693,7 @@ function PosterCardFluid({ item, onClick, badge }: any = {}) {
         transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
         <Img id={item.Id} type="Primary" alt={item.Name}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.06)' : 'scale(1)', transition: 'transform .4s' }} />
-        {epCount > 0 && (
+        {(epCount ?? 0) > 0 && (
           <div style={{ position: 'absolute', top: 8, right: 8, minWidth: 22, height: 22, padding: '0 6px', borderRadius: 999, display: 'grid', placeItems: 'center', fontFamily: MONO, fontSize: 11.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: C.text }}>{epCount}</div>
         )}
         {fullyWatched && !epCount && (
@@ -691,7 +715,7 @@ function PosterCardFluid({ item, onClick, badge }: any = {}) {
 }
 
 /* ── Detail page (Sen Player detail layout) ─────────────────────────────── */
-function CircleAction({ icon, title }: any = {}) {
+function CircleAction({ icon, title }: { icon: string; title: string }) {
   const [h, setH] = useState(false)
   return (
     <button title={title} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{
@@ -703,17 +727,17 @@ function CircleAction({ icon, title }: any = {}) {
   )
 }
 
-function Details({ itemId, onWatch, onOpen, onBack }: any = {}) {
+function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string; onWatch: (item: LibraryItem) => void; onOpen: (item: LibraryItem) => void; onBack: () => void }) {
   const mobile = useIsMobile()
-  const [d, setD] = useState(null)
-  const [seasons, setSeasons] = useState([])
+  const [d, setD] = useState<LibraryItem | null>(null)
+  const [seasons, setSeasons] = useState<LibraryItem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setLoading(true); setSeasons([]); setD(null)
     let cancel = false
     fetch(`/api/library/item/${itemId}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null).then(x => { if (!cancel) setD(x) }).catch(() => {}).finally(() => { if (!cancel) setLoading(false) })
+      .then(r => r.ok ? apiJson(r) : null).then(x => { if (!cancel) setD(isLibraryItem(x) ? x : null) }).catch(() => {}).finally(() => { if (!cancel) setLoading(false) })
     return () => { cancel = true }
   }, [itemId])
 
@@ -721,7 +745,7 @@ function Details({ itemId, onWatch, onOpen, onBack }: any = {}) {
     if (d?.Type !== 'Series') return
     let cancel = false
     fetch(`/api/library/items/${itemId}/children`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : []).then(x => { if (!cancel) setSeasons(x) }).catch(() => {})
+      .then(r => r.ok ? apiJson(r) : []).then(x => { if (!cancel) setSeasons(libraryItems(x)) }).catch(() => {})
     return () => { cancel = true }
   }, [d?.Type, itemId])
 
@@ -736,7 +760,7 @@ function Details({ itemId, onWatch, onOpen, onBack }: any = {}) {
   const ms = d.MediaSources?.[0]
   const streams = ms?.MediaStreams || []
   const video = streams.find(s => s.Type === 'Video')
-  const resLabel = video ? (video.Height >= 2160 ? '4K' : video.Height >= 1080 ? '1080P' : video.Height >= 720 ? '720P' : `${video.Height || '?'}P`) : null
+  const resLabel = video ? ((video.Height ?? 0) >= 2160 ? '4K' : (video.Height ?? 0) >= 1080 ? '1080P' : (video.Height ?? 0) >= 720 ? '720P' : `${video.Height || '?'}P`) : null
   const hdr = video?.VideoRange && video.VideoRange !== 'SDR' ? video.VideoRange : 'SDR'
   const sizeLabel = ms?.Size ? `${Math.round(ms.Size / 1_000_000)}M` : null
   const premiere = d.PremiereDate ? new Date(d.PremiereDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : null
@@ -767,7 +791,7 @@ function Details({ itemId, onWatch, onOpen, onBack }: any = {}) {
 
           {/* Big white Play pill (wired to onWatch exactly as before, movies only) */}
           {!isSeries && (
-            <button onClick={() => onWatch({ Id: itemId, Type: d.Type })} style={{
+            <button onClick={() => onWatch({ Id: itemId, Name: d.Name, Type: d.Type })} style={{
               display: 'inline-flex', alignItems: 'center', gap: 12, padding: '15px 34px', border: 'none', borderRadius: 999,
               background: C.accent, color: C.onAccent, fontFamily: SANS, fontSize: 16, fontWeight: 700, cursor: 'pointer',
               boxShadow: '0 10px 30px rgba(0,0,0,.4)', marginBottom: 22, transition: 'transform .15s' }}
@@ -839,9 +863,9 @@ function Details({ itemId, onWatch, onOpen, onBack }: any = {}) {
     </div>
   )
 }
-const linkPill = { padding: '9px 16px', borderRadius: 999, background: C.surface, border: `1px solid ${C.line}`, color: C.text, fontFamily: MONO, fontSize: 12.5, textDecoration: 'none', display: 'inline-block' }
+const linkPill: CSSProperties = { padding: '9px 16px', borderRadius: 999, background: C.surface, border: `1px solid ${C.line}`, color: C.text, fontFamily: MONO, fontSize: 12.5, textDecoration: 'none', display: 'inline-block' }
 
-function SectionHead({ title, count, children }: any = {}) {
+function SectionHead({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
   return (
     <section style={{ marginTop: 34, animation: 'up .4s ease both' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 16 }}>
@@ -854,7 +878,7 @@ function SectionHead({ title, count, children }: any = {}) {
 }
 
 /* ── Cast card (rounded-square avatar, name / role / "Actor") ───────────── */
-function CastPerson({ person }: any = {}) {
+function CastPerson({ person }: { person: Person }) {
   const [ok, setOk] = useState(true)
   return (
     <div style={{ flex: '0 0 120px', width: 120 }}>
@@ -871,7 +895,7 @@ function CastPerson({ person }: any = {}) {
 }
 
 /* ── Grid (inside a library / season) ───────────────────────────────────── */
-function GridView({ stack, items, loading, onOpen, onCrumb, onHome }: any = {}) {
+function GridView({ stack, items, loading, onOpen, onCrumb, onHome }: { stack: StackEntry[]; items: LibraryItem[]; loading: boolean; onOpen: (item: LibraryItem) => void; onCrumb: (index: number) => void; onHome: () => void }) {
   const mobile = useIsMobile()
   const current = stack[stack.length - 1]
   return (
@@ -886,7 +910,7 @@ function GridView({ stack, items, loading, onOpen, onCrumb, onHome }: any = {}) 
         ))}
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 22 }}>
-        <h1 style={{ fontSize: 30, fontWeight: 800, letterSpacing: '-.02em' }}>{current.name}</h1>
+        <h1 style={{ fontSize: 30, fontWeight: 800, letterSpacing: '-.02em' }}>{current?.name}</h1>
         {!loading && <span style={{ fontFamily: MONO, fontSize: 13, color: C.faint }}>{items.length} titles</span>}
       </div>
       {loading ? (

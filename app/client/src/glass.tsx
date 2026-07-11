@@ -8,6 +8,8 @@
 // small elevation scale (deeper = slightly lighter surface + stronger shadow),
 // NOT to blur. No backdrop-filter, no refraction, no specular sheen.
 
+import type { CSSProperties } from 'react'
+
 const SURFACE = {
   clear:  { bg: 'rgba(255,255,255,.04)', shadow: 'none' },
   light:  { bg: '#141416', shadow: '0 2px 12px rgba(0,0,0,.4)' },
@@ -19,7 +21,7 @@ const SURFACE = {
  * @param level  'clear' | 'light' | 'medium' | 'heavy'  (elevation, not blur)
  * @param opts   { radius?: number, ...extra style }
  */
-export function glass(level: keyof typeof SURFACE = 'medium', opts: Record<string, any> = {}) {
+export function glass(level: keyof typeof SURFACE = 'medium', opts: CSSProperties & { refract?: boolean; radius?: number } = {}) {
   const { refract, radius, ...extra } = opts   // `refract` accepted + ignored (legacy)
   const s = SURFACE[level] || SURFACE.medium
   return {

@@ -115,6 +115,7 @@ export interface SyncSchedule {
   rate?: number
   paused?: boolean
   version?: number
+  mediaGeneration?: string | number | null
 }
 
 export interface SyncIntent {

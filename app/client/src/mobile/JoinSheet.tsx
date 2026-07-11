@@ -54,7 +54,7 @@ export function JoinSheet({ open, onClose }: { open?: boolean; onClose?: () => v
         <div style={{ display: 'flex', gap: 10 }}>
           <input
             value={clean}
-            onChange={(e) => setCode(e.target.value)}
+            onChange={(e) => setCode(e.currentTarget.value)}
             placeholder="A1B2C3D4"
             inputMode="text"
             autoCapitalize="characters"
