@@ -28,6 +28,7 @@ import { registerNativeRoutes } from './native.js'
 import { registerSubtitleRoutes } from './subtitles.js'
 import { registerLiveKitRoutes } from './livekit.js'
 import { registerServarrRoutes } from './servarr/index.js'
+import { refreshPlayback } from './playback.js'
 import {
   createSession, getSession, deleteSession,
   findSessionBySocket, findSessionForMember, findSessionByHost,
@@ -183,7 +184,7 @@ if (TEST_ENDPOINTS_ENABLED) {
 app.get('/api/auth/me', me)
 app.post('/api/auth/logout', logout)
 registerLibraryRoutes(app)
-registerSubtitleRoutes(app)
+registerSubtitleRoutes(app, io)
 registerLiveKitRoutes(app)
 registerServarrRoutes(app)
 registerNativeRoutes(app)
@@ -244,6 +245,7 @@ io.on('connection', (socket) => {
 
   // party:create ────────────────────────────────────────────────────────────
   socket.on('party:create', async ({ mediaItemId = null } = {}, ack) => {
+    let sess = null
     try {
       // Room can start empty (lobby) — media is optional at creation.
       let mediaSourceId = null
@@ -253,15 +255,19 @@ io.on('connection', (socket) => {
         mediaSourceId = src
       }
 
-      const sess = createSession({
+      sess = createSession({
         hostId: userId, hostToken: token, hostDeviceId: deviceId, hostName: name,
         hostSocketId: socket.id, mediaItemId, mediaSourceId,
       })
+      if (mediaItemId) {
+        await refreshPlayback(sess, { token, userId, itemId: mediaItemId, mediaSourceId })
+      }
 
       socket.join(sess.id)
       ack?.({ partyId: sess.id, session: publicSession(sess) })
     } catch (err) {
       console.error('party:create', err.message)
+      if (sess) deleteSession(sess.id)
       ack?.({ error: err.message })
     }
   })
@@ -422,6 +428,7 @@ io.on('connection', (socket) => {
     try {
       const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
       if (!src) return ack?.({ error: 'item not found' })
+      await refreshPlayback(sess, { token, userId, itemId: mediaItemId, mediaSourceId: src })
       sess.mediaItemId = mediaItemId
       sess.mediaSourceId = src
       sess.stage = 'watching'
@@ -447,11 +454,32 @@ io.on('connection', (socket) => {
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
     sess.mediaItemId = null
     sess.mediaSourceId = null
+    sess.playback = null
     sess.stage = 'lobby'
     beginMediaGeneration(sess)
     resetTimeline(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
+  })
+
+  socket.on('party:setPlaybackTracks', async ({ audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
+    const sess = findSessionForMember(userId)
+    if (!sess || sess.hostId !== userId || !sess.mediaItemId) return ack?.({ error: 'not allowed' })
+    try {
+      const playback = await refreshPlayback(sess, {
+        token,
+        userId,
+        itemId: sess.mediaItemId,
+        mediaSourceId: sess.mediaSourceId,
+        audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : null,
+        subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : null,
+      })
+      io.to(sess.id).emit('party:state', publicSession(sess))
+      ack?.({ ok: true, playback })
+    } catch (err) {
+      console.error('party:setPlaybackTracks', err.message)
+      ack?.({ error: err.message })
+    }
   })
 
   // sync:hello — client asks for the current timeline once it's listening
