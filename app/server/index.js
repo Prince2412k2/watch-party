@@ -271,6 +271,17 @@ io.on('connection', (socket) => {
     const sess = getSession(partyId)
     if (!sess) return ack?.({ error: 'party not found' })
 
+    // Rejoining uses the same Socket instance on the client but a brand-new
+    // Socket.IO id on the server. Restore every room-scoped channel here, then
+    // replay state that may have changed while the connection was down. In
+    // particular, useSyncPlay stays mounted across a transport reconnect and
+    // therefore does not emit its mount-time sync:hello again by itself.
+    const restoreSocket = () => {
+      socket.join(sess.id)
+      io.to(socket.id).emit('chat:history', sess.messages)
+      io.to(socket.id).emit('sync:schedule', sess.schedule)
+    }
+
     if (sess.hostId === userId) {
       // Host reconnecting after disconnect
       if (sess.hostDisconnectTimer) {
@@ -278,23 +289,24 @@ io.on('connection', (socket) => {
         sess.hostDisconnectTimer = null
       }
       sess.hostSocketId = socket.id
-      socket.join(partyId)
+      restoreSocket()
       return ack?.({ status: 'joined', session: publicSession(sess) })
     }
 
     if (isMember(sess, userId)) {
       const guest = sess.guests.find(g => g.userId === userId)
       if (guest) guest.socketId = socket.id
-      socket.join(partyId)
+      restoreSocket()
       return ack?.({ status: 'joined', session: publicSession(sess) })
     }
 
     // Previously approved → re-enter freely (no re-approval needed unless kicked)
     if (sess.approved.has(userId)) {
       admitGuest(sess, { userId, name, socketId: socket.id, token, deviceId })
-      socket.join(partyId)
-      io.to(socket.id).emit('sync:schedule', sess.schedule)
-      io.to(sess.id).emit('user:joined', { userId, name })
+      restoreSocket()
+      // The ack's session snapshot already contains this guest. Exclude the
+      // rejoining socket so its reducer cannot append itself a second time.
+      socket.to(sess.id).emit('user:joined', { userId, name })
       return ack?.({ status: 'joined', session: publicSession(sess) })
     }
 

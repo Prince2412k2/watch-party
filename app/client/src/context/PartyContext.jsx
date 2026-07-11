@@ -174,6 +174,37 @@ export function PartyProvider({ children, userId }) {
     }
   }, [socket, userId])
 
+  // Socket.IO reconnects its transport automatically, but a new server-side
+  // socket is not a member of the party room. Re-assert membership after every
+  // reconnect so chat and sync broadcasts resume while the independently-held
+  // LiveKit call remains uninterrupted. The first page connection is ignored:
+  // createParty/joinParty owns that initial handshake.
+  useEffect(() => {
+    let hasConnected = socket.connected
+    const onConnect = () => {
+      if (!hasConnected) {
+        hasConnected = true
+        return
+      }
+      const current = stateRef.current
+      const partyId = current.session?.id
+      if (!partyId || (current.role !== 'host' && current.role !== 'guest')) return
+      socket.emit('party:join', { partyId }, (res) => {
+        if (res?.error) {
+          dispatch({ type: 'CLEAR' })
+          navigate('/library')
+          return
+        }
+        if (res?.status === 'joined' && res.session) {
+          const role = res.session.hostId === userId ? 'host' : 'guest'
+          dispatch({ type: 'SET_SESSION', session: res.session, role })
+        }
+      })
+    }
+    socket.on('connect', onConnect)
+    return () => socket.off('connect', onConnect)
+  }, [socket, userId])
+
   // Actions
   function createParty(mediaItemId) {
     return new Promise((resolve, reject) => {
