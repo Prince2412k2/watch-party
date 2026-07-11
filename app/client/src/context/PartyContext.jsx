@@ -5,6 +5,17 @@ import { mirror } from '../mirror.js'
 
 const PartyContext = createContext(null)
 
+// Phase 0 / FM1: the party id is persisted here so a re-attach survives a full
+// page reload (a transport blip keeps the id in live React state; the storage
+// key is the fallback for the reload case). Removed only at the real exit
+// points (kicked / rejected / ended / endParty) — never merely because the
+// session went transiently null.
+const PARTY_ID_KEY = 'wp:partyId'
+// How long to wait for a party:resume ack before assuming the server predates
+// the handler (old servers never ack unknown events) and falling back to the
+// legacy party:join re-entry path.
+const RESUME_ACK_TIMEOUT_MS = 3000
+
 const initialState = {
   session: null,       // publicSession from server
   role: null,          // 'host' | 'guest' | 'waiting'
@@ -98,11 +109,13 @@ export function PartyProvider({ children, userId }) {
     })
 
     socket.on('party:rejected', () => {
+      sessionStorage.removeItem(PARTY_ID_KEY)
       navigate('/library')
       toast('The host declined your request')
     })
 
     socket.on('party:kicked', () => {
+      sessionStorage.removeItem(PARTY_ID_KEY)
       dispatch({ type: 'CLEAR' })
       navigate('/library')
       toast('You were removed from the party')
@@ -113,6 +126,7 @@ export function PartyProvider({ children, userId }) {
     // a guest instead). Broadcast to guests only; the host navigates locally
     // from endParty()'s own ack.
     socket.on('party:ended', () => {
+      sessionStorage.removeItem(PARTY_ID_KEY)
       dispatch({ type: 'CLEAR' })
       navigate('/library')
       toast('The host ended the party')
@@ -128,10 +142,12 @@ export function PartyProvider({ children, userId }) {
       toast(`${name} left`)
     })
 
+    // FM3: no SET_ROLE here — role is derived from session.hostId in the
+    // provider value below, so HOST_CHANGED alone both promotes the new host
+    // AND demotes the old one (the stored role could only ever promote).
     socket.on('host:changed', ({ hostId }) => {
       dispatch({ type: 'HOST_CHANGED', hostId })
       if (hostId === userId) {
-        dispatch({ type: 'SET_ROLE', role: 'host' })
         toast('You are now the host', 'success')
       }
     })

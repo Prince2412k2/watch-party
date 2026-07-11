@@ -65,6 +65,16 @@ const ALLOWED_ORIGINS = [
 
 const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, credentials: true },
+  // Recovery is an optimization only — party:resume (below) is the actual
+  // re-attach guarantee and is sent by clients regardless of socket.recovered.
+  // skipMiddlewares only skips io.use() on recovery; the engine-level session
+  // middleware still runs on the HTTP handshake.
+  connectionStateRecovery: { maxDisconnectionDuration: 120_000, skipMiddlewares: true },
+  // Tighter heartbeat → dead sockets are detected in ≤ ~13s instead of the
+  // defaults' ~50s. The disconnect handler therefore fires sooner; the guest
+  // linger window (GUEST_LINGER_MS) absorbs that for transient drops.
+  pingInterval: 5000,
+  pingTimeout: 8000,
 })
 
 // Sessions persist to disk so a redeploy (container restart) doesn't silently
@@ -270,11 +280,9 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ error: 'party not found' })
 
     if (sess.hostId === userId) {
-      // Host reconnecting after disconnect
-      if (sess.hostDisconnectTimer) {
-        clearTimeout(sess.hostDisconnectTimer)
-        sess.hostDisconnectTimer = null
-      }
+      // Host reconnecting after disconnect — cancel both grace timers (legacy
+      // re-entry path must behave exactly like party:resume here).
+      cancelHostGraceTimers(sess)
       sess.hostSocketId = socket.id
       socket.join(partyId)
       return ack?.({ status: 'joined', session: publicSession(sess) })
@@ -283,6 +291,8 @@ io.on('connection', (socket) => {
     if (isMember(sess, userId)) {
       const guest = sess.guests.find(g => g.userId === userId)
       if (guest) guest.socketId = socket.id
+      // Legacy-path reconnect during linger must cancel the pending user:left
+      clearLinger(sess, userId)
       socket.join(partyId)
       return ack?.({ status: 'joined', session: publicSession(sess) })
     }

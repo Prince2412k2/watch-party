@@ -39,6 +39,12 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
   const hardSeeks = useRef([])
   const lastHardSeekAt = useRef(0)
   const lastReport = useRef(0)
+  // FM2: persistent hysteresis state for decideSyncAction's soft-correction
+  // band. One mutable object per hook instance, passed by reference into every
+  // decide call — the core flips `.correcting` itself and clears it on hard
+  // seek, so no manual resets are needed here. Without this the exit bound
+  // (SOFT_EXIT_SEC) is never active and nudges chatter on/off at SOFT_SEC.
+  const correctionRef = useRef({ correcting: false })
   const syncModeRef = useRef(syncMode)
   syncModeRef.current = syncMode
   // Last schedule.version this hook has applied, and the media generation it
@@ -337,6 +343,7 @@ export function useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode 
         mode,
         userSeeking: userSeekRef.current,
         suppressHardSeek: Date.now() - lastHardSeekAt.current < HARD_SEEK_COOLDOWN_MS,
+        correctionState: correctionRef.current,
       })
       if (!intent) return
 

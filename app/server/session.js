@@ -26,6 +26,8 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     messages: [],     // capped 200
     collaborativeControl: false,
     hostDisconnectTimer: null,
+    hostSoftGraceTimer: null,     // keep-playing window before a host loss freezes the room
+    lingerTimers: new Map(),      // userId → Timeout; "away" guests pending a user:left
     mediaGeneration: mediaItemId ? 1 : 0,
     // Shared playback timeline. position = positionTicks + rate*(now - t0).
     schedule: { positionTicks: 0, t0: 0, rate: 0, paused: true, phase: 'paused', version: 0, mediaGeneration: mediaItemId ? 1 : 0 },
@@ -141,7 +143,7 @@ export function isMember(session, userId) {
 
 export function publicSession(session) {
   const {
-    hostToken, hostDisconnectTimer, approved,
+    hostToken, hostDisconnectTimer, hostSoftGraceTimer, lingerTimers, approved,
     stalled, intent, pos, playT0, effPlaying, _stallTimer, reports, seenCommandIds,
     ...pub
   } = session
