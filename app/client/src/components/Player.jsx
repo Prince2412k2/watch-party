@@ -1444,6 +1444,35 @@ function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose })
     const alist = at ? Array.from(at) : []
     setAudios(alist); setAudioActive(Math.max(0, alist.findIndex(t => t.enabled)))
   }, [media])
+
+  useEffect(() => {
+    const mediaElement = getMediaElement()
+    if (!mediaElement) return
+
+    const syncTracks = () => refreshSubs()
+    syncTracks()
+
+    const textTracks = mediaElement.textTracks
+    const audioTracks = mediaElement.audioTracks
+    textTracks?.addEventListener?.('addtrack', syncTracks)
+    textTracks?.addEventListener?.('removetrack', syncTracks)
+    textTracks?.addEventListener?.('change', syncTracks)
+    audioTracks?.addEventListener?.('addtrack', syncTracks)
+    audioTracks?.addEventListener?.('removetrack', syncTracks)
+    audioTracks?.addEventListener?.('change', syncTracks)
+    mediaElement.addEventListener?.('loadedmetadata', syncTracks)
+
+    return () => {
+      textTracks?.removeEventListener?.('addtrack', syncTracks)
+      textTracks?.removeEventListener?.('removetrack', syncTracks)
+      textTracks?.removeEventListener?.('change', syncTracks)
+      audioTracks?.removeEventListener?.('addtrack', syncTracks)
+      audioTracks?.removeEventListener?.('removetrack', syncTracks)
+      audioTracks?.removeEventListener?.('change', syncTracks)
+      mediaElement.removeEventListener?.('loadedmetadata', syncTracks)
+    }
+  }, [media, mediaElementRef])
+
   useEffect(() => { setQ('') }, [view])
 
   function chooseSub(i) { subs.forEach((t, idx) => { t.mode = idx === i ? 'showing' : 'disabled' }); setSubActive(i) }
