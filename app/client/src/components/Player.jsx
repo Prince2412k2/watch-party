@@ -23,6 +23,22 @@ const VPlayer = createPlayer({ features: videoFeatures })
 
 const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
 
+function isMediaElement(value) {
+  return typeof HTMLMediaElement !== 'undefined' && value instanceof HTMLMediaElement
+}
+
+function resolveMediaElement(value, ref) {
+  const candidates = [
+    value,
+    value?.target,
+    typeof value?.el === 'function' ? value.el() : value?.el,
+    value?.media,
+    value?.mediaElement,
+    ref?.current,
+  ]
+  return candidates.find(isMediaElement) || null
+}
+
 export default function Player({
   hlsUrl, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
   onToggleMic, onToggleCam, micOn, camOn,
@@ -33,6 +49,7 @@ export default function Player({
   phone = false, camStripOpen, onToggleCamStrip, seekBridgeRef,
 }) {
   const canControl = isHost || collaborativeControl
+  const videoRef = useRef(null)
 
   // A freshly-opened movie is authored as "playing" immediately (so muted
   // guests autoplay) but the host's own video needs a real .play() call —
@@ -91,7 +108,7 @@ export default function Player({
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <HlsVideo ref={videoRef} src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         </VideoSkin>
 
         {canControl && hostMuted && (
@@ -113,6 +130,7 @@ export default function Player({
              + fullscreen — replacing the three floating desktop clusters. */
             <MobileBottomBar
             mediaItemId={mediaItemId}
+            mediaElementRef={videoRef}
             canControl={canControl} localPhase={localPhase}
             micOn={micOn} camOn={camOn}
             talking={talking} onTalkStart={onTalkStart} onTalkEnd={onTalkEnd}
@@ -138,6 +156,7 @@ export default function Player({
                 scrubber) — canControl gates interactivity throughout. */}
             <DesktopControlBar
               mediaItemId={mediaItemId}
+              mediaElementRef={videoRef}
               visible={visible} canControl={canControl}
               immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
               userMuted={userMuted} onToggleMuted={toggleMuted}
@@ -1046,7 +1065,7 @@ function VolumeControl({ userMuted, onToggleMuted }) {
 // The single pinned-bottom row: play/pause, current time, scrubber, duration,
 // volume, settings, fullscreen — over the one allowed black-alpha scrim. No
 // box, no border around the row itself.
-function DesktopControlBar({ mediaItemId, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }) {
+function DesktopControlBar({ mediaItemId, mediaElementRef, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }) {
   const media = VPlayer.useMedia()
   const quality = useQualityLevels(media)
   const { cur, dur } = useMediaClock(media)
@@ -1106,7 +1125,7 @@ function DesktopControlBar({ mediaItemId, visible, canControl, immersive, enterI
           <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </IconBtn>
-          {settingsOpen && <SettingsMenu media={media} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
+          {settingsOpen && <SettingsMenu media={media} mediaElementRef={mediaElementRef} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
         </div>
 
         <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
@@ -1132,6 +1151,7 @@ function DesktopControlBar({ mediaItemId, visible, canControl, immersive, enterI
 // auto-hide `visible` layer. Touch targets are 44px with ≥8px gaps.
 function MobileBottomBar({
   mediaItemId,
+  mediaElementRef,
   canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
   hideSelf, onToggleHideSelf, camStripOpen, onToggleCamStrip, visible, immersive, enterImmersive, exitImmersive,
 }) {
@@ -1207,7 +1227,7 @@ function MobileBottomBar({
       <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </BarBtn>
-      {settingsOpen && <SettingsMenu media={media} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsMenu media={media} mediaElementRef={mediaElementRef} mediaItemId={mediaItemId} quality={quality} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
   const secondary = [talkControl, hideSelfControl, camStripControl, settingsControl].filter(Boolean)
@@ -1396,7 +1416,7 @@ function TalkBtn({ talking, onStart, onStop }) {
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
 // Flat solid surface, hairline border, radius 12 — no blur, no gradient.
-function SettingsMenu({ media, mediaItemId, quality, onClose }) {
+function SettingsMenu({ media, mediaElementRef, mediaItemId, quality, onClose }) {
   const [view, setView] = useState('main')     // main | quality | subs | audio
   const [q, setQ] = useState('')
   const [subs, setSubs] = useState([])
@@ -1406,9 +1426,11 @@ function SettingsMenu({ media, mediaItemId, quality, onClose }) {
   const [uploadingSub, setUploadingSub] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const uploadInputRef = useRef(null)
+  const getMediaElement = () => resolveMediaElement(media, mediaElementRef)
 
   const refreshSubs = () => {
-    const tt = media?.textTracks
+    const mediaElement = getMediaElement()
+    const tt = mediaElement?.textTracks || media?.textTracks
     const list = tt ? Array.from(tt).filter(t => t.kind === 'subtitles' || t.kind === 'captions') : []
     setSubs(list)
     setSubActive(list.findIndex(t => t.mode === 'showing'))
@@ -1417,7 +1439,8 @@ function SettingsMenu({ media, mediaItemId, quality, onClose }) {
   useEffect(() => {
     if (!media) return
     refreshSubs()
-    const at = media.audioTracks
+    const mediaElement = getMediaElement()
+    const at = mediaElement?.audioTracks || media.audioTracks
     const alist = at ? Array.from(at) : []
     setAudios(alist); setAudioActive(Math.max(0, alist.findIndex(t => t.enabled)))
   }, [media])
@@ -1450,11 +1473,14 @@ function SettingsMenu({ media, mediaItemId, quality, onClose }) {
       track.src = data.url
       track.addEventListener('load', () => {
         refreshSubs()
-        const list = Array.from(media.textTracks || []).filter(t => t.kind === 'subtitles' || t.kind === 'captions')
+        const mediaElement = getMediaElement()
+        const list = Array.from(mediaElement?.textTracks || media.textTracks || []).filter(t => t.kind === 'subtitles' || t.kind === 'captions')
         list.forEach(t => { t.mode = t === track.track ? 'showing' : 'disabled' })
         setSubActive(list.indexOf(track.track))
       }, { once: true })
-      media.appendChild(track)
+      const mediaElement = getMediaElement()
+      if (!mediaElement?.appendChild) throw new Error('Could not attach subtitle track')
+      mediaElement.appendChild(track)
       track.track.mode = 'showing'
       refreshSubs()
     } catch (err) {
