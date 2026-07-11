@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
 import { useParty } from '../context/PartyContext'
 import { glass } from '../glass'
+import type { ChatMessage } from '../types'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
-function fmt(ts) {
+function fmt(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
@@ -13,13 +15,13 @@ const ALERT = {
   focus: { next: 'on', label: 'Alerts: focus', icon: <path d="M12 2v3M12 19v3M2 12h3M19 12h3M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" /> },
   on: { next: 'mute', label: 'Alerts: on', icon: <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" /> },
   mute: { next: 'focus', label: 'Alerts: muted', icon: <><path d="m2 2 20 20" /><path d="M18 8a6 6 0 0 0-9.3-5M6 8c0 7-3 9-3 9h13M13.7 21a2 2 0 0 1-3.4 0" /></> },
-}
+} as const
 
-export default function Chat({ top = 76, mobileSheet = false }: any = {}) {
+export default function Chat({ top = 76, mobileSheet = false }: { top?: number; mobileSheet?: boolean } = {}) {
   const { messages, sendMessage, chatOpen, closeChat, alertMode, setAlertMode, chatFocusToken } = useParty()
   const [text, setText] = useState('')
-  const bottomRef = useRef<any>(null)
-  const inputRef = useRef<any>(null)
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, chatOpen])
   // Pull focus into the input whenever asked (hotkey / auto-open on message)
@@ -27,14 +29,14 @@ export default function Chat({ top = 76, mobileSheet = false }: any = {}) {
 
   useEffect(() => {
     if (!chatOpen) return
-    const onKey = (e) => { if (e.key === 'Escape') closeChat() }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeChat() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [chatOpen, closeChat])
 
   if (!chatOpen) return null
 
-  function handleSend(e) {
+  function handleSend(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!text.trim()) return
     sendMessage(text.trim())
@@ -71,7 +73,7 @@ export default function Chat({ top = 76, mobileSheet = false }: any = {}) {
         {messages.length === 0 && (
           <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>No messages yet</div>
         )}
-        {messages.map((msg, i) => {
+        {messages.map((msg: ChatMessage, i: number) => {
           const cont = i > 0 && messages[i - 1].userId === msg.userId
           return (
             <div key={i} style={{ marginTop: cont ? -6 : 0 }}>
@@ -92,8 +94,8 @@ export default function Chat({ top = 76, mobileSheet = false }: any = {}) {
       <form onSubmit={handleSend} style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'center', borderTop: '1px solid var(--stroke)' }}>
         <input ref={inputRef} value={text} onChange={e => setText(e.target.value)} placeholder="Message…" maxLength={500}
           style={{ flex: 1, padding: '11px 14px', borderRadius: 999, border: '1px solid var(--stroke2)', background: 'var(--glass2)', color: 'var(--text)', fontSize: 14, outline: 'none', transition: 'border-color .15s' }}
-          onFocus={e => e.target.style.borderColor = 'var(--text3)'}
-          onBlur={e => e.target.style.borderColor = 'var(--stroke2)'} />
+          onFocus={e => { e.currentTarget.style.borderColor = 'var(--text3)' }}
+          onBlur={e => { e.currentTarget.style.borderColor = 'var(--stroke2)' }} />
         <button type="submit" disabled={!text.trim()} style={{
           width: 40, height: 40, flexShrink: 0, borderRadius: '50%', border: 'none',
           background: text.trim() ? 'var(--accent)' : 'var(--glass2)', color: text.trim() ? 'var(--on-accent)' : 'var(--text3)',

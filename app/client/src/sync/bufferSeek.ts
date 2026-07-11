@@ -9,10 +9,13 @@
 
 // Resolve when the element fires 'seeked', or after timeoutMs (fallback). HLS
 // seeks can be slow; never hang the routine on a missing event.
-export function waitForSeeked(media, timeoutMs) {
+export function waitForSeeked(media: {
+  addEventListener: (type: string, cb: () => void) => void
+  removeEventListener: (type: string, cb: () => void) => void
+}, timeoutMs: number) {
   return new Promise((resolve) => {
     let done = false
-    const finish = (via) => {
+    const finish = (via: string) => {
       if (done) return
       done = true
       clearTimeout(timer)
@@ -29,7 +32,7 @@ export function waitForSeeked(media, timeoutMs) {
 // and can render. Small slack on both ends so a seek that lands a hair inside a
 // segment (or right at its edge) still counts. Used to skip the hls.js load-kick
 // when the paused target is already buffered (no need to disturb the loader).
-export function isBuffered(media, t) {
+export function isBuffered(media: { buffered?: TimeRanges | null }, t: number) {
   try {
     const b = media.buffered
     if (!b) return false
@@ -47,7 +50,7 @@ export function isBuffered(media, t) {
 // (re)anchors the loader at pos so the segment is fetched while paused. No-op
 // when the element has no hls.js engine (native HLS playback, or the headless
 // VirtualPlayer, which has no `.engine`) — those buffer on the seek alone.
-export function ensureHlsLoad(media, position) {
+export function ensureHlsLoad(media: { engine?: { startLoad?: (position: number) => void } | null }, position: number) {
   const hls = media && media.engine
   if (!hls || typeof hls.startLoad !== 'function') return false
   try { hls.startLoad(position); return true } catch { return false }
@@ -57,9 +60,10 @@ export function ensureHlsLoad(media, position) {
 // which was confirmed around `anchor`. Keeping a margin from the range end
 // avoids resuming exactly on the download frontier. If ranges disappeared
 // during inspection, fall back to the anchor we already sought to.
-export function selectBufferedResumeTarget(media, anchor, desired, endMarginSec = 0.25) {
+export function selectBufferedResumeTarget(media: { buffered?: TimeRanges | null }, anchor: number, desired: number, endMarginSec = 0.25) {
   try {
     const b = media?.buffered
+    if (!b) return anchor
     for (let i = 0; i < (b?.length || 0); i++) {
       const start = b.start(i)
       const end = b.end(i)
@@ -76,7 +80,7 @@ export function selectBufferedResumeTarget(media, anchor, desired, endMarginSec 
 // of it (i.e. some buffered range covers [targetTime, targetTime + aheadSec]),
 // or after timeoutMs. Polls video.buffered because there is no single reliable
 // "enough buffered" DOM event across engines.
-export function waitForBuffer(media, targetTime, aheadSec, timeoutMs) {
+export function waitForBuffer(media: { duration?: number; buffered?: TimeRanges | null }, targetTime: number, aheadSec: number, timeoutMs: number) {
   // A target within aheadSec of the media end can never accumulate the full
   // look-ahead (there simply isn't that much media left), so the wait would
   // hang until timeout. Clamp the required runway to what's actually reachable:
@@ -101,7 +105,7 @@ export function waitForBuffer(media, targetTime, aheadSec, timeoutMs) {
   return new Promise((resolve) => {
     if (hasRunway()) { resolve('ready'); return }
     let done = false
-    const finish = (via) => {
+    const finish = (via: string) => {
       if (done) return
       done = true
       clearTimeout(timer)

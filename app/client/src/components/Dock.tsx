@@ -1,17 +1,26 @@
 import { useState } from 'react'
 import CameraTile from './CameraTile'
 
-export default function Dock({ localParticipant, participants, isHost, removedCameras, onRemove, hideSelf }: any = {}) {
-  const [hidden, setHidden] = useState(new Set())
+export default function Dock({
+  localParticipant, participants, isHost, removedCameras, onRemove, hideSelf,
+}: {
+  localParticipant?: { identity: string; isLocal?: boolean } | null
+  participants?: Array<{ identity: string; videoTrack?: unknown; isLocal?: boolean }>
+  isHost?: boolean
+  removedCameras?: Set<string>
+  onRemove?: (identity: string) => void
+  hideSelf?: boolean
+} = {}) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
 
   const localId = localParticipant?.identity
   const all = [
     // `hideSelf`: local render-only drop of our own tile (camera keeps publishing).
     ...(localParticipant && !hideSelf ? [{ ...localParticipant, isLocal: true }] : []),
-    ...participants.filter(p => p.identity !== localId && !removedCameras.has(p.identity)),
+    ...(participants ?? []).filter(p => p.identity !== localId && !(removedCameras ?? new Set()).has(p.identity)),
   ]
 
-  function hide(identity) { setHidden(s => new Set([...s, identity])) }
+  function hide(identity: string) { setHidden(s => new Set([...s, identity])) }
 
   return (
     <div style={{
@@ -34,7 +43,7 @@ export default function Dock({ localParticipant, participants, isHost, removedCa
             isLocal={p.isLocal}
             isHost={isHost}
             onHide={() => hide(p.identity)}
-            onRemove={() => onRemove(p.identity)}
+            onRemove={() => onRemove?.(p.identity)}
           />
         </div>
       ))}

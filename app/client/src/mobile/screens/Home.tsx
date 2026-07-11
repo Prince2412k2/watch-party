@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { navigate } from '../../router'

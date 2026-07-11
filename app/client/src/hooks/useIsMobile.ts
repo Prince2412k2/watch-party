@@ -27,7 +27,7 @@ export function useWideBar() {
   return matchStore(WIDE_BAR_QUERY)
 }
 
-function matchStore(q) {
+function matchStore(q: string) {
   return useSyncExternalStore(
     (cb) => {
       const m = window.matchMedia(q)

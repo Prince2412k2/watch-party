@@ -3,22 +3,26 @@ import { useCallback, useEffect, useRef } from 'react'
 // NTP-lite clock sync: estimate this client's offset from the server clock so
 // every client agrees on `serverNow()` within a few ms. We keep a rolling
 // window of samples and trust the offset from the lowest-RTT one (least noise).
-export function useServerClock(socket) {
+export function useServerClock(socket: {
+  timeout: (ms: number) => { emit: (event: string, payload: number, cb: (err: unknown, serverTs: number) => void) => void }
+} | null | undefined) {
   const offsetRef = useRef(0)
   const readyRef = useRef(false)
   // Quality metadata for the best sample currently backing offsetRef, so
   // callers can optionally judge confidence instead of trusting a bare
   // ready flag. Not required for existing consumers — see clockQuality().
-  const qualityRef = useRef({ rttMs: null, uncertaintyMs: null, sampledAt: null })
+  const qualityRefTyped = useRef<{ rttMs: number | null; uncertaintyMs: number | null; sampledAt: number | null }>({ rttMs: null, uncertaintyMs: null, sampledAt: null })
 
   useEffect(() => {
-    if (!socket) return
+    const s = socket
+    if (!s) return
+    const socketRef = s
     let stopped = false
-    const samples = []
+    const samples: { rtt: number; offset: number }[] = []
 
     function sample() {
       const t1 = Date.now()
-      socket.timeout(2000).emit('clock:ping', t1, (err, serverTs) => {
+      socketRef.timeout(2000).emit('clock:ping', t1, (err, serverTs) => {
         if (stopped || err || typeof serverTs !== 'number') return
         const t4 = Date.now()
         const rtt = t4 - t1
@@ -30,7 +34,7 @@ export function useServerClock(socket) {
         readyRef.current = true
         // Rough uncertainty bound: half the best sample's RTT is the max
         // one-way error the offset could carry (standard NTP assumption).
-        qualityRef.current = { rttMs: best.rtt, uncertaintyMs: best.rtt / 2, sampledAt: t4 }
+        qualityRefTyped.current = { rttMs: best.rtt, uncertaintyMs: best.rtt / 2, sampledAt: t4 }
       })
     }
 
@@ -47,7 +51,7 @@ export function useServerClock(socket) {
   // ageMs is measured fresh on each call (ms since the best sample was taken),
   // not cached, so it stays accurate between samples.
   const clockQuality = useCallback(() => {
-    const q = qualityRef.current
+    const q = qualityRefTyped.current
     return {
       offset: offsetRef.current,
       rttMs: q.rttMs,

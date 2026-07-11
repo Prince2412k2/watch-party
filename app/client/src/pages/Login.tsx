@@ -1,16 +1,17 @@
 import { useState } from 'react'
+import type { FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
-export default function Login({ onSuccess }: any = {}) {
+export default function Login({ onSuccess }: { onSuccess?: () => void } = {}) {
   const { login } = useAuth()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  async function handleSubmit(e) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
     setSubmitting(true)
@@ -18,7 +19,7 @@ export default function Login({ onSuccess }: any = {}) {
       await login(username, password)
       onSuccess?.()
     } catch (err) {
-      setError(err.message)
+      setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
       setSubmitting(false)
     }
@@ -49,16 +50,16 @@ export default function Login({ onSuccess }: any = {}) {
             <span style={{ display: 'block', fontFamily: MONO, fontSize: 11.5, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--faint)', marginBottom: 8 }}>Username</span>
             <input type="text" value={username} onChange={e => setUsername(e.target.value)} disabled={submitting} required autoComplete="username" autoFocus
               style={field}
-              onFocus={e => { e.target.style.borderColor = 'var(--text)' }}
-              onBlur={e => { e.target.style.borderColor = 'var(--line2)' }} />
+              onFocus={e => { e.currentTarget.style.borderColor = 'var(--text)' }}
+              onBlur={e => { e.currentTarget.style.borderColor = 'var(--line2)' }} />
           </label>
 
           <label style={{ display: 'block' }}>
             <span style={{ display: 'block', fontFamily: MONO, fontSize: 11.5, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--faint)', marginBottom: 8 }}>Password</span>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} disabled={submitting} autoComplete="current-password"
               style={field}
-              onFocus={e => { e.target.style.borderColor = 'var(--text)' }}
-              onBlur={e => { e.target.style.borderColor = 'var(--line2)' }} />
+              onFocus={e => { e.currentTarget.style.borderColor = 'var(--text)' }}
+              onBlur={e => { e.currentTarget.style.borderColor = 'var(--line2)' }} />
           </label>
 
           {error && (

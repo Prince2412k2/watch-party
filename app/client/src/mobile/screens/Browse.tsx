@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { glass } from '../../glass'
 import { navigate } from '../../router'

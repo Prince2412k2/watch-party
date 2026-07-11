@@ -4,6 +4,7 @@
 // drifting across Library.jsx / Downloads.jsx / FindDownload.jsx /
 // DownloadDetail.jsx — this is the single reconciled source.
 import { useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { navigate } from '../router'
 import { glass } from '../glass'
 
@@ -73,7 +74,7 @@ export const Ic = {
   spark: 'M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8',
 }
 
-export function Icon({ path, size = 20, stroke = 'currentColor', fill = 'none', sw = 1.7, style }: any = {}) {
+export function Icon({ path, size = 20, stroke = 'currentColor', fill = 'none', sw = 1.7, style }: { path: string; size?: number; stroke?: string; fill?: string; sw?: number; style?: CSSProperties }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={stroke}
       strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" style={style}>
@@ -83,7 +84,7 @@ export function Icon({ path, size = 20, stroke = 'currentColor', fill = 'none', 
 }
 
 // Pick a nav icon from a Jellyfin view's CollectionType/Name.
-export function viewIcon(v) {
+export function viewIcon(v: { CollectionType?: string }) {
   const t = (v.CollectionType || '').toLowerCase()
   if (t.includes('movie')) return Ic.film
   if (t.includes('tv') || t.includes('show')) return Ic.tv
@@ -92,7 +93,15 @@ export function viewIcon(v) {
 }
 
 // Flat, quiet icon/pill button — solid surface, hairline border, no glass.
-export function GlassBtn({ onClick, title, children, pill, wide }: any = {}) {
+export function GlassBtn({
+  onClick, title, children, pill, wide,
+}: {
+  onClick?: () => void
+  title?: string
+  children?: ReactNode
+  pill?: boolean
+  wide?: boolean
+} = {}) {
   const [h, setH] = useState(false)
   return (
     <button onClick={onClick} title={title} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
@@ -108,7 +117,17 @@ export function GlassBtn({ onClick, title, children, pill, wide }: any = {}) {
 
 // Active = brighter + heavier text/icon ONLY. No background fill, no rail, no
 // dot, no color — that boxed-pill treatment was explicitly rejected.
-export function NavRow({ mobile, icon, label, active, onClick, badge = 0, alertBadge = 0 }: any = {}) {
+export function NavRow({
+  mobile, icon, label, active, onClick, badge = 0, alertBadge = 0,
+}: {
+  mobile?: boolean
+  icon: string
+  label: string
+  active?: boolean
+  onClick?: () => void
+  badge?: number
+  alertBadge?: number
+}) {
   const [h, setH] = useState(false)
   const showBadge = badge > 0
   const showAlert = alertBadge > 0
@@ -150,7 +169,16 @@ export function NavRow({ mobile, icon, label, active, onClick, badge = 0, alertB
    Browse → Downloads. `current` ('browse' | 'downloads') marks the active row;
    library views come from the shared useLibraryViews hook so a library row
    appears here identically to the Library page. ──────────────────────────────── */
-export function Sidebar({ mobile, width, views = [], downloadCount = 0, failingCount = 0, current }: any = {}) {
+export function Sidebar({
+  mobile, width, views = [], downloadCount = 0, failingCount = 0, current,
+}: {
+  mobile?: boolean
+  width?: number | string
+  views?: Array<{ Id: string; Name: string; CollectionType?: string }>
+  downloadCount?: number
+  failingCount?: number
+  current?: string
+} = {}) {
   return (
     <aside style={{
       position: 'absolute', top: 0, left: 0, bottom: 0,
@@ -181,7 +209,16 @@ export function Sidebar({ mobile, width, views = [], downloadCount = 0, failingC
 
 /* ── Top bar for the download surfaces. `title` names the page; when `detail` is
    truthy the back button pops the detail view (onBack) instead of leaving. ──── */
-export function TopBar({ mobile, initials, logout, title, detail, onBack }: any = {}) {
+export function TopBar({
+  mobile, initials, logout, title, detail, onBack,
+}: {
+  mobile?: boolean
+  initials?: string
+  logout?: () => void
+  title?: string
+  detail?: boolean
+  onBack?: () => void
+} = {}) {
   return (
     <div style={{
       position: 'sticky', top: 0, zIndex: 15, display: 'flex', alignItems: 'center', gap: 12,
@@ -200,7 +237,15 @@ export function TopBar({ mobile, initials, logout, title, detail, onBack }: any 
   )
 }
 
-export function Notice({ icon, title, body, tone, compact }: any = {}) {
+export function Notice({
+  icon, title, body, tone, compact,
+}: {
+  icon: string
+  title?: string
+  body?: string
+  tone?: 'error' | 'ok' | 'warn' | string
+  compact?: boolean
+}) {
   const color = tone === 'error' ? C.red : tone === 'ok' ? C.green : tone === 'warn' ? C.red : C.dim
   const bg = tone === 'error' ? 'rgba(224,101,94,.1)' : tone === 'ok' ? 'rgba(90,185,138,.1)' : tone === 'warn' ? 'rgba(224,101,94,.1)' : 'transparent'
   const border = tone === 'error' ? 'rgba(224,101,94,.3)' : tone === 'ok' ? 'rgba(90,185,138,.3)' : tone === 'warn' ? 'rgba(224,101,94,.3)' : C.line

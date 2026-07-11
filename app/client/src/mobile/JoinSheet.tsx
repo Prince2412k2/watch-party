@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { FormEvent } from 'react'
 import { navigate } from '../router'
 import { T, MONO, TYPE, R, EASE } from './theme'
 import { Sheet } from './ui/Sheet'
@@ -14,13 +15,13 @@ const CODE_RE = /^[0-9A-F]{8}$/
  * QR join already works by opening the shared link (camera app → /party/:code),
  * so this focuses on manual entry; an in-app scanner can layer on later.
  */
-export function JoinSheet({ open, onClose }: any = {}) {
+export function JoinSheet({ open, onClose }: { open?: boolean; onClose?: () => void } = {}) {
   const [code, setCode] = useState('')
   const clean = code.replace(/[^0-9a-fA-F]/g, '').toUpperCase().slice(0, 8)
   const valid = CODE_RE.test(clean)
 
-  const go = (path) => { onClose?.(); navigate(path) }
-  const submit = (e) => { e.preventDefault(); if (valid) go(`/party/${clean}`) }
+  const go = (path: string) => { onClose?.(); navigate(path) }
+  const submit = (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); if (valid) go(`/party/${clean}`) }
 
   return (
     <Sheet open={open} onClose={onClose} title="Watch together">

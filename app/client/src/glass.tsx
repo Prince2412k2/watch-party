@@ -19,7 +19,7 @@ const SURFACE = {
  * @param level  'clear' | 'light' | 'medium' | 'heavy'  (elevation, not blur)
  * @param opts   { radius?: number, ...extra style }
  */
-export function glass(level = 'medium', opts: any = {}) {
+export function glass(level: keyof typeof SURFACE = 'medium', opts: Record<string, any> = {}) {
   const { refract, radius, ...extra } = opts   // `refract` accepted + ignored (legacy)
   const s = SURFACE[level] || SURFACE.medium
   return {

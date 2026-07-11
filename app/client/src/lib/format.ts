@@ -4,7 +4,7 @@
 import { C } from './ui'
 
 // Raw bytes → "12.4 MB". Returns "—" for missing/zero.
-export function fmtSize(bytes) {
+export function fmtSize(bytes: number | null | undefined) {
   if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return '—'
   const u = ['B', 'KB', 'MB', 'GB', 'TB']
   let i = 0, n = bytes
@@ -13,13 +13,13 @@ export function fmtSize(bytes) {
 }
 
 // Bytes-per-second → "12.4 MB/s". Floors to "0 B/s" for missing/zero.
-export function fmtSpeed(bps) {
+export function fmtSpeed(bps: number | null | undefined) {
   if (bps == null || !Number.isFinite(bps) || bps <= 0) return '0 B/s'
   return `${fmtSize(bps)}/s`
 }
 
 // The download client uses 8640000 (100 days) as its "unknown/∞" ETA sentinel.
-export function fmtEta(secs) {
+export function fmtEta(secs: number | null | undefined) {
   if (secs == null || !Number.isFinite(secs) || secs < 0 || secs >= 8640000) return '∞'
   if (secs === 0) return '—'
   const d = Math.floor(secs / 86400)
@@ -33,7 +33,7 @@ export function fmtEta(secs) {
 }
 
 // Runtime from Jellyfin RunTimeTicks (100ns units) → "1h 42m".
-export function fmtRuntimeFromTicks(ticks) {
+export function fmtRuntimeFromTicks(ticks: number | null | undefined) {
   if (!ticks) return null
   const m = Math.round(ticks / 600_000_000)
   const h = Math.floor(m / 60)
@@ -41,7 +41,7 @@ export function fmtRuntimeFromTicks(ticks) {
 }
 
 // Runtime from a plain minutes count (Radarr/Sonarr metadata) → "1h 42m".
-export function fmtRuntimeFromMinutes(mins) {
+export function fmtRuntimeFromMinutes(mins: number | null | undefined) {
   if (!mins || !Number.isFinite(mins) || mins <= 0) return null
   const h = Math.floor(mins / 60)
   return h > 0 ? `${h}h ${mins % 60}m` : `${mins}m`
@@ -50,7 +50,7 @@ export function fmtRuntimeFromMinutes(mins) {
 /* Map the download client's raw state strings → friendly label, dot color, and
  * whether the item is paused (drives the pause/resume toggle). (qBittorrent 5.x
  * renamed paused* → stopped*; both are kept so a version bump can't mislabel.) */
-export function stateInfo(state) {
+export function stateInfo(state: string | null | undefined) {
   switch (state) {
     case 'downloading': case 'forcedDL': case 'metaDL': case 'checkingDL': case 'allocating':
       return { label: 'Downloading', color: C.live, paused: false }
@@ -75,4 +75,4 @@ export function stateInfo(state) {
 
 // Single source of truth for "is this torrent paused?" — derived from stateInfo
 // so error/missingFiles are treated consistently (as paused) everywhere.
-export const isPausedState = (s) => stateInfo(s).paused
+export const isPausedState = (s: string | null | undefined) => stateInfo(s).paused

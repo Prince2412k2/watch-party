@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const jpost = (url, body) => fetch(url, {
+const jpost = (url: string, body: unknown) => fetch(url, {
   method: 'POST', credentials: 'include',
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 })
@@ -10,7 +10,7 @@ const jpost = (url, body) => fetch(url, {
  * layers, which each map to their own label/color. (qBittorrent 5.x renamed
  * paused* → stopped*; both are kept so a version bump can't silently mislabel.) */
 const PAUSED_STATES = new Set(['pausedDL', 'stoppedDL', 'pausedUP', 'stoppedUP'])
-export const isPausedState = (s) => PAUSED_STATES.has(s)
+export const isPausedState = (s: string | null | undefined) => PAUSED_STATES.has(s ?? '')
 
 /* "Actively downloading" — the states that mean a title is still working toward
  * a complete file. Deliberately EXCLUDES seeding/completed (uploading*, *UP),
@@ -21,7 +21,7 @@ const DOWNLOADING_STATES = new Set([
   'downloading', 'forcedDL', 'metaDL', 'forcedMetaDL',
   'stalledDL', 'queuedDL', 'checkingDL', 'allocating', 'checkingResumeData',
 ])
-export const isActiveState = (s) => DOWNLOADING_STATES.has(s)
+export const isActiveState = (s: string | null | undefined) => DOWNLOADING_STATES.has(s ?? '')
 
 /* ── Live downloads poller ──────────────────────────────────────────────────
    Visibility-aware ~2.5s polling with a single shared AbortController; a failed
@@ -29,11 +29,11 @@ export const isActiveState = (s) => DOWNLOADING_STATES.has(s)
    pause/resume/remove so every surface that shows the download queue (Browse,
    Library's "downloading now" rail, the Downloads tab) can share ONE poller
    shape without re-implementing the lifecycle. */
-export function useTorrents(ready) {
-  const [torrents, setTorrents] = useState(null)   // null = never loaded
+export function useTorrents(ready: boolean) {
+  const [torrents, setTorrents] = useState<any[] | null>(null)   // null = never loaded
   const [loadError, setLoadError] = useState(false)
-  const [busy, setBusy] = useState(() => new Set())
-  const abortRef = useRef(null)
+  const [busy, setBusy] = useState<Set<string>>(() => new Set())
+  const abortRef = useRef<AbortController | null>(null)
 
   const poll = useCallback(() => {
     abortRef.current?.abort()
@@ -51,7 +51,7 @@ export function useTorrents(ready) {
 
   useEffect(() => {
     if (!ready) { setTorrents(null); return }
-    let timer = null
+    let timer: ReturnType<typeof setInterval> | null = null
     const start = () => { if (timer == null) { poll(); timer = setInterval(poll, 2500) } }
     const stop = () => { if (timer != null) { clearInterval(timer); timer = null } abortRef.current?.abort() }
     const onVis = () => (document.hidden ? stop() : start())
@@ -60,10 +60,10 @@ export function useTorrents(ready) {
     return () => { document.removeEventListener('visibilitychange', onVis); stop() }
   }, [ready, poll])
 
-  const runAction = useCallback((hash, endpoint, body, optimistic = {}) => {
+  const runAction = useCallback((hash: string, endpoint: string, body: unknown, optimistic: Record<string, unknown> = {}) => {
     setBusy((prev) => new Set(prev).add(hash))
-    if (optimistic) setTorrents((cur) => cur && cur.map((t) => (t.hash === hash ? { ...t, ...optimistic } : t)))
-    jpost(`/api/servarr/qbittorrent/${endpoint}`, { hashes: hash, ...body })
+    if (optimistic) setTorrents((cur) => cur && cur.map((t) => (t.hash === hash ? { ...t, ...(optimistic as Record<string, unknown>) } : t)))
+    jpost(`/api/servarr/qbittorrent/${endpoint}`, { hashes: hash, ...(body as Record<string, unknown>) })
       .catch(() => {})
       .finally(() => {
         setBusy((prev) => { const n = new Set(prev); n.delete(hash); return n })
@@ -71,14 +71,14 @@ export function useTorrents(ready) {
       })
   }, [poll])
 
-  const pause = (t) => runAction(t.hash, 'pause', {}, { state: 'pausedDL' })
-  const resume = (t) => runAction(t.hash, 'resume', {}, { state: 'downloading' })
-  const remove = (hash, deleteFiles) => {
+  const pause = (t: { hash: string }) => runAction(t.hash, 'pause', {}, { state: 'pausedDL' })
+  const resume = (t: { hash: string }) => runAction(t.hash, 'resume', {}, { state: 'downloading' })
+  const remove = (hash: string, deleteFiles: boolean) => {
     setTorrents((cur) => cur && cur.filter((t) => t.hash !== hash))
     runAction(hash, 'delete', { deleteFiles })
   }
 
   const list = torrents || []
-  const activeCount = list.filter((t) => isActiveState(t.state)).length
+  const activeCount = list.filter((t: { state?: string }) => isActiveState(t.state)).length
   return { ready, torrents, list, loadError, busy, activeCount, pause, resume, remove }
 }

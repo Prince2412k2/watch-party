@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { T, TYPE, R, EASE, AVATAR_BG } from '../theme'

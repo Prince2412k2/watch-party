@@ -1,29 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Room, RoomEvent, Track } from 'livekit-client'
 
-export function useLiveKit({ partyId, enabled = true }: any = {}) {
-  const roomRef = useRef(null)
-  const [participants, setParticipants] = useState([]) // [{ identity, name, videoTrack, audioTrack, isSpeaking }]
-  const [localParticipant, setLocalParticipant] = useState(null)
+export interface LiveKitParticipantView {
+  identity: string
+  name: string
+  videoTrack: unknown | null
+  audioTrack: unknown | null
+  isSpeaking: boolean
+}
+
+export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enabled?: boolean } = {}) {
+  const roomRef = useRef<Room | null>(null)
+  const [participants, setParticipants] = useState<LiveKitParticipantView[]>([])
+  const [localParticipant, setLocalParticipant] = useState<LiveKitParticipantView | null>(null)
   const [camOn, setCamOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
-  const [error, setError] = useState(null)
-  const errorTimer = useRef(null)
+  const [error, setError] = useState<string | null>(null)
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Surface a transient error banner that dismisses itself after ~4.5s so a
   // one-off camera/mic hiccup doesn't leave a permanent bar over the movie.
   // Passing null clears it (and any pending timer) immediately.
-  const flagError = useCallback((msg) => {
-    clearTimeout(errorTimer.current)
+  const flagError = useCallback((msg: string | null) => {
+    if (errorTimer.current) clearTimeout(errorTimer.current)
     setError(msg ?? null)
     if (msg) errorTimer.current = setTimeout(() => setError(null), 4500)
   }, [])
-  useEffect(() => () => clearTimeout(errorTimer.current), [])
+  useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current) }, [])
 
   useEffect(() => {
     if (!partyId || !enabled) return
 
-    let room
+    let room: Room | null = null
     let cancelled = false
 
     async function connect() {
@@ -41,6 +49,7 @@ export function useLiveKit({ partyId, enabled = true }: any = {}) {
 
         function refresh() {
           if (cancelled) return
+          if (!room) return
           const parts = [...room.remoteParticipants.values()].map(p => ({
             identity: p.identity,
             name: p.name || p.identity,
@@ -72,7 +81,7 @@ export function useLiveKit({ partyId, enabled = true }: any = {}) {
         await room.connect(url, token)
         refresh()
       } catch (err) {
-        if (!cancelled) flagError(err.message)
+        if (!cancelled) flagError(err instanceof Error ? err.message : String(err))
       }
     }
 
@@ -96,15 +105,15 @@ export function useLiveKit({ partyId, enabled = true }: any = {}) {
     autoGainControl: true,
   }
 
-  function mediaError(kind, err) {
+  function mediaError(kind: string, err: unknown) {
     // getUserMedia only works in a secure context (https or localhost).
     if (!window.isSecureContext) {
       return `${kind} needs a secure (HTTPS) connection — open the site over https.`
     }
-    return err?.message || `Could not access ${kind.toLowerCase()}.`
+    return err instanceof Error ? err.message : `Could not access ${kind.toLowerCase()}.`
   }
 
-  async function enableCamera(on) {
+  async function enableCamera(on: boolean) {
     if (!roomRef.current) return flagError('Not connected to the room yet.')
     try {
       await roomRef.current.localParticipant.setCameraEnabled(on)
@@ -115,7 +124,7 @@ export function useLiveKit({ partyId, enabled = true }: any = {}) {
     }
   }
 
-  async function enableMic(on) {
+  async function enableMic(on: boolean) {
     if (!roomRef.current) return flagError('Not connected to the room yet.')
     try {
       await roomRef.current.localParticipant.setMicrophoneEnabled(on, MIC_CAPTURE)

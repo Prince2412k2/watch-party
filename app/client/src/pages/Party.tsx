@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { MouseEvent, PointerEvent } from 'react'
 import { useParty } from '../context/PartyContext'
 import { useSocket } from '../hooks/useSocket'
 import { useLiveKit } from '../hooks/useLiveKit'
@@ -18,7 +19,7 @@ import { Z } from '../watchLayers'
 import Library from './Library'
 import Lobby from './Lobby'
 
-export default function Party({ partyId, isNew, itemId }: any = {}) {
+export default function Party({ partyId, isNew, itemId }: { partyId?: string; isNew?: boolean; itemId?: string } = {}) {
   const { socket } = useSocket()
   const party = useParty()
   const {
@@ -26,10 +27,10 @@ export default function Party({ partyId, isNew, itemId }: any = {}) {
     setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks,
   } = party
 
-  const lk = useLiveKit({ partyId: session?.id ?? null, enabled: role === 'host' || role === 'guest' })
-  const [removedCameras, setRemovedCameras] = useState(new Set())
+  const lk = useLiveKit({ partyId: session?.id, enabled: role === 'host' || role === 'guest' })
+  const [removedCameras, setRemovedCameras] = useState<Set<string>>(new Set())
   const [hideSelf, toggleHideSelf, setHideSelf] = useHideSelf() as any
-  const [joinError, setJoinError] = useState(null)
+  const [joinError, setJoinError] = useState<string | null>(null)
   const phone = usePhone()
 
   // Bug 4: couple camera ⇄ self-view ONE WAY. Turning the camera OFF auto-hides
@@ -62,9 +63,9 @@ export default function Party({ partyId, isNew, itemId }: any = {}) {
   // React would crash ("rendered fewer hooks than expected") instead of showing
   // the friendly "Party not found" screen.
   useEffect(() => {
-    const handler = ({ userId }) => setRemovedCameras(prev => new Set([...prev, userId]))
+    const handler = ({ userId }: { userId: string }) => setRemovedCameras(prev => new Set([...prev, userId]))
     socket.on('camera:removed', handler)
-    return () => socket.off('camera:removed', handler)
+    return () => { socket.off('camera:removed', handler) }
   }, [socket])
 
   if (joinError) {
@@ -106,7 +107,7 @@ export default function Party({ partyId, isNew, itemId }: any = {}) {
     isHost,
     removedCameras,
     hideSelf,
-    onRemove: (identity) => {
+    onRemove: (identity: string) => {
       party.removeCamera(identity)
       setRemovedCameras(prev => new Set([...prev, identity]))
     },
@@ -125,7 +126,7 @@ export default function Party({ partyId, isNew, itemId }: any = {}) {
           embedded
           stack={session.browse?.stack ?? []}
           onNavigate={navigateBrowse}
-          onPickMedia={(item) => selectMedia(item.Id)}
+          onPickMedia={(item: { Id: string }) => selectMedia(item.Id)}
           canDrive={canDrive}
           onPointer={canDrive ? sendPointer : undefined}
           mirrorSubscribe={!canDrive ? mirror.subscribe : undefined}
@@ -172,10 +173,28 @@ export default function Party({ partyId, isNew, itemId }: any = {}) {
 // The immersive watch screen: real fullscreen (whole container, feeds stay
 // visible), and chrome that auto-hides after idle and returns on mouse move
 // (desktop) or a tap (phone). See watchLayers.js for the z-index scale.
-function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, alertMode, layoutMode, setLayout, openChat, closeChat, setPlaybackTracks, hideSelf, onToggleHideSelf }: any = {}) {
+function WatchView({
+  session, isHost, cameraProps, lk, chatOpen, chatRipple = 0, alertMode, layoutMode,
+  setLayout = () => {}, openChat = () => {}, closeChat = () => {}, setPlaybackTracks = () => {}, hideSelf, onToggleHideSelf = () => {},
+}: {
+  session?: any
+  isHost?: boolean
+  cameraProps?: any
+  lk?: any
+  chatOpen?: boolean
+  chatRipple?: number
+  alertMode?: 'focus' | 'on' | 'mute'
+  layoutMode?: string
+  setLayout?: (mode: 'float' | 'dock') => void
+  openChat?: (focus?: boolean) => void
+  closeChat?: () => void
+  setPlaybackTracks?: (tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
+  hideSelf?: boolean
+  onToggleHideSelf?: () => void
+} = {}) {
   const phone = usePhone()
-  const rootRef = useRef(null)
-  const hideTimer = useRef(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const hideTimer = useRef<number | null>(null)
   const [visible, setVisible] = useState(true)
   // Single "are we in the app's fullscreen presentation?" state. Derived from
   // whichever mechanism the platform supports (element FS today; iOS faux-FS in
@@ -207,15 +226,15 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
 
   const poke = () => {
     setVisible(true)
-    clearTimeout(hideTimer.current)
-    hideTimer.current = setTimeout(() => setVisible(false), 3000)
+    if (hideTimer.current != null) window.clearTimeout(hideTimer.current)
+    hideTimer.current = window.setTimeout(() => setVisible(false), 3000)
   }
-  useEffect(() => { poke(); return () => clearTimeout(hideTimer.current) }, [])
+  useEffect(() => { poke(); return () => { if (hideTimer.current != null) window.clearTimeout(hideTimer.current) } }, [])
 
   // On phones a tap on the video TOGGLES the control layer (show → hide); when
   // shown it re-arms the idle timer. On desktop a click only wakes the chrome.
   const toggleChrome = () => {
-    if (visible) { setVisible(false); clearTimeout(hideTimer.current) }
+    if (visible) { setVisible(false); if (hideTimer.current != null) window.clearTimeout(hideTimer.current) }
     else poke()
   }
   const onSurfaceTap = () => poke()   // desktop click-to-wake
@@ -236,35 +255,35 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
   // touching pan/pinch, and we attach NO horizontal swipe so iOS edge back-swipe
   // is left alone.
   const canControl = isHost || session.collaborativeControl
-  const seekBridgeRef = useRef(null)          // wired by Player/SyncBridge → { seekBy, canControl, guardToggle }
+  const seekBridgeRef = useRef<any>(null)          // wired by Player/SyncBridge → { seekBy, canControl, guardToggle }
   // Bug 2: route camera/mic toggles through the sync bridge's guard so a spurious
   // pause/play the browser can emit while (re)acquiring a device via getUserMedia
   // never authors a pause/seek to the shared timeline — and any spurious local
   // pause of a playing movie is undone. Falls back to a plain call pre-wiring.
-  const guardedToggle = (fn) => {
+  const guardedToggle = (fn: () => void) => {
     const g = seekBridgeRef.current?.guardToggle
     return g ? g(fn) : fn()
   }
   const DOUBLE_MS = 280                        // single/double discrimination window
   const MOVE_TOL = 12                          // px: past this a press is a drag/scroll, not a tap
-  const tapRef = useRef({ downX: 0, downY: 0, hasDown: false, lastT: 0, timer: null })
-  const fxTimer = useRef(null)
-  const [seekFx, setSeekFx] = useState(null)   // { key, dir: -1|1, amount } — brief feedback
+  const tapRef = useRef<{ downX: number; downY: number; hasDown: boolean; lastT: number; timer: number | null }>({ downX: 0, downY: 0, hasDown: false, lastT: 0, timer: null })
+  const fxTimer = useRef<number | null>(null)
+  const [seekFx, setSeekFx] = useState<{ key: number; dir: -1 | 1; amount: number } | null>(null)   // brief feedback
 
-  const showSeekFx = (dir) => {
+  const showSeekFx = (dir: -1 | 1) => {
     setSeekFx(prev => {
       const same = prev && prev.dir === dir
       return { key: (prev?.key ?? 0) + 1, dir, amount: same ? prev.amount + 10 : 10 }
     })
-    clearTimeout(fxTimer.current)
-    fxTimer.current = setTimeout(() => setSeekFx(null), 600)
+    if (fxTimer.current != null) window.clearTimeout(fxTimer.current)
+    fxTimer.current = window.setTimeout(() => setSeekFx(null), 600)
   }
 
-  const onPhonePointerDown = (e) => {
+  const onPhonePointerDown = (e: PointerEvent<HTMLDivElement>) => {
     const s = tapRef.current
     s.hasDown = true; s.downX = e.clientX; s.downY = e.clientY
   }
-  const onPhoneTap = (e) => {
+  const onPhoneTap = (e: MouseEvent<HTMLDivElement>) => {
     const s = tapRef.current
     // Reject a press that dragged past the movement threshold (scroll/slide).
     if (s.hasDown && (Math.abs(e.clientX - s.downX) > MOVE_TOL || Math.abs(e.clientY - s.downY) > MOVE_TOL)) {
@@ -276,7 +295,7 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
     const isDouble = now - s.lastT < DOUBLE_MS
     s.lastT = now
     if (isDouble) {
-      clearTimeout(s.timer); s.timer = null      // cancel the pending single-tap toggle
+      if (s.timer != null) window.clearTimeout(s.timer); s.timer = null      // cancel the pending single-tap toggle
       const w = rootRef.current?.clientWidth || window.innerWidth
       const x = e.clientX
       if (x < w / 3) {                            // left third → back
@@ -291,11 +310,14 @@ function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, ale
     } else {
       // Defer the single-tap toggle until the double-tap window closes so the
       // first tap of a double doesn't flash the chrome on/off.
-      clearTimeout(s.timer)
-      s.timer = setTimeout(() => { s.timer = null; toggleChrome() }, DOUBLE_MS)
+      if (s.timer != null) window.clearTimeout(s.timer)
+      s.timer = window.setTimeout(() => { s.timer = null; toggleChrome() }, DOUBLE_MS)
     }
   }
-  useEffect(() => () => { clearTimeout(tapRef.current.timer); clearTimeout(fxTimer.current) }, [])
+  useEffect(() => () => {
+    if (tapRef.current.timer != null) window.clearTimeout(tapRef.current.timer)
+    if (fxTimer.current != null) window.clearTimeout(fxTimer.current)
+  }, [])
 
   // ── Immersive (fullscreen) ownership ──────────────────────────────────────
   // Element-FS platforms (Android/Chromium, iPad, desktop) report
@@ -576,7 +598,17 @@ function ChatSheet() {
 // Phone camera strip: a single horizontal row of compact tiles, bottom-anchored
 // just above the control bar, dismissed via the bar's camera toggle. Respects
 // the Phase-2.1 hide-self flag (localParticipant is dropped upstream).
-function MobileCameraStrip({ localParticipant, participants, isHost, removedCameras, onRemove, hideSelf, visible }: any = {}) {
+function MobileCameraStrip({
+  localParticipant, participants = [], isHost, removedCameras = new Set(), onRemove = () => {}, hideSelf, visible,
+}: {
+  localParticipant?: { identity: string; isLocal?: boolean } | null
+  participants?: Array<{ identity: string; videoTrack?: unknown; isLocal?: boolean }>
+  isHost?: boolean
+  removedCameras?: Set<string>
+  onRemove?: (identity: string) => void
+  hideSelf?: boolean
+  visible?: boolean
+} = {}) {
   const localId = localParticipant?.identity
   const all = [
     ...(localParticipant && !hideSelf ? [{ ...localParticipant, isLocal: true }] : []),

@@ -23,7 +23,7 @@ export function useHideSelf() {
   // Imperative setter (persisted) for the one-way camera→self-view coupling:
   // turning the camera OFF auto-hides my self-view; turning it back ON shows it.
   // Toggling hide-self by hand never touches the camera (that stays in useLiveKit).
-  const set = useCallback((value) => {
+  const set = useCallback((value: boolean) => {
     setHideSelfState(prev => {
       const next = !!value
       if (next === prev) return prev

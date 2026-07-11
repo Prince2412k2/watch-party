@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { useParty } from '../context/PartyContext'
 import { navigate } from '../router'
+import type { PartyUser } from '../types'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 function initials(name = '') {
@@ -14,7 +15,16 @@ function initials(name = '') {
  * top cluster with the auto-hide layer; the join sidebar stays put (it's a
  * notification), and toasts/modal are never hidden.
  */
-export default function RoomControls({ stage, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false }: any = {}) {
+export default function RoomControls({
+  stage, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false,
+}: {
+  stage?: string
+  top?: number
+  visible?: boolean
+  phone?: boolean
+  onOpenChat?: () => void
+  chatOpen?: boolean
+} = {}) {
   const party = useParty()
   const {
     session, role, toasts,
@@ -26,14 +36,15 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
   const [copyLabel, setCopyLabel] = useState('Copy link')
   const [confirmEnd, setConfirmEnd] = useState(false)
   if (!session) return null
+  const currentSession = session
 
   const isHost = role === 'host'
   const watching = stage === 'watching'
-  const waiting = session.waiting ?? []
-  const participantCount = 1 + (session.guests?.length ?? 0)
+  const waiting = currentSession.waiting ?? []
+  const participantCount = 1 + (currentSession.guests?.length ?? 0)
 
   function copyLink() {
-    navigator.clipboard.writeText(`${window.location.origin}/party/${session.id}`)
+    navigator.clipboard.writeText(`${window.location.origin}/party/${currentSession.id}`)
     setCopyLabel('Copied!')
     setTimeout(() => setCopyLabel('Copy link'), 2000)
   }
@@ -119,7 +130,7 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
           <div style={{ padding: '11px 15px', borderBottom: '1px solid var(--stroke)', fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text2)' }}>
             Wants to join · {waiting.length}
           </div>
-          {waiting.map(w => (
+          {waiting.map((w: PartyUser) => (
             <div key={w.userId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
               <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--stroke2)', display: 'grid', placeItems: 'center', color: 'var(--text)', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{initials(w.name)}</div>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
@@ -155,7 +166,7 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
                     <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{session.hostName || 'Host'}</span>
                     <span style={{ padding: '2px 7px', borderRadius: 6, background: 'var(--glass2)', color: 'var(--text)', fontSize: 10, fontWeight: 700, letterSpacing: '.04em' }}>HOST</span>
                   </div>
-                  {session.guests?.map(g => (
+                  {session.guests?.map((g: PartyUser) => (
                     <div key={g.userId} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '6px 0' }}>
                       <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--stroke2)', display: 'grid', placeItems: 'center', color: 'var(--text)', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{initials(g.name)}</div>
                       <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{g.name}</span>
@@ -191,7 +202,7 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
                     {(session.syncMode ?? 'hopping') === 'dragging' ? 'Everyone waits for the slowest viewer' : 'Host never waits; slow viewers catch up'}
                   </div>
                   <div style={{ display: 'flex', gap: 6, background: 'var(--glass2)', border: '1px solid var(--stroke)', borderRadius: 10, padding: 4 }}>
-                    {[{ id: 'hopping', label: 'Hopping' }, { id: 'dragging', label: 'Dragging' }].map(m => {
+                    {[{ id: 'hopping', label: 'Hopping' }, { id: 'dragging', label: 'Dragging' }].map((m: { id: string; label: string }) => {
                       const active = (session.syncMode ?? 'hopping') === m.id
                       return <button key={m.id} onClick={() => setSyncMode(m.id)} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: active ? 700 : 600, background: active ? 'var(--accent)' : 'transparent', color: active ? 'var(--on-accent)' : 'var(--text2)', transition: 'background .15s, color .15s' }}>{m.label}</button>
                     })}
@@ -253,8 +264,8 @@ export default function RoomControls({ stage, top = 18, visible = true, phone = 
 // Self-contained QR code encoding the join URL — no network calls (the
 // 'qrcode' package renders entirely client-side as inline SVG), framed in a
 // small rounded white card so it stays scannable against the dark UI.
-function JoinQR({ url, size = 108 }: any = {}) {
-  const [svg, setSvg] = useState(null)
+function JoinQR({ url, size = 108 }: { url: string; size?: number }) {
+  const [svg, setSvg] = useState<string | null>(null)
   useEffect(() => {
     let live = true
     QRCode.toString(url, { type: 'svg', margin: 1, width: size, color: { dark: '#0a0a0c', light: '#ffffff' } })

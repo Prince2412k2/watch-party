@@ -4,6 +4,7 @@
 // red reserved for the active-dot / error state, nothing else colored.
 import { C, SANS, MONO, Icon, Ic } from '../../lib/ui'
 import { formatBytes, formatSpeed, progressPct } from './format'
+import type { DownloadRecord } from '../contract'
 
 const STATE_LABEL = {
   queued: 'Queued',
@@ -13,7 +14,7 @@ const STATE_LABEL = {
   error: 'Failed',
 }
 
-function IconBtn({ onClick, title, children }: any = {}) {
+function IconBtn({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
@@ -30,7 +31,7 @@ function IconBtn({ onClick, title, children }: any = {}) {
   )
 }
 
-export default function DownloadProgress({ record, onPause, onResume, onCancel }: any = {}) {
+export default function DownloadProgress({ record, onPause, onResume, onCancel }: { record: DownloadRecord; onPause: (id: string) => void; onResume: (id: string) => void; onCancel: (id: string) => void }) {
   const { title, state, receivedBytes = 0, totalBytes = 0, bytesPerSec = 0, message } = record
   const pct = progressPct(receivedBytes, totalBytes)
   const isError = state === 'error'

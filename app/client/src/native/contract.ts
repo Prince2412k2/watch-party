@@ -1,107 +1,95 @@
-// ── Native (Tauri) contract — frozen, see docs/native/PLAN.md §4 ────────────
+// Native (Tauri) contract — frozen, see docs/native/PLAN.md §4 ────────────
 // This file is the single source of truth for the boundary between the React
-// app and the Rust/Tauri host. It is plain JS-with-JSDoc (not compiled — the
-// app doesn't use a TS build step) so it can be imported directly; the .ts
-// extension signals "this is a type contract" to anyone reading the tree.
-//
-// MediaBackend duck-types HTMLMediaElement on exactly the surface useSyncPlay
-// (app/client/src/hooks/useSyncPlay.js) and Player.jsx actually touch — see
-// the plan for the audit. MpvBackend (native/MpvBackend.js) implements this;
-// the web path keeps using the real <HlsVideo> element, which already
-// satisfies the same shape natively.
+// app and the Rust/Tauri host.
 
-/**
- * @typedef {Object} BufferedRanges
- * @property {number} length
- * @property {(i: number) => number} start
- * @property {(i: number) => number} end
- */
+export interface BufferedRanges {
+  length: number
+  start: (i: number) => number
+  end: (i: number) => number
+}
 
-/**
- * @typedef {Object} MediaBackend
- * @property {number} currentTime            - seconds; set = seek
- * @property {number} duration                - seconds (NaN until known)
- * @property {boolean} paused
- * @property {number} playbackRate
- * @property {number} volume                  - 0..1
- * @property {boolean} muted
- * @property {BufferedRanges} buffered
- * @property {() => Promise<void>} play
- * @property {() => void} pause
- * @property {(url: string, opts?: { startSec?: number, paused?: boolean }) => void} load
- * @property {() => void} destroy
- * @property {(type: string, cb: (e?: any) => void) => void} addEventListener
- * @property {(type: string, cb: (e?: any) => void) => void} removeEventListener
- */
+export interface MediaBackend {
+  currentTime: number
+  duration: number
+  paused: boolean
+  playbackRate: number
+  volume: number
+  muted: boolean
+  buffered: BufferedRanges
+  play: () => Promise<void>
+  pause: () => void
+  load: (url: string, opts?: { startSec?: number; paused?: boolean }) => void
+  destroy: () => void
+  addEventListener: (type: string, cb: (e?: unknown) => void) => void
+  removeEventListener: (type: string, cb: (e?: unknown) => void) => void
+  [key: string]: any
+}
 
-// Event names a MediaBackend implementation MUST fire, matching
-// HTMLMediaElement semantics exactly (useSyncPlay/Player.jsx listen for these):
+export type DownloadState = 'queued' | 'active' | 'paused' | 'done' | 'error'
+
+export interface DownloadRecord {
+  id: string
+  itemId: string
+  title: string
+  state: DownloadState
+  receivedBytes: number
+  totalBytes: number
+  parts: number
+  bytesPerSec?: number
+  path?: string
+  message?: string
+  [key: string]: any
+}
+
+export interface OfflineRecord {
+  itemId: string
+  title: string
+  path: string
+  sizeBytes: number
+  addedAt: string
+  [key: string]: any
+}
+
 export const MEDIA_EVENTS = [
   'play', 'pause', 'seeking', 'seeked', 'timeupdate', 'waiting', 'playing',
   'ended', 'durationchange', 'ratechange', 'volumechange', 'loadedmetadata', 'progress',
-]
+] as const
 
-// ── Tauri IPC command names (Rust #[tauri::command] in desktop/src-tauri/src/ipc.rs) ──
 export const IPC = {
-  // playback (mpv.rs)
-  MPV_LOAD: 'mpv_load',                 // { url, startSec, paused }
+  MPV_LOAD: 'mpv_load',
   MPV_PLAY: 'mpv_play',
   MPV_PAUSE: 'mpv_pause',
-  MPV_SEEK: 'mpv_seek',                 // { sec }
-  MPV_SET_SPEED: 'mpv_set_speed',       // { rate }
-  MPV_SET_VOLUME: 'mpv_set_volume',     // { vol }
-  MPV_SET_MUTED: 'mpv_set_muted',       // { muted }
-  MPV_SET_REGION: 'mpv_set_region',     // { x, y, w, h, dpr }
-  MPV_SET_FULLSCREEN: 'mpv_set_fullscreen', // { on }
-  MPV_SET_CAN_CONTROL: 'mpv_set_can_control', // { canControl } — gate mpv OSC interactivity
+  MPV_SEEK: 'mpv_seek',
+  MPV_SET_SPEED: 'mpv_set_speed',
+  MPV_SET_VOLUME: 'mpv_set_volume',
+  MPV_SET_MUTED: 'mpv_set_muted',
+  MPV_SET_REGION: 'mpv_set_region',
+  MPV_SET_FULLSCREEN: 'mpv_set_fullscreen',
+  MPV_SET_CAN_CONTROL: 'mpv_set_can_control',
   MPV_TEARDOWN: 'mpv_teardown',
-  // downloader (download.rs)
-  DL_START: 'dl_start',                 // { itemId, url, title, parts? } -> { id }
-  DL_PAUSE: 'dl_pause',                 // { id }
-  DL_RESUME: 'dl_resume',               // { id }
-  DL_CANCEL: 'dl_cancel',               // { id }
-  DL_LIST: 'dl_list',                   // -> DownloadRecord[]
-  // offline store (offline.rs)
-  OFFLINE_LIST: 'offline_list',         // -> OfflineRecord[]
-  OFFLINE_PATH: 'offline_path',         // { itemId } -> { path } | null
-  OFFLINE_REMOVE: 'offline_remove',     // { itemId }
-  // lifecycle (main.rs / window.rs)
+  DL_START: 'dl_start',
+  DL_PAUSE: 'dl_pause',
+  DL_RESUME: 'dl_resume',
+  DL_CANCEL: 'dl_cancel',
+  DL_LIST: 'dl_list',
+  OFFLINE_LIST: 'offline_list',
+  OFFLINE_PATH: 'offline_path',
+  OFFLINE_REMOVE: 'offline_remove',
   APP_QUIT: 'app_quit',
-}
+} as const
 
-// ── Tauri event names (Rust `emit`, subscribed via @tauri-apps/api/event) ───
 export const EVENTS = {
-  MPV_TIMEPOS: 'mpv:timepos',           // { sec }            ~4-10Hz
-  MPV_PAUSE: 'mpv:pause',               // { paused }
-  MPV_DURATION: 'mpv:duration',         // { sec }
-  MPV_SEEKING: 'mpv:seeking',           // {}
-  MPV_SEEKED: 'mpv:seeked',             // { sec }
-  MPV_BUFFERING: 'mpv:buffering',       // { active }
-  MPV_EOF: 'mpv:eof',                   // {}
-  MPV_LOADEDMETADATA: 'mpv:loadedmetadata', // { durationSec }
-  MPV_SPEED: 'mpv:speed',               // { rate }
-  MPV_CACHE: 'mpv:cache',               // { cachedAheadSec, cachedBytes }
-  DL_PROGRESS: 'dl:progress',           // { id, receivedBytes, totalBytes, bytesPerSec }
-  DL_DONE: 'dl:done',                   // { id, itemId, path }
-  DL_ERROR: 'dl:error',                 // { id, message }
-}
-
-/**
- * @typedef {Object} DownloadRecord
- * @property {string} id
- * @property {string} itemId
- * @property {string} title
- * @property {'queued'|'active'|'paused'|'done'|'error'} state
- * @property {number} receivedBytes
- * @property {number} totalBytes
- * @property {number} parts
- */
-
-/**
- * @typedef {Object} OfflineRecord
- * @property {string} itemId
- * @property {string} title
- * @property {string} path
- * @property {number} sizeBytes
- * @property {string} addedAt
- */
+  MPV_TIMEPOS: 'mpv:timepos',
+  MPV_PAUSE: 'mpv:pause',
+  MPV_DURATION: 'mpv:duration',
+  MPV_SEEKING: 'mpv:seeking',
+  MPV_SEEKED: 'mpv:seeked',
+  MPV_BUFFERING: 'mpv:buffering',
+  MPV_EOF: 'mpv:eof',
+  MPV_LOADEDMETADATA: 'mpv:loadedmetadata',
+  MPV_SPEED: 'mpv:speed',
+  MPV_CACHE: 'mpv:cache',
+  DL_PROGRESS: 'dl:progress',
+  DL_DONE: 'dl:done',
+  DL_ERROR: 'dl:error',
+} as const

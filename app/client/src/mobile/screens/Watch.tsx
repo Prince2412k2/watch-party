@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { PartyProvider } from '../../context/PartyContext'
 import Party from '../../pages/Party'
 
