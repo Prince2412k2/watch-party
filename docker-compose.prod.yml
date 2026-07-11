@@ -107,6 +107,7 @@ services:
       # out — express-session's default MemoryStore is wiped on every
       # container recreate. See app/server/index.js's sessionStoreDir.
       - ./data/sessions:/data/sessions
+      - ./data/subtitles:/data/subtitles
     env_file:
       - ./secrets/.env
       - ./secrets/.env.local

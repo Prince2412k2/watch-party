@@ -108,6 +108,12 @@ export function buildHlsUrl(itemId, { maxBitrate, abr } = {}) {
     // WebRTC audio path anyway, so downmixing to 5.1 gains nothing.
     AudioBitRate: '256000',
     MaxAudioChannels: '2',
+    // Jellyfin omits its external subtitle renditions from an HLS master unless
+    // this is explicitly enabled. hls.js can only populate the browser's
+    // textTracks collection from renditions advertised in that manifest, so
+    // without this flag the web player's subtitle menu is always empty even
+    // when the media source has embedded or sidecar subtitles.
+    EnableSubtitlesInManifest: 'true',
   }
   if (abr) {
     // Adaptive (ABR) master: don't pin a single bitrate/resolution. Jellyfin's

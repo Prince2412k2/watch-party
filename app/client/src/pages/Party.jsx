@@ -702,5 +702,5 @@ function HlsPlayer({ session, isHost, collaborativeControl, ...rest }) {
     </div>
   )
 
-  return <Player hlsUrl={hlsUrl} isHost={isHost} collaborativeControl={collaborativeControl} syncMode={session.syncMode} {...rest} />
+  return <Player hlsUrl={hlsUrl} mediaItemId={session.mediaItemId} isHost={isHost} collaborativeControl={collaborativeControl} syncMode={session.syncMode} {...rest} />
 }
