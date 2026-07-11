@@ -18,6 +18,8 @@ on:
   pull_request:
     branches:
       - main # build (artifacts only) on PRs into main; the release job stays tag-gated
+    paths:
+      - "flutter_app/**"
   workflow_dispatch:
     inputs:
       version:
