@@ -1,5 +1,37 @@
 const BASE = process.env.JELLYFIN_URL || 'http://localhost:8096'
 
+const BROWSER_PLAYBACK_PROFILE = {
+  Name: 'Watchparty Web',
+  MaxStreamingBitrate: 20000000,
+  DirectPlayProfiles: [
+    {
+      Type: 'Video',
+      Container: 'mp4,m4v,mov,mkv,webm,ts,mpeg,mpegts',
+      AudioCodec: 'aac,mp3,opus,flac,vorbis,ac3,eac3,mp2',
+      VideoCodec: 'h264,hevc,av1,vp8,vp9',
+    },
+    {
+      Type: 'Audio',
+      Container: 'mp3,aac,flac,ogg,oga,opus,wav',
+      AudioCodec: 'aac,mp3,opus,flac,vorbis,ac3,eac3,mp2',
+    },
+  ],
+  TranscodingProfiles: [
+    {
+      Type: 'Video',
+      Container: 'hls',
+      Protocol: 'hls',
+      AudioCodec: 'aac,mp3,opus,flac,vorbis,ac3,eac3,mp2',
+      VideoCodec: 'h264,hevc,av1,vp8,vp9',
+      MaxAudioChannels: '2',
+    },
+  ],
+  SubtitleProfiles: [
+    { Format: 'vtt', Method: 'External' },
+    { Format: 'srt', Method: 'External' },
+  ],
+}
+
 function clientHeader(deviceId = 'watchparty-server') {
   return `MediaBrowser Client="Watchparty", Device="Server", DeviceId="${deviceId}", Version="1.0.0"`
 }
@@ -24,6 +56,16 @@ async function jfetch(path, { token, method = 'GET', body, deviceId } = {}) {
 
   const ct = res.headers.get('content-type') || ''
   return ct.includes('application/json') ? res.json() : res.text()
+}
+
+function proxyJellyfinUrl(url) {
+  if (!url) return null
+  try {
+    const resolved = new URL(url, BASE)
+    return `/jellyfin${resolved.pathname}${resolved.search}${resolved.hash}`
+  } catch {
+    return url.startsWith('/') ? `/jellyfin${url}` : url
+  }
 }
 
 export function authenticate(username, password, deviceId = 'watchparty-server') {
@@ -96,9 +138,82 @@ export function getItemDetail(token, userId, itemId) {
   return jfetch(`/Users/${userId}/Items/${itemId}?${qs}`, { token })
 }
 
-export function buildHlsUrl(itemId, { maxBitrate, abr } = {}) {
+export function getPlaybackInfo(token, userId, itemId, {
+  mediaSourceId,
+  audioStreamIndex,
+  subtitleStreamIndex,
+  playSessionId,
+} = {}) {
+  const qs = new URLSearchParams({ UserId: userId })
+  const body = { DeviceProfile: BROWSER_PLAYBACK_PROFILE }
+  if (mediaSourceId) body.MediaSourceId = mediaSourceId
+  if (Number.isInteger(audioStreamIndex) && audioStreamIndex >= 0) body.AudioStreamIndex = audioStreamIndex
+  if (Number.isInteger(subtitleStreamIndex)) body.SubtitleStreamIndex = subtitleStreamIndex
+  if (playSessionId) body.PlaySessionId = playSessionId
+  return jfetch(`/Items/${itemId}/PlaybackInfo?${qs}`, { token, method: 'POST', body })
+}
+
+export function normalizePlaybackInfo(response, {
+  itemId = null,
+  selectedAudioIndex = null,
+  selectedSubtitleIndex = null,
+} = {}) {
+  const source = response?.MediaSources?.[0] ?? null
+  const mediaStreams = Array.isArray(source?.MediaStreams) ? source.MediaStreams : []
+  const audioStreams = mediaStreams
+    .filter(stream => stream?.Type === 'Audio')
+    .map(stream => ({
+      index: stream.Index,
+      type: stream.Type,
+      codec: stream.Codec ?? null,
+      language: stream.Language ?? null,
+      displayTitle: stream.DisplayTitle ?? null,
+      title: stream.Title ?? null,
+      isDefault: !!stream.IsDefault,
+      isForced: !!stream.IsForced,
+      isExternal: !!stream.IsExternal,
+      isHearingImpaired: !!stream.IsHearingImpaired,
+      deliveryUrl: stream.DeliveryUrl ?? null,
+    }))
+  const subtitleStreams = mediaStreams
+    .filter(stream => stream?.Type === 'Subtitle')
+    .map(stream => ({
+      index: stream.Index,
+      type: stream.Type,
+      codec: stream.Codec ?? null,
+      language: stream.Language ?? null,
+      displayTitle: stream.DisplayTitle ?? null,
+      title: stream.Title ?? null,
+      isDefault: !!stream.IsDefault,
+      isForced: !!stream.IsForced,
+      isExternal: !!stream.IsExternal,
+      isHearingImpaired: !!stream.IsHearingImpaired,
+      deliveryUrl: stream.DeliveryUrl ?? null,
+    }))
+
+  return {
+    itemId,
+    mediaSourceId: source?.Id ?? null,
+    playSessionId: response?.PlaySessionId ?? null,
+    mediaStreams,
+    audioStreams,
+    subtitleStreams,
+    selectedAudioIndex: selectedAudioIndex ?? null,
+    selectedSubtitleIndex: selectedSubtitleIndex ?? null,
+    directStreamUrl: proxyJellyfinUrl(source?.DirectStreamUrl ?? null),
+    transcodingUrl: proxyJellyfinUrl(source?.TranscodingUrl ?? null),
+  }
+}
+
+export function buildHlsUrl(itemId, {
+  mediaSourceId,
+  audioStreamIndex,
+  subtitleStreamIndex,
+  maxBitrate,
+  abr,
+} = {}) {
   const params = {
-    MediaSourceId: itemId,
+    MediaSourceId: mediaSourceId ?? itemId,
     VideoCodec: 'h264',
     AudioCodec: 'aac',
     // Without an explicit bitrate/channel count Jellyfin's ffmpeg falls back to
@@ -114,6 +229,12 @@ export function buildHlsUrl(itemId, { maxBitrate, abr } = {}) {
     // without this flag the web player's subtitle menu is always empty even
     // when the media source has embedded or sidecar subtitles.
     EnableSubtitlesInManifest: 'true',
+  }
+  if (Number.isInteger(audioStreamIndex) && audioStreamIndex >= 0) {
+    params.AudioStreamIndex = String(audioStreamIndex)
+  }
+  if (Number.isInteger(subtitleStreamIndex)) {
+    params.SubtitleStreamIndex = String(subtitleStreamIndex)
   }
   if (abr) {
     // Adaptive (ABR) master: don't pin a single bitrate/resolution. Jellyfin's

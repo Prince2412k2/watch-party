@@ -306,6 +306,10 @@ export function PartyProvider({ children, userId }) {
     socket.emit('party:setSyncMode', { mode })
   }
 
+  function setPlaybackTracks({ audioStreamIndex = null, subtitleStreamIndex = null } = {}) {
+    socket.emit('party:setPlaybackTracks', { audioStreamIndex, subtitleStreamIndex })
+  }
+
   function sendMessage(text) {
     socket.emit('chat:message', { text })
   }
@@ -338,6 +342,7 @@ export function PartyProvider({ children, userId }) {
       navigateBrowse, sendPointer, selectMedia, backToLobby,
       approveUser, rejectUser, kickUser, transferHost, endParty,
       setCollaborative, setSyncMode, sendMessage, removeCamera,
+      setPlaybackTracks,
       setLayout, toggleChat, openChat, closeChat, setAlertMode,
     }}>
       {children}
