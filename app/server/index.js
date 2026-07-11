@@ -25,6 +25,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware'
 import { login, me, logout, testLogin, requireAuth } from './auth.js'
 import { registerLibraryRoutes } from './library.js'
 import { registerNativeRoutes } from './native.js'
+import { registerSubtitleRoutes } from './subtitles.js'
 import { registerLiveKitRoutes } from './livekit.js'
 import { registerServarrRoutes } from './servarr/index.js'
 import {
@@ -182,6 +183,7 @@ if (TEST_ENDPOINTS_ENABLED) {
 app.get('/api/auth/me', me)
 app.post('/api/auth/logout', logout)
 registerLibraryRoutes(app)
+registerSubtitleRoutes(app)
 registerLiveKitRoutes(app)
 registerServarrRoutes(app)
 registerNativeRoutes(app)
