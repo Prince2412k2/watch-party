@@ -163,6 +163,7 @@ export default function Party({ partyId, isNew, itemId }) {
       session={session} isHost={isHost} cameraProps={cameraProps} lk={lk}
       chatOpen={chatOpen} chatRipple={chatRipple} alertMode={alertMode}
       layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat}
+      setPlaybackTracks={setPlaybackTracks}
       hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf}
     />
   )
@@ -171,7 +172,7 @@ export default function Party({ partyId, isNew, itemId }) {
 // The immersive watch screen: real fullscreen (whole container, feeds stay
 // visible), and chrome that auto-hides after idle and returns on mouse move
 // (desktop) or a tap (phone). See watchLayers.js for the z-index scale.
-function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, alertMode, layoutMode, setLayout, openChat, closeChat, hideSelf, onToggleHideSelf }) {
+function WatchView({ session, isHost, cameraProps, lk, chatOpen, chatRipple, alertMode, layoutMode, setLayout, openChat, closeChat, setPlaybackTracks, hideSelf, onToggleHideSelf }) {
   const phone = usePhone()
   const rootRef = useRef(null)
   const hideTimer = useRef(null)
