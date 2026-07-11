@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { apiJson, arrayOf, isTorrentJson } from '../types/guards'
 
 const jpost = (url: string, body: unknown) => fetch(url, {
   method: 'POST', credentials: 'include',
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 })
+
+export interface TorrentRecord {
+  hash: string
+  name?: string
+  state?: string
+  progress?: number
+  dlspeed?: number
+  upspeed?: number
+  displayTitle?: string
+  subtitle?: string
+  posterUrl?: string
+  kind?: string
+  [key: string]: unknown
+}
 
 /* Map the download client's raw state strings → whether the item is paused.
  * Shared with stateInfo() in FindDownload.jsx / Downloads.jsx presentational
@@ -30,7 +45,7 @@ export const isActiveState = (s: string | null | undefined) => DOWNLOADING_STATE
    Library's "downloading now" rail, the Downloads tab) can share ONE poller
    shape without re-implementing the lifecycle. */
 export function useTorrents(ready: boolean) {
-  const [torrents, setTorrents] = useState<any[] | null>(null)   // null = never loaded
+  const [torrents, setTorrents] = useState<TorrentRecord[] | null>(null)   // null = never loaded
   const [loadError, setLoadError] = useState(false)
   const [busy, setBusy] = useState<Set<string>>(() => new Set())
   const abortRef = useRef<AbortController | null>(null)
@@ -40,10 +55,10 @@ export function useTorrents(ready: boolean) {
     const ctrl = new AbortController()
     abortRef.current = ctrl
     return fetch('/api/servarr/downloads/enriched', { credentials: 'include', signal: ctrl.signal })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then((data) => {
         if (ctrl.signal.aborted) return
-        setTorrents(Array.isArray(data) ? data : [])
+        setTorrents(arrayOf(data, isTorrentJson))
         setLoadError(false)
       })
       .catch((e) => { if (e?.name === 'AbortError' || ctrl.signal.aborted) return; setLoadError(true) })
@@ -79,6 +94,6 @@ export function useTorrents(ready: boolean) {
   }
 
   const list = torrents || []
-  const activeCount = list.filter((t: { state?: string }) => isActiveState(t.state)).length
+  const activeCount = list.filter((torrent) => isActiveState(torrent.state)).length
   return { ready, torrents, list, loadError, busy, activeCount, pause, resume, remove }
 }

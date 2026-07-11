@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { navigate } from '../router'
 import { useTorrents } from '../hooks/useTorrents'
 import { useFailingCount } from '../hooks/useFailingDownloads'
@@ -54,7 +53,7 @@ export function TabBar({ path, onParty }: { path?: string; onParty?: () => void 
           return (
             <button
               key={t.key}
-              onClick={() => navigate(t.path)}
+              onClick={() => { if (t.path) navigate(t.path) }}
               aria-label={t.label}
               aria-current={active ? 'page' : undefined}
               className="mob-press"

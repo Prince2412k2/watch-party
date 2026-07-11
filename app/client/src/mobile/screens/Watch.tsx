@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { PartyProvider } from '../../context/PartyContext'
 import Party from '../../pages/Party'
+import type { AuthUser } from '../../types'
 
 /**
  * Watch = WRAP, do not rebuild (MOBILE-SPEC §2.4). There is NO separate mobile
@@ -17,13 +17,13 @@ import Party from '../../pages/Party'
  * Any mobile watch-screen polish is done ADDITIVELY inside the existing Party/
  * Player components (keeping desktop branches intact) — never forked into here.
  */
-export function WatchRoute({ user, path }: any = {}) {
+export function WatchRoute({ user, path }: { user: AuthUser; path: string }) {
   const segment = path.slice('/party/'.length)
   const qs = new URLSearchParams(window.location.search)
   if (segment === 'new') {
     return (
       <PartyProvider userId={user.userId}>
-        <Party isNew itemId={qs.get('itemId')} />
+        <Party isNew itemId={qs.get('itemId') ?? undefined} />
       </PartyProvider>
     )
   }

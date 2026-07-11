@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CSSProperties, Dispatch, FormEvent, ReactNode, SetStateAction } from 'react'
 import { glass } from '../../glass'
 import { navigate } from '../../router'
 import { useTorrents, isPausedState } from '../../hooks/useTorrents'
@@ -7,6 +7,7 @@ import { T, SANS, MONO, R, EASE, TYPE, SP } from '../theme'
 import { Icon, Ic } from '../ui/Icon'
 import { Sheet } from '../ui/Sheet'
 import { PosterSkeleton } from '../ui/Skeleton'
+import { apiJson, arrayOf, isRecord } from '../../types/guards'
 
 /**
  * Mobile Browse / Discover (MOBILE-SPEC §3.3). A search-first sticky header
@@ -27,26 +28,75 @@ import { PosterSkeleton } from '../ui/Skeleton'
 const P_ALERT = 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'
 const P_SPARK = 'M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8'
 
-const jget = (url, opts = {}) => fetch(url, { credentials: 'include', ...opts })
-const jpost = (url, body) => fetch(url, {
+type Kind = 'movie' | 'series'
+type Service = 'radarr' | 'sonarr'
+type AddState = 'searching' | 'grabbed' | 'no_release' | 'search_failed' | 'monitoring' | 'added' | 'error'
+type SeasonState = 'idle' | 'requesting' | 'requested' | 'monitored' | 'error'
+interface CatalogImage { coverType?: string; remoteUrl?: string; url?: string }
+interface Rating { value?: number }
+interface Season { seasonNumber: number; totalEpisodeCount?: number; monitored?: boolean }
+interface CatalogItem {
+  id?: number; tmdbId?: number; tvdbId?: number; titleSlug?: string; title: string; year?: number
+  network?: string; images?: CatalogImage[]; ratings?: Rating & { imdb?: Rating; tmdb?: Rating }
+  runtime?: number; certification?: string; seasonCount?: number; status?: string
+  genres?: string[]; overview?: string; seasons?: Season[]
+}
+const isCatalogItem = (value: unknown): value is CatalogItem => isRecord(value) && typeof value.title === 'string'
+interface Torrent { name?: string; title?: string; state?: string; progress?: number; dlspeed?: number; eta?: number; numSeeds?: number }
+interface ServiceHealth { configured?: boolean; reachable?: boolean }
+interface Health { services?: Partial<Record<Service | 'qbittorrent', ServiceHealth>> }
+interface Profile { id: number }
+interface RootFolder { path: string }
+interface Meta { profiles: Profile[]; rootFolders: RootFolder[]; langProfiles: Profile[] }
+interface Popular { source: string; items: CatalogItem[] }
+interface Release { guid: string; indexerId: number; title: string; rejected?: boolean; rejections?: string[]; seeders?: number; quality?: string; size?: number; indexer?: string }
+interface ReleaseData { movieId: number; createdByPicker?: boolean; searchFailed?: boolean; releases?: Release[] }
+type RequestBody = Record<string, unknown>
+const isProfile = (value: unknown): value is Profile => isRecord(value) && typeof value.id === 'number'
+const isRootFolder = (value: unknown): value is RootFolder => isRecord(value) && typeof value.path === 'string'
+const isRelease = (value: unknown): value is Release => isRecord(value) && typeof value.guid === 'string' && typeof value.indexerId === 'number' && typeof value.title === 'string'
+const parseHealth = (value: unknown): Health => {
+  if (!isRecord(value) || !isRecord(value.services)) return { services: {} }
+  const parse = (raw: unknown): ServiceHealth | undefined => isRecord(raw) ? {
+    configured: typeof raw.configured === 'boolean' ? raw.configured : undefined,
+    reachable: typeof raw.reachable === 'boolean' ? raw.reachable : undefined,
+  } : undefined
+  return { services: { radarr: parse(value.services.radarr), sonarr: parse(value.services.sonarr), qbittorrent: parse(value.services.qbittorrent) } }
+}
+const parseReleaseData = (value: unknown): ReleaseData => isRecord(value) && typeof value.movieId === 'number' ? {
+  movieId: value.movieId,
+  createdByPicker: typeof value.createdByPicker === 'boolean' ? value.createdByPicker : undefined,
+  searchFailed: typeof value.searchFailed === 'boolean' ? value.searchFailed : undefined,
+  releases: arrayOf(value.releases, isRelease),
+} : { movieId: 0, releases: [] }
+
+function isTorrent(value: Record<string, unknown>): value is Record<string, unknown> & Torrent {
+  return (value.name == null || typeof value.name === 'string')
+    && (value.title == null || typeof value.title === 'string')
+    && (value.state == null || typeof value.state === 'string')
+    && (value.progress == null || typeof value.progress === 'number')
+}
+
+const jget = (url: string, opts: RequestInit = {}) => fetch(url, { credentials: 'include', ...opts })
+const jpost = (url: string, body: unknown) => fetch(url, {
   method: 'POST', credentials: 'include',
   headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 })
 
 /* ── Pure helpers (ported from FindDownload) ──────────────────────────────── */
-function posterUrl(images) {
+function posterUrl(images?: CatalogImage[]) {
   if (!Array.isArray(images) || images.length === 0) return null
   const p = images.find((i) => i.coverType === 'poster') || images[0]
   return p?.remoteUrl || p?.url || null
 }
-function backdropUrl(images) {
+function backdropUrl(images?: CatalogImage[]) {
   if (!Array.isArray(images) || images.length === 0) return null
   const f = images.find((i) => i.coverType === 'fanart') || images.find((i) => i.coverType === 'banner')
   return f?.remoteUrl || f?.url || posterUrl(images)
 }
-const isAdded = (r) => r?.id != null
-const keyOf = (kind, r) => (kind === 'movie' ? `m:${r.tmdbId}` : `s:${r.tvdbId}`)
-function outcomeToState(o) {
+const isAdded = (r: CatalogItem) => r.id != null
+const keyOf = (kind: Kind, r: CatalogItem) => (kind === 'movie' ? `m:${r.tmdbId}` : `s:${r.tvdbId}`)
+function outcomeToState(o?: string): AddState {
   switch (o) {
     case 'grabbed': return 'grabbed'
     case 'no_release': return 'no_release'
@@ -56,32 +106,32 @@ function outcomeToState(o) {
     default: return 'error'
   }
 }
-function ratingOf(r) {
+function ratingOf(r: CatalogItem) {
   const rt = r?.ratings
   if (!rt) return null
   const v = (typeof rt.value === 'number' ? rt.value : null) ?? rt.imdb?.value ?? rt.tmdb?.value ?? null
   return typeof v === 'number' && v > 0 ? v : null
 }
-function fmtMins(m) {
+function fmtMins(m?: number) {
   if (!m || !Number.isFinite(m) || m <= 0) return null
   const h = Math.floor(m / 60)
   return h > 0 ? `${h}h ${m % 60}m` : `${m}m`
 }
-const normTitle = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-function matchTorrent(title, torrents) {
+const normTitle = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+function matchTorrent(title: string, torrents: Torrent[]) {
   const n = normTitle(title)
   if (!n || n.length < 2 || !Array.isArray(torrents)) return null
   return torrents.find((t) => normTitle(t.name || t.title).includes(n)) || null
 }
-function fmtSize(bytes) {
+function fmtSize(bytes?: number | null) {
   if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return '—'
   const u = ['B', 'KB', 'MB', 'GB', 'TB']
   let i = 0, n = bytes
   while (n >= 1024 && i < u.length - 1) { n /= 1024; i++ }
   return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${u[i]}`
 }
-const fmtSpeed = (bps) => (bps == null || !Number.isFinite(bps) || bps <= 0) ? '0 B/s' : `${fmtSize(bps)}/s`
-function fmtEta(secs) {
+const fmtSpeed = (bps?: number | null) => (bps == null || !Number.isFinite(bps) || bps <= 0) ? '0 B/s' : `${fmtSize(bps)}/s`
+function fmtEta(secs?: number | null) {
   if (secs == null || !Number.isFinite(secs) || secs < 0 || secs >= 8640000) return '∞'
   if (secs === 0) return '—'
   const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600)
@@ -95,8 +145,8 @@ function fmtEta(secs) {
 /* Session caches (screens remount on tab switch — cache in module scope so the
  * popular feed + profile/folder meta survive a re-entry). One in-flight promise
  * per key; transient failures/empties aren't pinned. Mirrors FindDownload. */
-const metaCache = {}
-function loadMeta(service) {
+const metaCache: Partial<Record<Service, Promise<Meta>>> = {}
+function loadMeta(service: Service): Promise<Meta> {
   if (metaCache[service]) return metaCache[service]
   const reqs = [
     jget(`/api/servarr/${service}/quality-profiles`),
@@ -105,19 +155,19 @@ function loadMeta(service) {
   if (service === 'sonarr') reqs.push(jget('/api/servarr/sonarr/language-profiles'))
   const p = Promise.all(reqs).then(async (rs) => {
     for (const r of rs) if (!r.ok) throw new Error('meta')
-    const [profiles, rootFolders, langProfiles] = await Promise.all(rs.map((r) => r.json()))
-    return { profiles: profiles || [], rootFolders: rootFolders || [], langProfiles: langProfiles || [] }
+    const [profiles, rootFolders, langProfiles] = await Promise.all(rs.map(apiJson))
+    return { profiles: arrayOf(profiles, isProfile), rootFolders: arrayOf(rootFolders, isRootFolder), langProfiles: arrayOf(langProfiles, isProfile) }
   }).catch((e) => { delete metaCache[service]; throw e })
   metaCache[service] = p
   return p
 }
-const popularCache = {}
-function loadPopular(service) {
+const popularCache: Partial<Record<Service, Promise<Popular>>> = {}
+function loadPopular(service: Service): Promise<Popular> {
   if (popularCache[service]) return popularCache[service]
   const p = jget(`/api/servarr/${service}/popular`)
-    .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+    .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
     .then((d) => {
-      const val = { source: d?.source || 'curated', items: Array.isArray(d?.items) ? d.items : [] }
+      const val = { source: isRecord(d) && typeof d.source === 'string' ? d.source : 'curated', items: arrayOf(isRecord(d) ? d.items : null, isCatalogItem) }
       if (!val.items.length) delete popularCache[service]
       return val
     })
@@ -127,7 +177,7 @@ function loadPopular(service) {
 }
 
 // Deep-linkable ?q=/?type= (custom router → read/write location directly).
-function readParams() {
+function readParams(): { kind: Kind; term: string } {
   const p = new URLSearchParams(window.location.search)
   return { kind: p.get('type') === 'series' ? 'series' : 'movie', term: p.get('q') || '' }
 }
@@ -136,21 +186,21 @@ function readParams() {
 export default function Browse() {
   const [kind, setKind] = useState(() => readParams().kind)
   const [term, setTerm] = useState(() => readParams().term)
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState<CatalogItem[]>([])
   const [loading, setLoading] = useState(() => !!readParams().term.trim())
   const [searchError, setSearchError] = useState('')
   const [hasSearched, setHasSearched] = useState(false)
 
-  const [health, setHealth] = useState(null)
+  const [health, setHealth] = useState<Health | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
 
   // One detail sheet, two modes: 'detail' | 'releases' (movie release picker).
-  const [detail, setDetail] = useState(null)   // retained through the close anim
+  const [detail, setDetail] = useState<CatalogItem | null>(null)   // retained through the close anim
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [mode, setMode] = useState('detail')
+  const [mode, setMode] = useState<'detail' | 'releases'>('detail')
 
   // Per-item request state so cards/detail flip without a re-search.
-  const [addState, setAddState] = useState({})
+  const [addState, setAddState] = useState<Record<string, AddState>>({})
 
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
   const svcState = health?.services?.[service]
@@ -158,13 +208,13 @@ export default function Browse() {
 
   const qbReady = !!health?.services?.qbittorrent?.configured && !!health?.services?.qbittorrent?.reachable
   const dl = useTorrents(qbReady)
-  const torrents = dl.list
+  const torrents = dl.list.filter(isTorrent)
 
   useEffect(() => {
     setHealthLoading(true)
     jget('/api/servarr/health')
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then(setHealth)
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+      .then((value) => setHealth(parseHealth(value)))
       .catch(() => setHealth({ services: {} }))
       .finally(() => setHealthLoading(false))
   }, [])
@@ -184,8 +234,8 @@ export default function Browse() {
   }, [term, kind])
 
   // Debounced search with AbortController; blank term clears to the popular feed.
-  const abortRef = useRef(null)
-  const runSearch = useCallback((q, k) => {
+  const abortRef = useRef<AbortController | null>(null)
+  const runSearch = useCallback((q: string, k: Kind) => {
     const query = q.trim()
     abortRef.current?.abort()
     if (!query) { setResults([]); setLoading(false); setHasSearched(false); setSearchError(''); return }
@@ -194,9 +244,9 @@ export default function Browse() {
     abortRef.current = ctrl
     setLoading(true); setSearchError('')
     fetch(`/api/servarr/${svc}/search?term=${encodeURIComponent(query)}`, { credentials: 'include', signal: ctrl.signal })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((data) => { setResults(Array.isArray(data) ? data : []); setHasSearched(true) })
-      .catch((e) => { if (e?.name !== 'AbortError') { setResults([]); setHasSearched(true); setSearchError('Something went wrong. Try again.') } })
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+      .then((data: unknown) => { setResults(arrayOf(data, isCatalogItem)); setHasSearched(true) })
+      .catch((e: unknown) => { if (!(e instanceof DOMException && e.name === 'AbortError')) { setResults([]); setHasSearched(true); setSearchError('Something went wrong. Try again.') } })
       .finally(() => { if (abortRef.current === ctrl) setLoading(false) })
   }, [])
 
@@ -206,10 +256,10 @@ export default function Browse() {
     return () => clearTimeout(t)
   }, [term, kind, svcReady, runSearch])
 
-  const stateFor = (r) => (isAdded(r) ? 'added' : addState[keyOf(kind, r)]) || null
+  const stateFor = (r: CatalogItem): AddState | null => (isAdded(r) ? 'added' : addState[keyOf(kind, r)]) || null
 
   // One-tap request — cached-meta defaults → server-authoritative grab-or-remove.
-  const oneTapAdd = useCallback((r) => {
+  const oneTapAdd = useCallback((r: CatalogItem) => {
     const key = keyOf(kind, r)
     const svc = kind === 'movie' ? 'radarr' : 'sonarr'
     setAddState((s) => ({ ...s, [key]: 'searching' }))
@@ -222,17 +272,17 @@ export default function Browse() {
         const body = kind === 'movie'
           ? { movie: r, qualityProfileId, rootFolderPath }
           : { series: r, qualityProfileId, languageProfileId, rootFolderPath, monitor: true, searchNow: true }
-        return jpost(`/api/servarr/${svc}/request`, body).then((res) => (res.ok ? res.json() : Promise.reject(res)))
+        return jpost(`/api/servarr/${svc}/request`, body).then((res) => (res.ok ? apiJson(res) : Promise.reject(res)))
       })
-      .then((out) => setAddState((s) => ({ ...s, [key]: outcomeToState(out?.outcome) })))
+      .then((out) => setAddState((s) => ({ ...s, [key]: outcomeToState(isRecord(out) && typeof out.outcome === 'string' ? out.outcome : undefined) })))
       .catch(() => setAddState((s) => ({ ...s, [key]: 'error' })))
   }, [kind])
 
-  const openDetail = (r) => { setDetail(r); setMode('detail'); setSheetOpen(true) }
+  const openDetail = (r: CatalogItem) => { setDetail(r); setMode('detail'); setSheetOpen(true) }
   const closeSheet = () => setSheetOpen(false)  // keep `detail` for the exit anim
 
   // Release picker grabbed a specific release → behaves like a one-tap grab.
-  const onReleaseGrabbed = (r) => {
+  const onReleaseGrabbed = (r: CatalogItem) => {
     setAddState((s) => ({ ...s, [keyOf(kind, r)]: 'grabbed' }))
     setSheetOpen(false)
   }
@@ -281,7 +331,8 @@ export default function Browse() {
 }
 
 /* ── Sticky search header (title + segmented toggle, then the 16px field) ──── */
-function Header({ kind, setKind, term, setTerm, loading, disabled, onSubmit }: any = {}) {
+interface HeaderProps { kind: Kind; setKind: Dispatch<SetStateAction<Kind>>; term: string; setTerm: Dispatch<SetStateAction<string>>; loading: boolean; disabled: boolean; onSubmit: () => void }
+function Header({ kind, setKind, term, setTerm, loading, disabled, onSubmit }: HeaderProps) {
   const [focus, setFocus] = useState(false)
   return (
     <header
@@ -301,7 +352,7 @@ function Header({ kind, setKind, term, setTerm, loading, disabled, onSubmit }: a
       </div>
 
       <form
-        onSubmit={(e) => { e.preventDefault(); e.currentTarget.querySelector('input')?.blur(); onSubmit() }}
+        onSubmit={(e: FormEvent<HTMLFormElement>) => { e.preventDefault(); e.currentTarget.querySelector('input')?.blur(); onSubmit() }}
         style={{ position: 'relative', display: 'flex', alignItems: 'center', marginTop: 12 }}
       >
         <span style={{ position: 'absolute', left: 14, display: 'grid', placeItems: 'center', color: focus ? T.text : T.faint, pointerEvents: 'none', transition: `color .15s ${EASE}` }}>
@@ -345,8 +396,8 @@ function Header({ kind, setKind, term, setTerm, loading, disabled, onSubmit }: a
 }
 
 // Movies / Series segmented control — white active pill (Sen-Player primary).
-function Segmented({ kind, setKind }: any = {}) {
-  const seg = (val, label, icon) => {
+function Segmented({ kind, setKind }: { kind: Kind; setKind: Dispatch<SetStateAction<Kind>> }) {
+  const seg = (val: Kind, label: string, icon: string) => {
     const active = kind === val
     return (
       <button
@@ -371,7 +422,7 @@ function Segmented({ kind, setKind }: any = {}) {
 }
 
 /* ── Remote catalog poster (TMDB/TVDB art — direct <img>, graceful fallback) ── */
-function RemotePoster({ images, alt, style, useBackdrop, radius }: any = {}) {
+function RemotePoster({ images, alt, style, useBackdrop, radius }: { images?: CatalogImage[]; alt?: string; style?: CSSProperties; useBackdrop?: boolean; radius?: string | number }) {
   const url = useBackdrop ? backdropUrl(images) : posterUrl(images)
   const [broken, setBroken] = useState(false)
   if (!url || broken) {
@@ -388,7 +439,8 @@ function RemotePoster({ images, alt, style, useBackdrop, radius }: any = {}) {
 }
 
 /* ── Poster grid + card ──────────────────────────────────────────────────── */
-function Grid({ results, kind, torrents, stateFor, onOpen }: any = {}) {
+interface GridProps { results: CatalogItem[]; kind: Kind; torrents: Torrent[]; stateFor: (item: CatalogItem) => AddState | null; onOpen: (item: CatalogItem) => void }
+function Grid({ results, kind, torrents, stateFor, onOpen }: GridProps) {
   return (
     <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', animation: 'up .4s ease both' }}>
       {results.map((r, i) => (
@@ -399,7 +451,7 @@ function Grid({ results, kind, torrents, stateFor, onOpen }: any = {}) {
   )
 }
 
-function Card({ r, state, torrent, onOpen }: any = {}) {
+function Card({ r, state, torrent, onOpen }: { r: CatalogItem; kind: Kind; state: AddState | null; torrent: Torrent | null; onOpen: () => void }) {
   const active = torrent && !isPausedState(torrent.state)
   const pct = torrent ? Math.max(0, Math.min(100, Math.round((torrent.progress || 0) * 100))) : 0
   const torrentDownloading = active && pct < 100
@@ -469,9 +521,9 @@ const SUGGESTED = {
   movie: ['Inception', 'Dune', 'Parasite', 'Oppenheimer', 'The Matrix'],
   series: ['Breaking Bad', 'The Last of Us', 'Severance', 'Chernobyl', 'Arcane'],
 }
-function PopularSection({ kind, torrents, stateFor, onOpen, onPick }: any = {}) {
+function PopularSection({ kind, torrents, stateFor, onOpen, onPick }: Omit<GridProps, 'results'> & { onPick: (term: string) => void }) {
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
-  const [state, setState] = useState({ loading: true, error: false, items: [], source: 'curated' })
+  const [state, setState] = useState<{ loading: boolean; error: boolean; items: CatalogItem[]; source: string }>({ loading: true, error: false, items: [], source: 'curated' })
 
   useEffect(() => {
     let cancel = false
@@ -496,7 +548,7 @@ function PopularSection({ kind, torrents, stateFor, onOpen, onPick }: any = {}) 
     </div>
   )
 }
-function SuggestedSearches({ kind, onPick }: any = {}) {
+function SuggestedSearches({ kind, onPick }: { kind: Kind; onPick: (term: string) => void }) {
   const list = SUGGESTED[kind] || []
   return (
     <div style={{ marginTop: 4, padding: '40px 24px', borderRadius: R.lg, border: `1px solid ${T.line}`, background: 'rgba(255,255,255,.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animation: 'up .4s ease both' }}>
@@ -520,7 +572,7 @@ function SuggestedSearches({ kind, onPick }: any = {}) {
 }
 
 /* ── Detail sheet body ───────────────────────────────────────────────────── */
-function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }: any = {}) {
+function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }: { item: CatalogItem; kind: Kind; state: AddState | null; torrents: Torrent[]; onDownload: () => void; onSeeSources: () => void }) {
   const rating = ratingOf(item)
   const genres = item.genres || []
   const torrent = matchTorrent(item.title, torrents)
@@ -608,7 +660,7 @@ function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }: a
   )
 }
 
-function DownloadProgress({ torrent, active, pct }: any = {}) {
+function DownloadProgress({ torrent, active, pct }: { torrent: Torrent | null; active: boolean | null; pct: number }) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: T.text, marginBottom: 8 }}>
@@ -619,9 +671,9 @@ function DownloadProgress({ torrent, active, pct }: any = {}) {
       </div>
       {active && (
         <div style={{ display: 'flex', gap: 14, marginTop: 8, fontFamily: MONO, fontSize: 12, color: T.dim, flexWrap: 'wrap' }}>
-          <span>↓ {fmtSpeed(torrent.dlspeed)}</span>
-          <span>ETA {pct >= 100 ? '—' : fmtEta(torrent.eta)}</span>
-          <span>Seeds {torrent.numSeeds ?? 0}</span>
+          <span>↓ {fmtSpeed(torrent?.dlspeed)}</span>
+          <span>ETA {pct >= 100 ? '—' : fmtEta(torrent?.eta)}</span>
+          <span>Seeds {torrent?.numSeeds ?? 0}</span>
         </div>
       )}
       <SecondaryBtn icon={Ic.download} label="Track in Downloads" onClick={() => navigate('/downloads')} style={{ marginTop: 14 }} />
@@ -630,14 +682,14 @@ function DownloadProgress({ torrent, active, pct }: any = {}) {
 }
 
 /* ── Season chooser (series) ─────────────────────────────────────────────── */
-function SeasonChooserBody({ item, onWholeSeriesFallback }: any = {}) {
+function SeasonChooserBody({ item, onWholeSeriesFallback }: { item: CatalogItem; onWholeSeriesFallback: () => void }) {
   const seasons = Array.isArray(item.seasons) ? item.seasons : []
   const real = seasons.filter((s) => s.seasonNumber >= 1).sort((a, b) => a.seasonNumber - b.seasonNumber)
   const specials = seasons.filter((s) => s.seasonNumber === 0)
   const added = isAdded(item)
 
   const [meta, setMeta] = useState({ loading: true, error: '' })
-  const [req, setReq] = useState({})
+  const [req, setReq] = useState<Record<number, SeasonState>>({})
 
   useEffect(() => {
     let cancel = false
@@ -652,7 +704,7 @@ function SeasonChooserBody({ item, onWholeSeriesFallback }: any = {}) {
     return () => { cancel = true }
   }, [item])
 
-  const request = (nums) => {
+  const request = (nums: number[]) => {
     if (!nums.length) return
     setReq((s) => { const n = { ...s }; for (const k of nums) n[k] = 'requesting'; return n })
     loadMeta('sonarr')
@@ -663,12 +715,12 @@ function SeasonChooserBody({ item, onWholeSeriesFallback }: any = {}) {
         if (qualityProfileId == null || !rootFolderPath) throw new Error('meta')
         return jpost('/api/servarr/sonarr/request-season', { series: item, seasons: nums, qualityProfileId, languageProfileId, rootFolderPath })
       })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then(() => setReq((s) => { const n = { ...s }; for (const k of nums) n[k] = 'requested'; return n }))
       .catch(() => setReq((s) => { const n = { ...s }; for (const k of nums) n[k] = 'error'; return n }))
   }
 
-  const stateOf = (s) => req[s.seasonNumber] || (added && s.monitored ? 'monitored' : 'idle')
+  const stateOf = (s: Season): SeasonState => req[s.seasonNumber] || (added && s.monitored ? 'monitored' : 'idle')
   const anyRequesting = Object.values(req).some((v) => v === 'requesting')
 
   if (real.length === 0 && specials.length === 0) {
@@ -718,9 +770,10 @@ function SeasonChooserBody({ item, onWholeSeriesFallback }: any = {}) {
     </div>
   )
 }
-function SeasonRow({ season, state, disabled, specials, onRequest }: any = {}) {
+function SeasonRow({ season, state, disabled, specials, onRequest }: { season: Season; state: SeasonState; disabled: boolean; specials?: boolean; onRequest: () => void }) {
   const label = season.seasonNumber === 0 ? 'Specials' : `Season ${season.seasonNumber}`
-  const count = season.totalEpisodeCount > 0 ? `${season.totalEpisodeCount} episode${season.totalEpisodeCount === 1 ? '' : 's'}` : null
+  const episodeCount = season.totalEpisodeCount ?? 0
+  const count = episodeCount > 0 ? `${episodeCount} episode${episodeCount === 1 ? '' : 's'}` : null
 
   const right = (() => {
     if (state === 'requesting') return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: T.dim }}><Spinner size={15} />Requesting…</span>
@@ -757,14 +810,14 @@ function SeasonRow({ season, state, disabled, specials, onRequest }: any = {}) {
 }
 
 /* ── Release picker (movies) — sheet sub-view ────────────────────────────── */
-function ReleasePickerBody({ item, onBack, onGrabbed }: any = {}) {
+function ReleasePickerBody({ item, onBack, onGrabbed }: { item: CatalogItem; onBack: () => void; onGrabbed: (item: CatalogItem) => void }) {
   const [meta, setMeta] = useState({ loading: true, error: '' })
-  const [data, setData] = useState(null)
+  const [data, setData] = useState<ReleaseData | null>(null)
   const [nonce, setNonce] = useState(0)
-  const [grabbing, setGrabbing] = useState(null)
+  const [grabbing, setGrabbing] = useState<string | null>(null)
   const [grabError, setGrabError] = useState('')
 
-  const life = useRef({ movieId: null, createdByPicker: false, settled: false })
+  const life = useRef<{ movieId: number | null; createdByPicker: boolean; settled: boolean }>({ movieId: null, createdByPicker: false, settled: false })
   const cleanup = useCallback(() => {
     const { movieId, createdByPicker, settled } = life.current
     if (settled) return
@@ -778,7 +831,7 @@ function ReleasePickerBody({ item, onBack, onGrabbed }: any = {}) {
     ;(async () => {
       const existing = life.current.movieId
       let createdByPicker = life.current.createdByPicker
-      let body
+      let body: RequestBody
       if (existing != null) body = { movieId: existing }
       else if (isAdded(item)) { body = { movieId: item.id }; createdByPicker = false }
       else {
@@ -790,7 +843,7 @@ function ReleasePickerBody({ item, onBack, onGrabbed }: any = {}) {
       }
       const res = await jpost('/api/servarr/radarr/releases', body)
       if (!res.ok) throw new Error('releases')
-      const d = await res.json()
+      const d = parseReleaseData(await apiJson(res))
       return { d, createdByPicker: existing != null ? createdByPicker : !!d.createdByPicker }
     })()
       .then(({ d, createdByPicker }) => {
@@ -807,11 +860,11 @@ function ReleasePickerBody({ item, onBack, onGrabbed }: any = {}) {
 
   useEffect(() => cleanup, [cleanup])
 
-  const grab = (rel) => {
+  const grab = (rel: Release) => {
     if (grabbing) return
     setGrabbing(rel.guid); setGrabError('')
     jpost('/api/servarr/radarr/grab', { movieId: data?.movieId, guid: rel.guid, indexerId: rel.indexerId })
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then(() => { life.current.settled = true; onGrabbed(item) })
       .catch(() => { setGrabbing(null); setGrabError('Couldn’t start that download. Try another source.') })
   }
@@ -852,7 +905,7 @@ function ReleasePickerBody({ item, onBack, onGrabbed }: any = {}) {
     </div>
   )
 }
-function ReleaseRow({ rel, grabbing, onGrab }: any = {}) {
+function ReleaseRow({ rel, grabbing, onGrab }: { rel: Release; grabbing: string | null; onGrab: () => void }) {
   const busy = grabbing === rel.guid
   const anyBusy = !!grabbing
   const rejected = rel.rejected
@@ -887,7 +940,8 @@ function ReleaseRow({ rel, grabbing, onGrab }: any = {}) {
 }
 
 /* ── Shared bits ─────────────────────────────────────────────────────────── */
-function PrimaryBtn({ icon, label, onClick }: any = {}) {
+interface ButtonProps { icon: string; label?: string; onClick?: () => void; style?: CSSProperties }
+function PrimaryBtn({ icon, label, onClick }: ButtonProps) {
   return (
     <button onClick={onClick} className="mob-press"
       style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%', minHeight: 52, borderRadius: R.md, border: 'none', cursor: 'pointer', fontFamily: SANS, fontSize: 16, fontWeight: 700, background: T.primary, color: T.onLight, boxShadow: '0 10px 26px rgba(0,0,0,.4)' }}>
@@ -895,7 +949,7 @@ function PrimaryBtn({ icon, label, onClick }: any = {}) {
     </button>
   )
 }
-function SecondaryBtn({ icon, label, onClick, style }: any = {}) {
+function SecondaryBtn({ icon, label, onClick, style }: ButtonProps) {
   return (
     <button onClick={onClick} className="mob-press"
       style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', minHeight: 48, borderRadius: R.md, cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: T.text, background: 'rgba(255,255,255,.05)', border: `1px solid ${T.line}`, ...style }}>
@@ -903,7 +957,7 @@ function SecondaryBtn({ icon, label, onClick, style }: any = {}) {
     </button>
   )
 }
-function IconBtn({ children, onClick, disabled, label }: any = {}) {
+function IconBtn({ children, onClick, disabled, label }: { children: ReactNode; onClick: () => void; disabled?: boolean; label: string }) {
   return (
     <button onClick={onClick} disabled={disabled} aria-label={label} className="mob-press"
       style={{ width: 40, height: 40, borderRadius: 999, display: 'grid', placeItems: 'center', cursor: disabled ? 'default' : 'pointer', color: T.text, background: 'rgba(255,255,255,.05)', border: `1px solid ${T.line}`, opacity: disabled ? 0.5 : 1 }}>
@@ -911,7 +965,7 @@ function IconBtn({ children, onClick, disabled, label }: any = {}) {
     </button>
   )
 }
-function Pill({ icon, label }: any = {}) {
+function Pill({ icon, label }: { icon: string; label: string }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: 32, padding: '0 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 700, color: T.text, background: 'rgba(255,255,255,.08)', border: `1px solid ${T.line2}` }}>
       <Icon path={icon} size={13} sw={2.4} />{label}
@@ -925,7 +979,7 @@ function InLibraryChip() {
     </span>
   )
 }
-function StatusLine({ tone, title, body }: any = {}) {
+function StatusLine({ tone, title, body }: { tone: string; title: string; body?: string }) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, ...TYPE.headline, color: tone }}>
@@ -935,7 +989,7 @@ function StatusLine({ tone, title, body }: any = {}) {
     </div>
   )
 }
-function ActionState({ tone, icon, title, note, onAction, actionLabel }: any = {}) {
+function ActionState({ tone, icon, title, note, onAction, actionLabel }: { tone: string; icon: string; title: string; note?: string; onAction?: () => void; actionLabel?: string }) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, ...TYPE.headline, color: tone }}>
@@ -950,14 +1004,14 @@ function ActionState({ tone, icon, title, note, onAction, actionLabel }: any = {
     </div>
   )
 }
-function LiveDot({ color, size = 8 }: any = {}) {
+function LiveDot({ color, size = 8 }: { color: string; size?: number }) {
   return <span style={{ width: size, height: size, borderRadius: '50%', background: color, animation: 'pulse 1.6s ease-in-out infinite', flexShrink: 0 }} />
 }
-function Spinner({ size = 18, dark }: any = {}) {
+function Spinner({ size = 18, dark }: { size?: number; dark?: boolean } = {}) {
   return <span style={{ display: 'inline-block', width: size, height: size, borderRadius: '50%', border: `2px solid ${dark ? 'rgba(10,11,13,.25)' : 'rgba(255,255,255,.22)'}`, borderTopColor: dark ? T.onLight : T.text, animation: 'spin .7s linear infinite' }} />
 }
 
-function NotAvailable({ kind, state }: any = {}) {
+function NotAvailable({ kind, state }: { kind: Kind; state?: ServiceHealth }) {
   const unreachable = state?.configured && !state?.reachable
   return (
     <div style={{ marginTop: 4, padding: '44px 24px', borderRadius: R.lg, border: `1px solid ${T.line}`, background: 'rgba(255,255,255,.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animation: 'up .4s ease both' }}>
@@ -973,7 +1027,7 @@ function NotAvailable({ kind, state }: any = {}) {
     </div>
   )
 }
-function StateCard({ icon, title, body, tone }: any = {}) {
+function StateCard({ icon, title, body, tone }: { icon: string; title: string; body?: string; tone?: 'error' }) {
   const color = tone === 'error' ? T.red : T.text
   return (
     <div style={{ marginTop: 4, padding: '44px 24px', borderRadius: R.lg, border: `1px solid ${T.line}`, background: 'rgba(255,255,255,.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animation: 'up .4s ease both' }}>

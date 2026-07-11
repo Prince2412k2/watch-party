@@ -1,4 +1,5 @@
 import { T, MONO, TYPE, SP } from '../theme'
+import type { CSSProperties, ReactNode } from 'react'
 
 /**
  * Horizontal swipeable rail. Header (title + optional mono count) over a
@@ -6,7 +7,7 @@ import { T, MONO, TYPE, SP } from '../theme'
  * the horizontal scroller (`overflow-x: auto`) so wide content never widens the
  * page. Children are laid out with `gap`; give them a fixed width.
  */
-export function Rail({ title, count, action, children, gap = SP.md, padX = 16, style }: any = {}) {
+export function Rail({ title, count, action, children, gap = SP.md, padX = 16, style }: { title?: ReactNode; count?: number; action?: ReactNode; children?: ReactNode; gap?: number; padX?: number; style?: CSSProperties } = {}) {
   return (
     <section style={{ marginBottom: SP.xl, ...style }}>
       {(title || action) && (
@@ -44,6 +45,6 @@ export function Rail({ title, count, action, children, gap = SP.md, padX = 16, s
 }
 
 // A rail item that snaps to the start edge. Wrap posters/cards in this.
-export function RailItem({ children, style }: any = {}) {
+export function RailItem({ children, style }: { children?: ReactNode; style?: CSSProperties } = {}) {
   return <div style={{ scrollSnapAlign: 'start', flex: '0 0 auto', ...style }}>{children}</div>
 }

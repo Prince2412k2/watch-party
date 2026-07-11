@@ -1,6 +1,6 @@
 import { navigate } from '../router'
 
-export default function Lobby({ partyId }: any = {}) {
+export default function Lobby({ partyId }: { partyId?: string } = {}) {
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'var(--bg)',

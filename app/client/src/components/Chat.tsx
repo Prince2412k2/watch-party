@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { useParty } from '../context/PartyContext'
 import { glass } from '../glass'
 import type { ChatMessage } from '../types'
@@ -47,7 +47,7 @@ export default function Chat({ top = 76, mobileSheet = false }: { top?: number; 
 
   // Sheet mode: fill the slide-over container (positioned by ChatSheet in
   // Party.jsx). Desktop mode: the original floating right-side panel.
-  const frame: any = mobileSheet
+  const frame: CSSProperties = mobileSheet
     ? { position: 'absolute', inset: 0, animation: 'none' }
     : { position: 'absolute', top, right: 12, bottom: 84, width: 'min(300px, calc(100vw - 24px))', animation: 'chatIn .28s cubic-bezier(.2,.8,.2,1)' }
 
@@ -80,7 +80,7 @@ export default function Chat({ top = 76, mobileSheet = false }: { top?: number; 
               {!cont && (
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
                   <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{msg.name}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text3)' }}>{fmt(msg.timestamp)}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text3)' }}>{fmt(msg.timestamp ?? msg.ts ?? 0)}</span>
                 </div>
               )}
               <div style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--text2)', wordBreak: 'break-word' }}>{msg.text}</div>

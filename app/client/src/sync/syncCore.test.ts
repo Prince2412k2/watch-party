@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { decideSyncAction } from './syncCore'
-import { selectBufferedResumeTarget } from './bufferSeek'
+import { decideSyncAction } from './syncCore.ts'
+import { selectBufferedResumeTarget } from './bufferSeek.ts'
 
 const playing = { positionTicks: 100_000_000, t0: 1_000, phase: 'playing', version: 7 }
 
@@ -18,6 +18,7 @@ test('paused hopping guest with material drift requests buffer-aware catch-up', 
     userSeeking: false,
   })
 
+  assert.ok(intent)
   assert.equal(intent.hardSeek, true)
   assert.equal(intent.seekTo, 11)
   assert.equal(intent.play, true)
@@ -44,6 +45,7 @@ test('hard-seek cooldown keeps a playing guest on bounded rate correction', () =
     suppressHardSeek: true,
   })
 
+  assert.ok(intent)
   assert.equal(intent.hardSeek, undefined)
   assert.equal(intent.seekTo, undefined)
   assert.equal(intent.rate, 1.08)

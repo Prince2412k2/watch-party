@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Native-only download/offline state — reconciles live dl:* events against
 // dl_list()/offline_list() (the source of truth per docs/native/PLAN.md §4.2).
 // Gated on IS_NATIVE by the caller; safe to import from a web bundle (it just
@@ -12,8 +11,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke, listen } from './ipc'
 import { IPC, EVENTS } from './contract'
 import { IS_NATIVE } from './env'
-import { reconcileList, applyStart, applyProgress, applyDone, applyError, toSortedList, type DownloadProgressPayload, type DownloadDonePayload, type DownloadErrorPayload } from './offline/reconcile'
+import { reconcileList, applyStart, applyProgress, applyDone, applyError, toSortedList } from './offline/reconcile'
 import type { DownloadRecord, OfflineRecord } from './contract'
+import { isDownloadDone, isDownloadError, isDownloadProgress, isDownloadRecord, isOfflineRecord, isRecord } from './guards'
 
 const POLL_MS = 5000
 
@@ -29,7 +29,8 @@ export function useDownloads() {
 
   const refresh = useCallback(async () => {
     if (!IS_NATIVE) return
-    const list = await invoke<DownloadRecord[]>(IPC.DL_LIST, {})
+    const result = await invoke(IPC.DL_LIST, {})
+    const list = Array.isArray(result) ? result.filter(isDownloadRecord) : []
     mapRef.current = reconcileList(mapRef.current, list)
     emit()
   }, [emit])
@@ -37,25 +38,28 @@ export function useDownloads() {
   useEffect(() => {
     if (!IS_NATIVE) return
     let disposed = false
-    const unlisten = []
+    const unlisten: Array<() => void> = []
 
     ;(async () => {
       await refresh()
       unlisten.push(
         await listen(EVENTS.DL_PROGRESS, ({ payload }) => {
-          mapRef.current = applyProgress(mapRef.current, payload as DownloadProgressPayload)
+          if (!isDownloadProgress(payload)) return
+          mapRef.current = applyProgress(mapRef.current, payload)
           emit()
         })
       )
       unlisten.push(
         await listen(EVENTS.DL_DONE, ({ payload }) => {
-          mapRef.current = applyDone(mapRef.current, payload as DownloadDonePayload)
+          if (!isDownloadDone(payload)) return
+          mapRef.current = applyDone(mapRef.current, payload)
           emit()
         })
       )
       unlisten.push(
         await listen(EVENTS.DL_ERROR, ({ payload }) => {
-          mapRef.current = applyError(mapRef.current, payload as DownloadErrorPayload)
+          if (!isDownloadError(payload)) return
+          mapRef.current = applyError(mapRef.current, payload)
           emit()
         })
       )
@@ -72,7 +76,9 @@ export function useDownloads() {
 
   const start = useCallback(
     async ({ itemId, url, title, parts }: { itemId: string; url: string; title: string; parts?: number }) => {
-      const { id } = await invoke<{ id: string }>(IPC.DL_START, { itemId, url, title, parts })
+      const result = await invoke(IPC.DL_START, { itemId, url, title, parts })
+      if (!isRecord(result) || typeof result.id !== 'string') throw new Error('Native download returned an invalid id')
+      const { id } = result
       mapRef.current = applyStart(mapRef.current, { id, itemId, title, parts })
       emit()
       return id
@@ -94,8 +100,8 @@ export function useOfflineLibrary() {
 
   const refresh = useCallback(async () => {
     if (!IS_NATIVE) return
-    const list = await invoke(IPC.OFFLINE_LIST, {})
-    setItems((list as OfflineRecord[]) || [])
+    const result = await invoke(IPC.OFFLINE_LIST, {})
+    setItems(Array.isArray(result) ? result.filter(isOfflineRecord) : [])
   }, [])
 
   useEffect(() => {
@@ -119,8 +125,8 @@ export function useOfflineLibrary() {
 export async function resolveOfflinePlayback(itemId: string | undefined, streamUrl: string) {
   if (IS_NATIVE && itemId) {
     try {
-      const result = await invoke<{ path?: string }>(IPC.OFFLINE_PATH, { itemId })
-      if (result && result.path) return { url: result.path, offline: true }
+      const result = await invoke(IPC.OFFLINE_PATH, { itemId })
+      if (isRecord(result) && typeof result.path === 'string' && result.path) return { url: result.path, offline: true }
     } catch {
       // fall through to the stream URL — offline lookup failing shouldn't block playback
     }

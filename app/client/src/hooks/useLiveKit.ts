@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Room, RoomEvent, Track } from 'livekit-client'
+import { isObject } from '../guards'
+import { apiJson } from '../types/guards'
 
 export interface LiveKitParticipantView {
   identity: string
@@ -38,7 +40,9 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
       try {
         const res = await fetch(`/api/livekit/token?partyId=${partyId}`, { credentials: 'include' })
         if (!res.ok) throw new Error('Failed to get LiveKit token')
-        const { token, url, iceServers } = await res.json()
+        const payload = await apiJson(res)
+        if (!isLiveKitConnection(payload)) throw new Error('LiveKit returned invalid connection details')
+        const { token, url, iceServers } = payload
 
         room = new Room({
           adaptiveStream: true,
@@ -136,4 +140,24 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
   }
 
   return { participants, localParticipant, camOn, micOn, enableCamera, enableMic, error }
+}
+
+interface LiveKitConnection {
+  token: string
+  url: string
+  iceServers?: RTCIceServer[]
+}
+
+function isIceServer(value: unknown): value is RTCIceServer {
+  if (!isObject(value)) return false
+  const urlsValid = typeof value.urls === 'string' ||
+    (Array.isArray(value.urls) && value.urls.length > 0 && value.urls.every(url => typeof url === 'string'))
+  return urlsValid && (value.username === undefined || typeof value.username === 'string') &&
+    (value.credential === undefined || typeof value.credential === 'string')
+}
+
+function isLiveKitConnection(value: unknown): value is LiveKitConnection {
+  return isObject(value) && typeof value.token === 'string' && value.token.length > 0 &&
+    typeof value.url === 'string' && /^wss?:\/\//.test(value.url) &&
+    (value.iceServers === undefined || (Array.isArray(value.iceServers) && value.iceServers.every(isIceServer)))
 }

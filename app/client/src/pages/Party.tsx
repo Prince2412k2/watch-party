@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MouseEvent, PointerEvent } from 'react'
+import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from 'react'
 import { useParty } from '../context/PartyContext'
 import { useSocket } from '../hooks/useSocket'
 import { useLiveKit } from '../hooks/useLiveKit'
+import type { LiveKitParticipantView } from '../hooks/useLiveKit'
 import { useHideSelf } from '../hooks/useHideSelf'
 import { usePushToTalk } from '../hooks/usePushToTalk'
 import { navigate } from '../router'
 import Player from '../components/Player'
+import type { PlayerProps } from '../components/Player'
 import CameraGrid from '../components/CameraGrid'
 import Dock from '../components/Dock'
 import Chat from '../components/Chat'
@@ -18,6 +20,23 @@ import { usePhone } from '../hooks/useIsMobile'
 import { Z } from '../watchLayers'
 import Library from './Library'
 import Lobby from './Lobby'
+import type { PartySession } from '../types'
+import { apiJson, stringField } from '../types/guards'
+
+type LiveKitState = ReturnType<typeof useLiveKit>
+type CameraProps = {
+  localParticipant: LiveKitParticipantView | null
+  participants: LiveKitParticipantView[]
+  isHost: boolean
+  removedCameras: Set<string>
+  hideSelf: boolean
+  onRemove: (identity: string) => void
+}
+type SeekBridge = {
+  canControl: boolean
+  seekBy: (seconds: number) => void
+  guardToggle: (action: () => void | Promise<void>) => Promise<void>
+}
 
 export default function Party({ partyId, isNew, itemId }: { partyId?: string; isNew?: boolean; itemId?: string } = {}) {
   const { socket } = useSocket()
@@ -29,7 +48,7 @@ export default function Party({ partyId, isNew, itemId }: { partyId?: string; is
 
   const lk = useLiveKit({ partyId: session?.id, enabled: role === 'host' || role === 'guest' })
   const [removedCameras, setRemovedCameras] = useState<Set<string>>(new Set())
-  const [hideSelf, toggleHideSelf, setHideSelf] = useHideSelf() as any
+  const [hideSelf, toggleHideSelf, setHideSelf] = useHideSelf()
   const [joinError, setJoinError] = useState<string | null>(null)
   const phone = usePhone()
 
@@ -177,21 +196,21 @@ function WatchView({
   session, isHost, cameraProps, lk, chatOpen, chatRipple = 0, alertMode, layoutMode,
   setLayout = () => {}, openChat = () => {}, closeChat = () => {}, setPlaybackTracks = () => {}, hideSelf, onToggleHideSelf = () => {},
 }: {
-  session?: any
+  session: PartySession
   isHost?: boolean
-  cameraProps?: any
-  lk?: any
+  cameraProps: CameraProps
+  lk: LiveKitState
   chatOpen?: boolean
   chatRipple?: number
   alertMode?: 'focus' | 'on' | 'mute'
-  layoutMode?: string
+  layoutMode?: 'float' | 'dock'
   setLayout?: (mode: 'float' | 'dock') => void
   openChat?: (focus?: boolean) => void
   closeChat?: () => void
   setPlaybackTracks?: (tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   hideSelf?: boolean
   onToggleHideSelf?: () => void
-} = {}) {
+}) {
   const phone = usePhone()
   const rootRef = useRef<HTMLDivElement | null>(null)
   const hideTimer = useRef<number | null>(null)
@@ -255,7 +274,7 @@ function WatchView({
   // touching pan/pinch, and we attach NO horizontal swipe so iOS edge back-swipe
   // is left alone.
   const canControl = isHost || session.collaborativeControl
-  const seekBridgeRef = useRef<any>(null)          // wired by Player/SyncBridge → { seekBy, canControl, guardToggle }
+  const seekBridgeRef = useRef<SeekBridge | null>(null)          // wired by Player/SyncBridge → { seekBy, canControl, guardToggle }
   // Bug 2: route camera/mic toggles through the sync bridge's guard so a spurious
   // pause/play the browser can emit while (re)acquiring a device via getUserMedia
   // never authors a pause/seek to the shared timeline — and any spurious local
@@ -387,7 +406,7 @@ function WatchView({
   // stage robust, not just the immersive case (Phase B). overflow:hidden guards
   // against any dvw rounding overflow. Anchoring via top/left/right + an explicit
   // height (no `bottom`) is what lets `100dvh` win over the layout viewport.
-  const rootStyle: any = {
+  const rootStyle: CSSProperties = {
     position: 'fixed', top: 0, left: 0, right: 0,
     height: '100dvh', minHeight: '100dvh',
     background: '#000', overflow: 'hidden', cursor: visible ? 'default' : 'none',
@@ -647,7 +666,7 @@ function MobileCameraStrip({
 }
 
 /* ── Lobby chrome bits ─────────────────────────────────────────────────── */
-function CodePill({ code, count }: any = {}) {
+function CodePill({ code, count }: { code?: string; count?: number } = {}) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '7px 8px 7px 14px', borderRadius: 999,
@@ -663,7 +682,7 @@ function CodePill({ code, count }: any = {}) {
   )
 }
 
-function ChoosingBanner({ host }: any = {}) {
+function ChoosingBanner({ host }: { host?: string } = {}) {
   return (
     <div style={{
       maxWidth: 1240, margin: '14px auto 0', padding: '10px 16px', borderRadius: 10,
@@ -676,8 +695,20 @@ function ChoosingBanner({ host }: any = {}) {
   )
 }
 
-function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }: any = {}) {
-  const Btn = ({ on, danger = false, onClick, title, children }: any = {}) => (
+function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }: {
+  lk: LiveKitState
+  chatOpen?: boolean
+  onToggleChat?: () => void
+  hideSelf?: boolean
+  onToggleHideSelf?: () => void
+}) {
+  const Btn = ({ on, danger = false, onClick, title, children }: {
+    on?: boolean
+    danger?: boolean
+    onClick?: () => void
+    title?: string
+    children?: ReactNode
+  }) => (
     <button onClick={onClick} title={title} style={{
       ...glass('light'), width: 48, height: 48, borderRadius: 16, cursor: 'pointer',
       display: 'grid', placeItems: 'center',
@@ -712,8 +743,12 @@ function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }: 
   )
 }
 
-function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, ...rest }: any = {}) {
-  const [hlsUrl, setHlsUrl] = useState(null)
+type HlsPlayerProps = Omit<PlayerProps, 'hlsUrl' | 'mediaItemId' | 'playback' | 'syncMode'> & {
+  session: PartySession
+}
+
+function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, ...rest }: HlsPlayerProps) {
+  const [hlsUrl, setHlsUrl] = useState<string | null>(null)
   const audioStreamIndex = session?.playback?.selectedAudioIndex
   const subtitleStreamIndex = session?.playback?.selectedSubtitleIndex
   const mediaSourceId = session?.playback?.mediaSourceId ?? session?.mediaSourceId ?? session?.mediaItemId
@@ -730,8 +765,8 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
     if (Number.isInteger(audioStreamIndex)) qs.set('audioStreamIndex', String(audioStreamIndex))
     if (Number.isInteger(subtitleStreamIndex)) qs.set('subtitleStreamIndex', String(subtitleStreamIndex))
     fetch(`/api/library/hls-url?${qs}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.url) setHlsUrl(d.url) })
+      .then(r => r.ok ? apiJson(r) : null)
+      .then(d => { const url = stringField(d, 'url'); if (url) setHlsUrl(url) })
   }, [session?.mediaItemId, mediaSourceId, audioStreamIndex, subtitleStreamIndex])
 
   if (!hlsUrl) return (

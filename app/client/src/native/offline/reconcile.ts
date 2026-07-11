@@ -1,16 +1,15 @@
-// @ts-nocheck
 // Pure reconciliation core for useDownloads (native/useOffline.js), split out
 // so it's testable without a React renderer. Each function takes the current
 // `Map<id, record>` and returns a NEW map with one update applied — dl_list()
 // is the source of truth for state/byte totals (reconcileList), dl:* events
 // patch individual records between polls.
 
-import type { DownloadRecord } from '../contract'
+import type { DownloadRecord } from '../contract.ts'
 export interface DownloadProgressPayload { id: string; receivedBytes: number; totalBytes: number; bytesPerSec?: number }
 export interface DownloadDonePayload { id: string; itemId: string; path: string }
 export interface DownloadErrorPayload { id: string; message?: string }
 export function reconcileList(map: Map<string, DownloadRecord>, list: DownloadRecord[] = []) {
-  const next = new Map()
+  const next = new Map<string, DownloadRecord>()
   for (const rec of list || []) {
     const prev = map.get(rec.id)
     next.set(rec.id, { bytesPerSec: prev?.bytesPerSec ?? 0, ...rec })
@@ -57,6 +56,9 @@ export function applyDone(map: Map<string, DownloadRecord>, payload: DownloadDon
     ...prev,
     id: payload.id,
     itemId: payload.itemId,
+    title: prev?.title ?? '',
+    totalBytes: prev?.totalBytes ?? 0,
+    parts: prev?.parts ?? 1,
     state: 'done',
     path: payload.path,
     receivedBytes: prev?.totalBytes ?? prev?.receivedBytes ?? 0,
@@ -67,7 +69,17 @@ export function applyDone(map: Map<string, DownloadRecord>, payload: DownloadDon
 export function applyError(map: Map<string, DownloadRecord>, payload: DownloadErrorPayload) {
   const next = new Map(map)
   const prev = next.get(payload.id)
-  next.set(payload.id, { ...prev, id: payload.id, state: 'error', message: payload.message })
+  next.set(payload.id, {
+    ...prev,
+    id: payload.id,
+    itemId: prev?.itemId ?? '',
+    title: prev?.title ?? '',
+    state: 'error',
+    receivedBytes: prev?.receivedBytes ?? 0,
+    totalBytes: prev?.totalBytes ?? 0,
+    parts: prev?.parts ?? 1,
+    message: payload.message,
+  })
   return next
 }
 

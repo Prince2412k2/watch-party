@@ -10,12 +10,22 @@
 // correction called .play()" — both just show up as property changes to relay
 // onward as standard media events.
 
-// @ts-nocheck
-import { invoke, listen } from './ipc'
-import { IPC, EVENTS, MEDIA_EVENTS } from './contract'
+import { invoke, listen } from './ipc.ts'
+import { IPC, EVENTS, MEDIA_EVENTS } from './contract.ts'
+import { isFiniteNumber, isRecord } from './guards.ts'
 
 export class MpvBackend {
-  [key: string]: any
+  private _currentTime = 0
+  private _duration = Number.NaN
+  private _paused = true
+  private _playbackRate = 1
+  private _volume = 1
+  private _muted = false
+  private _cachedAheadSec = 0
+  private _cachedBytes = 0
+  private _listeners: Map<string, Set<() => void>>
+  private _unlistens: Array<Promise<() => void>>
+
   constructor() {
     this._currentTime = 0
     this._duration = NaN
@@ -26,55 +36,57 @@ export class MpvBackend {
     this._cachedAheadSec = 0
     this._cachedBytes = 0
 
-    this._listeners = new Map(MEDIA_EVENTS.map((t) => [t, new Set()]))
+    this._listeners = new Map(MEDIA_EVENTS.map((eventName) => [eventName, new Set<() => void>()]))
     this._unlistens = []
 
-    this._subscribe(EVENTS.MPV_TIMEPOS, ({ sec }) => {
+    this._subscribe(EVENTS.MPV_TIMEPOS, isSecPayload, ({ sec }) => {
       this._currentTime = sec
       this._emit('timeupdate')
     })
-    this._subscribe(EVENTS.MPV_PAUSE, ({ paused }) => {
+    this._subscribe(EVENTS.MPV_PAUSE, isPausedPayload, ({ paused }) => {
       this._paused = paused
       this._emit(paused ? 'pause' : 'play')
     })
-    this._subscribe(EVENTS.MPV_DURATION, ({ sec }) => {
+    this._subscribe(EVENTS.MPV_DURATION, isSecPayload, ({ sec }) => {
       this._duration = sec
       this._emit('durationchange')
     })
-    this._subscribe(EVENTS.MPV_SEEKING, () => {
+    this._subscribe(EVENTS.MPV_SEEKING, isRecord, () => {
       this._emit('seeking')
     })
-    this._subscribe(EVENTS.MPV_SEEKED, ({ sec }) => {
+    this._subscribe(EVENTS.MPV_SEEKED, isSecPayload, ({ sec }) => {
       this._currentTime = sec
       this._emit('seeked')
     })
-    this._subscribe(EVENTS.MPV_BUFFERING, ({ active }) => {
+    this._subscribe(EVENTS.MPV_BUFFERING, isActivePayload, ({ active }) => {
       this._emit(active ? 'waiting' : 'playing')
     })
-    this._subscribe(EVENTS.MPV_EOF, () => {
+    this._subscribe(EVENTS.MPV_EOF, isRecord, () => {
       this._paused = true
       this._emit('ended')
     })
-    this._subscribe(EVENTS.MPV_LOADEDMETADATA, ({ durationSec }) => {
+    this._subscribe(EVENTS.MPV_LOADEDMETADATA, isDurationPayload, ({ durationSec }) => {
       this._duration = durationSec
       this._emit('loadedmetadata')
     })
-    this._subscribe(EVENTS.MPV_SPEED, ({ rate }) => {
+    this._subscribe(EVENTS.MPV_SPEED, isRatePayload, ({ rate }) => {
       this._playbackRate = rate
       this._emit('ratechange')
     })
-    this._subscribe(EVENTS.MPV_CACHE, ({ cachedAheadSec, cachedBytes }) => {
+    this._subscribe(EVENTS.MPV_CACHE, isCachePayload, ({ cachedAheadSec, cachedBytes }) => {
       this._cachedAheadSec = cachedAheadSec
       this._cachedBytes = cachedBytes
       this._emit('progress')
     })
   }
 
-  _subscribe(eventName: string, handler: (payload: any) => void) {
+  _subscribe<T>(eventName: string, guard: (payload: unknown) => payload is T, handler: (payload: T) => void) {
     // listen() is async (dynamic-imports @tauri-apps/api on first real call);
     // fire-and-forget is fine here — nothing needs the unlisten fn before
     // destroy(), and destroy() itself just awaits whatever accumulated.
-    const p = listen(eventName, (e) => handler(e.payload))
+    const p = listen(eventName, (event) => {
+      if (guard(event.payload)) handler(event.payload)
+    })
     this._unlistens.push(p)
   }
 
@@ -88,7 +100,7 @@ export class MpvBackend {
 
   // ── getters/setters ──────────────────────────────────────────────────────
   get currentTime() { return this._currentTime }
-  set currentTime(sec) {
+  set currentTime(sec: number) {
     this._currentTime = sec
     invoke(IPC.MPV_SEEK, { sec })
   }
@@ -97,19 +109,19 @@ export class MpvBackend {
   get paused() { return this._paused }
 
   get playbackRate() { return this._playbackRate }
-  set playbackRate(rate) {
+  set playbackRate(rate: number) {
     this._playbackRate = rate
     invoke(IPC.MPV_SET_SPEED, { rate })
   }
 
   get volume() { return this._volume }
-  set volume(vol) {
+  set volume(vol: number) {
     this._volume = vol
     invoke(IPC.MPV_SET_VOLUME, { vol })
   }
 
   get muted() { return this._muted }
-  set muted(muted) {
+  set muted(muted: boolean) {
     this._muted = muted
     invoke(IPC.MPV_SET_MUTED, { muted })
   }
@@ -120,8 +132,8 @@ export class MpvBackend {
     const end = start + Math.max(0, aheadSec)
     return {
       length: aheadSec > 0 ? 1 : 0,
-      start: (i) => { if (i !== 0) throw new Error('index out of range'); return start },
-      end: (i) => { if (i !== 0) throw new Error('index out of range'); return end },
+      start: (i: number) => { if (i !== 0) throw new Error('index out of range'); return start },
+      end: (i: number) => { if (i !== 0) throw new Error('index out of range'); return end },
     }
   }
 
@@ -148,7 +160,7 @@ export class MpvBackend {
     invoke(IPC.MPV_TEARDOWN, {})
     for (const set of this._listeners.values()) set.clear()
     for (const p of this._unlistens) {
-      p.then((unlisten) => { try { unlisten() } catch { /* already torn down */ } }).catch(() => {})
+      p.then((unlisten: () => void) => { try { unlisten() } catch { /* already torn down */ } }).catch(() => {})
     }
     this._unlistens = []
   }
@@ -162,4 +174,23 @@ export class MpvBackend {
     const set = this._listeners.get(type)
     if (set) set.delete(cb)
   }
+}
+
+function isSecPayload(value: unknown): value is { sec: number } {
+  return isRecord(value) && isFiniteNumber(value.sec)
+}
+function isPausedPayload(value: unknown): value is { paused: boolean } {
+  return isRecord(value) && typeof value.paused === 'boolean'
+}
+function isActivePayload(value: unknown): value is { active: boolean } {
+  return isRecord(value) && typeof value.active === 'boolean'
+}
+function isDurationPayload(value: unknown): value is { durationSec: number } {
+  return isRecord(value) && isFiniteNumber(value.durationSec)
+}
+function isRatePayload(value: unknown): value is { rate: number } {
+  return isRecord(value) && isFiniteNumber(value.rate)
+}
+function isCachePayload(value: unknown): value is { cachedAheadSec: number; cachedBytes: number } {
+  return isRecord(value) && isFiniteNumber(value.cachedAheadSec) && isFiniteNumber(value.cachedBytes)
 }

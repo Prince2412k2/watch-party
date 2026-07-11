@@ -1,9 +1,12 @@
-// @ts-nocheck
 import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
+import type { AuthUser } from '../../types'
+import type { MobileItem } from '../types'
 import { useAuth } from '../../context/AuthContext'
 import { navigate } from '../../router'
 import { useMobileShell } from '../shellContext'
 import { useTorrents, isActiveState } from '../../hooks/useTorrents'
+import type { TorrentRecord } from '../../hooks/useTorrents'
 import { T, SANS, MONO, R, EASE, TYPE, AVATAR_BG, SP } from '../theme'
 import { TopBar, TopBarButton } from '../ui/TopBar'
 import { Icon, Ic, viewIcon } from '../ui/Icon'
@@ -11,6 +14,7 @@ import { Img } from '../ui/Poster'
 import { Rail, RailItem } from '../ui/Rail'
 import { Sheet } from '../ui/Sheet'
 import { Skeleton, RailSkeleton } from '../ui/Skeleton'
+import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../../types/guards'
 
 /**
  * Mobile Home — the phone library landing. A vertical stack of swipeable rails
@@ -31,14 +35,21 @@ const STILL_W = 262
 const VIEW_W = 262
 const DL_W = 290
 const LEAF = new Set(['Movie', 'Episode'])
+type HomeData = { resume?: MobileItem[]; nextUp?: MobileItem[]; views?: MobileItem[] }
+const isMobileItem = (value: unknown): value is MobileItem => isLibraryItemJson(value)
+const mobileItems = (value: unknown): MobileItem[] => arrayOf(value, isMobileItem)
+const parseHome = (value: unknown): HomeData => isRecord(value) ? {
+  resume: mobileItems(value.resume), nextUp: mobileItems(value.nextUp), views: mobileItems(value.views),
+} : {}
+type ArtFallback = { id: string; type?: string }
 
-const fmtRuntime = (ticks) => {
+const fmtRuntime = (ticks: number | null | undefined) => {
   if (!ticks) return null
   const m = Math.round(ticks / 600_000_000)
   const h = Math.floor(m / 60)
   return h > 0 ? `${h}h ${m % 60}m` : `${m}m`
 }
-const fmtSpeed = (bps) => {
+const fmtSpeed = (bps: number | null | undefined) => {
   if (bps == null || !Number.isFinite(bps) || bps <= 0) return '0 B/s'
   const u = ['B', 'KB', 'MB', 'GB']
   let i = 0, n = bps
@@ -47,7 +58,7 @@ const fmtSpeed = (bps) => {
 }
 
 // button reset for tappable cards / rows
-const cardBtn: any = {
+const cardBtn: CSSProperties = {
   border: 'none', background: 'none', padding: 0, margin: 0, cursor: 'pointer',
   textAlign: 'left', color: 'inherit', font: 'inherit', width: '100%', display: 'block',
 }
@@ -56,7 +67,9 @@ const cardBtn: any = {
    <Img> (shares the session-wide failedArt 404 guard). Overlays render as
    children. Covers the placeholder once the image paints; falls back to the
    glyph if every candidate 404s. */
-function Art({ id, type = 'Primary', fallback, alt = '', ratio = '2 / 3', radius = R.md, style, children }: any = {}) {
+function Art({ id, type = 'Primary', fallback, alt = '', ratio = '2 / 3', radius = R.md, style, children }: {
+  id: string; type?: string; fallback?: ArtFallback; alt?: string; ratio?: string; radius?: number; style?: CSSProperties; children?: ReactNode
+}) {
   return (
     <div style={{
       position: 'relative', aspectRatio: ratio, borderRadius: radius, overflow: 'hidden',
@@ -77,7 +90,7 @@ function Art({ id, type = 'Primary', fallback, alt = '', ratio = '2 / 3', radius
 /* ── Rail cards ──────────────────────────────────────────────────────────── */
 
 // 2:3 poster (Recently added, library-grid items). Optional corner badge.
-function PosterCard({ item, onOpen, badge }: any = {}) {
+function PosterCard({ item, onOpen, badge }: { item: MobileItem; onOpen: (item: MobileItem) => void; badge?: string }) {
   return (
     <RailItem style={{ width: POSTER_W }}>
       <button className="mob-press" style={cardBtn} onClick={() => onOpen(item)} aria-label={item.Name}>
@@ -98,7 +111,7 @@ function PosterCard({ item, onOpen, badge }: any = {}) {
 }
 
 // 16:9 still (Continue watching / Next up), with resume progress bar.
-function StillCard({ item, onOpen, progress }: any = {}) {
+function StillCard({ item, onOpen, progress }: { item: MobileItem; onOpen: (item: MobileItem) => void; progress?: boolean }) {
   const pct = item.UserData?.PlayedPercentage
   const label = item.SeriesName ? (item.Name || item.SeriesName) : item.Name
   const sub = item.SeriesName
@@ -109,7 +122,7 @@ function StillCard({ item, onOpen, progress }: any = {}) {
       <button className="mob-press" style={cardBtn} onClick={() => onOpen(item)} aria-label={label}>
         <Art id={item.Id} type="Thumb" fallback={{ id: item.SeriesId || item.Id, type: 'Backdrop' }}
           alt={label} ratio="16 / 9">
-          {progress && pct > 0 && (
+          {progress && pct != null && pct > 0 && (
             <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'rgba(0,0,0,.5)' }}>
               <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: T.text }} />
             </span>
@@ -123,7 +136,7 @@ function StillCard({ item, onOpen, progress }: any = {}) {
 }
 
 // 16:9 library view card (label + icon over a dimmed backdrop).
-function ViewCard({ view, onOpen }: any = {}) {
+function ViewCard({ view, onOpen }: { view: MobileItem; onOpen: (item: MobileItem) => void }) {
   return (
     <RailItem style={{ width: VIEW_W }}>
       <button className="mob-press" style={cardBtn} onClick={() => onOpen(view)} aria-label={view.Name}>
@@ -139,7 +152,7 @@ function ViewCard({ view, onOpen }: any = {}) {
 }
 
 // Poster for a download card — external *arr posterUrl, with an icon fallback.
-function DlPoster({ src, kind, w }: any = {}) {
+function DlPoster({ src, kind, w }: { src?: string; kind?: string; w: number }) {
   const [ok, setOk] = useState(true)
   return (
     <div style={{
@@ -154,7 +167,7 @@ function DlPoster({ src, kind, w }: any = {}) {
 }
 
 // "Downloading now" — a live-progress card. Taps through to the Downloads queue.
-function DownloadingCard({ torrent }: any = {}) {
+function DownloadingCard({ torrent }: { torrent: TorrentRecord }) {
   const pct = Math.max(0, Math.min(100, Math.round((torrent.progress || 0) * 100)))
   const title = torrent.displayTitle || torrent.name
   return (
@@ -190,7 +203,7 @@ function DownloadingCard({ torrent }: any = {}) {
 
 /* ── Detail / drill-in sheet ─────────────────────────────────────────────── */
 
-function MetaChips({ items }: any = {}) {
+function MetaChips({ items }: { items: Array<string | number | null | undefined | false> }) {
   const parts = items.filter(Boolean)
   if (!parts.length) return null
   return (
@@ -202,15 +215,15 @@ function MetaChips({ items }: any = {}) {
 
 // Hero for a leaf (Movie/Episode → shows the Watch button) or a Series (info
 // only; seasons render below via <ChildrenView>). Fetches full item detail.
-function DetailHero({ item, onWatch }: any = {}) {
-  const [d, setD] = useState(null)
+function DetailHero({ item, onWatch }: { item: MobileItem; onWatch: (id: string) => void }) {
+  const [d, setD] = useState<MobileItem | null>(null)
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     let cancel = false
     setLoading(true); setD(null)
     fetch(`/api/library/item/${item.Id}`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(x => { if (!cancel) setD(x) })
+      .then(r => r.ok ? apiJson(r) : null)
+      .then((x: unknown) => { if (!cancel) setD(isMobileItem(x) ? x : null) })
       .catch(() => {})
       .finally(() => { if (!cancel) setLoading(false) })
     return () => { cancel = true }
@@ -266,7 +279,7 @@ function DetailHero({ item, onWatch }: any = {}) {
 }
 
 // Tappable episode row (Season contents). Whole row → start a party at it.
-function EpisodeRow({ ep, onWatch }: any = {}) {
+function EpisodeRow({ ep, onWatch }: { ep: MobileItem; onWatch: (id: string) => void }) {
   const num = ep.IndexNumber != null ? `E${ep.IndexNumber}` : ''
   const rt = fmtRuntime(ep.RunTimeTicks)
   return (
@@ -288,14 +301,16 @@ function EpisodeRow({ ep, onWatch }: any = {}) {
 
 // Children of a folder-ish node: seasons/library items → poster grid (tap drills
 // in); episodes → a tappable row list (tap starts a party).
-function ChildrenView({ parentId, onOpen, onWatch, top = 0 }: any = {}) {
-  const [items, setItems] = useState(null)
+function ChildrenView({ parentId, onOpen, onWatch, top = 0 }: {
+  parentId: string; onOpen: (item: MobileItem) => void; onWatch: (id: string) => void; top?: number
+}) {
+  const [items, setItems] = useState<MobileItem[] | null>(null)
   useEffect(() => {
     let cancel = false
     setItems(null)
     fetch(`/api/library/items/${parentId}/children`, { credentials: 'include' })
-      .then(r => r.ok ? r.json() : [])
-      .then(x => { if (!cancel) setItems(Array.isArray(x) ? x : []) })
+      .then(r => r.ok ? apiJson(r) : [])
+      .then((x: unknown) => { if (!cancel) setItems(mobileItems(x)) })
       .catch(() => { if (!cancel) setItems([]) })
     return () => { cancel = true }
   }, [parentId])
@@ -337,9 +352,9 @@ function ChildrenView({ parentId, onOpen, onWatch, top = 0 }: any = {}) {
  * The stack is intentionally NOT cleared on close so the panel keeps its content
  * through the slide-out; it re-inits when a new root item opens.
  */
-function DetailSheet({ item, onClose }: any = {}) {
-  const [stack, setStack] = useState([])
-  const rootRef = useRef(null)
+function DetailSheet({ item, onClose }: { item: MobileItem | null; onClose: () => void }) {
+  const [stack, setStack] = useState<MobileItem[]>([])
+  const rootRef = useRef<string | null>(null)
   useEffect(() => {
     if (!item) { rootRef.current = null; return }
     if (item.Id !== rootRef.current) { rootRef.current = item.Id; setStack([item]) }
@@ -347,9 +362,9 @@ function DetailSheet({ item, onClose }: any = {}) {
 
   const current = stack[stack.length - 1] || null
   const depth = stack.length
-  const push = (it) => setStack(s => [...s, { Id: it.Id, Name: it.Name, Type: it.Type, SeriesId: it.SeriesId, SeriesName: it.SeriesName }])
+  const push = (it: MobileItem) => setStack(s => [...s, { Id: it.Id, Name: it.Name, Type: it.Type, SeriesId: it.SeriesId, SeriesName: it.SeriesName }])
   const pop = () => setStack(s => (s.length > 1 ? s.slice(0, -1) : s))
-  const watch = (id) => { onClose(); navigate(`/party/new?itemId=${id}`) }
+  const watch = (id: string) => { onClose(); navigate(`/party/new?itemId=${id}`) }
 
   const isLeaf = current && LEAF.has(current.Type)
   const isSeries = current && current.Type === 'Series'
@@ -390,12 +405,14 @@ function DetailSheet({ item, onClose }: any = {}) {
 }
 
 /* ── Account sheet (avatar → sign out) ───────────────────────────────────── */
-const rowBtn: any = {
+const rowBtn: CSSProperties = {
   width: '100%', display: 'flex', alignItems: 'center', gap: 12, minHeight: 52, padding: '0 16px',
   borderRadius: R.md, border: `1px solid ${T.line}`, background: 'rgba(255,255,255,.03)', color: T.text,
   ...TYPE.body, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
 }
-function AccountSheet({ open, onClose, user, initials, logout, onJoin }: any = {}) {
+function AccountSheet({ open, onClose, user, initials, logout, onJoin }: {
+  open: boolean; onClose: () => void; user: AuthUser | null; initials: string; logout: () => Promise<void>; onJoin: () => void
+}) {
   return (
     <Sheet open={open} onClose={onClose} title="Account">
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '2px 0 18px' }}>
@@ -429,7 +446,7 @@ function SectionLoading() {
     </>
   )
 }
-function ErrorNote({ onRetry }: any = {}) {
+function ErrorNote({ onRetry }: { onRetry: () => void }) {
   return (
     <div style={{
       margin: '14px 16px', padding: '14px 16px', borderRadius: R.md, ...TYPE.body,
@@ -441,7 +458,7 @@ function ErrorNote({ onRetry }: any = {}) {
     </div>
   )
 }
-function EmptyState({ onStart }: any = {}) {
+function EmptyState({ onStart }: { onStart: () => void }) {
   return (
     <div style={{ padding: '9vh 24px', display: 'grid', placeItems: 'center', textAlign: 'center' }}>
       <div style={{ maxWidth: 320, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
@@ -469,12 +486,12 @@ export default function Home() {
   const name = (user?.name || 'there').split(' ')[0]
   const initials = (user?.name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
 
-  const [home, setHome] = useState(null)
-  const [latest, setLatest] = useState([])
+  const [home, setHome] = useState<HomeData | null>(null)
+  const [latest, setLatest] = useState<MobileItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [reload, setReload] = useState(0)
-  const [detail, setDetail] = useState(null)
+  const [detail, setDetail] = useState<MobileItem | null>(null)
   const [account, setAccount] = useState(false)
 
   // Shared download poller — same hook/shape the TabBar + Downloads screen use.
@@ -485,8 +502,8 @@ export default function Home() {
     let cancel = false
     setLoading(true); setError(false)
     fetch('/api/library/home', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-      .then(d => { if (!cancel) setHome(d) })
+      .then(r => r.ok ? apiJson(r) : Promise.reject(r))
+      .then((d: unknown) => { if (!cancel) setHome(parseHome(d)) })
       .catch(() => { if (!cancel) setError(true) })
       .finally(() => { if (!cancel) setLoading(false) })
     return () => { cancel = true }
@@ -495,8 +512,8 @@ export default function Home() {
   useEffect(() => {
     let cancel = false
     fetch('/api/library/latest', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : Promise.reject(r))
-      .then(d => { if (!cancel) setLatest(Array.isArray(d) ? d : []) })
+      .then(r => r.ok ? apiJson(r) : Promise.reject(r))
+      .then((d: unknown) => { if (!cancel) setLatest(mobileItems(d)) })
       .catch(() => {})
     return () => { cancel = true }
   }, [reload])

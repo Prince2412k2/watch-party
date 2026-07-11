@@ -57,7 +57,7 @@ function Router() {
   // Rendered above the device branch so a usePhone() flip on rotation never
   // remounts a live watch session (which would tear down LiveKit + useSyncPlay).
   // Handles /party/new?itemId=xxx and /party/:id. See mobile/screens/Watch.jsx.
-  if (path.startsWith('/party/')) return <WatchRoute user={user} path={path} />
+  if (path.startsWith('/party/') && user) return <WatchRoute user={user} path={path} />
 
   // (2) Phone shell — the new mobile presentation tree (Login/Home/Browse/
   // Downloads). Coarse-pointer gated, so a narrow desktop window keeps desktop.

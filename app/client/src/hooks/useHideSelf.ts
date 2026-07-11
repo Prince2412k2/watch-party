@@ -9,7 +9,7 @@ function read() {
   try { return localStorage.getItem(KEY) === '1' } catch { return false }
 }
 
-export function useHideSelf() {
+export function useHideSelf(): [boolean, () => void, (value: boolean) => void] {
   const [hideSelf, setHideSelfState] = useState(read)
 
   const toggle = useCallback(() => {

@@ -1,27 +1,57 @@
 import { useEffect, useRef } from 'react'
 
+interface AttachableTrack {
+  attach: (element: HTMLMediaElement) => unknown
+  detach: (element: HTMLMediaElement) => unknown
+}
+
+interface CameraParticipant {
+  name?: string
+  videoTrack?: unknown
+  audioTrack?: unknown
+  isSpeaking?: boolean
+}
+
+function isAttachableTrack(value: unknown): value is AttachableTrack {
+  return typeof value === 'object' && value !== null
+    && 'attach' in value && typeof value.attach === 'function'
+    && 'detach' in value && typeof value.detach === 'function'
+}
+
+interface CameraTileProps {
+  participant: CameraParticipant
+  isLocal?: boolean
+  isHost?: boolean
+  onHide?: () => void
+  onRemove?: () => void
+}
+
 // Avatars carry identity through initials only — a fixed neutral fill, no
 // per-user hue (monochrome; color is reserved for semantic status).
 function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
 }
 
-export default function CameraTile({ participant, isLocal, isHost, onHide, onRemove }: any = {}) {
-  const videoRef = useRef(null)
-  const audioRef = useRef(null)
-  const hasVideo = !!participant.videoTrack
+export default function CameraTile({ participant, isLocal }: CameraTileProps) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const hasVideo = isAttachableTrack(participant.videoTrack)
 
   useEffect(() => {
-    if (participant.videoTrack && videoRef.current) {
-      participant.videoTrack.attach(videoRef.current)
-      return () => participant.videoTrack.detach(videoRef.current)
+    const track = participant.videoTrack
+    const element = videoRef.current
+    if (isAttachableTrack(track) && element) {
+      track.attach(element)
+      return () => { track.detach(element) }
     }
   }, [participant.videoTrack])
 
   useEffect(() => {
-    if (participant.audioTrack && audioRef.current && !isLocal) {
-      participant.audioTrack.attach(audioRef.current)
-      return () => participant.audioTrack.detach(audioRef.current)
+    const track = participant.audioTrack
+    const element = audioRef.current
+    if (isAttachableTrack(track) && element && !isLocal) {
+      track.attach(element)
+      return () => { track.detach(element) }
     }
   }, [participant.audioTrack, isLocal])
 

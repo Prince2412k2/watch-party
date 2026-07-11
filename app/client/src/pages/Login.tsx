@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
@@ -25,7 +25,7 @@ export default function Login({ onSuccess }: { onSuccess?: () => void } = {}) {
     }
   }
 
-  const field: any = {
+  const field: CSSProperties = {
     width: '100%', padding: '13px 16px', borderRadius: 10, boxSizing: 'border-box',
     border: '1px solid var(--line2)', background: 'var(--bg)',
     color: 'var(--text)', fontSize: 15, outline: 'none', transition: 'border-color .15s',

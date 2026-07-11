@@ -1,5 +1,5 @@
-// @ts-nocheck
 import { useState } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { T, TYPE, R, EASE, AVATAR_BG } from '../theme'
 import { Icon, Ic } from '../ui/Icon'
@@ -37,20 +37,20 @@ export default function Login() {
 
   const canSubmit = !!username.trim() && !busy
 
-  async function submit(e) {
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!username.trim()) return
     setError(''); setBusy(true)
     try { await login(username.trim(), password) }
-    catch (err) { setError(err.message || 'Login failed') }
+    catch (err) { setError(err instanceof Error ? err.message : 'Login failed') }
     finally { setBusy(false) }
   }
 
-  const caption = (on) => ({
+  const caption = (on: boolean): CSSProperties => ({
     ...TYPE.meta, color: on ? T.text : T.dim, display: 'block',
     marginBottom: 8, transition: `color .16s ${EASE}`,
   })
-  const fieldStyle = (on, pad) => ({
+  const fieldStyle = (on: boolean, pad: number): CSSProperties => ({
     width: '100%', height: 54, padding: `0 ${pad}px 0 46px`, borderRadius: R.md,
     border: `1px solid ${on ? T.text : T.line2}`,
     background: 'rgba(255,255,255,.05)',
@@ -58,7 +58,7 @@ export default function Login() {
     boxShadow: on ? '0 0 0 3px rgba(255,255,255,.12)' : 'none',
     transition: `border-color .16s ${EASE}, box-shadow .16s ${EASE}, background .16s ${EASE}`,
   })
-  const lead: any = { position: 'absolute', left: 14, top: 0, bottom: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }
+  const lead: CSSProperties = { position: 'absolute', left: 14, top: 0, bottom: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }
 
   return (
     <div style={{
@@ -91,7 +91,7 @@ export default function Login() {
             <div style={{ position: 'relative' }}>
               <span style={lead}><Icon path={Ic.user} size={19} stroke={focus === 'u' ? T.text : T.faint} /></span>
               <input
-                type="text" value={username} onChange={(e) => setUsername(e.target.value)}
+                type="text" value={username} onChange={(e) => setUsername(e.currentTarget.value)}
                 onFocus={() => setFocus('u')} onBlur={() => setFocus('')}
                 disabled={busy} required
                 name="username" autoComplete="username" autoCapitalize="none"
@@ -106,7 +106,7 @@ export default function Login() {
             <div style={{ position: 'relative' }}>
               <span style={lead}><Icon path={LOCK} size={19} stroke={focus === 'p' ? T.text : T.faint} /></span>
               <input
-                type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
+                type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.currentTarget.value)}
                 onFocus={() => setFocus('p')} onBlur={() => setFocus('')}
                 disabled={busy}
                 name="password" autoComplete="current-password" enterKeyHint="go" placeholder="••••••••"

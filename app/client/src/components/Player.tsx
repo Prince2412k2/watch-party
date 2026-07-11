@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
 import { createPlayer } from '@videojs/react'
 import { VideoSkin, videoFeatures } from '@videojs/react/video'
 import { HlsVideo } from '@videojs/react/media/hls-video'
@@ -14,6 +13,32 @@ import { IS_NATIVE } from '../native/env'
 import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc'
 import { MpvBackend } from '../native/MpvBackend'
+import { apiJson, stringField } from '../types/guards'
+
+type LocalPhase = 'ready' | 'catchingUp' | 'buffering'
+type VoidCallback = () => void
+interface SeekBridge { canControl: boolean; seekBy: (delta: number) => void; guardToggle: (fn: () => Promise<void> | void) => Promise<void> }
+type SeekBridgeRef = MutableRefObject<SeekBridge | null>
+interface MediaLike {
+  currentTime: number; duration: number; paused: boolean; playbackRate: number; volume: number; muted: boolean
+  buffered: TimeRanges; engine?: HlsLike
+  play: () => Promise<void>; pause: () => void
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+  removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+}
+interface HlsLevel { height?: number; width?: number; bitrate?: number }
+interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number; autoLevelEnabled?: boolean; on: (event: string, fn: () => void) => void; off: (event: string, fn: () => void) => void }
+interface QualityState { levels: HlsLevel[]; current: number; selected: number; choose: (index: number) => void }
+type TrackSelection = { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
+export interface PlayerTrack { index: number; displayTitle?: string; title?: string; language?: string; codec?: string; isDefault?: boolean }
+export interface PlayerPlayback { audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
+export interface PlayerProps {
+  hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
+  onToggleMic?: VoidCallback; onToggleCam?: VoidCallback; micOn?: boolean; camOn?: boolean; talking?: boolean; onTalkStart?: VoidCallback; onTalkEnd?: VoidCallback
+  onToggleLayout?: VoidCallback; onOpenChat?: VoidCallback; layoutMode?: 'float' | 'dock'; hideSelf?: boolean; onToggleHideSelf?: VoidCallback
+  visible?: boolean; immersive?: boolean; enterImmersive?: VoidCallback; exitImmersive?: VoidCallback; phone?: boolean; camStripOpen?: boolean; onToggleCamStrip?: VoidCallback
+  seekBridgeRef?: SeekBridgeRef; onSetPlaybackTracks?: (tracks: TrackSelection) => void
+}
 
 // Fullscreen is owned by WatchView (Party.jsx) via a single `immersive` state and
 // an enterImmersive()/exitImmersive() pair that branches by platform capability
@@ -32,9 +57,9 @@ export default function Player({
   hideSelf, onToggleHideSelf,
   visible = true, immersive, enterImmersive, exitImmersive,
   phone = false, camStripOpen, onToggleCamStrip, seekBridgeRef, onSetPlaybackTracks,
-}: any = {}) {
-  const canControl = isHost || collaborativeControl
-  const videoRef = useRef<any>(null)
+}: PlayerProps = {}) {
+  const canControl = Boolean(isHost || collaborativeControl)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
 
   // A freshly-opened movie is authored as "playing" immediately (so muted
   // guests autoplay) but the host's own video needs a real .play() call —
@@ -179,13 +204,13 @@ function NativePlayer({
   hideSelf, onToggleHideSelf,
   immersive, enterImmersive, exitImmersive,
   phone, camStripOpen, onToggleCamStrip, seekBridgeRef,
-}: any = {}) {
-  const stageRef = useRef<any>(null)
+}: PlayerProps & { canControl?: boolean } = {}) {
+  const stageRef = useRef<HTMLDivElement | null>(null)
   // One MpvBackend per mounted native player, torn down on unmount — mirrors
   // the lifetime of the <HlsVideo> element it replaces.
-  const backendRef = useRef<any>(null)
+  const backendRef = useRef<MpvBackend | null>(null)
   if (!backendRef.current) backendRef.current = new MpvBackend()
-  const playerRef = useRef<any>(null)
+  const playerRef = useRef<MpvBackend | null>(null)
   playerRef.current = backendRef.current
 
   // Drop-in for the web path's SyncBridge: useSyncPlay only ever touches the
@@ -195,7 +220,7 @@ function NativePlayer({
   const {
     requestPlay, requestPause, requestSeek, holdApplying, releaseApplying,
     TICKS_PER_SECOND,
-  } = useSyncPlay({ playerRef, isHost, collaborativeControl, syncMode, onStruggle })
+  } = useSyncPlay({ playerRef: playerRef as unknown as RefObject<HTMLVideoElement | null>, isHost, collaborativeControl, syncMode, onStruggle })
 
   useEffect(() => {
     return () => { backendRef.current?.destroy(); backendRef.current = null }
@@ -218,7 +243,7 @@ function NativePlayer({
       try {
         const r = await fetch(`/api/library/native/stream-url/${itemId}`, { credentials: 'include' })
         if (!r.ok) throw new Error(`stream-url ${r.status}`)
-        const { url } = await r.json()
+        const url = stringField(await apiJson(r), 'url')
         if (!url) throw new Error('stream-url response missing url')
         if (!cancelled) backendRef.current?.load(url, { paused: false })
       } catch (e) {
@@ -278,7 +303,7 @@ function NativePlayer({
   useEffect(() => {
     if (!seekBridgeRef) return
     seekBridgeRef.current = {
-      canControl,
+      canControl: Boolean(canControl),
         seekBy: (delta: number) => {
         const m = playerRef.current
         if (!m || !canControl) return
@@ -369,17 +394,20 @@ function NativePlayer({
 // holdApplying/releaseApplying, buffer-aware seek, ABR wiring) and stays exactly
 // as it was. Only its own overlay render (buffering/switching-quality) at the
 // bottom was restyled to the neutral spinner spec.
-function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }: any = {}) {
+interface SyncBridgeProps extends Pick<PlayerProps, 'isHost' | 'collaborativeControl' | 'syncMode' | 'onStruggle' | 'onOpenChat' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'seekBridgeRef'> {
+  srcUrl?: string; onAutoplayBlocked?: VoidCallback; userMuted?: boolean; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
+}
+function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
   const toggleFullscreen = () => (immersive ? exitImmersive?.() : enterImmersive?.())
-  const media = VPlayer.useMedia() as any
-  const mediaRef = useRef<any>(null)
+  const media = VPlayer.useMedia() as unknown as MediaLike
+  const mediaRef = useRef<MediaLike | null>(null)
   mediaRef.current = media
 
   const {
     canControl, applyingRef, holdApplying, releaseApplying, notifyUserSeeking, reportStall,
     requestPlay, requestPause, requestSeek, localPhase,
     TICKS_PER_SECOND,
-  } = useSyncPlay({ playerRef: mediaRef, isHost, collaborativeControl, syncMode, onStruggle, onAutoplayBlocked })
+  } = useSyncPlay({ playerRef: mediaRef as unknown as RefObject<HTMLVideoElement | null>, isHost, collaborativeControl, syncMode, onStruggle, onAutoplayBlocked })
 
   // Surface localPhase to Player (MobileBottomBar's transport button needs it
   // and is a sibling of this component, not a descendant).
@@ -400,8 +428,8 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   useEffect(() => {
     if (!seekBridgeRef) return
     seekBridgeRef.current = {
-      canControl,
-      seekBy: (delta) => {
+      canControl: Boolean(canControl),
+      seekBy: (delta: number) => {
         const m = mediaRef.current
         if (!m || !canControl) return
         const dur = m.duration
@@ -513,34 +541,37 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   // browser stalls and pipeline reconfiguration must never become room intent.
   // Volume / mute / fullscreen / chat are local and available to everyone.
   useEffect(() => {
-    const ticks = (m) => Math.round((m.currentTime || 0) * TICKS_PER_SECOND)
-    const play = (m) => { requestPlay(ticks(m)); holdApplying(); m.play().catch(() => {}); setTimeout(releaseApplying, 250) }
-    const pause = (m) => { requestPause(ticks(m)); holdApplying(); m.pause(); setTimeout(releaseApplying, 250) }
-    const seek = (m, time) => {
+    const ticks = (m: MediaLike) => Math.round((m.currentTime || 0) * TICKS_PER_SECOND)
+    const play = (m: MediaLike) => { requestPlay(ticks(m)); holdApplying(); m.play().catch(() => {}); setTimeout(releaseApplying, 250) }
+    const pause = (m: MediaLike) => { requestPause(ticks(m)); holdApplying(); m.pause(); setTimeout(releaseApplying, 250) }
+    const seek = (m: MediaLike, time: number) => {
       const dur = m.duration
       const max = Number.isFinite(dur) && dur > 0 ? Math.max(0, dur - 0.5) : Infinity
       const target = Math.min(max, Math.max(0, time))
       requestSeek(Math.round(target * TICKS_PER_SECOND))
       holdApplying(); m.currentTime = target; setTimeout(releaseApplying, 250)
     }
-    function onKey(e) {
-      const t = e.target
+    function onKey(e: KeyboardEvent) {
+      const t = e.target instanceof HTMLElement ? e.target : null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const m = mediaRef.current
       const k = e.key.toLowerCase()
       // Ctrl/Cmd+F → fullscreen (also plain 'f' below)
       if (k === 'f' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); toggleFullscreen(); return }
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      const transport = () => { if (!m || !canControl) return false; return true }
+      if (!m) {
+        if ([' ', 'k', 'arrowright', 'arrowleft', 'l', 'j'].includes(k)) return
+      }
+      const transport = () => Boolean(m && canControl)
       switch (k) {
         case ' ': case 'k':
-          if (!transport()) return; e.preventDefault(); m.paused ? play(m) : pause(m); break
+          if (!transport()) return; e.preventDefault(); m!.paused ? play(m!) : pause(m!); break
         case 'arrowright':
-          if (!transport()) return; e.preventDefault(); seek(m, (m.currentTime || 0) + 5); break
+          if (!transport()) return; e.preventDefault(); seek(m!, (m!.currentTime || 0) + 5); break
         case 'arrowleft':
-          if (!transport()) return; e.preventDefault(); seek(m, (m.currentTime || 0) - 5); break
-        case 'l': if (transport()) seek(m, (m.currentTime || 0) + 10); break
-        case 'j': if (transport()) seek(m, (m.currentTime || 0) - 10); break
+          if (!transport()) return; e.preventDefault(); seek(m!, (m!.currentTime || 0) - 5); break
+        case 'l': if (transport()) seek(m!, (m!.currentTime || 0) + 10); break
+        case 'j': if (transport()) seek(m!, (m!.currentTime || 0) - 10); break
         case 'arrowup': if (m) { e.preventDefault(); m.volume = Math.min(1, (m.volume ?? 1) + 0.1); m.muted = false } break
         case 'arrowdown': if (m) { e.preventDefault(); m.volume = Math.max(0, (m.volume ?? 1) - 0.1) } break
         case 'm': onToggleMuted?.(); break
@@ -554,12 +585,13 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     }
     // Capture phase so we run before the vidstack skin's own key handler.
     window.addEventListener('keydown', onKey, true)
-    const onCommand = (e) => {
+    const onCommand = (event: Event) => {
+      const e = event as CustomEvent<{ kind?: string; time?: number }>
       const m = mediaRef.current
       if (!m || !canControl) return
       if (e.detail?.kind === 'play') play(m)
       else if (e.detail?.kind === 'pause') pause(m)
-      else if (e.detail?.kind === 'seek') seek(m, e.detail.time)
+      else if (e.detail?.kind === 'seek' && typeof e.detail.time === 'number') seek(m, e.detail.time)
     }
     window.addEventListener('watch:transport', onCommand)
     return () => {
@@ -574,8 +606,8 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   // (rendered outside VideoSkin) also carries this class for the same reason.
   useEffect(() => {
     if (!canControl) return
-    const onPointerDown = (e) => {
-      if (e.target?.closest?.('.watch-skin')) transportIntent.current.arm('*')
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest('.watch-skin')) transportIntent.current.arm('*')
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
@@ -619,7 +651,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   useEffect(() => {
     if (!media || syncMode !== 'dragging') return
     let stalled = false
-    const set = (v) => { if (stalled !== v) { stalled = v; reportStall(v) } }
+    const set = (v: boolean) => { if (stalled !== v) { stalled = v; reportStall(v) } }
     const check = () => {
       const t = media.currentTime || 0
       const ready = isBuffered(media, t) && isBuffered(media, t + BUFFER_AHEAD_SEC)
@@ -704,7 +736,8 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
 // ── Shared monochrome icon button ────────────────────────────────────────────
 // No box, no border, no fill at rest — dim glyph brightens to text on hover.
 // Used by the top bar and the desktop control row alike.
-function IconBtn({ onClick, title, active, danger, size = 34, children, style }: any = {}) {
+interface ButtonProps { onClick?: (event: MouseEvent<HTMLButtonElement>) => void; title?: string; active?: boolean; danger?: boolean; size?: number; children?: ReactNode; style?: CSSProperties }
+function IconBtn({ onClick, title, active, danger, size = 34, children, style }: ButtonProps = {}) {
   return (
     <button
       onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
@@ -727,7 +760,7 @@ function IconBtn({ onClick, title, active, danger, size = 34, children, style }:
 // Quiet top-of-stage row (desktop). Only renders content while chrome is
 // visible; fades with it. No title/back affordance is wired here — Player
 // isn't handed a title or a back handler, only room-essential toggles.
-function TopBar({ visible, onOpenChat, micOn, camOn, onToggleMic, onToggleCam, talking, hideSelf, onToggleHideSelf, onToggleLayout, layoutMode }: any = {}) {
+function TopBar({ visible, onOpenChat, micOn, camOn, onToggleMic, onToggleCam, talking, hideSelf, onToggleHideSelf, onToggleLayout, layoutMode }: PlayerProps = {}) {
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, zIndex: Z.controlBar,
@@ -774,7 +807,7 @@ function TopBar({ visible, onOpenChat, micOn, camOn, onToggleMic, onToggleCam, t
 
 // Host restores audio after autoplay-with-sound was blocked. Flat, no glass,
 // no color — a plain dim pill that brightens on hover.
-function RestoreSoundPrompt({ onClick }: any = {}) {
+function RestoreSoundPrompt({ onClick }: { onClick?: VoidCallback } = {}) {
   return (
     <button onClick={onClick} style={{
       position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
@@ -790,7 +823,7 @@ function RestoreSoundPrompt({ onClick }: any = {}) {
 
 // Guests (no playback control) get a dedicated unmute affordance, since they
 // have no other way to enable audio — audio is independent of control rights.
-function UnmuteButton({ onClick }: any = {}) {
+function UnmuteButton({ onClick }: { onClick?: VoidCallback } = {}) {
   return (
     <button onClick={onClick} style={{
       position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
@@ -807,7 +840,7 @@ function UnmuteButton({ onClick }: any = {}) {
 // Hold-T-to-talk hint / live "Talking…" state, shown above the AV cluster.
 // Neutral — no green. Active state = brighter + a plain white pulse dot, per
 // the "active = brightness, not color" rule.
-function PTTHint({ talking, muted }: any = {}) {
+function PTTHint({ talking, muted }: { talking?: boolean; muted?: boolean } = {}) {
   if (!talking && !muted) return null
   return (
     <div style={{
@@ -845,18 +878,18 @@ function PTTHint({ talking, muted }: any = {}) {
 //              boundary, again on the same stream (no re-transcode / reload).
 // This is entirely local to each client, so guests may sit on different rungs
 // than the host — bitrate is per-client, transport (play/pause/seek) is shared.
-function useQualityLevels(media) {
-  const [levels, setLevels] = useState([])       // hls.levels snapshot
+function useQualityLevels(media: MediaLike | null | undefined): QualityState {
+  const [levels, setLevels] = useState<HlsLevel[]>([])       // hls.levels snapshot
   const [current, setCurrent] = useState(-1)     // active level index (-1 = none yet)
   const [selected, setSelected] = useState(-1)   // user choice; -1 = Auto
 
   useEffect(() => {
     if (!media) return
-    let hls = null
-    let poll = null
+    let hls: HlsLike | undefined
+    let poll: ReturnType<typeof setInterval> | undefined
     const sync = () => {
       if (!hls) return
-      setLevels(hls.levels || [])
+      setLevels(hls.levels ?? [])
       // hls.currentLevel is the actual playing level; -1 while unknown.
       setCurrent(typeof hls.currentLevel === 'number' ? hls.currentLevel : -1)
       // Reflect external auto/manual state (autoLevelEnabled true → Auto).
@@ -869,7 +902,8 @@ function useQualityLevels(media) {
     const attach = () => {
       hls = media.engine
       if (!hls) return false
-      evs.forEach(e => hls.on(e, sync))
+      const engine = hls
+      evs.forEach(e => engine.on(e, sync))
       sync()
       return true
     }
@@ -878,11 +912,12 @@ function useQualityLevels(media) {
     if (!attach()) poll = setInterval(() => { if (attach()) clearInterval(poll) }, 100)
     return () => {
       if (poll) clearInterval(poll)
-      if (hls) evs.forEach(e => { try { hls.off(e, sync) } catch {} })
+      const engine = hls
+      if (engine) evs.forEach(e => { try { engine.off(e, sync) } catch {} })
     }
   }, [media])
 
-  const choose = (i) => {
+  const choose = (i: number) => {
     const hls = media?.engine
     if (!hls) return
     setSelected(i)
@@ -896,7 +931,7 @@ function useQualityLevels(media) {
   return { levels, current, selected, choose }
 }
 
-function levelLabel(l) {
+function levelLabel(l: HlsLevel | null | undefined) {
   if (!l) return ''
   const h = l.height ? `${l.height}p` : (l.width ? `${l.width}w` : '')
   const mbps = l.bitrate ? `${(l.bitrate / 1_000_000).toFixed(1)} Mbps` : ''
@@ -904,7 +939,7 @@ function levelLabel(l) {
 }
 
 // ── Read-only playback clock (position / duration / buffer) ─────────────────
-function useMediaClock(media) {
+function useMediaClock(media: MediaLike | null | undefined) {
   const [c, setC] = useState({ cur: 0, dur: 0, buf: 0 })
   useEffect(() => {
     if (!media) return
@@ -921,7 +956,7 @@ function useMediaClock(media) {
   return c
 }
 
-function fmtClock(s) {
+function fmtClock(s: number) {
   if (!Number.isFinite(s) || s < 0) s = 0
   s = Math.floor(s)
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
@@ -937,36 +972,36 @@ function fmtClock(s) {
 // pointerdown-arm listener in SyncBridge still arms before we mutate, and the
 // existing seeking/seeked → requestSeek pipeline authors the room exactly as
 // before.
-function Scrubber({ canControl }: any = {}) {
-  const media = VPlayer.useMedia() as any
+function Scrubber({ canControl }: { canControl?: boolean } = {}) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
   const { cur, dur, buf } = useMediaClock(media)
   const [hover, setHover] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const trackRef = useRef<any>(null)
+  const trackRef = useRef<HTMLDivElement | null>(null)
 
   const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
   const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
   const active = hover || dragging
   const barH = active ? 6 : 4
 
-  const ratioFromEvent = (e) => {
+  const ratioFromEvent = (e: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
     const el = trackRef.current
     if (!el) return 0
     const r = el.getBoundingClientRect()
-    const clientX = 'touches' in e && e.touches.length ? e.touches[0].clientX : e.clientX
+    const clientX = e.clientX
     return Math.min(1, Math.max(0, (clientX - r.left) / r.width))
   }
 
-  const onPointerDown = (e) => {
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!canControl || !media) return
     e.stopPropagation()
     setDragging(true)
-    const seekTo = (ev) => {
+    const seekTo = (ev: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
       const dur2 = media.duration || 0
       media.currentTime = ratioFromEvent(ev) * dur2
     }
     seekTo(e)
-    const move = (ev) => seekTo(ev)
+    const move = (ev: PointerEvent) => seekTo(ev)
     const up = () => {
       setDragging(false)
       window.removeEventListener('pointermove', move)
@@ -1012,8 +1047,8 @@ function HostControlsHint() {
 // Hover-reveal volume slider. Desktop only, purely local (media.volume) —
 // independent of the shared `userMuted` flag, which callers still flip via
 // the mute icon.
-function VolumeControl({ userMuted, onToggleMuted }: any = {}) {
-  const media = VPlayer.useMedia() as any
+function VolumeControl({ userMuted, onToggleMuted }: { userMuted?: boolean; onToggleMuted?: VoidCallback } = {}) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
   const [open, setOpen] = useState(false)
   const [volume, setVolume] = useState(1)
 
@@ -1054,8 +1089,11 @@ function VolumeControl({ userMuted, onToggleMuted }: any = {}) {
 // The single pinned-bottom row: play/pause, current time, scrubber, duration,
 // volume, settings, fullscreen — over the one allowed black-alpha scrim. No
 // box, no border around the row itself.
-function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlaybackTracks, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase }: any = {}) {
-  const media = VPlayer.useMedia() as any
+interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'talking' | 'onTalkStart' | 'onTalkEnd' | 'onToggleMic' | 'onToggleCam' | 'onToggleLayout' | 'layoutMode' | 'hideSelf' | 'onToggleHideSelf' | 'camStripOpen' | 'onToggleCamStrip'> {
+  mediaElementRef?: RefObject<HTMLVideoElement | null>; canControl?: boolean; userMuted?: boolean; onToggleMuted?: VoidCallback; localPhase?: LocalPhase
+}
+function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlaybackTracks, visible, canControl, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase = 'ready' }: ControlBarProps = {}) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
   const { cur, dur } = useMediaClock(media)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1145,14 +1183,14 @@ function MobileBottomBar({
   onSetPlaybackTracks,
   canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
   hideSelf, onToggleHideSelf, camStripOpen, onToggleCamStrip, visible, immersive, enterImmersive, exitImmersive,
-}: any = {}) {
-  const media = VPlayer.useMedia() as any
+}: ControlBarProps = {}) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [paused, setPaused] = useState(true)
   const wide = useWideBar()
-  const barRef = useRef<any>(null)
+  const barRef = useRef<HTMLDivElement | null>(null)
 
   // Reflect real play/pause state on the transport button — but only while
   // localPhase is 'ready'. useSyncPlay pauses the element itself as an
@@ -1342,8 +1380,8 @@ function MobileBottomBar({
 // Compact read-only mono time row for the mobile bar — time / scrubber / time,
 // matching the desktop scrubber but sized for the touch bar. Read-only, same
 // as the desktop guest scrubber (mobile transport is via double-tap-seek).
-function MobileTimelineRow({ canControl }: any = {}) {
-  const media = VPlayer.useMedia() as any
+function MobileTimelineRow({ canControl }: { canControl?: boolean } = {}) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
   const { cur, dur, buf } = useMediaClock(media)
   const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
   const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
@@ -1363,7 +1401,7 @@ function MobileTimelineRow({ canControl }: any = {}) {
 // 44px touch-target button used across the mobile bar. Flat: no glass, active
 // state is brightness only (never a color fill) except the semantic `danger`
 // (muted mic/cam) and the near-white `primary` transport knob.
-function BarBtn({ onClick, title, active, danger, primary, children }: any = {}) {
+function BarBtn({ onClick, title, active, danger, primary, children }: ButtonProps & { primary?: boolean } = {}) {
   return (
     <button onClick={(e) => { e.stopPropagation(); onClick?.(e) }} title={title} aria-label={title} style={{
       width: 44, height: 44, flexShrink: 0, borderRadius: 12, border: 'none', display: 'grid', placeItems: 'center',
@@ -1384,9 +1422,9 @@ function BarBtn({ onClick, title, active, danger, primary, children }: any = {})
 // state (currently talking) is brightness only — near-white fill, never a
 // color highlight. No-op if the user already manually unmuted (the PTT hook
 // swallows start() in that case).
-function TalkBtn({ talking, onStart, onStop }: any = {}) {
-  const down = (e) => { e.stopPropagation(); e.preventDefault(); onStart?.() }
-  const up = (e) => { e.stopPropagation(); onStop?.() }
+function TalkBtn({ talking, onStart, onStop }: { talking?: boolean; onStart?: VoidCallback; onStop?: VoidCallback } = {}) {
+  const down = (e: ReactPointerEvent<HTMLButtonElement>) => { e.stopPropagation(); e.preventDefault(); onStart?.() }
+  const up = (e: ReactPointerEvent<HTMLButtonElement>) => { e.stopPropagation(); onStop?.() }
   return (
     <button
       title="Hold to talk" aria-label="Hold to talk"
@@ -1407,34 +1445,35 @@ function TalkBtn({ talking, onStart, onStop }: any = {}) {
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
 // Flat solid surface, hairline border, radius 12 — no blur, no gradient.
-function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybackTracks, onClose }: any = {}) {
-  const [view, setView] = useState('main')     // main | quality | subs | audio
+interface SettingsMenuProps { playback?: PlayerPlayback; mediaItemId?: string; quality: QualityState; canControl?: boolean; onSetPlaybackTracks?: (tracks: TrackSelection) => void; onClose?: VoidCallback }
+function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybackTracks, onClose }: SettingsMenuProps) {
+  const [view, setView] = useState<'main' | 'quality' | 'subs' | 'audio'>('main')
   const [q, setQ] = useState('')
   const [uploadingSub, setUploadingSub] = useState(false)
   const [uploadError, setUploadError] = useState('')
-  const uploadInputRef = useRef<any>(null)
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
 
   const audioStreams = playback?.audioStreams ?? []
   const subtitleStreams = playback?.subtitleStreams ?? []
   const selectedAudioIndex = playback?.selectedAudioIndex ?? audioStreams.find(t => t.isDefault)?.index ?? audioStreams[0]?.index ?? null
   const selectedSubtitleIndex = playback?.selectedSubtitleIndex ?? null
-  const trackName = (t, i) => t?.displayTitle || t?.title || t?.language || `${t?.codec || 'Track'} ${t?.index ?? (i + 1)}`
+  const trackName = (t: Partial<PlayerTrack>, i: number) => t.displayTitle || t.title || t.language || `${t.codec || 'Track'} ${t.index ?? (i + 1)}`
 
   useEffect(() => { setQ('') }, [view])
 
-  function chooseAudio(index) {
+  function chooseAudio(index: number) {
     if (!canControl) return
     onSetPlaybackTracks?.({ audioStreamIndex: index, subtitleStreamIndex: selectedSubtitleIndex })
     setView('main')
   }
 
-  function chooseSub(index) {
+  function chooseSub(index: number | null) {
     if (!canControl) return
     onSetPlaybackTracks?.({ audioStreamIndex: selectedAudioIndex, subtitleStreamIndex: index })
     setView('main')
   }
 
-  async function uploadSubtitle(file) {
+  async function uploadSubtitle(file?: File) {
     if (!file || !mediaItemId || !canControl) return
     setUploadingSub(true); setUploadError('')
     try {
@@ -1446,10 +1485,11 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
           'X-Subtitle-Filename': encodeURIComponent(file.name),
         },
       })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || 'Upload failed')
+      const data: unknown = await apiJson(res).catch(() => ({}))
+      const message = typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' ? data.error : 'Upload failed'
+      if (!res.ok) throw new Error(message)
     } catch (err) {
-      setUploadError(err.message || 'Could not upload subtitle')
+      setUploadError(err instanceof Error ? err.message : 'Could not upload subtitle')
     } finally {
       setUploadingSub(false)
       if (uploadInputRef.current) uploadInputRef.current.value = ''
@@ -1469,13 +1509,13 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
   const curSub = selectedSubtitleIndex == null || selectedSubtitleIndex < 0 ? 'Off' : trackName(subtitleStreams.find(s => s.index === selectedSubtitleIndex) || {}, 0)
   const curAudio = audioStreams.length ? trackName(audioStreams.find(s => s.index === selectedAudioIndex) || {}, 0) : '—'
 
-  const panel: any = {
+  const panel: CSSProperties = {
     backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
     position: 'absolute', bottom: 52, right: 0, zIndex: 31, width: 272, maxHeight: '60vh',
     display: 'flex', flexDirection: 'column', borderRadius: 12, overflow: 'hidden', color: '#f4f4f5',
     animation: 'up .18s ease both',
   }
-  const navRow = (label, value, onClick) => (
+  const navRow = (label: string, value: string, onClick: VoidCallback) => (
     <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', padding: '12px 14px', border: 'none', cursor: 'pointer', background: 'transparent', color: '#f4f4f5', fontSize: 13.5, fontWeight: 500, textAlign: 'left' }}>
       <span>{label}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(244,244,245,.62)', fontSize: 12.5, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1484,13 +1524,13 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
       </span>
     </button>
   )
-  const optRow = (label, active, onClick, key) => (
+  const optRow = (label: string, active: boolean, onClick: VoidCallback, key: string | number) => (
     <button key={key} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', border: 'none', cursor: 'pointer', background: active ? 'rgba(255,255,255,.06)' : 'transparent', color: active ? '#f4f4f5' : 'rgba(244,244,245,.62)', fontSize: 13, fontWeight: active ? 600 : 500, textAlign: 'left' }}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" style={{ opacity: active ? 1 : 0, flexShrink: 0 }}><path d="M20 6 9 17l-5-5" /></svg>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   )
-  const subHeader = (title) => (
+  const subHeader = (title: string) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 12px', borderBottom: '1px solid rgba(255,255,255,.08)', flexShrink: 0 }}>
       <button onClick={() => setView('main')} style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.06)', color: '#f4f4f5', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="m15 18-6-6 6-6" /></svg>
@@ -1504,7 +1544,7 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
         style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', color: '#f4f4f5', fontSize: 13, outline: 'none' }} />
     </div>
   )
-  const filtered = (arr) => arr.filter((t, i) => trackName(t, i).toLowerCase().includes(q.toLowerCase()))
+  const filtered = (arr: PlayerTrack[]) => arr.filter((t, i) => trackName(t, i).toLowerCase().includes(q.toLowerCase()))
 
   return (
     <>
@@ -1527,7 +1567,7 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
               {optRow(autoLabel, quality.selected === -1, () => { quality.choose(-1); setView('main') }, 'auto')}
               {/* Real variant rungs reported by hls.js, highest bitrate first */}
               {qLevels
-                .map((l, i) => [l, i])
+                .map((l, i): [HlsLevel, number] => [l, i])
                 .sort((a, b) => (b[0].bitrate || 0) - (a[0].bitrate || 0))
                 .map(([l, i]) => optRow(levelLabel(l), quality.selected === i, () => { quality.choose(i); setView('main') }, i))}
             </div>

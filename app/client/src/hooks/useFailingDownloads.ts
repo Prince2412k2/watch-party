@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiJson, arrayOf, isQueueJson } from '../types/guards'
 
 /* Lightweight poll of Radarr + Sonarr's queues for the *count* of items stuck
  * in a warning/failed state — just enough to drive a nav badge. The full list
@@ -20,11 +21,11 @@ export function useFailingCount(enabled: boolean) {
       const c = new AbortController()
       ctrl = c
       Promise.all([
-        fetch('/api/servarr/radarr/queue', { credentials: 'include', signal: c.signal }).then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch('/api/servarr/sonarr/queue', { credentials: 'include', signal: c.signal }).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch('/api/servarr/radarr/queue', { credentials: 'include', signal: c.signal }).then((r) => (r.ok ? apiJson(r) : [])).catch(() => []),
+        fetch('/api/servarr/sonarr/queue', { credentials: 'include', signal: c.signal }).then((r) => (r.ok ? apiJson(r) : [])).catch(() => []),
       ]).then(([a, b]) => {
         if (c.signal.aborted) return
-        const items = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]
+        const items = [...arrayOf(a, isQueueJson), ...arrayOf(b, isQueueJson)]
         setCount(items.filter((q) => q.failing).length)
       })
     }

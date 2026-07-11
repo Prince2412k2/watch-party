@@ -22,7 +22,6 @@ export interface MediaBackend {
   destroy: () => void
   addEventListener: (type: string, cb: (e?: unknown) => void) => void
   removeEventListener: (type: string, cb: (e?: unknown) => void) => void
-  [key: string]: any
 }
 
 export type DownloadState = 'queued' | 'active' | 'paused' | 'done' | 'error'
@@ -38,7 +37,6 @@ export interface DownloadRecord {
   bytesPerSec?: number
   path?: string
   message?: string
-  [key: string]: any
 }
 
 export interface OfflineRecord {
@@ -47,7 +45,6 @@ export interface OfflineRecord {
   path: string
   sizeBytes: number
   addedAt: string
-  [key: string]: any
 }
 
 export const MEDIA_EVENTS = [
