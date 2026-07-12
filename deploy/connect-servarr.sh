@@ -161,6 +161,12 @@ PROWLARR_KEY="$(read_arr_key prowlarr)"
 BAZARR_KEY="$(read_bazarr_key)"
 QBITTORRENT_USER="$(read_env_local QBITTORRENT_USER)"
 QBITTORRENT_PASS="$(read_env_local QBITTORRENT_PASS)"
+QBITTORRENT_SEED_RATIO="${QBITTORRENT_SEED_RATIO:-$(read_env_local QBITTORRENT_SEED_RATIO)}"
+QBITTORRENT_SEED_RATIO="${QBITTORRENT_SEED_RATIO:-0}"
+if ! [[ "$QBITTORRENT_SEED_RATIO" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  status warn "Invalid QBITTORRENT_SEED_RATIO; using 0"
+  QBITTORRENT_SEED_RATIO=0
+fi
 
 # Report presence (length only) without revealing anything.
 for pair in "Radarr:$RADARR_KEY" "Sonarr:$SONARR_KEY" "Prowlarr:$PROWLARR_KEY" "Bazarr:$BAZARR_KEY"; do
@@ -301,7 +307,7 @@ header "2. Root folders"
 [ "$SONARR_UP" = 1 ] && ensure_root_folder "Sonarr" "$SONARR_URL" "$SONARR_KEY" "/data/media/tv"
 
 # ===========================================================================
-# 2b. Import via hardlink, not copy
+# 2b. Import via hardlink and carry subtitle sidecars
 # ===========================================================================
 # qBittorrent's save path (/data/downloads) and the *arr root folders
 # (/data/media/movies, /data/media/tv) are the SAME bind-mounted volume
@@ -311,28 +317,36 @@ header "2. Root folders"
 # doubling storage for every title until the torrent is later removed.
 #   $1 label  $2 base url  $3 api key
 ensure_hardlink_import() {
-  local label="$1" base="$2" key="$3" cfg id want
+  local label="$1" base="$2" key="$3" cfg id want already_correct
 
   _curl -H "X-Api-Key: $key" "$base/api/v3/config/mediamanagement"
   if [ "$HTTP_STATUS" != "200" ]; then
     status warn "$label: could not read media management config (HTTP $HTTP_STATUS)"; return 0
   fi
   cfg="$RESP"
-  if printf '%s' "$cfg" | jq -e '.copyUsingHardlinks == true' >/dev/null 2>&1; then
-    status "exists, skipped" "$label already imports via hardlink"
+  already_correct="$(printf '%s' "$cfg" | jq -r '
+    (.copyUsingHardlinks == true) and
+    (.importExtraFiles == true) and
+    (((.extraFileExtensions // "") | ascii_downcase | split(",")) as $ext |
+      (["srt", "sub", "ass", "ssa", "vtt"] - $ext | length) == 0)')"
+  if [ "$already_correct" = "true" ]; then
+    status "exists, skipped" "$label already imports via hardlink with subtitle sidecars"
     return 0
   fi
   id="$(printf '%s' "$cfg" | jq -r '.id')"
-  want="$(printf '%s' "$cfg" | jq '.copyUsingHardlinks = true')"
+  want="$(printf '%s' "$cfg" | jq '
+    .copyUsingHardlinks = true |
+    .importExtraFiles = true |
+    .extraFileExtensions = "srt,sub,ass,ssa,vtt"')"
   _curl -X PUT -H "X-Api-Key: $key" -H 'Content-Type: application/json' \
         --data "$want" "$base/api/v3/config/mediamanagement/$id"
   case "$HTTP_STATUS" in
-    200|202) status updated "$label: import now uses hardlinks instead of copy" ;;
-    *)       status warn "$label: failed to enable hardlink import (HTTP $HTTP_STATUS)" ;;
+    200|202) status updated "$label: hardlink import enabled; subtitle sidecars imported" ;;
+    *)       status warn "$label: failed to configure media import (HTTP $HTTP_STATUS)" ;;
   esac
 }
 
-header "2b. Import via hardlink, not copy"
+header "2b. Import via hardlink + subtitle sidecars"
 [ "$RADARR_UP" = 1 ] && ensure_hardlink_import "Radarr" "$RADARR_URL" "$RADARR_KEY"
 [ "$SONARR_UP" = 1 ] && ensure_hardlink_import "Sonarr" "$SONARR_URL" "$SONARR_KEY"
 
@@ -387,7 +401,7 @@ else
 fi
 
 # ===========================================================================
-# 4. qBittorrent WebUI creds + default save path /data/downloads
+# 4. qBittorrent WebUI creds + download lifecycle
 # ===========================================================================
 header "4. qBittorrent (credential check + save path)"
 if [ "$QBIT_UP" != 1 ]; then
@@ -408,24 +422,35 @@ else
   if { [ "$HTTP_STATUS" = "204" ] || [ "$HTTP_STATUS" = "200" ]; } && [ "$login_clean" != "Fails." ]; then
     status "exists, skipped" "qBittorrent WebUI creds already aligned with .env.local (login OK)"
 
-    # Default save path.
+    # Default save path and completion lifecycle. qBittorrent must pause a
+    # completed torrent at its ratio limit before Radarr/Sonarr's
+    # removeCompletedDownloads setting is allowed to remove the torrent and its
+    # download-side hardlinks. A zero ratio means import, then clean up without
+    # retaining a seeding copy; override QBITTORRENT_SEED_RATIO if desired.
     _curl -b "$JAR" -H "Referer: $QBIT_URL" "$QBIT_URL/api/v2/app/preferences"
-    cur_path=""
+    cur_path=""; seed_ratio="$QBITTORRENT_SEED_RATIO"
     [ "$HTTP_STATUS" = "200" ] && cur_path="$(resp_get '.save_path // empty')"
-    if [ "$cur_path" = "/data/downloads" ]; then
-      status "exists, skipped" "qBittorrent save path already /data/downloads"
+    qbit_correct="$(printf '%s' "$RESP" | jq -r --argjson ratio "$seed_ratio" '
+      (.save_path == "/data/downloads") and
+      (.max_ratio_enabled == true) and
+      ((.max_ratio | tonumber) == $ratio) and
+      (.max_ratio_act == 0)' 2>/dev/null || true)"
+    if [ "$qbit_correct" = "true" ]; then
+      status "exists, skipped" "qBittorrent save path and completed-download cleanup already configured"
     else
       _curl -b "$JAR" -H "Referer: $QBIT_URL" \
-        --data-urlencode 'json={"save_path":"/data/downloads"}' \
+        --data-urlencode "json={\"save_path\":\"/data/downloads\",\"max_ratio_enabled\":true,\"max_ratio\":$seed_ratio,\"max_ratio_act\":0}" \
         "$QBIT_URL/api/v2/app/setPreferences"
       set_code="$HTTP_STATUS"
       # Confirm by re-reading.
       _curl -b "$JAR" -H "Referer: $QBIT_URL" "$QBIT_URL/api/v2/app/preferences"
       new_path="$(resp_get '.save_path // empty')"
-      if [ "$new_path" = "/data/downloads" ]; then
-        status created "qBittorrent default save path -> /data/downloads (was ${cur_path:-unknown})"
+      cleanup_ok="$(printf '%s' "$RESP" | jq -r --argjson ratio "$seed_ratio" '
+        (.max_ratio_enabled == true) and ((.max_ratio | tonumber) == $ratio) and (.max_ratio_act == 0)' 2>/dev/null || true)"
+      if [ "$new_path" = "/data/downloads" ] && [ "$cleanup_ok" = "true" ]; then
+        status updated "qBittorrent: save to /data/downloads, pause at ratio $seed_ratio for Servarr cleanup"
       else
-        status warn "qBittorrent: save path not confirmed (setPreferences HTTP $set_code, now '${new_path:-?}')"
+        status warn "qBittorrent preferences not confirmed (setPreferences HTTP $set_code, path '${new_path:-?}')"
       fi
     fi
   else
