@@ -83,8 +83,12 @@ What it does (each step is existence-checked, so re-running is a safe no-op):
 3. Registers **Radarr + Sonarr** in **Prowlarr** as `fullSync` applications
    (Prowlarr self-URL `http://prowlarr:9696`), so indexers auto-propagate.
 4. Confirms the **qBittorrent** WebUI login matches `.env.local` and sets the
-   default save path to `/data/downloads`.
+   default save path to `/data/downloads`. It also pauses completed torrents at
+   `QBITTORRENT_SEED_RATIO` (default `0`) so Radarr/Sonarr remove the torrent and
+   download-side hardlinks after a successful import.
 5. Connects **Bazarr** to Radarr + Sonarr for subtitles.
+6. Enables **Import Extra Files** for `srt,sub,ass,ssa,vtt`, so subtitle files
+   bundled with a release are renamed and imported next to the movie/episode.
 
 Properties:
 
@@ -187,6 +191,8 @@ For each:
    - Radarr: `/data/media/movies`
 3. Confirm hardlinking: **Settings -> Media Management** -> "Use Hardlinks
    instead of Copy" enabled (default).
+4. Confirm **Import Extra Files** is enabled with
+   `srt,sub,ass,ssa,vtt` as the extension list.
 
 ### D. Bazarr — subtitles
 1. http://localhost:6767
