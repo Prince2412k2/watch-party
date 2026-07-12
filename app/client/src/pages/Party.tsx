@@ -38,7 +38,7 @@ type SeekBridge = {
   guardToggle: (action: () => void | Promise<void>) => Promise<void>
 }
 
-export default function Party({ partyId, isNew, itemId }: { partyId?: string; isNew?: boolean; itemId?: string } = {}) {
+export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } } = {}) {
   const { socket } = useSocket()
   const party = useParty()
   const {
@@ -66,7 +66,7 @@ export default function Party({ partyId, isNew, itemId }: { partyId?: string; is
     joinedRef.current = true
     if (isNew) {
       // itemId → room preloaded with a title; no itemId → empty lobby room
-      const create = itemId ? party.createParty(itemId) : party.createRoom()
+      const create = itemId ? party.createParty(itemId, initialTracks) : party.createRoom()
       create
         .then(id => window.history.replaceState({}, '', `/party/${id}`))
         .catch(() => navigate('/library'))
@@ -145,7 +145,7 @@ export default function Party({ partyId, isNew, itemId }: { partyId?: string; is
           embedded
           stack={session.browse?.stack ?? []}
           onNavigate={navigateBrowse}
-          onPickMedia={(item: { Id: string }) => selectMedia(item.Id)}
+          onPickMedia={(item: { Id: string }, tracks) => selectMedia(item.Id, tracks)}
           canDrive={canDrive}
           onPointer={canDrive ? sendPointer : undefined}
           mirrorSubscribe={!canDrive ? mirror.subscribe : undefined}

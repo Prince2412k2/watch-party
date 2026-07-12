@@ -80,12 +80,12 @@ export interface PartyContextValue {
   chatRipple: number
   alertMode: 'focus' | 'on' | 'mute'
   toasts: ToastRecord[]
-  createParty: (mediaItemId: string) => Promise<string>
+  createParty: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => Promise<string>
   createRoom: () => Promise<string>
   joinParty: (partyId: string) => Promise<string>
   navigateBrowse: (stack: BrowseEntry[]) => void
   sendPointer: (point: MirrorPoint) => void
-  selectMedia: (mediaItemId: string) => void
+  selectMedia: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   backToLobby: () => void
   approveUser: (userId: string) => void
   rejectUser: (userId: string) => void
