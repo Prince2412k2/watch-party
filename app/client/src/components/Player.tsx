@@ -944,8 +944,15 @@ function jellyfinStreamIndex(url: string, param: string): number | null {
   } catch { return null }
 }
 
-function hlsIndexForJellyfin(tracks: HlsTrack[], jellyfinIndex: number, param: string): number {
-  return tracks.findIndex(t => jellyfinStreamIndex(t.url, param) === jellyfinIndex)
+function hlsIndexForJellyfin(tracks: HlsTrack[], jellyfinIndex: number, param: string, streams: PlayerTrack[] = []): number {
+  const urlIndex = tracks.findIndex(t => jellyfinStreamIndex(t.url, param) === jellyfinIndex)
+  if (urlIndex >= 0) return urlIndex
+
+  // Some Jellyfin versions omit the original stream index from rendition URLs.
+  // Jellyfin and hls.js preserve rendition order, so map through the playback
+  // metadata as a fallback instead of making the track impossible to select.
+  const streamPosition = streams.findIndex(stream => stream.index === jellyfinIndex)
+  return streamPosition >= 0 && streamPosition < tracks.length ? streamPosition : -1
 }
 
 // ── In-stream audio track switching (no reload) ─────────────────────────────
@@ -960,21 +967,21 @@ function useAudioTrack(media: MediaLike | null | undefined, playback?: PlayerPla
     const target = playback?.selectedAudioIndex
     if (target == null) return
     const apply = () => {
-      const idx = hlsIndexForJellyfin(hls.audioTracks, target, 'AudioStreamIndex')
+      const idx = hlsIndexForJellyfin(hls.audioTracks, target, 'AudioStreamIndex', playback?.audioStreams)
       if (idx >= 0 && hls.audioTrack !== idx) hls.audioTrack = idx
     }
     apply()
     const onManifest = () => apply()
     hls.on('hlsManifestParsed', onManifest)
     return () => { hls.off('hlsManifestParsed', onManifest) }
-  }, [media, playback?.selectedAudioIndex])
+  }, [media, playback?.selectedAudioIndex, playback?.audioStreams])
 
   const choose = useCallback((jellyfinIndex: number) => {
     const hls = media?.engine
     if (!hls) return
-    const idx = hlsIndexForJellyfin(hls.audioTracks, jellyfinIndex, 'AudioStreamIndex')
+    const idx = hlsIndexForJellyfin(hls.audioTracks, jellyfinIndex, 'AudioStreamIndex', playback?.audioStreams)
     if (idx >= 0) hls.audioTrack = idx
-  }, [media])
+  }, [media, playback?.audioStreams])
 
   return { choose }
 }
@@ -999,8 +1006,8 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
   const selectedIndex = useRef<number | null>(playback?.selectedSubtitleIndex ?? null)
   const resolveHlsIdx = useCallback((hls: HlsLike, jellyfinIndex: number | null | undefined) => {
     if (jellyfinIndex == null || jellyfinIndex < 0) return -1
-    return hlsIndexForJellyfin(hls.subtitleTracks, jellyfinIndex, 'SubtitleStreamIndex')
-  }, [])
+    return hlsIndexForJellyfin(hls.subtitleTracks, jellyfinIndex, 'SubtitleStreamIndex', playback?.subtitleStreams)
+  }, [playback?.subtitleStreams])
 
   const applySubtitle = useCallback((hls: HlsLike, target: number | null | undefined) => {
     const video = videoRef?.current
@@ -1039,15 +1046,13 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
     // Deliver cues from hlsCuesParsed directly to the correct DOM track,
     // bypassing the mixin's broken getTrackById-based cue delivery.
     const onCuesParsed = (...args: unknown[]) => {
-      const data = args[1] as { track: string; cues: unknown[] }
+      const data = args[1] as { cues: unknown[] }
       const hlsIdx = resolveHlsIdx(hls, selectedIndex.current)
       if (hlsIdx < 0) return
-      const hlsTrack = hls.subtitleTracks[hlsIdx]
-      if (!hlsTrack) return
-      // hls.js identifies subtitle cue batches as `subtitles${track.id}`
-      // (or `default` for the manifest default). Do not add another rendition's
-      // cues just because it shares a language or display name.
-      if (data.track !== `subtitles${hlsTrack.id}` && !(hlsTrack.default && data.track === 'default')) return
+      if (!hls.subtitleTracks[hlsIdx]) return
+      // hls.js only loads and parses the selected subtitle rendition. Its cue
+      // batch name is based on an internal fragment level, which is not stable
+      // enough to compare with either the array index or public track id.
       const tt = ownedTracks.current.get(hlsIdx)
       if (!tt) return
       const wasDisabled = tt.mode === 'disabled'
