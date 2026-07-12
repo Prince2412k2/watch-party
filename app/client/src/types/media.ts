@@ -23,6 +23,7 @@ export interface PlaybackTrack {
   language?: string
   codec?: string
   isDefault?: boolean
+  deliveryUrl?: string | null
 }
 
 export interface PlaybackSource {

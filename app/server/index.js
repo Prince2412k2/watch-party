@@ -120,6 +120,12 @@ app.use('/jellyfin', requireAuth, createProxyMiddleware({
   target: JELLYFIN_TARGET,
   changeOrigin: true,
   pathRewrite: { '^/jellyfin': '' },
+  on: {
+    proxyReq: (proxyReq, req) => {
+      const token = req.session?.jellyfin?.accessToken
+      if (token) proxyReq.setHeader('X-Emby-Token', token)
+    },
+  },
 }))
 
 const livekitProxy = createProxyMiddleware({
