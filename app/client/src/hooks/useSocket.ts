@@ -5,7 +5,10 @@ let socketSingleton: Socket | null = null
 
 function getSocket(): Socket {
   if (!socketSingleton) {
-    socketSingleton = io({ withCredentials: true, autoConnect: true })
+    // The deployed proxy path is failing WebSocket frames (`Invalid frame header`),
+    // which breaks room state sync and prevents playback-track updates from
+    // propagating. Socket.IO polling works with this server, so prefer it here.
+    socketSingleton = io({ withCredentials: true, autoConnect: true, transports: ['polling'] })
   }
   return socketSingleton
 }
