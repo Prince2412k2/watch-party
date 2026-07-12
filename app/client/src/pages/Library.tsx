@@ -8,6 +8,7 @@ import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
 import { C, SANS, MONO, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui'
 import { fmtRuntimeFromTicks, fmtSpeed } from '../lib/format'
 import { apiJson, arrayOf, isLibraryItemJson, isRecord, isTorrentJson } from '../types/guards'
+import type { PlaybackTrack } from '../types/media'
 
 type ItemType = 'Movie' | 'Series' | 'Episode' | 'Season' | 'CollectionFolder' | 'Folder' | 'UserView' | string
 interface LibraryItem {
@@ -31,7 +32,38 @@ interface StackEntry { id?: string; name?: string; type?: ItemType; [key: string
 interface Torrent { hash: string; state?: string; progress?: number; displayTitle?: string; name?: string; subtitle?: string; posterUrl?: string; kind?: string; dlspeed?: number }
 interface MirrorPoint { scroll: number; x: number; y: number }
 type StackUpdater = StackEntry[] | ((stack: StackEntry[]) => StackEntry[])
-interface LibraryProps { embedded?: boolean; stack?: StackEntry[]; onNavigate?: (stack: StackEntry[]) => void; onPickMedia?: (item: LibraryItem) => void; canDrive?: boolean; headerRight?: ReactNode; banner?: ReactNode; onPointer?: (point: MirrorPoint) => void; mirrorSubscribe?: (listener: (point: MirrorPoint) => void) => () => void; driverName?: string }
+interface LibraryProps { embedded?: boolean; stack?: StackEntry[]; onNavigate?: (stack: StackEntry[]) => void; onPickMedia?: (item: LibraryItem, tracks?: DetailTrackSelection) => void; canDrive?: boolean; headerRight?: ReactNode; banner?: ReactNode; onPointer?: (point: MirrorPoint) => void; mirrorSubscribe?: (listener: (point: MirrorPoint) => void) => () => void; driverName?: string }
+interface DetailPlayback {
+  mediaSourceId?: string | null
+  audioStreams: PlaybackTrack[]
+  subtitleStreams: PlaybackTrack[]
+  selectedAudioIndex?: number | null
+  selectedSubtitleIndex?: number | null
+}
+interface DetailTrackSelection { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
+function parseDetailPlayback(value: unknown): DetailPlayback | null {
+  if (!isRecord(value)) return null
+  const tracks = (raw: unknown): PlaybackTrack[] => Array.isArray(raw)
+    ? raw.filter(isRecord).flatMap(track => typeof track.index === 'number' ? [{
+      index: track.index,
+      displayTitle: typeof track.displayTitle === 'string' ? track.displayTitle : undefined,
+      title: typeof track.title === 'string' ? track.title : undefined,
+      language: typeof track.language === 'string' ? track.language : undefined,
+      codec: typeof track.codec === 'string' ? track.codec : undefined,
+      isDefault: track.isDefault === true,
+      isForced: track.isForced === true,
+      isExternal: track.isExternal === true,
+      deliveryUrl: typeof track.deliveryUrl === 'string' ? track.deliveryUrl : null,
+    }] : [])
+    : []
+  return {
+    mediaSourceId: typeof value.mediaSourceId === 'string' ? value.mediaSourceId : null,
+    audioStreams: tracks(value.audioStreams),
+    subtitleStreams: tracks(value.subtitleStreams),
+    selectedAudioIndex: typeof value.selectedAudioIndex === 'number' ? value.selectedAudioIndex : null,
+    selectedSubtitleIndex: typeof value.selectedSubtitleIndex === 'number' ? value.selectedSubtitleIndex : null,
+  }
+}
 
 const img = (id: string, type = 'Primary') => `/api/library/image/${id}?type=${type}`
 
@@ -252,9 +284,15 @@ export default function Library({
   }, [following, mirrorSubscribe, current?.id])
 
   function open(item: LibraryItem) { if (canDrive) setStack(s => [...s, { id: item.Id, name: item.Name, type: item.Type }]) }
-  function pick(item: LibraryItem) {
+  function pick(item: LibraryItem, tracks?: DetailTrackSelection) {
     if (!canDrive) return
-    if (onPickMedia) onPickMedia(item); else navigate(`/party/new?itemId=${item.Id}`)
+    if (onPickMedia) onPickMedia(item, tracks)
+    else {
+      const qs = new URLSearchParams({ itemId: item.Id })
+      if (Number.isInteger(tracks?.audioStreamIndex)) qs.set('audioStreamIndex', String(tracks!.audioStreamIndex))
+      if (Number.isInteger(tracks?.subtitleStreamIndex)) qs.set('subtitleStreamIndex', String(tracks!.subtitleStreamIndex))
+      navigate(`/party/new?${qs}`)
+    }
   }
   const openDownload = (t: Torrent) => { if (canDrive) setDlDetail(t) }
   const goHome = () => { if (canDrive) setStack([]) }
@@ -715,22 +753,28 @@ function PosterCardFluid({ item, onClick, badge }: { item: LibraryItem; onClick:
 }
 
 /* ── Detail page (Sen Player detail layout) ─────────────────────────────── */
-function CircleAction({ icon, title }: { icon: string; title: string }) {
+function DetailAction({ icon, title, onClick, active }: { icon: string; title: string; onClick?: () => void; active?: boolean }) {
   const [h, setH] = useState(false)
   return (
-    <button title={title} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{
-      width: 54, height: 54, borderRadius: '50%', display: 'grid', placeItems: 'center', cursor: 'pointer',
-      border: `1px solid ${C.line}`, background: h ? C.surface2 : C.surface, color: C.text, transition: 'background .15s',
+    <button title={title} aria-label={title} onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{
+      flex: 1, minWidth: 88, height: 48, borderRadius: 999, display: 'grid', placeItems: 'center', cursor: onClick ? 'pointer' : 'default',
+      border: `1px solid ${active ? 'rgba(255,255,255,.7)' : C.line}`, background: active || h ? 'rgba(255,255,255,.92)' : 'rgba(12,12,12,.62)',
+      color: active || h ? '#111' : C.text, transition: 'background .18s, color .18s, transform .18s', backdropFilter: 'blur(12px)',
     }}>
       <Icon path={icon} size={22} sw={1.9} />
     </button>
   )
 }
 
-function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string; onWatch: (item: LibraryItem) => void; onOpen: (item: LibraryItem) => void; onBack: () => void }) {
+function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string; onWatch: (item: LibraryItem, tracks?: DetailTrackSelection) => void; onOpen: (item: LibraryItem) => void; onBack: () => void }) {
   const mobile = useIsMobile()
   const [d, setD] = useState<LibraryItem | null>(null)
   const [seasons, setSeasons] = useState<LibraryItem[]>([])
+  const [playback, setPlayback] = useState<DetailPlayback | null>(null)
+  const [selectedAudio, setSelectedAudio] = useState<number | null>(null)
+  const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null)
+  const [trackMenuOpen, setTrackMenuOpen] = useState(false)
+  const tracksInitialized = useRef(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -748,6 +792,25 @@ function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string;
       .then(r => r.ok ? apiJson(r) : []).then(x => { if (!cancel) setSeasons(libraryItems(x)) }).catch(() => {})
     return () => { cancel = true }
   }, [d?.Type, itemId])
+
+  const refreshPlayback = () => fetch(`/api/library/playback-info/${itemId}`, {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  }).then(r => r.ok ? apiJson(r) : null).then(value => {
+    const next = parseDetailPlayback(value)
+    setPlayback(next)
+    if (next && !tracksInitialized.current) {
+      tracksInitialized.current = true
+      setSelectedAudio(next.audioStreams.find(track => track.isDefault)?.index ?? next.audioStreams[0]?.index ?? null)
+      setSelectedSubtitle(next.subtitleStreams.find(track => track.isDefault || track.isForced)?.index ?? null)
+    }
+  })
+
+  useEffect(() => {
+    if (!d || d.Type === 'Series') { setPlayback(null); return }
+    let cancelled = false
+    refreshPlayback().catch(() => { if (!cancelled) setPlayback(null) })
+    return () => { cancelled = true }
+  }, [d?.Id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading || !d) return <div style={{ minHeight: '70vh', background: C.surface, animation: 'shim 1.3s linear infinite', backgroundImage: `linear-gradient(100deg, ${C.surface} 30%, ${C.surface2} 50%, ${C.surface} 70%)`, backgroundSize: '200% 100%' }} />
 
@@ -768,69 +831,54 @@ function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string;
 
   const resumeTicks = d.UserData?.PlaybackPositionTicks
   const resumeLabel = resumeTicks ? fmtRuntimeFromTicks(resumeTicks) : null
+  const selection = { audioStreamIndex: selectedAudio, subtitleStreamIndex: selectedSubtitle ?? -1 }
 
   return (
     <div style={{ paddingBottom: 100 }}>
       {/* Full-bleed backdrop hero — real Jellyfin artwork with only a black-alpha
           legibility scrim, no blur/frost. */}
-      <div style={{ position: 'relative', minHeight: 'min(78vh, 640px)', display: 'flex', alignItems: 'flex-end' }}>
+      <div style={{ position: 'relative', minHeight: mobile ? '620px' : 'min(82vh, 760px)', display: 'flex', alignItems: 'flex-end' }}>
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
           <Img id={backdropId} type="Backdrop" fallback={{ id: backdropId, type: 'Primary' }}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center' }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, rgba(0,0,0,.92) 4%, rgba(0,0,0,.55) 48%, rgba(0,0,0,.2) 100%)` }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(0,0,0,.7) 0%, rgba(0,0,0,.35) 45%, transparent 82%)` }} />
+            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 24%', filter: 'brightness(.66) saturate(.82)' }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 0%, rgba(8,8,8,.82) 12%, rgba(8,8,8,.18) 58%, rgba(8,8,8,.34) 100%)` }} />
+          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(8,8,8,.56) 0%, rgba(8,8,8,.12) 56%, rgba(8,8,8,.42) 100%)` }} />
         </div>
 
-        <div style={{ position: 'relative', width: '100%', padding: mobile ? '0 16px 26px' : '0 44px 36px' }}>
-          {/* Three circular glass actions */}
-          <div style={{ display: 'flex', gap: 14, marginBottom: 20 }}>
-            <CircleAction icon={Ic.history} title="Restart / history" />
-            <CircleAction icon={Ic.check} title="Mark watched" />
-            <CircleAction icon={Ic.heart} title="Favorite" />
-          </div>
-
-          {/* Big white Play pill (wired to onWatch exactly as before, movies only) */}
-          {!isSeries && (
-            <button onClick={() => onWatch({ Id: itemId, Name: d.Name, Type: d.Type })} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 12, padding: '15px 34px', border: 'none', borderRadius: 999,
-              background: C.accent, color: C.onAccent, fontFamily: SANS, fontSize: 16, fontWeight: 700, cursor: 'pointer',
-              boxShadow: '0 10px 30px rgba(0,0,0,.4)', marginBottom: 22, transition: 'transform .15s' }}
-              onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.02)'} onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
-              <Icon path={Ic.play} size={19} fill="currentColor" stroke="none" />
-              {resumeLabel ? `Play  ${resumeLabel}` : 'Play'}
-            </button>
-          )}
-
-          {/* Metadata line: ★ rating · critic% · rating badge · genre */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 8, fontSize: 15, fontWeight: 600 }}>
-            {d.CommunityRating != null && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: C.text }}>
-                <Icon path={Ic.star} size={16} fill={C.text} stroke="none" />{d.CommunityRating.toFixed(1)}
-              </span>
-            )}
-            {d.CriticRating != null && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: C.dim }}>
-                <span style={{ fontSize: 15 }}>&#127813;</span>{d.CriticRating}%
-              </span>
-            )}
-            {d.OfficialRating && <span style={{ padding: '1px 8px', borderRadius: 5, border: `1px solid ${C.line2}`, fontSize: 13, fontFamily: MONO }}>{d.OfficialRating}</span>}
-            {genres.slice(0, 2).map(g => <span key={g} style={{ color: C.dim }}>{g}</span>)}
-          </div>
-
-          {/* Info line: runtime · date · quality */}
-          {infoLine.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14, fontFamily: MONO, fontSize: 13, color: C.dim }}>
-              {infoLine.map((v, i) => <span key={i}>{v}</span>)}
+        <div style={{ position: 'relative', width: '100%', maxWidth: 1440, margin: '0 auto', padding: mobile ? '0 18px 30px' : '0 44px 44px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'minmax(300px, 430px) minmax(0, 1fr)', gap: mobile ? 24 : 48, alignItems: 'end' }}>
+            <div>
+              <DetailLogo id={backdropId} title={d.Name} mobile={mobile} />
+              <div style={{ display: 'flex', gap: 10, margin: '22px 0 12px', position: 'relative' }}>
+                <DetailAction icon={Ic.check} title={d.UserData?.Played ? 'Watched' : 'Mark watched'} active={d.UserData?.Played} />
+                <DetailAction icon={Ic.heart} title="Favorite" />
+                {!isSeries && <DetailAction icon={Ic.music} title="Audio and subtitles" active={trackMenuOpen} onClick={() => setTrackMenuOpen(open => !open)} />}
+                {trackMenuOpen && playback && (
+                  <DetailTrackMenu itemId={itemId} playback={playback} selectedAudio={selectedAudio} selectedSubtitle={selectedSubtitle}
+                    onSelectAudio={setSelectedAudio} onSelectSubtitle={setSelectedSubtitle} onRefresh={refreshPlayback} onClose={() => setTrackMenuOpen(false)} />
+                )}
+              </div>
+              <button onClick={() => isSeries ? seasons[0] && onOpen(seasons[0]) : onWatch({ Id: itemId, Name: d.Name, Type: d.Type }, selection)} disabled={isSeries && seasons.length === 0} style={{
+                width: '100%', minHeight: 54, display: 'inline-flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '14px 28px', border: 'none', borderRadius: 999,
+                background: '#f4f4f2', color: '#151515', fontFamily: SANS, fontSize: 17, fontWeight: 750, cursor: isSeries && seasons.length === 0 ? 'default' : 'pointer',
+                opacity: isSeries && seasons.length === 0 ? .45 : 1, boxShadow: '0 12px 34px rgba(0,0,0,.32)', transition: 'transform .18s, background .18s' }}
+                onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.transform = 'translateY(-2px)' }} onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
+                <Icon path={Ic.play} size={20} fill="currentColor" stroke="none" />
+                {isSeries ? 'Browse episodes' : resumeLabel ? `Resume · ${resumeLabel}` : 'Play'}
+              </button>
             </div>
-          )}
 
-          {/* Overview */}
-          {d.Overview && (
-            <p style={{ fontSize: 15, lineHeight: 1.6, color: C.dim, maxWidth: 720, margin: 0,
-              display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-              {d.Name ? <b style={{ fontWeight: 700 }}>[{d.Name}]</b> : null} {d.Overview}
-            </p>
-          )}
+            <div style={{ paddingBottom: mobile ? 0 : 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 10, fontSize: mobile ? 14 : 16, fontWeight: 650 }}>
+                {d.CommunityRating != null && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon path={Ic.star} size={17} fill="#ef5b55" stroke="none" />{d.CommunityRating.toFixed(1)}</span>}
+                {d.CriticRating != null && <span style={{ color: C.text }}><span style={{ marginRight: 5 }}>&#127813;</span>{d.CriticRating}%</span>}
+                {d.OfficialRating && <span style={{ padding: '2px 8px', borderRadius: 5, border: `1px solid rgba(255,255,255,.48)`, fontSize: 12, fontFamily: MONO }}>{d.OfficialRating}</span>}
+                {genres.slice(0, 2).length > 0 && <span style={{ color: C.text }}>{genres.slice(0, 2).join(' · ')}</span>}
+              </div>
+              {infoLine.length > 0 && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12, fontFamily: MONO, fontSize: 13, color: 'rgba(255,255,255,.82)' }}>{infoLine.map((v, i) => <span key={i}>{v}</span>)}</div>}
+              {d.Overview && <p style={{ fontSize: mobile ? 14 : 15.5, lineHeight: 1.55, color: 'rgba(255,255,255,.86)', maxWidth: 820, margin: 0, textWrap: 'pretty', display: '-webkit-box', WebkitLineClamp: mobile ? 4 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{d.Overview}</p>}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -859,6 +907,94 @@ function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string;
             </div>
           </SectionHead>
         )}
+      </div>
+    </div>
+  )
+}
+
+function DetailLogo({ id, title, mobile }: { id: string; title: string; mobile: boolean }) {
+  const [logoAvailable, setLogoAvailable] = useState(!failedArt.has(`${id}:Logo`))
+  return (
+    <div style={{ minHeight: mobile ? 62 : 82, display: 'flex', alignItems: 'flex-end' }}>
+      {logoAvailable ? (
+        <img src={img(id, 'Logo')} alt={`${title} logo`} onError={() => { failedArt.add(`${id}:Logo`); setLogoAvailable(false) }}
+          style={{ display: 'block', maxWidth: mobile ? '76%' : 360, maxHeight: mobile ? 78 : 112, objectFit: 'contain', objectPosition: 'left bottom', filter: 'drop-shadow(0 5px 18px rgba(0,0,0,.5))' }} />
+      ) : (
+        <h1 style={{ margin: 0, maxWidth: 520, color: '#fff', fontSize: mobile ? 42 : 62, lineHeight: .94, fontWeight: 850, letterSpacing: '-.055em', textWrap: 'balance', textShadow: '0 5px 24px rgba(0,0,0,.55)' }}>{title}</h1>
+      )}
+    </div>
+  )
+}
+
+function trackLabel(track: PlaybackTrack, fallback: string) {
+  const base = track.displayTitle || track.title || track.language || fallback
+  return `${base}${track.isDefault ? ' · Default' : ''}${track.isForced ? ' · Forced' : ''}`
+}
+
+function DetailTrackMenu({ itemId, playback, selectedAudio, selectedSubtitle, onSelectAudio, onSelectSubtitle, onRefresh, onClose }: {
+  itemId: string; playback: DetailPlayback; selectedAudio: number | null; selectedSubtitle: number | null
+  onSelectAudio: (index: number | null) => void; onSelectSubtitle: (index: number | null) => void
+  onRefresh: () => Promise<void>; onClose: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const upload = async (file?: File) => {
+    if (!file) return
+    setBusy(true); setError('')
+    try {
+      const response = await fetch(`/api/library/items/${itemId}/subtitles`, {
+        method: 'POST', credentials: 'include', body: file,
+        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Subtitle-Filename': encodeURIComponent(file.name) },
+      })
+      const data = await apiJson(response).catch(() => ({}))
+      if (!response.ok) throw new Error(isRecord(data) && typeof data.error === 'string' ? data.error : 'Subtitle upload failed')
+      await onRefresh()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Subtitle upload failed') }
+    finally { setBusy(false); if (inputRef.current) inputRef.current.value = '' }
+  }
+
+  const remove = async (track: PlaybackTrack) => {
+    if (!window.confirm(`Delete ${trackLabel(track, 'this subtitle')}?`)) return
+    setBusy(true); setError('')
+    try {
+      const response = await fetch(`/api/library/items/${itemId}/subtitles/${track.index}`, { method: 'DELETE', credentials: 'include' })
+      const data = await apiJson(response).catch(() => ({}))
+      if (!response.ok) throw new Error(isRecord(data) && typeof data.error === 'string' ? data.error : 'Subtitle delete failed')
+      if (selectedSubtitle === track.index) onSelectSubtitle(null)
+      await onRefresh()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Subtitle delete failed') }
+    finally { setBusy(false) }
+  }
+
+  const row = (label: string, selected: boolean, onClick: () => void, action?: ReactNode) => (
+    <div style={{ display: 'flex', alignItems: 'center', minHeight: 44, borderRadius: 9, background: selected ? 'rgba(255,255,255,.08)' : 'transparent' }}>
+      <button onClick={onClick} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 9, padding: '9px 10px', border: 0, background: 'transparent', color: selected ? '#fff' : 'rgba(255,255,255,.72)', cursor: 'pointer', textAlign: 'left', fontFamily: SANS, fontSize: 13 }}>
+        <span style={{ width: 15, opacity: selected ? 1 : 0 }}><Icon path={Ic.check} size={14} sw={2.4} /></span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      </button>
+      {action}
+    </div>
+  )
+
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 20, top: 58, left: 0, width: 'min(430px, calc(100vw - 38px))', maxHeight: 'min(62vh, 520px)', overflow: 'hidden auto', padding: 12, borderRadius: 18, background: 'rgba(24,22,21,.94)', border: '1px solid rgba(255,255,255,.18)', boxShadow: '0 24px 70px rgba(0,0,0,.55)', backdropFilter: 'blur(22px)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 5px 9px' }}>
+        <strong style={{ fontSize: 13.5 }}>Playback tracks</strong>
+        <button onClick={onClose} aria-label="Close track menu" style={{ border: 0, background: 'transparent', color: C.dim, cursor: 'pointer', padding: 4 }}><Icon path={Ic.x} size={17} /></button>
+      </div>
+      {playback.audioStreams.length > 0 && <div style={{ marginBottom: 12 }}>
+        <div style={{ padding: '5px 10px', fontFamily: MONO, fontSize: 10.5, color: C.faint, letterSpacing: '.1em', textTransform: 'uppercase' }}>Audio</div>
+        {playback.audioStreams.map((track, i) => <div key={track.index}>{row(trackLabel(track, `Audio ${i + 1}`), selectedAudio === track.index, () => onSelectAudio(track.index))}</div>)}
+      </div>}
+      <div>
+        <div style={{ padding: '5px 10px', fontFamily: MONO, fontSize: 10.5, color: C.faint, letterSpacing: '.1em', textTransform: 'uppercase' }}>Subtitles</div>
+        {row('Off', selectedSubtitle == null || selectedSubtitle < 0, () => onSelectSubtitle(null))}
+        {playback.subtitleStreams.map((track, i) => <div key={track.index}>{row(trackLabel(track, `Subtitle ${i + 1}`), selectedSubtitle === track.index, () => onSelectSubtitle(track.index), track.isExternal ? <button disabled={busy} onClick={() => remove(track)} title="Delete subtitle" style={{ border: 0, background: 'transparent', color: C.faint, cursor: busy ? 'wait' : 'pointer', padding: '9px 10px' }}><Icon path={Ic.trash} size={15} /></button> : null)}</div>)}
+        <input ref={inputRef} type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden onChange={e => upload(e.target.files?.[0])} />
+        <button disabled={busy} onClick={() => inputRef.current?.click()} style={{ width: '100%', marginTop: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.14)', background: 'rgba(255,255,255,.06)', color: '#fff', cursor: busy ? 'wait' : 'pointer', fontFamily: SANS, fontSize: 13, fontWeight: 650 }}>{busy ? 'Working…' : 'Upload SRT or VTT'}</button>
+        {error && <div role="alert" style={{ marginTop: 8, padding: '0 4px', color: C.red, fontSize: 12 }}>{error}</div>}
       </div>
     </div>
   )

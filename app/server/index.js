@@ -251,7 +251,7 @@ io.on('connection', (socket) => {
   const { userId, name, token, deviceId } = socket.user
 
   // party:create ────────────────────────────────────────────────────────────
-  socket.on('party:create', async ({ mediaItemId = null } = {}, ack) => {
+  socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     let sess = null
     try {
       // Room can start empty (lobby) — media is optional at creation.
@@ -267,7 +267,11 @@ io.on('connection', (socket) => {
         hostSocketId: socket.id, mediaItemId, mediaSourceId,
       })
       if (mediaItemId) {
-        await refreshPlayback(sess, { token, userId, itemId: mediaItemId, mediaSourceId })
+        await refreshPlayback(sess, {
+          token, userId, itemId: mediaItemId, mediaSourceId,
+          audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
+          subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+        })
       }
 
       socket.join(sess.id)
@@ -429,13 +433,17 @@ io.on('connection', (socket) => {
   })
 
   // party:selectMedia — a title was chosen in the lobby → enter watching stage
-  socket.on('party:selectMedia', async ({ mediaItemId } = {}, ack) => {
+  socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
     try {
       const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
       if (!src) return ack?.({ error: 'item not found' })
-      await refreshPlayback(sess, { token, userId, itemId: mediaItemId, mediaSourceId: src })
+      await refreshPlayback(sess, {
+        token, userId, itemId: mediaItemId, mediaSourceId: src,
+        audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
+        subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+      })
       sess.mediaItemId = mediaItemId
       sess.mediaSourceId = src
       sess.stage = 'watching'

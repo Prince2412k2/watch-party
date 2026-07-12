@@ -21,9 +21,17 @@ export function WatchRoute({ user, path }: { user: AuthUser; path: string }) {
   const segment = path.slice('/party/'.length)
   const qs = new URLSearchParams(window.location.search)
   if (segment === 'new') {
+    const audioParam = qs.get('audioStreamIndex')
+    const subtitleParam = qs.get('subtitleStreamIndex')
+    const audioStreamIndex = audioParam == null ? NaN : Number(audioParam)
+    const subtitleStreamIndex = subtitleParam == null ? NaN : Number(subtitleParam)
     return (
       <PartyProvider userId={user.userId}>
-        <Party isNew itemId={qs.get('itemId') ?? undefined} />
+        <Party isNew itemId={qs.get('itemId') ?? undefined}
+          initialTracks={{
+            audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
+            subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+          }} />
       </PartyProvider>
     )
   }
