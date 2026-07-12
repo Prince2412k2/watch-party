@@ -719,6 +719,13 @@ class _PartyChrome extends ConsumerWidget {
               const SizedBox(height: AppSpacing.sm),
               _JoinRequests(waiting: waiting),
             ],
+            if (lkState.error != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                lkState.error!,
+                style: const TextStyle(color: AppColors.red, fontSize: 13),
+              ),
+            ],
           ],
         ),
       ),

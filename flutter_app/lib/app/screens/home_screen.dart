@@ -24,17 +24,24 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final home = ref.watch(homeProvider);
+    final latest = ref.watch(latestProvider);
     final api = ref.watch(apiClientProvider);
+    final latestItems = latest.valueOrNull ?? const <LibraryItem>[];
 
     return home.when(
       loading: () => const _HomeSkeleton(),
-      error: (e, _) => ErrorState(
-        title: 'Failed to load home',
-        message: '$e',
-        onRetry: () => ref.invalidate(homeProvider),
-      ),
+      error: (e, _) => latestItems.isNotEmpty
+          ? _CatalogFallback(items: latestItems, api: api)
+          : ErrorState(
+              title: 'Failed to load home',
+              message: '$e',
+              onRetry: () {
+                ref.invalidate(homeProvider);
+                ref.invalidate(latestProvider);
+              },
+            ),
       data: (data) {
-        if (data.views.isEmpty && data.resume.isEmpty && data.nextUp.isEmpty) {
+        if (data.views.isEmpty && data.resume.isEmpty && data.nextUp.isEmpty && latestItems.isEmpty) {
           return const EmptyState(
             title: 'Your library is empty',
             message: 'Titles added to Jellyfin will show up here.',
@@ -53,6 +60,12 @@ class HomeScreen extends ConsumerWidget {
         ];
 
         final rails = <Widget>[
+          _Rail(
+            title: 'Recently Added',
+            items: latestItems,
+            api: api,
+            heroTags: heroTags(latestItems),
+          ),
           _Rail(
             title: 'Continue Watching',
             items: data.resume,
@@ -85,6 +98,27 @@ class HomeScreen extends ConsumerWidget {
       },
     );
   }
+}
+
+class _CatalogFallback extends StatelessWidget {
+  const _CatalogFallback({required this.items, required this.api});
+  final List<LibraryItem> items;
+  final ApiClient api;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+        padding: const EdgeInsets.all(AppSpacing.xxl),
+        children: [
+          const Text('Home', style: AppTheme.titleLarge),
+          const SizedBox(height: AppSpacing.xl),
+          _Rail(
+            title: 'Recently Added',
+            items: items,
+            api: api,
+            heroTags: [for (final item in items) 'poster-${item.id}'],
+          ),
+        ],
+      );
 }
 
 /// A horizontally-scrolling rail of posters. Posters cascade in via

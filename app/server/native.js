@@ -16,24 +16,22 @@ import crypto from 'crypto'
 import { Readable } from 'stream'
 import { requireAuth, getJellyfin } from './auth.js'
 
-const SECRET = process.env.NATIVE_STREAM_SECRET
-
 // TTLs per §0.5 / §4.3: playback tokens are short-lived (rotated as the app
 // keeps watching); download tokens are long enough to cover a full-file grab,
 // and the downloader re-mints via `stream-url` on a 401/403 if one still expires.
 const TTL_MS = { stream: 6 * 60 * 60 * 1000, download: 48 * 60 * 60 * 1000 }
 
-function sign(payload) {
+function sign(payload, secret) {
   const body = JSON.stringify(payload)
   const b64 = Buffer.from(body).toString('base64url')
-  const mac = crypto.createHmac('sha256', SECRET).update(b64).digest('base64url')
+  const mac = crypto.createHmac('sha256', secret).update(b64).digest('base64url')
   return `${b64}.${mac}`
 }
 
-function verify(token) {
+function verify(token, secret) {
   if (typeof token !== 'string' || !token.includes('.')) return null
   const [b64, mac] = token.split('.')
-  const expected = crypto.createHmac('sha256', SECRET).update(b64).digest('base64url')
+  const expected = crypto.createHmac('sha256', secret).update(b64).digest('base64url')
   // timing-safe compare
   const a = Buffer.from(mac)
   const b = Buffer.from(expected)
@@ -48,7 +46,10 @@ function verify(token) {
 const PASSTHROUGH_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges']
 
 export function registerNativeRoutes(app) {
-  if (!SECRET) {
+  // Read at registration time. This supports local `.env` loading in index.js,
+  // whose assignments run after ESM dependencies have been evaluated.
+  const secret = process.env.NATIVE_STREAM_SECRET
+  if (!secret) {
     // Fail closed, not open: the whole feature is unavailable rather than
     // silently unsigned. Native builds without this env var simply can't
     // stream/download — everything else in the app is unaffected.
@@ -66,7 +67,7 @@ export function registerNativeRoutes(app) {
     const purpose = req.query.purpose === 'download' ? 'download' : 'stream'
     const { baseUrl, token: jellyfinToken, userId } = getJellyfin(req)
     const exp = Date.now() + TTL_MS[purpose]
-    const token = sign({ itemId, purpose, userId, jellyfinToken, baseUrl, exp })
+    const token = sign({ itemId, purpose, userId, jellyfinToken, baseUrl, exp }, secret)
     const url = `${req.protocol}://${req.get('host')}/api/library/native/file?token=${encodeURIComponent(token)}`
     res.json({ url, expiresAt: exp })
   })
@@ -77,7 +78,7 @@ export function registerNativeRoutes(app) {
   // requests for the same token (the multi-part downloader) proxy to N
   // independent Jellyfin connections — nothing here is shared/serialized.
   app.get('/api/library/native/file', async (req, res) => {
-    const payload = verify(req.query.token)
+    const payload = verify(req.query.token, secret)
     if (!payload) return res.status(401).json({ error: 'invalid or expired token' })
 
     const { itemId, jellyfinToken, baseUrl } = payload
