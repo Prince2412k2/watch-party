@@ -1,10 +1,10 @@
-# PRODUCTION stack for watch.sniffkin.tech — a standalone compose file (not an
+# PRODUCTION stack for watch.sniffkin.tech + jelly.sniffkin.tech — a standalone compose file (not an
 # overlay on docker-compose.yml, to avoid list-merge ambiguity). Reads secrets
 # from ./secrets/ (gitignored) instead of the repo-root .env/.env.local used
 # for local dev.
 #
 # One-time setup:
-#   1. Point watch.sniffkin.tech's DNS A record at this VPS's public IPv4.
+#   1. Point watch.sniffkin.tech and jelly.sniffkin.tech DNS A records at this VPS's public IPv4.
 #   2. Fill in the two YOUR_VPS_PUBLIC_IP placeholders:
 #        secrets/livekit.yaml  (rtc.node_ip)
 #        secrets/coturn.conf   (external-ip)
@@ -120,6 +120,10 @@ services:
       - PROWLARR_URL=http://prowlarr:9696
       - BAZARR_URL=http://bazarr:6767
       - QBITTORRENT_URL=http://qbittorrent:8080
+      # Share auth cookies across watch.sniffkin.tech and jelly.sniffkin.tech.
+      - SESSION_COOKIE_DOMAIN=${SESSION_COOKIE_DOMAIN:-}
+      # If the same app is served on both subdomains, allow both browser origins.
+      - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-}
       - SERVE_CLIENT=1
       - PORT=3000
     depends_on:

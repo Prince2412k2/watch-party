@@ -95,6 +95,7 @@ const sessionMiddleware = session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
+    domain: process.env.SESSION_COOKIE_DOMAIN || undefined,
     maxAge: 7 * 24 * 60 * 60 * 1000,          // 7 days
     secure: process.env.NODE_ENV === 'production',
   },
