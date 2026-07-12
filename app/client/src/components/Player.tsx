@@ -27,7 +27,7 @@ interface MediaLike {
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
 }
 interface HlsLevel { height?: number; width?: number; bitrate?: number }
-interface HlsTrack { id: number; name: string; lang?: string; url: string }
+interface HlsTrack { id: number; name: string; lang?: string; url: string; default?: boolean }
 interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number; autoLevelEnabled?: boolean; audioTrack: number; audioTracks: HlsTrack[]; subtitleTrack: number; subtitleTracks: HlsTrack[]; on: (event: string, fn: (...a: unknown[]) => void) => void; off: (event: string, fn: (...a: unknown[]) => void) => void }
 interface QualityState { levels: HlsLevel[]; current: number; selected: number; choose: (index: number) => void }
 type TrackSelection = { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
@@ -995,13 +995,14 @@ function useAudioTrack(media: MediaLike | null | undefined, playback?: PlayerPla
 // language/name matching instead of the mixin's broken ID lookup.
 interface SubtitleTrackState { choose: (jellyfinIndex: number | null) => void }
 function useSubtitleTrack(media: MediaLike | null | undefined, playback?: PlayerPlayback): SubtitleTrackState {
+  const ownedTracks = useRef(new Map<number, TextTrack>())
   const resolveHlsIdx = useCallback((hls: HlsLike, jellyfinIndex: number | null | undefined) => {
     if (jellyfinIndex == null || jellyfinIndex < 0) return -1
     return hlsIndexForJellyfin(hls.subtitleTracks, jellyfinIndex, 'SubtitleStreamIndex')
   }, [])
 
   const applySubtitle = useCallback((hls: HlsLike, target: number | null | undefined) => {
-    const video = media as unknown as { textTracks?: TextTrackList }
+    const video = media as unknown as { textTracks?: TextTrackList; addTextTrack?: (kind: string, label?: string, language?: string) => TextTrack }
     const tracks = video?.textTracks
     const hlsIdx = resolveHlsIdx(hls, target)
     const hlsTrack = hlsIdx >= 0 ? hls.subtitleTracks[hlsIdx] : null
@@ -1009,17 +1010,19 @@ function useSubtitleTrack(media: MediaLike | null | undefined, playback?: Player
     // Tell hls.js which subtitle track to load (or -1 to disable)
     hls.subtitleTrack = hlsIdx
 
-    // Sync DOM text track modes
+    // @videojs/core creates its own tracks but drops their cues. Keep a browser
+    // track we own for each HLS rendition instead, so track labels/languages
+    // cannot accidentally route Movie A's cues to Movie B's selected subtitle.
+    if (hlsTrack && !ownedTracks.current.has(hlsIdx) && video?.addTextTrack) {
+      ownedTracks.current.set(hlsIdx, video.addTextTrack('subtitles', hlsTrack.name, hlsTrack.lang))
+    }
+    // Sync DOM text track modes. Third-party tracks remain disabled; only our
+    // exact HLS-rendition track is allowed to render.
     if (!tracks) return
     for (let i = 0; i < tracks.length; i++) {
       const tt = tracks[i]
       if (tt.kind !== 'subtitles' && tt.kind !== 'captions') continue
-      if (hlsTrack) {
-        const matches = (hlsTrack.lang && tt.language === hlsTrack.lang) || tt.label === hlsTrack.name
-        tt.mode = matches ? 'showing' : 'disabled'
-      } else {
-        tt.mode = 'disabled'
-      }
+      tt.mode = ownedTracks.current.get(hlsIdx) === tt ? 'showing' : 'disabled'
     }
   }, [media, resolveHlsIdx])
 
@@ -1040,25 +1043,19 @@ function useSubtitleTrack(media: MediaLike | null | undefined, playback?: Player
       if (hlsIdx < 0) return
       const hlsTrack = hls.subtitleTracks[hlsIdx]
       if (!hlsTrack) return
-      const video = media as unknown as { textTracks?: TextTrackList }
-      const tracks = video?.textTracks
-      if (!tracks) return
-      for (let i = 0; i < tracks.length; i++) {
-        const tt = tracks[i]
-        if (tt.kind !== 'subtitles' && tt.kind !== 'captions') continue
-        const matches = (hlsTrack.lang && tt.language === hlsTrack.lang) || tt.label === hlsTrack.name
-        if (!matches) continue
-        // Temporarily set mode to "hidden" so the browser accepts new cues
-        const wasDisabled = tt.mode === 'disabled'
-        if (wasDisabled) tt.mode = 'hidden'
-        for (const cue of data.cues) {
-          if (tt.cues?.getCueById((cue as VTTCue).id)) continue
-          tt.addCue(cue as VTTCue)
-        }
-        // Restore to "showing" — the applySubtitle call below finalises the mode
-        if (wasDisabled) tt.mode = 'showing'
-        break
+      // hls.js identifies subtitle cue batches as `subtitles${trackIndex}`
+      // (or `default` for the manifest default). Do not add another rendition's
+      // cues just because it shares a language or display name.
+      if (data.track !== `subtitles${hlsIdx}` && !(hlsTrack.default && data.track === 'default')) return
+      const tt = ownedTracks.current.get(hlsIdx)
+      if (!tt) return
+      const wasDisabled = tt.mode === 'disabled'
+      if (wasDisabled) tt.mode = 'hidden'
+      for (const cue of data.cues) {
+        if (tt.cues?.getCueById((cue as VTTCue).id)) continue
+        tt.addCue(cue as VTTCue)
       }
+      if (wasDisabled) tt.mode = 'showing'
     }
 
     applySubtitle(hls, target)
