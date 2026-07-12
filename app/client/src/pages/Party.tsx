@@ -748,7 +748,7 @@ type HlsPlayerProps = Omit<PlayerProps, 'hlsUrl' | 'mediaItemId' | 'playback' | 
 }
 
 function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, ...rest }: HlsPlayerProps) {
-  const [hlsUrl, setHlsUrl] = useState<string | null>(null)
+  const [hlsUrl, setHlsUrl] = useState<{ itemId: string; url: string } | null>(null)
   const audioStreamIndex = session?.playback?.selectedAudioIndex
   const subtitleStreamIndex = session?.playback?.selectedSubtitleIndex
   const mediaSourceId = session?.playback?.mediaSourceId ?? session?.mediaSourceId ?? session?.mediaItemId
@@ -759,21 +759,32 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
   // (see Player → useQualityLevels) — they never re-fetch or swap <HlsVideo src>,
   // so this effect intentionally does NOT depend on the selected quality.
   useEffect(() => {
-    if (!session?.mediaItemId) return
-    const qs = new URLSearchParams({ itemId: session.mediaItemId, abr: '1' })
+    const itemId = session?.mediaItemId
+    // Never render the prior title while the new playlist is resolving. Apart
+    // from showing the wrong movie briefly, that kept the old HLS track list
+    // alive while the settings menu was already using the new session metadata.
+    setHlsUrl(null)
+    if (!itemId) return
+    let cancelled = false
+    const qs = new URLSearchParams({ itemId, abr: '1' })
     if (mediaSourceId) qs.set('mediaSourceId', mediaSourceId)
     if (Number.isInteger(audioStreamIndex)) qs.set('audioStreamIndex', String(audioStreamIndex))
     if (Number.isInteger(subtitleStreamIndex)) qs.set('subtitleStreamIndex', String(subtitleStreamIndex))
     fetch(`/api/library/hls-url?${qs}`, { credentials: 'include' })
       .then(r => r.ok ? apiJson(r) : null)
-      .then(d => { const url = stringField(d, 'url'); if (url) setHlsUrl(url) })
+      .then(d => {
+        const url = stringField(d, 'url')
+        if (url && !cancelled) setHlsUrl({ itemId, url })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
   // Track indices are intentionally excluded from deps: audio/subtitle switching
   // is handled client-side via hls.audioTrack / hls.subtitleTrack (no src reload).
   // The initial URL still carries the session's starting indices for the first load.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.mediaItemId, mediaSourceId])
 
-  if (!hlsUrl) return (
+  if (!hlsUrl || hlsUrl.itemId !== session.mediaItemId) return (
     <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: '#000' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
         <div style={{ width: 36, height: 36, borderRadius: '50%', border: '3px solid var(--stroke2)', borderTopColor: 'var(--accent)', animation: 'spin .9s linear infinite' }} />
@@ -784,7 +795,11 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
 
   return (
     <Player
-      hlsUrl={hlsUrl}
+      // A media item has its own HLS engine and text-track collection. Keying
+      // the player prevents the previous item's engine from receiving a new
+      // subtitle selection during the handoff.
+      key={hlsUrl.itemId}
+      hlsUrl={hlsUrl.url}
       mediaItemId={session.mediaItemId}
       playback={session.playback}
       isHost={isHost}
