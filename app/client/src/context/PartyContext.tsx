@@ -257,9 +257,9 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   }, [socket, userId])
 
   // Actions
-  function createParty(mediaItemId: string): Promise<string> {
+  function createParty(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } = {}): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      socket.emit('party:create', { mediaItemId }, (value: unknown) => {
+      socket.emit('party:create', { mediaItemId, ...tracks }, (value: unknown) => {
         if (!isObject(value)) return reject(new Error('Party creation failed'))
         if (typeof value.error === 'string') return reject(new Error(value.error))
         if (!isPartySession(value.session) || typeof value.partyId !== 'string') return reject(new Error('Party creation failed'))
@@ -295,8 +295,8 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   }
 
   // Pick a title from the lobby → everyone transitions into the player.
-  function selectMedia(mediaItemId: string) {
-    socket.emit('party:selectMedia', { mediaItemId })
+  function selectMedia(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } = {}) {
+    socket.emit('party:selectMedia', { mediaItemId, ...tracks })
   }
 
   // Stop the movie, return the room to shared browsing.

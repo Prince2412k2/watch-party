@@ -43,6 +43,25 @@ function rawSubtitle(req, res, next) {
   })
 }
 
+function parseSubtitleUpload(req, res) {
+  const filename = filenameFrom(req)
+  const ext = filename.match(/\.([^.]+)$/)?.[1]?.toLowerCase()
+  const contentType = (req.get('content-type') || '').split(';', 1)[0].trim().toLowerCase()
+  if (!['srt', 'vtt'].includes(ext) || !ALLOWED_CONTENT_TYPES.has(contentType)) {
+    res.status(415).json({ error: 'Only SRT and WebVTT subtitle files are supported' })
+    return null
+  }
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) { res.status(400).json({ error: 'Subtitle file is empty' }); return null }
+  if (req.body.includes(0)) { res.status(400).json({ error: 'Subtitle file must be plain text' }); return null }
+  const text = req.body.toString('utf8')
+  if (text.includes('\uFFFD')) { res.status(400).json({ error: 'Subtitle file must use UTF-8 encoding' }); return null }
+  return {
+    filename,
+    ext,
+    data: Buffer.from(text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'), 'utf8').toString('base64'),
+  }
+}
+
 async function refreshSessionPlayback(io, session, { token, userId, subtitleStreamIndex = null }) {
   const selectedAudioIndex = session.playback?.selectedAudioIndex ?? null
   const playback = await refreshPlayback(session, {
@@ -78,6 +97,40 @@ async function jellyfinSubtitleMutation({ token, deviceId, itemId, method, body,
 }
 
 export function registerSubtitleRoutes(app, io) {
+  // Library detail management. Unlike the party routes below, these are scoped
+  // to the authenticated Jellyfin user and can be used before playback starts.
+  app.post('/api/library/items/:itemId/subtitles', requireAuth, rawSubtitle, async (req, res) => {
+    const mediaItemId = String(req.params.itemId || '')
+    if (!ITEM_ID.test(mediaItemId)) return res.status(400).json({ error: 'Invalid media item' })
+    const upload = parseSubtitleUpload(req, res)
+    if (!upload) return
+    const { token, deviceId } = getJellyfin(req)
+    try {
+      await jellyfinSubtitleMutation({
+        token, deviceId, itemId: mediaItemId, method: 'POST',
+        body: JSON.stringify({ Language: subtitleLanguageFrom(req), Format: upload.ext, IsForced: false, IsHearingImpaired: false, Data: upload.data }),
+      })
+      res.status(201).json({ ok: true, label: cleanLabel(upload.filename) })
+    } catch (err) {
+      console.error('library subtitle upload', err.message)
+      res.status(500).json({ error: 'Could not store subtitle file' })
+    }
+  })
+
+  app.delete('/api/library/items/:itemId/subtitles/:index', requireAuth, async (req, res) => {
+    const mediaItemId = String(req.params.itemId || '')
+    const index = Number.parseInt(String(req.params.index || ''), 10)
+    if (!ITEM_ID.test(mediaItemId) || !Number.isInteger(index) || index < 0) return res.status(400).json({ error: 'Invalid subtitle' })
+    const { token, deviceId } = getJellyfin(req)
+    try {
+      await jellyfinSubtitleMutation({ token, deviceId, itemId: mediaItemId, method: 'DELETE', subtitleIndex: index })
+      res.json({ ok: true })
+    } catch (err) {
+      console.error('library subtitle delete', err.message)
+      res.status(500).json({ error: 'Could not delete subtitle file' })
+    }
+  })
+
   app.post('/api/library/subtitles/upload', requireAuth, rawSubtitle, async (req, res) => {
     const userId = req.session.jellyfin.userId
     const { token, deviceId } = getJellyfin(req)
@@ -89,18 +142,8 @@ export function registerSubtitleRoutes(app, io) {
     if (!ITEM_ID.test(mediaItemId) || session.mediaItemId !== mediaItemId) {
       return res.status(409).json({ error: 'Subtitle does not match the party’s current media' })
     }
-    const filename = filenameFrom(req)
-    const ext = filename.match(/\.([^.]+)$/)?.[1]?.toLowerCase()
-    const contentType = (req.get('content-type') || '').split(';', 1)[0].trim().toLowerCase()
-    if (!['srt', 'vtt'].includes(ext) || !ALLOWED_CONTENT_TYPES.has(contentType)) {
-      return res.status(415).json({ error: 'Only SRT and WebVTT subtitle files are supported' })
-    }
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: 'Subtitle file is empty' })
-    if (req.body.includes(0)) return res.status(400).json({ error: 'Subtitle file must be plain text' })
-
-    const text = req.body.toString('utf8')
-    if (text.includes('\uFFFD')) return res.status(400).json({ error: 'Subtitle file must use UTF-8 encoding' })
-    const data = Buffer.from(text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'), 'utf8').toString('base64')
+    const upload = parseSubtitleUpload(req, res)
+    if (!upload) return
 
     try {
       await jellyfinSubtitleMutation({
@@ -110,10 +153,10 @@ export function registerSubtitleRoutes(app, io) {
         method: 'POST',
         body: JSON.stringify({
           Language: subtitleLanguageFrom(req),
-          Format: ext,
+          Format: upload.ext,
           IsForced: false,
           IsHearingImpaired: false,
-          Data: data,
+          Data: upload.data,
         }),
       })
       await refreshSessionPlayback(io, session, {
@@ -123,7 +166,7 @@ export function registerSubtitleRoutes(app, io) {
       })
       res.status(201).json({
         ok: true,
-        label: cleanLabel(filename),
+        label: cleanLabel(upload.filename),
         session: publicSession(session),
         playback: session.playback,
       })
