@@ -49,6 +49,95 @@ export interface PlayerProps {
 const VPlayer = createPlayer({ features: videoFeatures })
 
 const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
+const SUBTITLE_SETTINGS_KEY = 'watchparty:subtitle-settings:v1'
+
+type SubtitlePosition = 'top' | 'middle' | 'bottom'
+interface SubtitlePreferences {
+  offsetMs: number
+  fontSize: number
+  fontFamily: 'sans' | 'serif' | 'mono'
+  textColor: string
+  backgroundOpacity: number
+  position: SubtitlePosition
+}
+
+const DEFAULT_SUBTITLE_PREFERENCES: SubtitlePreferences = {
+  offsetMs: 0,
+  fontSize: 100,
+  fontFamily: 'sans',
+  textColor: '#ffffff',
+  backgroundOpacity: 65,
+  position: 'bottom',
+}
+
+const originalCueState = new WeakMap<TextTrackCue, { startTime: number; endTime: number }>()
+
+function applyCuePreferences(track: TextTrack, preferences: SubtitlePreferences) {
+  const previousMode = track.mode
+  if (previousMode === 'disabled') track.mode = 'hidden'
+  const cues = track.cues
+  if (cues) {
+    for (let i = 0; i < cues.length; i++) {
+      const cue = cues[i]
+      let original = originalCueState.get(cue)
+      if (!original) {
+        original = { startTime: cue.startTime, endTime: cue.endTime }
+        originalCueState.set(cue, original)
+      }
+      const offset = preferences.offsetMs / 1000
+      cue.startTime = Math.max(0, original.startTime + offset)
+      cue.endTime = Math.max(cue.startTime + 0.05, original.endTime + offset)
+      if (cue instanceof VTTCue) {
+        if (preferences.position === 'top') {
+          cue.snapToLines = true
+          cue.line = 2
+        } else if (preferences.position === 'middle') {
+          cue.snapToLines = false
+          cue.line = 50
+        } else {
+          cue.snapToLines = true
+          cue.line = -3
+        }
+      }
+    }
+  }
+  if (previousMode === 'disabled') track.mode = previousMode
+}
+
+function useSubtitlePreferences(videoRef?: RefObject<HTMLVideoElement | null>) {
+  const [preferences, setPreferences] = useState<SubtitlePreferences>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SUBTITLE_SETTINGS_KEY) || '{}') as Partial<SubtitlePreferences>
+      return { ...DEFAULT_SUBTITLE_PREFERENCES, ...saved }
+    } catch { return DEFAULT_SUBTITLE_PREFERENCES }
+  })
+
+  useEffect(() => {
+    localStorage.setItem(SUBTITLE_SETTINGS_KEY, JSON.stringify(preferences))
+    const video = videoRef?.current
+    if (video) {
+      for (let i = 0; i < video.textTracks.length; i++) applyCuePreferences(video.textTracks[i], preferences)
+    }
+  }, [preferences, videoRef])
+
+  useEffect(() => {
+    const id = 'watchparty-subtitle-style'
+    let style = document.getElementById(id) as HTMLStyleElement | null
+    if (!style) {
+      style = document.createElement('style')
+      style.id = id
+      document.head.append(style)
+    }
+    const family = preferences.fontFamily === 'serif'
+      ? "Georgia, 'Times New Roman', serif"
+      : preferences.fontFamily === 'mono' ? MONO_F : "Inter, Arial, sans-serif"
+    style.textContent = `.watch-video::cue { color: ${preferences.textColor}; background-color: rgba(0,0,0,${preferences.backgroundOpacity / 100}); font-family: ${family}; font-size: ${preferences.fontSize}%; }`
+  }, [preferences])
+
+  const update = (patch: Partial<SubtitlePreferences>) => setPreferences(current => ({ ...current, ...patch }))
+  const reset = () => setPreferences(DEFAULT_SUBTITLE_PREFERENCES)
+  return { preferences, update, reset }
+}
 
 export default function Player({
   hlsUrl, playback, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
@@ -119,7 +208,7 @@ export default function Player({
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo ref={videoRef} src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         </VideoSkin>
 
         {canControl && hostMuted && (
@@ -1008,10 +1097,12 @@ function useAudioTrack(media: MediaLike | null | undefined, playback?: PlayerPla
 // Fix: we listen for hlsCuesParsed directly and deliver cues ourselves using
 // language/name matching instead of the mixin's broken ID lookup.
 interface SubtitleTrackState { choose: (jellyfinIndex: number | null) => void }
-function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObject<HTMLVideoElement | null> | undefined, playback?: PlayerPlayback): SubtitleTrackState {
+function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObject<HTMLVideoElement | null> | undefined, playback: PlayerPlayback | undefined, preferences: SubtitlePreferences): SubtitleTrackState {
   const ownedTracks = useRef(new Map<number, TextTrack>())
   const externalTracks = useRef(new Map<number, HTMLTrackElement>())
   const selectedIndex = useRef<number | null>(playback?.selectedSubtitleIndex ?? null)
+  const preferencesRef = useRef(preferences)
+  preferencesRef.current = preferences
   const resolveHlsIdx = useCallback((hls: HlsLike, jellyfinIndex: number | null | undefined) => {
     if (jellyfinIndex == null || jellyfinIndex < 0) return -1
     return hlsIndexForJellyfin(hls.subtitleTracks, jellyfinIndex, 'SubtitleStreamIndex', playback?.subtitleStreams)
@@ -1037,9 +1128,11 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
         if (stream.language) trackElement.srclang = stream.language
         trackElement.src = jellyfinProxyUrl(stream.deliveryUrl)
         trackElement.dataset.watchpartySubtitle = String(stream.index)
+        trackElement.addEventListener('load', () => applyCuePreferences(trackElement!.track, preferencesRef.current))
         video.append(trackElement)
         externalTracks.current.set(stream.index, trackElement)
       }
+      applyCuePreferences(trackElement.track, preferencesRef.current)
       if (tracks) {
         for (let i = 0; i < tracks.length; i++) {
           const tt = tracks[i]
@@ -1097,6 +1190,7 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
         if (tt.cues?.getCueById((cue as VTTCue).id)) continue
         tt.addCue(cue as VTTCue)
       }
+      applyCuePreferences(tt, preferencesRef.current)
       if (wasDisabled) tt.mode = 'showing'
     }
 
@@ -1116,6 +1210,12 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
     selectedIndex.current = jellyfinIndex
     applySubtitle(hls, jellyfinIndex)
   }, [media, applySubtitle])
+
+  useEffect(() => {
+    const video = videoRef?.current
+    if (!video) return
+    for (let i = 0; i < video.textTracks.length; i++) applyCuePreferences(video.textTracks[i], preferences)
+  }, [preferences, videoRef])
 
   return { choose }
 }
@@ -1285,7 +1385,8 @@ function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlayba
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
   const audioTrack = useAudioTrack(media, playback)
-  const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback)
+  const subtitlePreferences = useSubtitlePreferences(mediaElementRef)
+  const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences)
   const { cur, dur } = useMediaClock(media)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paused, setPaused] = useState(true)
@@ -1343,7 +1444,7 @@ function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlayba
           <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </IconBtn>
-          {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} onClose={() => setSettingsOpen(false)} />}
+          {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
         </div>
 
         <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
@@ -1378,7 +1479,8 @@ function MobileBottomBar({
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
   const audioTrack = useAudioTrack(media, playback)
-  const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback)
+  const subtitlePreferences = useSubtitlePreferences(mediaElementRef)
+  const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [paused, setPaused] = useState(true)
@@ -1449,7 +1551,7 @@ function MobileBottomBar({
       <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </BarBtn>
-      {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canControl={canControl} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
   const secondary = [talkControl, hideSelfControl, camStripControl, settingsControl].filter(Boolean)
@@ -1638,9 +1740,13 @@ function TalkBtn({ talking, onStart, onStop }: { talking?: boolean; onStart?: Vo
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
 // Flat solid surface, hairline border, radius 12 — no blur, no gradient.
-interface SettingsMenuProps { playback?: PlayerPlayback; mediaItemId?: string; quality: QualityState; canControl?: boolean; onSetPlaybackTracks?: (tracks: TrackSelection) => void; onChooseAudio?: (jellyfinIndex: number) => void; onChooseSubtitle?: (jellyfinIndex: number | null) => void; onClose?: VoidCallback }
-function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, onClose }: SettingsMenuProps) {
-  const [view, setView] = useState<'main' | 'quality' | 'subs' | 'audio'>('main')
+interface SettingsMenuProps {
+  playback?: PlayerPlayback; mediaItemId?: string; quality: QualityState; canControl?: boolean
+  onSetPlaybackTracks?: (tracks: TrackSelection) => void; onChooseAudio?: (jellyfinIndex: number) => void; onChooseSubtitle?: (jellyfinIndex: number | null) => void
+  subtitlePreferences?: SubtitlePreferences; onUpdateSubtitlePreferences?: (patch: Partial<SubtitlePreferences>) => void; onResetSubtitlePreferences?: VoidCallback; onClose?: VoidCallback
+}
+function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, subtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES, onUpdateSubtitlePreferences, onResetSubtitlePreferences, onClose }: SettingsMenuProps) {
+  const [view, setView] = useState<'main' | 'quality' | 'subs' | 'subtitleStyle' | 'audio'>('main')
   const [q, setQ] = useState('')
   const [uploadingSub, setUploadingSub] = useState(false)
   const [uploadError, setUploadError] = useState('')
@@ -1706,7 +1812,7 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
 
   const panel: CSSProperties = {
     backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
-    position: 'absolute', bottom: 52, right: 0, zIndex: 31, width: 272, maxHeight: '60vh',
+    position: 'absolute', bottom: 52, right: 0, zIndex: 31, width: 292, maxHeight: '70vh',
     display: 'flex', flexDirection: 'column', borderRadius: 12, overflow: 'hidden', color: '#f4f4f5',
     animation: 'up .18s ease both',
   }
@@ -1740,6 +1846,20 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
     </div>
   )
   const filtered = (arr: PlayerTrack[]) => arr.filter((t, i) => trackName(t, i).toLowerCase().includes(q.toLowerCase()))
+  const settingRow = (label: string, value: ReactNode, control: ReactNode) => (
+    <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8, fontSize: 12.5 }}>
+        <span style={{ color: 'rgba(244,244,245,.62)' }}>{label}</span>
+        <span style={{ color: '#f4f4f5', fontFamily: MONO_F, fontSize: 11.5 }}>{value}</span>
+      </div>
+      {control}
+    </div>
+  )
+  const selectStyle: CSSProperties = {
+    width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,.1)',
+    background: '#1d1d20', color: '#f4f4f5', fontSize: 12.5,
+  }
+  const rangeStyle: CSSProperties = { width: '100%', accentColor: '#f4f4f5', cursor: 'pointer' }
 
   return (
     <>
@@ -1772,6 +1892,9 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
         {view === 'subs' && (
           <>
             {subHeader('Subtitles')}
+            <div style={{ borderBottom: '1px solid rgba(255,255,255,.08)', padding: '6px 0' }}>
+              {navRow('Appearance & timing', `${subtitlePreferences.offsetMs > 0 ? '+' : ''}${subtitlePreferences.offsetMs} ms`, () => setView('subtitleStyle'))}
+            </div>
             {subtitleStreams.length > 8 && searchBox}
             <div style={{ overflowY: 'auto', padding: '6px 0' }}>
               {optRow('Off', selectedSubtitleIndex == null || selectedSubtitleIndex < 0, () => chooseSub(null), 'off')}
@@ -1787,6 +1910,35 @@ function SettingsMenu({ playback, mediaItemId, quality, canControl, onSetPlaybac
                 }}>{uploadingSub ? 'Uploading…' : 'Upload subtitle file'}</button>
                 {uploadError && <div role="alert" style={{ color: '#e0655e', fontSize: 11.5, marginTop: 7 }}>{uploadError}</div>}
                 <div style={{ color: 'rgba(244,244,245,.36)', fontSize: 11, marginTop: 6 }}>SRT or WebVTT · 5 MB max</div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {view === 'subtitleStyle' && (
+          <>
+            {subHeader('Subtitle settings')}
+            <div style={{ overflowY: 'auto' }}>
+              {settingRow('Timing offset', `${subtitlePreferences.offsetMs > 0 ? '+' : ''}${subtitlePreferences.offsetMs} ms`,
+                <input aria-label="Subtitle timing offset" type="range" min={-10000} max={10000} step={250} value={subtitlePreferences.offsetMs} onChange={e => onUpdateSubtitlePreferences?.({ offsetMs: Number(e.target.value) })} style={rangeStyle} />)}
+              {settingRow('Font size', `${subtitlePreferences.fontSize}%`,
+                <input aria-label="Subtitle font size" type="range" min={60} max={200} step={10} value={subtitlePreferences.fontSize} onChange={e => onUpdateSubtitlePreferences?.({ fontSize: Number(e.target.value) })} style={rangeStyle} />)}
+              {settingRow('Background', `${subtitlePreferences.backgroundOpacity}%`,
+                <input aria-label="Subtitle background opacity" type="range" min={0} max={100} step={5} value={subtitlePreferences.backgroundOpacity} onChange={e => onUpdateSubtitlePreferences?.({ backgroundOpacity: Number(e.target.value) })} style={rangeStyle} />)}
+              {settingRow('Font', '',
+                <select aria-label="Subtitle font" value={subtitlePreferences.fontFamily} onChange={e => onUpdateSubtitlePreferences?.({ fontFamily: e.target.value as SubtitlePreferences['fontFamily'] })} style={selectStyle}>
+                  <option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option>
+                </select>)}
+              {settingRow('Text color', '',
+                <select aria-label="Subtitle text color" value={subtitlePreferences.textColor} onChange={e => onUpdateSubtitlePreferences?.({ textColor: e.target.value })} style={selectStyle}>
+                  <option value="#ffffff">White</option><option value="#ffe66d">Yellow</option><option value="#7fdbff">Cyan</option><option value="#a8ffb0">Green</option>
+                </select>)}
+              {settingRow('Position', '',
+                <select aria-label="Subtitle position" value={subtitlePreferences.position} onChange={e => onUpdateSubtitlePreferences?.({ position: e.target.value as SubtitlePosition })} style={selectStyle}>
+                  <option value="bottom">Bottom</option><option value="middle">Middle</option><option value="top">Top</option>
+                </select>)}
+              <div style={{ padding: 12 }}>
+                <button onClick={onResetSubtitlePreferences} style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,.1)', background: 'transparent', color: 'rgba(244,244,245,.62)', cursor: 'pointer', fontSize: 12.5 }}>Reset subtitle settings</button>
               </div>
             </div>
           </>
