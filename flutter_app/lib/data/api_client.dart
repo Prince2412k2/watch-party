@@ -120,7 +120,9 @@ class DioApiClient implements ApiClient {
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 30),
               // We inspect non-2xx ourselves for auth flows.
-              validateStatus: (s) => s != null && s < 500,
+              // Handle every HTTP response below ourselves so the UI receives
+              // the API's concise error instead of Dio's exception dump.
+              validateStatus: (s) => s != null && s < 600,
             )) {
     _dio.interceptors.add(CookieManager(_cookieJar));
   }
