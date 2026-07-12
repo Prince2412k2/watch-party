@@ -13,6 +13,12 @@ final homeProvider = FutureProvider<HomeData>((ref) async {
   return ref.read(apiClientProvider).home();
 });
 
+/// The same catalog rail the web home shows. Unlike Continue Watching / Next
+/// Up, it is populated for a brand-new account with no playback history.
+final latestProvider = FutureProvider<List<LibraryItem>>((ref) async {
+  return ref.read(apiClientProvider).latest();
+});
+
 /// The flat library list, optionally scoped to a parent (library view) id.
 final libraryProvider =
     FutureProvider.family<List<LibraryItem>, String?>((ref, parentId) async {

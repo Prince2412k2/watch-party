@@ -288,7 +288,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
           ? Center(
               child: ErrorState(
                 title: 'Playback failed',
-                message: '$_error',
+                message: _error is ApiException
+                    ? (_error as ApiException).message
+                    : 'Could not open this title. Check your connection and try again.',
                 onRetry: _open,
               ),
             )

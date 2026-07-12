@@ -83,7 +83,13 @@ class DesktopLifecycle with WindowListener, TrayListener {
 
   Future<void> _initTray() async {
     trayManager.addListener(this);
-    await trayManager.setIcon('assets/icons/tray_icon.png');
+    // The app must still launch when a platform package omits the optional tray
+    // icon. Previously this threw before runApp(), leaving a black window.
+    try {
+      await trayManager.setIcon('assets/icons/tray_icon.png');
+    } catch (_) {
+      return;
+    }
     if (!Platform.isLinux) {
       // tray_manager's Linux (libayatana-appindicator) backend doesn't
       // implement setToolTip — only setIcon/setTitle/setContextMenu/destroy.

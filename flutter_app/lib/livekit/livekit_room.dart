@@ -65,14 +65,13 @@ class LiveKitRoomSnapshot {
     bool? micEnabled,
     bool? cameraEnabled,
     String? error,
-  }) =>
-      LiveKitRoomSnapshot(
-        connectionState: connectionState ?? this.connectionState,
-        participants: participants ?? this.participants,
-        micEnabled: micEnabled ?? this.micEnabled,
-        cameraEnabled: cameraEnabled ?? this.cameraEnabled,
-        error: error,
-      );
+  }) => LiveKitRoomSnapshot(
+    connectionState: connectionState ?? this.connectionState,
+    participants: participants ?? this.participants,
+    micEnabled: micEnabled ?? this.micEnabled,
+    cameraEnabled: cameraEnabled ?? this.cameraEnabled,
+    error: error,
+  );
 }
 
 /// Service wrapping a single `livekit_client` [lk.Room] lifecycle: connect,
@@ -123,10 +122,12 @@ class LiveKitRoomService {
     // cost (once per session, behind the pending spinner).
     final room = lk.Room(
       roomOptions: const lk.RoomOptions(
-        defaultAudioCaptureOptions:
-            lk.AudioCaptureOptions(stopAudioCaptureOnMute: false),
-        defaultCameraCaptureOptions:
-            lk.CameraCaptureOptions(stopCameraCaptureOnMute: false),
+        defaultAudioCaptureOptions: lk.AudioCaptureOptions(
+          stopAudioCaptureOnMute: false,
+        ),
+        defaultCameraCaptureOptions: lk.CameraCaptureOptions(
+          stopCameraCaptureOnMute: false,
+        ),
       ),
     );
     _room = room;
@@ -141,9 +142,9 @@ class LiveKitRoomService {
       })
       ..on<lk.RoomDisconnectedEvent>((e) {
         _log.info('RoomDisconnectedEvent reason=${e.reason}');
-        _emit(_snapshot.copyWith(
-          connectionState: lk.ConnectionState.disconnected,
-        ));
+        _emit(
+          _snapshot.copyWith(connectionState: lk.ConnectionState.disconnected),
+        );
       })
       ..on<lk.RoomReconnectingEvent>((_) => _refresh())
       ..on<lk.RoomReconnectedEvent>((_) => _refresh())
@@ -162,10 +163,12 @@ class LiveKitRoomService {
       _log.info('connect() returned, state=${room.connectionState}');
     } catch (e, st) {
       _log.severe('connect() failed: $e', e, st);
-      _emit(_snapshot.copyWith(
-        connectionState: lk.ConnectionState.disconnected,
-        error: 'connect failed: $e',
-      ));
+      _emit(
+        _snapshot.copyWith(
+          connectionState: lk.ConnectionState.disconnected,
+          error: 'connect failed: $e',
+        ),
+      );
       rethrow;
     }
 
@@ -198,12 +201,17 @@ class LiveKitRoomService {
   Future<void> setMicEnabled(bool enabled) async {
     final lp = _room?.localParticipant;
     if (lp == null) return;
-    await lp.setMicrophoneEnabled(
-      enabled,
-      audioCaptureOptions:
-          const lk.AudioCaptureOptions(stopAudioCaptureOnMute: false),
-    );
-    _refresh();
+    try {
+      await lp.setMicrophoneEnabled(
+        enabled,
+        audioCaptureOptions: const lk.AudioCaptureOptions(
+          stopAudioCaptureOnMute: false,
+        ),
+      );
+      _refresh();
+    } catch (e) {
+      _captureFailed('microphone', e);
+    }
   }
 
   /// Toggle the local camera. See [setMicEnabled] for why the capture options
@@ -212,19 +220,35 @@ class LiveKitRoomService {
   Future<void> setCameraEnabled(bool enabled) async {
     final lp = _room?.localParticipant;
     if (lp == null) return;
-    await lp.setCameraEnabled(
-      enabled,
-      cameraCaptureOptions: const lk.CameraCaptureOptions(
-        stopCameraCaptureOnMute: false,
-        // Capture at 360p. The camera only ever shows in a small floating PiP
-        // tile, so HD is wasted — and requesting 720p makes the (UI-thread)
-        // v4l2 device open + format negotiation much slower, and the ongoing
-        // encode heavier. 360p opens faster (shorter first-enable freeze) and
-        // encodes lighter.
-        params: lk.VideoParametersPresets.h360_169,
+    try {
+      await lp.setCameraEnabled(
+        enabled,
+        cameraCaptureOptions: const lk.CameraCaptureOptions(
+          stopCameraCaptureOnMute: false,
+          // Capture at 360p. The camera only ever shows in a small floating PiP
+          // tile, so HD is wasted — and requesting 720p makes the (UI-thread)
+          // v4l2 device open + format negotiation much slower, and the ongoing
+          // encode heavier. 360p opens faster (shorter first-enable freeze) and
+          // encodes lighter.
+          params: lk.VideoParametersPresets.h360_169,
+        ),
+      );
+      _refresh();
+    } catch (e) {
+      _captureFailed('camera', e);
+    }
+  }
+
+  void _captureFailed(String device, Object error) {
+    _log.warning('$device enable failed: $error');
+    final missing = error.toString().contains('NotFoundError');
+    _emit(
+      _snapshot.copyWith(
+        error: missing
+            ? 'No $device was found. Connect one and try again.'
+            : 'Could not enable the $device. Check macOS privacy permissions.',
       ),
     );
-    _refresh();
   }
 
   /// Hide the local tile from the grid without unpublishing (so remotes keep
@@ -268,38 +292,43 @@ class LiveKitRoomService {
     final room = _room;
     if (room == null) return;
 
-    final activeSpeakerIds =
-        room.activeSpeakers.map((p) => p.identity).toSet();
+    final activeSpeakerIds = room.activeSpeakers.map((p) => p.identity).toSet();
     final tracks = <ParticipantTrack>[];
 
     final lp = room.localParticipant;
     if (lp != null) {
-      tracks.add(_toParticipantTrack(
-        identity: lp.identity,
-        name: lp.name.isNotEmpty ? lp.name : lp.identity,
-        isLocal: true,
-        videoPubs: lp.videoTrackPublications,
-        audioPubs: lp.audioTrackPublications,
-        isSpeaking: activeSpeakerIds.contains(lp.identity),
-      ));
+      tracks.add(
+        _toParticipantTrack(
+          identity: lp.identity,
+          name: lp.name.isNotEmpty ? lp.name : lp.identity,
+          isLocal: true,
+          videoPubs: lp.videoTrackPublications,
+          audioPubs: lp.audioTrackPublications,
+          isSpeaking: activeSpeakerIds.contains(lp.identity),
+        ),
+      );
     }
     for (final p in room.remoteParticipants.values) {
-      tracks.add(_toParticipantTrack(
-        identity: p.identity,
-        name: p.name.isNotEmpty ? p.name : p.identity,
-        isLocal: false,
-        videoPubs: p.videoTrackPublications,
-        audioPubs: p.audioTrackPublications,
-        isSpeaking: activeSpeakerIds.contains(p.identity),
-      ));
+      tracks.add(
+        _toParticipantTrack(
+          identity: p.identity,
+          name: p.name.isNotEmpty ? p.name : p.identity,
+          isLocal: false,
+          videoPubs: p.videoTrackPublications,
+          audioPubs: p.audioTrackPublications,
+          isSpeaking: activeSpeakerIds.contains(p.identity),
+        ),
+      );
     }
 
-    _emit(_snapshot.copyWith(
-      connectionState: room.connectionState,
-      participants: tracks,
-      micEnabled: room.localParticipant?.isMicrophoneEnabled() ?? false,
-      cameraEnabled: room.localParticipant?.isCameraEnabled() ?? false,
-    ));
+    _emit(
+      _snapshot.copyWith(
+        connectionState: room.connectionState,
+        participants: tracks,
+        micEnabled: room.localParticipant?.isMicrophoneEnabled() ?? false,
+        cameraEnabled: room.localParticipant?.isCameraEnabled() ?? false,
+      ),
+    );
   }
 
   ParticipantTrack _toParticipantTrack({
