@@ -48,6 +48,8 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
       theme: AppTheme.dark,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.dark,
+      localizationsDelegates: sc.ShadcnLocalizations.localizationsDelegates,
+      supportedLocales: sc.ShadcnLocalizations.supportedLocales,
       routerConfig: _router,
       builder: (context, child) {
         final content = child ?? const SizedBox.shrink();
