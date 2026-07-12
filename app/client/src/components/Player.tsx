@@ -31,7 +31,7 @@ interface HlsTrack { id: number; name: string; lang?: string; url: string; defau
 interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number; autoLevelEnabled?: boolean; audioTrack: number; audioTracks: HlsTrack[]; subtitleTrack: number; subtitleTracks: HlsTrack[]; on: (event: string, fn: (...a: unknown[]) => void) => void; off: (event: string, fn: (...a: unknown[]) => void) => void }
 interface QualityState { levels: HlsLevel[]; current: number; selected: number; choose: (index: number) => void }
 type TrackSelection = { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
-export interface PlayerTrack { index: number; displayTitle?: string; title?: string; language?: string; codec?: string; isDefault?: boolean }
+export interface PlayerTrack { index: number; displayTitle?: string; title?: string; language?: string; codec?: string; isDefault?: boolean; deliveryUrl?: string | null }
 export interface PlayerPlayback { audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
 export interface PlayerProps {
   hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
@@ -955,6 +955,13 @@ function hlsIndexForJellyfin(tracks: HlsTrack[], jellyfinIndex: number, param: s
   return streamPosition >= 0 && streamPosition < tracks.length ? streamPosition : -1
 }
 
+function jellyfinProxyUrl(rawUrl: string): string {
+  const url = new URL(rawUrl, window.location.origin)
+  url.searchParams.delete('api_key')
+  const path = url.pathname.startsWith('/jellyfin/') ? url.pathname : `/jellyfin${url.pathname}`
+  return `${path}${url.search}`
+}
+
 // ── In-stream audio track switching (no reload) ─────────────────────────────
 // Mirrors useQualityLevels: reads playback.selectedAudioIndex from the session,
 // maps it to hls.js's audioTracks[], and sets hls.audioTrack. This avoids the
@@ -1003,6 +1010,7 @@ function useAudioTrack(media: MediaLike | null | undefined, playback?: PlayerPla
 interface SubtitleTrackState { choose: (jellyfinIndex: number | null) => void }
 function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObject<HTMLVideoElement | null> | undefined, playback?: PlayerPlayback): SubtitleTrackState {
   const ownedTracks = useRef(new Map<number, TextTrack>())
+  const externalTracks = useRef(new Map<number, HTMLTrackElement>())
   const selectedIndex = useRef<number | null>(playback?.selectedSubtitleIndex ?? null)
   const resolveHlsIdx = useCallback((hls: HlsLike, jellyfinIndex: number | null | undefined) => {
     if (jellyfinIndex == null || jellyfinIndex < 0) return -1
@@ -1012,8 +1020,34 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
   const applySubtitle = useCallback((hls: HlsLike, target: number | null | undefined) => {
     const video = videoRef?.current
     const tracks = video?.textTracks
+    const stream = playback?.subtitleStreams?.find(candidate => candidate.index === target)
     const hlsIdx = resolveHlsIdx(hls, target)
     const hlsTrack = hlsIdx >= 0 ? hls.subtitleTracks[hlsIdx] : null
+
+    if (video && stream?.deliveryUrl) {
+      // Jellyfin exposes browser-ready VTT for both external and extracted
+      // embedded subtitles. Let the browser load/render it natively rather than
+      // copying cues out of hls.js through @videojs/core's broken bridge.
+      hls.subtitleTrack = -1
+      let trackElement = externalTracks.current.get(stream.index)
+      if (!trackElement) {
+        trackElement = document.createElement('track')
+        trackElement.kind = 'subtitles'
+        trackElement.label = stream.displayTitle || stream.title || stream.language || `Subtitle ${stream.index}`
+        if (stream.language) trackElement.srclang = stream.language
+        trackElement.src = jellyfinProxyUrl(stream.deliveryUrl)
+        trackElement.dataset.watchpartySubtitle = String(stream.index)
+        video.append(trackElement)
+        externalTracks.current.set(stream.index, trackElement)
+      }
+      if (tracks) {
+        for (let i = 0; i < tracks.length; i++) {
+          const tt = tracks[i]
+          if (tt.kind === 'subtitles' || tt.kind === 'captions') tt.mode = tt === trackElement.track ? 'showing' : 'disabled'
+        }
+      }
+      return
+    }
 
     // Tell hls.js which subtitle track to load (or -1 to disable)
     hls.subtitleTrack = hlsIdx
@@ -1032,7 +1066,7 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
       if (tt.kind !== 'subtitles' && tt.kind !== 'captions') continue
       tt.mode = ownedTracks.current.get(hlsIdx) === tt ? 'showing' : 'disabled'
     }
-  }, [resolveHlsIdx, videoRef])
+  }, [playback?.subtitleStreams, resolveHlsIdx, videoRef])
 
   const disableSubtitles = useCallback((hls: HlsLike) => {
     applySubtitle(hls, null)
@@ -1047,6 +1081,8 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
     // bypassing the mixin's broken getTrackById-based cue delivery.
     const onCuesParsed = (...args: unknown[]) => {
       const data = args[1] as { cues: unknown[] }
+      const selectedStream = playback?.subtitleStreams?.find(stream => stream.index === selectedIndex.current)
+      if (selectedStream?.deliveryUrl) return
       const hlsIdx = resolveHlsIdx(hls, selectedIndex.current)
       if (hlsIdx < 0) return
       if (!hls.subtitleTracks[hlsIdx]) return
@@ -1072,7 +1108,7 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
       hls.off('hlsCuesParsed', onCuesParsed)
       hls.off('hlsManifestParsed', onManifest)
     }
-  }, [media, playback?.selectedSubtitleIndex, applySubtitle, resolveHlsIdx])
+  }, [media, playback?.selectedSubtitleIndex, playback?.subtitleStreams, applySubtitle, resolveHlsIdx])
 
   const choose = useCallback((jellyfinIndex: number | null) => {
     const hls = media?.engine
