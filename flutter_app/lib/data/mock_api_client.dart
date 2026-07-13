@@ -82,6 +82,18 @@ class MockApiClient implements ApiClient {
       );
 
   @override
+  Future<PlaybackInfo> playbackInfo(String itemId,
+          {int? audioStreamIndex, int? subtitleStreamIndex}) async =>
+      const PlaybackInfo();
+
+  @override
+  Future<void> uploadSubtitle(
+      String itemId, List<int> bytes, String filename) async {}
+
+  @override
+  Future<void> deleteSubtitle(String itemId, int streamIndex) async {}
+
+  @override
   Future<LiveKitToken> livekitToken(String partyId) async => const LiveKitToken(
         token: 'mock-token',
         url: 'ws://localhost:7880',
