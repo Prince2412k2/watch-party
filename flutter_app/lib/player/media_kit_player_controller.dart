@@ -17,16 +17,14 @@ import 'player_controller.dart';
 /// [setAudioTrack]/[setSubtitle] can resolve a `PlayerTrack.id` back to the
 /// libmpv track object.
 class MediaKitPlayerController implements PlayerController {
-  // Hardware *rendering* is OFF by default: on this class of GPU/driver
-  // media_kit's HW VideoOutput takes the "isolated EGL context" path and
-  // hard-crashes the process (SIGSEGV → "Lost connection to device"). Software
-  // rendering is stable. It can be re-enabled with WP_HWACCEL=1 to test GPUs
-  // where HW rendering works (Mac/Windows, or a Linux box that doesn't crash).
+  // Hardware rendering avoids copying every decoded frame through a software
+  // texture. WP_HWACCEL=0 retains the fallback for Linux/Mesa configurations
+  // where media_kit's isolated EGL context is unstable.
   //
   // Hardware *decoding* is a SEPARATE concern and stays ON regardless (see
   // [videoController]'s `hwdec`): the GPU decodes, frames are copied back to
-  // system memory, and the CPU only does the cheap final blit. Without this,
-  // pure-software decode can't keep realtime and playback runs in slow-motion.
+  // system memory. Without this, pure-software decode can't keep realtime and
+  // playback runs in slow-motion.
   // Direct-play streams the source file at its native bitrate (no transcode,
   // no adaptive-bitrate ladder — see docs/native/PLAN.md §4.3), so the only
   // lever against a variable remote connection is how much libmpv reads
@@ -41,7 +39,7 @@ class MediaKitPlayerController implements PlayerController {
       ),
       _enableHwAccel =
           enableHardwareAcceleration ??
-          (Platform.environment['WP_HWACCEL'] == '1') {
+          (Platform.environment['WP_HWACCEL'] != '0') {
     _wire();
   }
 
@@ -59,8 +57,8 @@ class MediaKitPlayerController implements PlayerController {
   /// widget actually mounts the video (never during headless/audio-only use).
   ///
   /// `hwdec: 'auto-safe'` forces GPU decode using only methods that copy frames
-  /// back to system memory — so it works even with software rendering (the
-  /// default here) and keeps playback at realtime instead of slow-motion.
+  /// back to system memory — so it works with the opt-in software-rendering
+  /// fallback and keeps playback at realtime instead of slow-motion.
   /// (media_kit's default `hwdec` is `'auto'`, which can pick a GPU-surface
   /// method that doesn't copy back and effectively falls back to slow software
   /// decode under a software VO.) When HW rendering is enabled, `'auto'` lets
