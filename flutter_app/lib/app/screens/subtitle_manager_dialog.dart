@@ -131,10 +131,7 @@ class _SubtitleManagerDialogState
                 if (info.audioStreams.isNotEmpty) ...[
                   const SectionHeader(title: 'Audio'),
                   for (final t in info.audioStreams)
-                    ListTile(
-                      dense: true,
-                      title: Text(_label(t, 'Audio ${t.index}')),
-                    ),
+                    _TrackRow(label: _label(t, 'Audio ${t.index}')),
                   const SizedBox(height: AppSpacing.md),
                 ],
                 const SectionHeader(title: 'Subtitles'),
@@ -147,15 +144,9 @@ class _SubtitleManagerDialogState
                     ),
                   ),
                 for (final t in info.subtitleStreams)
-                  ListTile(
-                    dense: true,
-                    title: Text(_label(t, 'Subtitle ${t.index}')),
-                    trailing: t.isExternal
-                        ? IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 18),
-                            onPressed: _busy ? null : () => _delete(t),
-                          )
-                        : null,
+                  _TrackRow(
+                    label: _label(t, 'Subtitle ${t.index}'),
+                    onDelete: t.isExternal && !_busy ? () => _delete(t) : null,
                   ),
                 const SizedBox(height: AppSpacing.md),
                 AppButton(
@@ -173,6 +164,33 @@ class _SubtitleManagerDialogState
           onPressed: () => Navigator.of(context).pop(),
         ),
       ],
+    );
+  }
+}
+
+/// A track row, built on shadcn/plain widgets — `ListTile` needs a `Material`
+/// ancestor, which `sc.AlertDialog` doesn't provide.
+class _TrackRow extends StatelessWidget {
+  const _TrackRow({required this.label, this.onDelete});
+  final String label;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(label, style: const TextStyle(color: AppColors.text)),
+          ),
+          if (onDelete != null)
+            sc.IconButton.ghost(
+              icon: const Icon(Icons.delete_outline, size: 18),
+              onPressed: onDelete,
+            ),
+        ],
+      ),
     );
   }
 }

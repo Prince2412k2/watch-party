@@ -27,10 +27,21 @@ class MediaKitPlayerController implements PlayerController {
   // [videoController]'s `hwdec`): the GPU decodes, frames are copied back to
   // system memory, and the CPU only does the cheap final blit. Without this,
   // pure-software decode can't keep realtime and playback runs in slow-motion.
+  // Direct-play streams the source file at its native bitrate (no transcode,
+  // no adaptive-bitrate ladder — see docs/native/PLAN.md §4.3), so the only
+  // lever against a variable remote connection is how much libmpv reads
+  // ahead. media_kit's default `bufferSize` (32MiB, ~a few seconds at 4K
+  // bitrates) drains fast on a WAN link with real jitter; 128MiB gives a
+  // brief bandwidth dip enough runway to not surface as a visible stall.
+  static const int _bufferSize = 128 * 1024 * 1024;
+
   MediaKitPlayerController({bool? enableHardwareAcceleration})
-      : _player = mk.Player(),
-        _enableHwAccel = enableHardwareAcceleration ??
-            (Platform.environment['WP_HWACCEL'] == '1') {
+    : _player = mk.Player(
+        configuration: const mk.PlayerConfiguration(bufferSize: _bufferSize),
+      ),
+      _enableHwAccel =
+          enableHardwareAcceleration ??
+          (Platform.environment['WP_HWACCEL'] == '1') {
     _wire();
   }
 
@@ -54,7 +65,8 @@ class MediaKitPlayerController implements PlayerController {
   /// method that doesn't copy back and effectively falls back to slow software
   /// decode under a software VO.) When HW rendering is enabled, `'auto'` lets
   /// libmpv keep frames on the GPU. Not part of the frozen contract — additive.
-  mkv.VideoController get videoController => _videoController ??= mkv.VideoController(
+  mkv.VideoController get videoController =>
+      _videoController ??= mkv.VideoController(
         _player,
         configuration: mkv.VideoControllerConfiguration(
           enableHardwareAcceleration: _enableHwAccel,
@@ -110,10 +122,12 @@ class MediaKitPlayerController implements PlayerController {
 
   void _wire() {
     _subs.add(_player.stream.tracks.listen(_onTracks));
-    _subs.add(_player.stream.error.listen((e) {
-      _lastError = e;
-      if (!_errorCtrl.isClosed) _errorCtrl.add(e);
-    }));
+    _subs.add(
+      _player.stream.error.listen((e) {
+        _lastError = e;
+        if (!_errorCtrl.isClosed) _errorCtrl.add(e);
+      }),
+    );
   }
 
   void _onTracks(mk.Tracks t) {
@@ -126,49 +140,54 @@ class MediaKitPlayerController implements PlayerController {
       if (!_isPseudo(s.id)) _subtitleById[s.id] = s;
     }
     if (!_tracksCtrl.isClosed) {
-      _tracksCtrl.add(PlayerTracks(
-        video: [
-          for (final v in t.video)
-            if (!_isPseudo(v.id)) _mapVideo(v),
-        ],
-        audio: [for (final a in _audioById.values) _mapAudio(a)],
-        subtitle: [for (final s in _subtitleById.values) _mapSubtitle(s)],
-      ));
+      _tracksCtrl.add(
+        PlayerTracks(
+          video: [
+            for (final v in t.video)
+              if (!_isPseudo(v.id)) _mapVideo(v),
+          ],
+          audio: [for (final a in _audioById.values) _mapAudio(a)],
+          subtitle: [for (final s in _subtitleById.values) _mapSubtitle(s)],
+        ),
+      );
     }
   }
 
   static bool _isPseudo(String id) => id == 'auto' || id == 'no';
 
   static PlayerTrack _mapVideo(mk.VideoTrack v) => PlayerTrack(
-        id: v.id,
-        type: 'video',
-        title: v.title,
-        language: v.language,
-        codec: v.codec,
-        isDefault: v.isDefault ?? false,
-      );
+    id: v.id,
+    type: 'video',
+    title: v.title,
+    language: v.language,
+    codec: v.codec,
+    isDefault: v.isDefault ?? false,
+  );
 
   static PlayerTrack _mapAudio(mk.AudioTrack a) => PlayerTrack(
-        id: a.id,
-        type: 'audio',
-        title: a.title,
-        language: a.language,
-        codec: a.codec,
-        isDefault: a.isDefault ?? false,
-      );
+    id: a.id,
+    type: 'audio',
+    title: a.title,
+    language: a.language,
+    codec: a.codec,
+    isDefault: a.isDefault ?? false,
+  );
 
   static PlayerTrack _mapSubtitle(mk.SubtitleTrack s) => PlayerTrack(
-        id: s.id,
-        type: 'subtitle',
-        title: s.title,
-        language: s.language,
-        codec: s.codec,
-        isDefault: s.isDefault ?? false,
-      );
+    id: s.id,
+    type: 'subtitle',
+    title: s.title,
+    language: s.language,
+    codec: s.codec,
+    isDefault: s.isDefault ?? false,
+  );
 
   @override
-  Future<void> open(String url,
-      {Duration startAt = Duration.zero, bool autoplay = false}) async {
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {
     if (_disposed) return;
     // Open paused so a non-zero startAt lands before the first frame is shown;
     // libmpv queues the seek against the freshly-loaded file.
@@ -202,8 +221,7 @@ class MediaKitPlayerController implements PlayerController {
   @override
   Future<void> setAudioTrack(String? trackId) {
     if (_disposed) return Future.value();
-    final track =
-        trackId == null ? mk.AudioTrack.auto() : _audioById[trackId];
+    final track = trackId == null ? mk.AudioTrack.auto() : _audioById[trackId];
     if (track == null) return Future.value();
     return _player.setAudioTrack(track);
   }
@@ -212,8 +230,9 @@ class MediaKitPlayerController implements PlayerController {
   Future<void> setSubtitle(String? trackId) {
     if (_disposed) return Future.value();
     // null → disable subtitles (libmpv `no`).
-    final track =
-        trackId == null ? mk.SubtitleTrack.no() : _subtitleById[trackId];
+    final track = trackId == null
+        ? mk.SubtitleTrack.no()
+        : _subtitleById[trackId];
     if (track == null) return Future.value();
     return _player.setSubtitleTrack(track);
   }
