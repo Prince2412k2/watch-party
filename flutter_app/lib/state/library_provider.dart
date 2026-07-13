@@ -38,6 +38,14 @@ final searchProvider =
   return ref.read(apiClientProvider).search(query);
 });
 
+/// A parent item's direct children — a Series' Seasons, or a Season's
+/// Episodes. Used by the detail screen to browse a Series instead of playing
+/// it directly.
+final itemChildrenProvider =
+    FutureProvider.family<List<LibraryItem>, String>((ref, parentId) async {
+  return ref.read(apiClientProvider).children(parentId);
+});
+
 /// Basic type filter for the Browse grid. `all` means no filtering.
 enum BrowseTypeFilter { all, movie, series }
 
