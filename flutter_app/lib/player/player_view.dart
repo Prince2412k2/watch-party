@@ -33,6 +33,9 @@ class PlayerView extends StatefulWidget {
     this.onToggleFullscreen,
     this.isFullscreen = false,
     this.onSeek,
+    this.itemId,
+    this.mediaSourceId,
+    this.apiClient,
   })  : _controller = controller,
         _itemId = null,
         _apiClient = null,
@@ -62,6 +65,9 @@ class PlayerView extends StatefulWidget {
         _purpose = purpose,
         _startAt = startAt,
         _autoplay = autoplay,
+        itemId = itemId,
+        mediaSourceId = null,
+        apiClient = apiClient,
         onSeek = null;
 
   /// Ready-made controller supplied by the caller (party/detail inject one).
@@ -92,6 +98,9 @@ class PlayerView extends StatefulWidget {
   /// Authors a seek to an external owner (the party's sync engine). Only set on
   /// the party path; null for solo playback. Passed straight to [PlayerChrome].
   final ValueChanged<Duration>? onSeek;
+  final String? itemId;
+  final String? mediaSourceId;
+  final ApiClient? apiClient;
 
   @override
   State<PlayerView> createState() => _PlayerViewState();
@@ -197,6 +206,9 @@ class _PlayerViewState extends State<PlayerView> {
             onBack: widget.onBack,
             onToggleFullscreen: widget.onToggleFullscreen,
             isFullscreen: widget.isFullscreen,
+            itemId: widget.itemId ?? widget._itemId,
+            mediaSourceId: widget.mediaSourceId,
+            apiClient: widget.apiClient ?? widget._apiClient,
           ),
         ],
       ),

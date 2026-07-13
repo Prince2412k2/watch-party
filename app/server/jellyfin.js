@@ -133,9 +133,47 @@ export function getLatest(token, userId, parentId, limit = 20) {
 // Full detail for the hero / item page
 export function getItemDetail(token, userId, itemId) {
   const qs = new URLSearchParams({
-    Fields: 'Overview,Genres,People,Studios,Taglines,Tags,ProviderIds,ProductionYear,PremiereDate,CommunityRating,CriticRating,OfficialRating,RunTimeTicks,MediaSources,MediaStreams,Width,Height',
+    Fields: 'Overview,Genres,People,Studios,Taglines,Tags,ProviderIds,ProductionYear,PremiereDate,CommunityRating,CriticRating,OfficialRating,RunTimeTicks,MediaSources,MediaStreams,Width,Height,Trickplay',
   })
   return jfetch(`/Users/${userId}/Items/${itemId}?${qs}`, { token })
+}
+
+export function selectTrickplayProfile(item, mediaSourceId, targetWidth = 320) {
+  const selectedSourceId = mediaSourceId ?? item?.MediaSources?.find(source => item?.Trickplay?.[source?.Id])?.Id
+  if (!selectedSourceId || !item?.MediaSources?.some(source => source?.Id === selectedSourceId)) return null
+  const profiles = item?.Trickplay?.[selectedSourceId]
+  if (!profiles || typeof profiles !== 'object') return null
+
+  const candidates = Object.entries(profiles)
+    .map(([width, profile]) => normalizeTrickplayProfile(width, profile))
+    .filter(Boolean)
+    .sort((a, b) => Math.abs(a.width - targetWidth) - Math.abs(b.width - targetWidth) || a.width - b.width)
+  const profile = candidates[0]
+  return profile ? { mediaSourceId: selectedSourceId, ...profile } : null
+}
+
+export function getTrickplayProfile(item, mediaSourceId, width) {
+  if (!item?.MediaSources?.some(source => source?.Id === mediaSourceId)) return null
+  return normalizeTrickplayProfile(String(width), item?.Trickplay?.[mediaSourceId]?.[String(width)])
+}
+
+function normalizeTrickplayProfile(width, profile) {
+  const normalizedWidth = Number(width)
+  if (Number(profile?.Width) !== normalizedWidth) return null
+  const values = {
+    width: normalizedWidth,
+    height: Number(profile?.Height),
+    tileWidth: Number(profile?.TileWidth),
+    tileHeight: Number(profile?.TileHeight),
+    thumbnailCount: Number(profile?.ThumbnailCount),
+    intervalMs: Number(profile?.Interval),
+  }
+  if (!Object.values(values).every(Number.isSafeInteger)) return null
+  if (Object.values(values).some(value => value <= 0)) return null
+  return {
+    ...values,
+    sheetCount: Math.ceil(values.thumbnailCount / (values.tileWidth * values.tileHeight)),
+  }
 }
 
 export function getPlaybackInfo(token, userId, itemId, {

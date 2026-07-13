@@ -83,6 +83,7 @@ abstract class ApiClient {
   Future<LibraryItem> item(String id);
   Future<List<LibraryItem>> latest({String? parentId});
   Future<List<LibraryItem>> search(String query);
+  Future<TrickplayManifest> trickplay(String itemId, {String? mediaSourceId});
 
   /// Absolute URL to a proxied poster/backdrop image.
   String imageUrl(String itemId, {ImageType type = ImageType.primary, String? tag});
@@ -258,6 +259,16 @@ class DioApiClient implements ApiClient {
     final all = await items();
     final q = query.toLowerCase();
     return all.where((i) => i.name.toLowerCase().contains(q)).toList();
+  }
+
+  @override
+  Future<TrickplayManifest> trickplay(String itemId,
+      {String? mediaSourceId}) async {
+    final res = await _dio.get('/api/library/items/$itemId/trickplay',
+        queryParameters:
+            mediaSourceId == null ? null : {'mediaSourceId': mediaSourceId});
+    if (res.statusCode != 200) _fail(res, 'trickplay');
+    return TrickplayManifest.fromJson(res.data as Map<String, dynamic>);
   }
 
   @override
