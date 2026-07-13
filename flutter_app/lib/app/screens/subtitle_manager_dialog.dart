@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -86,20 +87,37 @@ class _SubtitleManagerDialogState
   Future<void> _upload() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa', 'sub'],
+      allowedExtensions: const ['srt', 'vtt'],
       withData: true,
     );
     final file = picked?.files.single;
-    if (file?.bytes == null) return;
+    if (file == null) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await ref
-          .read(apiClientProvider)
-          .uploadSubtitle(widget.itemId, _toUtf8(file!.bytes!), file.name);
-      await _refresh();
+      final bytes = file.bytes ?? await File(file.path!).readAsBytes();
+      final api = ref.read(apiClientProvider);
+      final previousIndexes = _info?.subtitleStreams
+          .map((t) => t.index)
+          .toSet();
+      await api.uploadSubtitle(widget.itemId, _toUtf8(bytes), file.name);
+      for (var attempt = 0; attempt < 5; attempt++) {
+        final info = await api.playbackInfo(widget.itemId);
+        if (mounted) setState(() => _info = info);
+        if (previousIndexes == null ||
+            info.subtitleStreams.any(
+              (t) => !previousIndexes.contains(t.index),
+            )) {
+          break;
+        }
+        if (attempt < 4) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 200 * (1 << attempt)),
+          );
+        }
+      }
     } catch (e) {
       if (mounted) setState(() => _error = e);
     } finally {
@@ -143,6 +161,13 @@ class _SubtitleManagerDialogState
           : info == null
           ? 'Loading tracks…'
           : null,
+      actions: [
+        AppButton(
+          label: 'Close',
+          variant: AppButtonVariant.ghost,
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ],
       child: info == null
           ? const SizedBox(
               height: 80,
@@ -181,13 +206,6 @@ class _SubtitleManagerDialogState
                 ),
               ],
             ),
-      actions: [
-        AppButton(
-          label: 'Close',
-          variant: AppButtonVariant.ghost,
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-      ],
     );
   }
 }

@@ -7,11 +7,15 @@ class MockApiClient implements ApiClient {
   MockApiClient({
     this.baseUrl = 'http://mock.local',
     this.trickplayManifest,
+    this.playback,
+    this.subtitleContents = const {},
   });
 
   @override
   String baseUrl;
   final TrickplayManifest? trickplayManifest;
+  final PlaybackInfo? playback;
+  final Map<int, String> subtitleContents;
 
   static const _user = User(userId: 'mock-user', name: 'root', isAdmin: true);
 
@@ -30,8 +34,18 @@ class MockApiClient implements ApiClient {
   );
 
   static const _titles = [
-    '12 Angry Men', 'Blade Runner', 'Chinatown', 'Dune', 'Election',
-    'Fargo', 'Gattaca', 'Heat', 'Inception', 'Jaws', 'Klute', 'La La Land',
+    '12 Angry Men',
+    'Blade Runner',
+    'Chinatown',
+    'Dune',
+    'Election',
+    'Fargo',
+    'Gattaca',
+    'Heat',
+    'Inception',
+    'Jaws',
+    'Klute',
+    'La La Land',
   ];
 
   @override
@@ -45,10 +59,10 @@ class MockApiClient implements ApiClient {
 
   @override
   Future<HomeData> home() async => HomeData(
-        views: _catalog.take(3).toList(),
-        resume: _catalog.skip(3).take(4).toList(),
-        nextUp: _catalog.skip(7).take(4).toList(),
-      );
+    views: _catalog.take(3).toList(),
+    resume: _catalog.skip(3).take(4).toList(),
+    nextUp: _catalog.skip(7).take(4).toList(),
+  );
 
   @override
   Future<List<LibraryItem>> items({String? parentId}) async => _catalog;
@@ -71,9 +85,12 @@ class MockApiClient implements ApiClient {
   }
 
   @override
-  Future<TrickplayManifest> trickplay(String itemId,
-          {String? mediaSourceId}) async =>
-      trickplayManifest ?? TrickplayManifest(
+  Future<TrickplayManifest> trickplay(
+    String itemId, {
+    String? mediaSourceId,
+  }) async =>
+      trickplayManifest ??
+      TrickplayManifest(
         itemId: itemId,
         mediaSourceId: mediaSourceId ?? itemId,
         width: 320,
@@ -87,50 +104,68 @@ class MockApiClient implements ApiClient {
       );
 
   @override
-  String imageUrl(String itemId,
-          {ImageType type = ImageType.primary, String? tag}) =>
-      '$baseUrl/image/$itemId';
+  String imageUrl(
+    String itemId, {
+    ImageType type = ImageType.primary,
+    String? tag,
+  }) => '$baseUrl/image/$itemId';
 
   @override
-  Future<StreamUrl> nativeStreamUrl(String itemId,
-          {String purpose = 'stream'}) async =>
-      StreamUrl(
-        url: '$baseUrl/native/file?token=mock-$itemId-$purpose',
-        expiresAt: DateTime.now()
-            .add(const Duration(hours: 6))
-            .millisecondsSinceEpoch,
-      );
+  Future<StreamUrl> nativeStreamUrl(
+    String itemId, {
+    String purpose = 'stream',
+  }) async => StreamUrl(
+    url: '$baseUrl/native/file?token=mock-$itemId-$purpose',
+    expiresAt: DateTime.now()
+        .add(const Duration(hours: 6))
+        .millisecondsSinceEpoch,
+  );
 
   @override
-  Future<PlaybackInfo> playbackInfo(String itemId,
-          {int? audioStreamIndex, int? subtitleStreamIndex}) async =>
-      const PlaybackInfo();
+  Future<PlaybackInfo> playbackInfo(
+    String itemId, {
+    String? mediaSourceId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) async => playback ?? const PlaybackInfo();
+
+  @override
+  Future<String> subtitleContent(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  }) async => subtitleContents[streamIndex] ?? '';
 
   @override
   Future<void> uploadSubtitle(
-      String itemId, List<int> bytes, String filename) async {}
+    String itemId,
+    List<int> bytes,
+    String filename,
+  ) async {}
 
   @override
   Future<void> deleteSubtitle(String itemId, int streamIndex) async {}
 
   @override
-  Future<LiveKitToken> livekitToken(String partyId) async => const LiveKitToken(
-        token: 'mock-token',
-        url: 'ws://localhost:7880',
-      );
+  Future<LiveKitToken> livekitToken(String partyId) async =>
+      const LiveKitToken(token: 'mock-token', url: 'ws://localhost:7880');
 
   @override
-  Future<dynamic> servarrGet(String path, {Map<String, dynamic>? query}) async =>
-      const [];
+  Future<dynamic> servarrGet(
+    String path, {
+    Map<String, dynamic>? query,
+  }) async => const [];
 
   @override
-  Future<dynamic> servarrPost(String path, {Object? body}) async =>
-      {'ok': true};
+  Future<dynamic> servarrPost(String path, {Object? body}) async => {
+    'ok': true,
+  };
 
   @override
-  Future<dynamic> servarrDelete(String path,
-          {Map<String, dynamic>? query}) async =>
-      {'ok': true};
+  Future<dynamic> servarrDelete(
+    String path, {
+    Map<String, dynamic>? query,
+  }) async => {'ok': true};
 
   @override
   String servarrImageUrl(String remoteUrl) => remoteUrl;

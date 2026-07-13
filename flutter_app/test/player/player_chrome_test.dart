@@ -174,6 +174,34 @@ void main() {
     expect(c.audioTracks, ['a1']);
   });
 
+  testWidgets('guest can select local audio and subtitle tracks', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(body: PlayerChrome(controller: c, canControl: false)),
+      ),
+    );
+    c.emitTracks(tracks);
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.audiotrack));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Commentary'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.subtitles));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('English SDH'));
+    await tester.pumpAndSettle();
+
+    expect(c.audioTracks, ['a1']);
+    expect(c.subtitles, ['s0']);
+    expect(c.seeks, isEmpty);
+  });
+
   testWidgets('track menus are hidden when the media has no extra tracks', (
     tester,
   ) async {
