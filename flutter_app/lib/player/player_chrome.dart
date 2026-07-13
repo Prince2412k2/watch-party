@@ -13,6 +13,7 @@ import '../models/trickplay_manifest.dart';
 import '../ui/ui.dart';
 import 'media_kit_player_controller.dart';
 import 'player_controller.dart';
+import 'subtitle_cues.dart';
 import 'trickplay_preview.dart';
 
 /// The minimal, monochrome transport bar for [PlayerController] (E4.2/E4.3).
@@ -89,6 +90,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
   List<PlayerTrack> _externalSubtitles = const [];
   final Map<String, PlaybackTrack> _externalSubtitleById = {};
   int _subtitleSelectionVersion = 0;
+  List<SubtitleCue> _subtitleCues = const [];
 
   double _volume = 100;
 
@@ -178,6 +180,12 @@ class _PlayerChromeState extends State<PlayerChrome> {
   @override
   void didUpdateWidget(PlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      setState(() {
+        _subtitleCues = const [];
+        _selectedSubtitle = null;
+      });
+    }
     if (oldWidget.itemId != widget.itemId ||
         oldWidget.mediaSourceId != widget.mediaSourceId ||
         oldWidget.apiClient != widget.apiClient) {
@@ -224,6 +232,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (mounted) {
       setState(() {
         _externalSubtitles = const [];
+        _subtitleCues = const [];
         if (_selectedSubtitle?.startsWith('jellyfin-external:') ?? false) {
           _selectedSubtitle = null;
         }
@@ -424,7 +433,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     final version = ++_subtitleSelectionVersion;
     final external = id == null ? null : _externalSubtitleById[id];
     final c = widget.controller;
-    if (external != null && c is MediaKitPlayerController) {
+    if (external != null) {
       final itemId = widget.itemId;
       final mediaSourceId = widget.mediaSourceId;
       final api = widget.apiClient;
@@ -443,21 +452,35 @@ class _PlayerChromeState extends State<PlayerChrome> {
             widget.controller != c) {
           return;
         }
-        await c.addExternalSubtitle(
-          content,
-          title: external.displayTitle ?? external.title,
-          language: external.language,
-        );
+        final cues = parseSubtitleCues(content);
+        if (cues.isEmpty) throw const FormatException('No valid subtitle cues');
+        setState(() {
+          _subtitleCues = cues;
+          _selectedSubtitle = id;
+        });
+        if (c is MediaKitPlayerController) {
+          try {
+            await c.addExternalSubtitle(
+              content,
+              title: external.displayTitle ?? external.title,
+              language: external.language,
+            );
+          } catch (_) {
+            // The Flutter overlay remains the rendering fallback.
+          }
+        }
       } catch (e) {
         if (mounted && version == _subtitleSelectionVersion) {
           setState(() {
             _selectedSubtitle = previous;
+            _subtitleCues = const [];
             _error = '$e';
           });
         }
         return;
       }
     } else {
+      if (mounted) setState(() => _subtitleCues = const []);
       await widget.controller.setSubtitle(id);
     }
     if (mounted && version == _subtitleSelectionVersion) {
@@ -530,6 +553,11 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
   @override
   Widget build(BuildContext context) {
+    final activeCues = activeSubtitleCues(
+      _subtitleCues,
+      _position,
+      delay: Duration(milliseconds: (_subDelay * 1000).round()),
+    );
     return Focus(
       focusNode: _focusNode,
       autofocus: true,
@@ -615,7 +643,62 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   onHoverEnd: () => setState(() => _previewPosition = null),
                 ),
               ),
+
+              if (activeCues.isNotEmpty)
+                _SubtitleOverlay(
+                  text: activeCues.map((cue) => cue.text).join('\n'),
+                  scale: _subScale,
+                  position: _subPos,
+                  font: _subFont,
+                ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SubtitleOverlay extends StatelessWidget {
+  const _SubtitleOverlay({
+    required this.text,
+    required this.scale,
+    required this.position,
+    required this.font,
+  });
+
+  final String text;
+  final double scale;
+  final int position;
+  final String font;
+
+  @override
+  Widget build(BuildContext context) {
+    final (family, fallbacks) = switch (font) {
+      'serif' => ('Times New Roman', const ['DejaVu Serif', 'serif']),
+      'monospace' => ('Courier New', const ['DejaVu Sans Mono', 'monospace']),
+      _ => ('Arial', const ['DejaVu Sans', 'sans-serif']),
+    };
+    return IgnorePointer(
+      child: Align(
+        alignment: Alignment(0, (position.clamp(0, 100) / 50) - 1),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          child: Text(
+            text,
+            key: const Key('externalSubtitleOverlay'),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22 * scale,
+              fontFamily: family,
+              fontFamilyFallback: fallbacks,
+              height: 1.25,
+              shadows: const [
+                Shadow(color: Colors.black, blurRadius: 4),
+                Shadow(color: Colors.black, offset: Offset(1, 1)),
+              ],
+            ),
           ),
         ),
       ),
