@@ -14,6 +14,7 @@ import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc'
 import { MpvBackend } from '../native/MpvBackend'
 import { apiJson, stringField } from '../types/guards'
+import { parseTrickplayManifest, trickplayFrame, trickplaySheetUrl, type TrickplayManifest } from './trickplay'
 
 type LocalPhase = 'ready' | 'catchingUp' | 'buffering'
 type VoidCallback = () => void
@@ -32,7 +33,7 @@ interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number
 interface QualityState { levels: HlsLevel[]; current: number; selected: number; choose: (index: number) => void }
 type TrackSelection = { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
 export interface PlayerTrack { index: number; displayTitle?: string; title?: string; language?: string; codec?: string; isDefault?: boolean; deliveryUrl?: string | null }
-export interface PlayerPlayback { audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
+export interface PlayerPlayback { mediaSourceId?: string | null; audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
 export interface PlayerProps {
   hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
   onToggleMic?: VoidCallback; onToggleCam?: VoidCallback; micOn?: boolean; camOn?: boolean; talking?: boolean; onTalkStart?: VoidCallback; onTalkEnd?: VoidCallback
@@ -1261,12 +1262,32 @@ function fmtClock(s: number) {
 // pointerdown-arm listener in SyncBridge still arms before we mutate, and the
 // existing seeking/seeked → requestSeek pipeline authors the room exactly as
 // before.
-function Scrubber({ canControl }: { canControl?: boolean } = {}) {
+function Scrubber({ canControl, mediaItemId, mediaSourceId }: { canControl?: boolean; mediaItemId?: string; mediaSourceId?: string | null } = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const { cur, dur, buf } = useMediaClock(media)
   const [hover, setHover] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [manifest, setManifest] = useState<TrickplayManifest | null>(null)
+  const [preview, setPreview] = useState<{ time: number; x: number } | null>(null)
+  const [failedSheet, setFailedSheet] = useState<number | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
+  const dragCleanupRef = useRef<VoidCallback | null>(null)
+
+  useEffect(() => {
+    setManifest(null)
+    setPreview(null)
+    setFailedSheet(null)
+    if (!mediaItemId) return
+    const controller = new AbortController()
+    const query = mediaSourceId ? `?mediaSourceId=${encodeURIComponent(mediaSourceId)}` : ''
+    fetch(`/api/library/items/${encodeURIComponent(mediaItemId)}/trickplay${query}`, { credentials: 'include', signal: controller.signal })
+      .then(response => response.ok ? response.json() as Promise<unknown> : null)
+      .then(value => { if (value) setManifest(parseTrickplayManifest(value)) })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [mediaItemId, mediaSourceId])
+
+  useEffect(() => () => dragCleanupRef.current?.(), [])
 
   const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
   const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
@@ -1281,11 +1302,19 @@ function Scrubber({ canControl }: { canControl?: boolean } = {}) {
     return Math.min(1, Math.max(0, (clientX - r.left) / r.width))
   }
 
+  const updatePreview = (e: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
+    const el = trackRef.current
+    if (!el || dur <= 0) return
+    const rect = el.getBoundingClientRect()
+    setPreview({ time: ratioFromEvent(e) * dur, x: Math.min(rect.width, Math.max(0, e.clientX - rect.left)) })
+  }
+
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!canControl || !media) return
     e.stopPropagation()
     setDragging(true)
     const seekTo = (ev: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
+      updatePreview(ev)
       const dur2 = media.duration || 0
       media.currentTime = ratioFromEvent(ev) * dur2
     }
@@ -1293,24 +1322,55 @@ function Scrubber({ canControl }: { canControl?: boolean } = {}) {
     const move = (ev: PointerEvent) => seekTo(ev)
     const up = () => {
       setDragging(false)
+      setPreview(null)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      dragCleanupRef.current = null
     }
+    dragCleanupRef.current?.()
+    dragCleanupRef.current = up
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up, { once: true })
+    window.addEventListener('pointercancel', up, { once: true })
   }
+
+
+  const candidateFrame = manifest && preview ? trickplayFrame(manifest, preview.time) : null
+  const frame = candidateFrame?.sheetIndex === failedSheet ? null : candidateFrame
+  const previewScale = manifest ? Math.min(1, 240 / manifest.width) : 1
+  const previewWidth = manifest ? manifest.width * previewScale : 0
+  const previewHeight = manifest ? manifest.height * previewScale : 0
+  const popupLeft = preview ? Math.min(Math.max(preview.x, previewWidth / 2), Math.max(previewWidth / 2, (trackRef.current?.clientWidth ?? 0) - previewWidth / 2)) : 0
 
   return (
     <div
       ref={trackRef}
-      onMouseEnter={() => canControl && setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onPointerEnter={(e) => { setHover(true); updatePreview(e) }}
+      onPointerMove={updatePreview}
+      onPointerLeave={() => { setHover(false); if (!dragging) setPreview(null) }}
       onPointerDown={onPointerDown}
       style={{
         position: 'relative', flex: 1, height: 16, display: 'flex', alignItems: 'center',
-        cursor: canControl ? 'pointer' : 'default', pointerEvents: canControl ? 'auto' : 'none',
+        cursor: canControl ? 'pointer' : 'default',
       }}
     >
+      {frame && manifest && preview && (
+        <div style={{
+          position: 'absolute', left: popupLeft, bottom: 22, width: previewWidth, transform: 'translateX(-50%)',
+          pointerEvents: 'none', overflow: 'hidden', borderRadius: 6, background: '#09090b',
+          boxShadow: '0 4px 18px rgba(0,0,0,.55)', border: '1px solid rgba(255,255,255,.16)',
+        }}>
+          <div style={{ position: 'relative', width: previewWidth, height: previewHeight, overflow: 'hidden' }}>
+            <img
+              src={trickplaySheetUrl(manifest, frame.sheetIndex)} alt=""
+              onError={() => setFailedSheet(frame.sheetIndex)}
+              style={{ position: 'absolute', width: manifest.width * frame.columns * previewScale, height: manifest.height * frame.rows * previewScale, left: -frame.x * previewScale, top: -frame.y * previewScale, maxWidth: 'none' }}
+            />
+          </div>
+          <div style={{ padding: '5px 8px', textAlign: 'center', fontFamily: MONO_F, fontSize: 11, color: '#f4f4f5' }}>{fmtClock(preview.time)}</div>
+        </div>
+      )}
       <div style={{ position: 'absolute', left: 0, right: 0, height: barH, borderRadius: 999, background: 'rgba(255,255,255,.14)', transition: 'height .15s' }} />
       <div style={{ position: 'absolute', left: 0, height: barH, width: `${bufPct}%`, borderRadius: 999, background: 'rgba(255,255,255,.28)', transition: 'height .15s' }} />
       <div style={{ position: 'absolute', left: 0, height: barH, width: `${pct}%`, borderRadius: 999, background: '#f4f4f5', transition: 'height .15s' }} />
@@ -1432,7 +1492,7 @@ function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlayba
 
         <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#f4f4f5', minWidth: 40, flexShrink: 0 }}>{fmtClock(cur)}</span>
 
-        <Scrubber canControl={canControl} />
+        <Scrubber canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId} />
 
         <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', minWidth: 40, flexShrink: 0 }}>{fmtClock(dur)}</span>
 

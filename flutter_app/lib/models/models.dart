@@ -9,5 +9,8 @@ export 'media_stream.dart';
 export 'offline_record.dart';
 export 'participant.dart';
 export 'party_state.dart';
+export 'person.dart';
+export 'playback_info.dart';
 export 'stream_url.dart';
+export 'trickplay_manifest.dart';
 export 'user.dart';
