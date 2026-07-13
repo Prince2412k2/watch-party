@@ -17,20 +17,29 @@ import 'player_controller.dart';
 /// [setAudioTrack]/[setSubtitle] can resolve a `PlayerTrack.id` back to the
 /// libmpv track object.
 class MediaKitPlayerController implements PlayerController {
-  // Hardware *rendering* is OFF by default: on this class of GPU/driver
-  // media_kit's HW VideoOutput takes the "isolated EGL context" path and
-  // hard-crashes the process (SIGSEGV → "Lost connection to device"). Software
-  // rendering is stable. It can be re-enabled with WP_HWACCEL=1 to test GPUs
-  // where HW rendering works (Mac/Windows, or a Linux box that doesn't crash).
+  // Hardware rendering avoids copying every decoded frame through a software
+  // texture. WP_HWACCEL=0 retains the fallback for Linux/Mesa configurations
+  // where media_kit's isolated EGL context is unstable.
   //
   // Hardware *decoding* is a SEPARATE concern and stays ON regardless (see
   // [videoController]'s `hwdec`): the GPU decodes, frames are copied back to
-  // system memory, and the CPU only does the cheap final blit. Without this,
-  // pure-software decode can't keep realtime and playback runs in slow-motion.
+  // system memory. Without this, pure-software decode can't keep realtime and
+  // playback runs in slow-motion.
+  // Direct-play streams the source file at its native bitrate (no transcode,
+  // no adaptive-bitrate ladder — see docs/native/PLAN.md §4.3), so the only
+  // lever against a variable remote connection is how much libmpv reads
+  // ahead. media_kit's default `bufferSize` (32MiB, ~a few seconds at 4K
+  // bitrates) drains fast on a WAN link with real jitter; 128MiB gives a
+  // brief bandwidth dip enough runway to not surface as a visible stall.
+  static const int _bufferSize = 128 * 1024 * 1024;
+
   MediaKitPlayerController({bool? enableHardwareAcceleration})
-      : _player = mk.Player(),
-        _enableHwAccel = enableHardwareAcceleration ??
-            (Platform.environment['WP_HWACCEL'] == '1') {
+    : _player = mk.Player(
+        configuration: const mk.PlayerConfiguration(bufferSize: _bufferSize),
+      ),
+      _enableHwAccel =
+          enableHardwareAcceleration ??
+          (Platform.environment['WP_HWACCEL'] != '0') {
     _wire();
   }
 
@@ -48,13 +57,14 @@ class MediaKitPlayerController implements PlayerController {
   /// widget actually mounts the video (never during headless/audio-only use).
   ///
   /// `hwdec: 'auto-safe'` forces GPU decode using only methods that copy frames
-  /// back to system memory — so it works even with software rendering (the
-  /// default here) and keeps playback at realtime instead of slow-motion.
+  /// back to system memory — so it works with the opt-in software-rendering
+  /// fallback and keeps playback at realtime instead of slow-motion.
   /// (media_kit's default `hwdec` is `'auto'`, which can pick a GPU-surface
   /// method that doesn't copy back and effectively falls back to slow software
   /// decode under a software VO.) When HW rendering is enabled, `'auto'` lets
   /// libmpv keep frames on the GPU. Not part of the frozen contract — additive.
-  mkv.VideoController get videoController => _videoController ??= mkv.VideoController(
+  mkv.VideoController get videoController =>
+      _videoController ??= mkv.VideoController(
         _player,
         configuration: mkv.VideoControllerConfiguration(
           enableHardwareAcceleration: _enableHwAccel,
@@ -68,6 +78,7 @@ class MediaKitPlayerController implements PlayerController {
   // id → libmpv track, for resolving contract track ids back to selections.
   final Map<String, mk.AudioTrack> _audioById = {};
   final Map<String, mk.SubtitleTrack> _subtitleById = {};
+  PlayerTracks _latestTracks = const PlayerTracks();
 
   final List<StreamSubscription<dynamic>> _subs = [];
   String? _lastError;
@@ -79,6 +90,9 @@ class MediaKitPlayerController implements PlayerController {
 
   /// Error text stream. Additive.
   Stream<String> get errors => _errorCtrl.stream;
+
+  /// Most recent track list, including events emitted before the chrome mounts.
+  PlayerTracks get latestTracks => _latestTracks;
 
   // ── Current selection / mixer snapshots (additive) ────────────────────────
   // The frozen contract expresses track *availability* via [tracks] and lets
@@ -108,12 +122,111 @@ class MediaKitPlayerController implements PlayerController {
   /// Current playback rate (1.0 = normal). Additive.
   double get rateNow => _player.state.rate;
 
+  // ── Hardware/software decode toggle (additive) ────────────────────────────
+  // libmpv's `hwdec` property is runtime-settable, so the chrome can flip
+  // between GPU and CPU decode without reopening the file. We mirror the
+  // construction-time rationale (see [videoController]): the "on" value is
+  // `auto-safe` — GPU decode via copy-back methods that stay compatible with
+  // the software-rendering fallback and keep playback realtime. "off" is `no`
+  // (pure software decode). Tracked in a field so the UI can render a
+  // checkmark; seeded from [_enableHwAccel].
+  late bool _hwdecEnabled = _enableHwAccel;
+
+  /// Whether hardware (GPU) video decoding is currently enabled. Additive.
+  bool get hardwareDecodingEnabled => _hwdecEnabled;
+
+  /// Toggle hardware vs software video decoding at runtime via libmpv's
+  /// `hwdec` property. Additive (not in the frozen contract).
+  Future<void> setHardwareDecoding(bool enabled) async {
+    if (_disposed) return;
+    _hwdecEnabled = enabled;
+    await _setMpvProperty('hwdec', enabled ? 'auto-safe' : 'no');
+  }
+
+  /// Set a raw libmpv property. media_kit only exposes arbitrary-property
+  /// access on the native platform player (`NativePlayer.setProperty`), reached
+  /// via `player.platform`; the abstract [mk.Player] surface has no generic
+  /// setter. No-op if the platform player isn't the native one.
+  Future<void> _setMpvProperty(String property, String value) async {
+    final platform = _player.platform;
+    if (platform is mk.NativePlayer) {
+      await platform.setProperty(property, value);
+    }
+  }
+
+  // ── Subtitle appearance (additive) ────────────────────────────────────────
+  // Backed by libmpv properties: `sub-scale` (size), `sub-pos` (0–150, 100 =
+  // bottom), `sub-delay` (seconds, may be negative). Tracked in fields so the
+  // settings panel can reflect current values.
+  double _subScale = 1.0;
+  int _subPos = 100;
+  double _subDelay = 0.0;
+  String _subFont = 'sans-serif';
+
+  /// Current subtitle scale (1.0 = default). Additive.
+  double get subtitleScale => _subScale;
+
+  /// Current subtitle vertical position (0–150; 100 = bottom). Additive.
+  int get subtitlePosition => _subPos;
+
+  /// Current subtitle timing offset in seconds (may be negative). Additive.
+  double get subtitleDelay => _subDelay;
+
+  String get subtitleFont => _subFont;
+
+  /// Set subtitle scale via libmpv `sub-scale`. Additive.
+  Future<void> setSubtitleScale(double scale) async {
+    if (_disposed) return;
+    _subScale = scale;
+    await _setMpvProperty('sub-scale', scale.toString());
+  }
+
+  /// Set subtitle vertical position via libmpv `sub-pos` (0–150). Additive.
+  Future<void> setSubtitlePosition(int pos) async {
+    if (_disposed) return;
+    _subPos = pos;
+    await _setMpvProperty('sub-pos', pos.toString());
+  }
+
+  /// Set subtitle timing offset in seconds via libmpv `sub-delay`. Additive.
+  Future<void> setSubtitleDelay(double seconds) async {
+    if (_disposed) return;
+    _subDelay = seconds;
+    await _setMpvProperty('sub-delay', seconds.toString());
+  }
+
+  Future<void> setSubtitleFont(String font) async {
+    if (_disposed) return;
+    _subFont = font;
+    await _setMpvProperty('sub-font', font);
+  }
+
+  /// Load an external subtitle from raw text (SRT / WebVTT / ASS) and select
+  /// it. This is how subtitles reach the player without transcoding: the video
+  /// is direct-played untouched, and libmpv side-loads the subtitle and times
+  /// it against playback by the subtitle's own timestamps — so it follows the
+  /// video (including seeks) automatically. The added track shows up on the
+  /// next [tracks] emission, so the chrome's subtitle menu can re-select it.
+  /// Additive (not in the frozen contract).
+  Future<void> addExternalSubtitle(
+    String data, {
+    String? title,
+    String? language,
+  }) async {
+    if (_disposed) return;
+    await _player.setSubtitleTrack(
+      mk.SubtitleTrack.data(data, title: title, language: language),
+    );
+  }
+
   void _wire() {
     _subs.add(_player.stream.tracks.listen(_onTracks));
-    _subs.add(_player.stream.error.listen((e) {
-      _lastError = e;
-      if (!_errorCtrl.isClosed) _errorCtrl.add(e);
-    }));
+    _subs.add(
+      _player.stream.error.listen((e) {
+        _lastError = e;
+        if (!_errorCtrl.isClosed) _errorCtrl.add(e);
+      }),
+    );
   }
 
   void _onTracks(mk.Tracks t) {
@@ -125,50 +238,52 @@ class MediaKitPlayerController implements PlayerController {
     for (final s in t.subtitle) {
       if (!_isPseudo(s.id)) _subtitleById[s.id] = s;
     }
-    if (!_tracksCtrl.isClosed) {
-      _tracksCtrl.add(PlayerTracks(
-        video: [
-          for (final v in t.video)
-            if (!_isPseudo(v.id)) _mapVideo(v),
-        ],
-        audio: [for (final a in _audioById.values) _mapAudio(a)],
-        subtitle: [for (final s in _subtitleById.values) _mapSubtitle(s)],
-      ));
-    }
+    _latestTracks = PlayerTracks(
+      video: [
+        for (final v in t.video)
+          if (!_isPseudo(v.id)) _mapVideo(v),
+      ],
+      audio: [for (final a in _audioById.values) _mapAudio(a)],
+      subtitle: [for (final s in _subtitleById.values) _mapSubtitle(s)],
+    );
+    if (!_tracksCtrl.isClosed) _tracksCtrl.add(_latestTracks);
   }
 
   static bool _isPseudo(String id) => id == 'auto' || id == 'no';
 
   static PlayerTrack _mapVideo(mk.VideoTrack v) => PlayerTrack(
-        id: v.id,
-        type: 'video',
-        title: v.title,
-        language: v.language,
-        codec: v.codec,
-        isDefault: v.isDefault ?? false,
-      );
+    id: v.id,
+    type: 'video',
+    title: v.title,
+    language: v.language,
+    codec: v.codec,
+    isDefault: v.isDefault ?? false,
+  );
 
   static PlayerTrack _mapAudio(mk.AudioTrack a) => PlayerTrack(
-        id: a.id,
-        type: 'audio',
-        title: a.title,
-        language: a.language,
-        codec: a.codec,
-        isDefault: a.isDefault ?? false,
-      );
+    id: a.id,
+    type: 'audio',
+    title: a.title,
+    language: a.language,
+    codec: a.codec,
+    isDefault: a.isDefault ?? false,
+  );
 
   static PlayerTrack _mapSubtitle(mk.SubtitleTrack s) => PlayerTrack(
-        id: s.id,
-        type: 'subtitle',
-        title: s.title,
-        language: s.language,
-        codec: s.codec,
-        isDefault: s.isDefault ?? false,
-      );
+    id: s.id,
+    type: 'subtitle',
+    title: s.title,
+    language: s.language,
+    codec: s.codec,
+    isDefault: s.isDefault ?? false,
+  );
 
   @override
-  Future<void> open(String url,
-      {Duration startAt = Duration.zero, bool autoplay = false}) async {
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {
     if (_disposed) return;
     // Open paused so a non-zero startAt lands before the first frame is shown;
     // libmpv queues the seek against the freshly-loaded file.
@@ -202,8 +317,7 @@ class MediaKitPlayerController implements PlayerController {
   @override
   Future<void> setAudioTrack(String? trackId) {
     if (_disposed) return Future.value();
-    final track =
-        trackId == null ? mk.AudioTrack.auto() : _audioById[trackId];
+    final track = trackId == null ? mk.AudioTrack.auto() : _audioById[trackId];
     if (track == null) return Future.value();
     return _player.setAudioTrack(track);
   }
@@ -212,8 +326,9 @@ class MediaKitPlayerController implements PlayerController {
   Future<void> setSubtitle(String? trackId) {
     if (_disposed) return Future.value();
     // null → disable subtitles (libmpv `no`).
-    final track =
-        trackId == null ? mk.SubtitleTrack.no() : _subtitleById[trackId];
+    final track = trackId == null
+        ? mk.SubtitleTrack.no()
+        : _subtitleById[trackId];
     if (track == null) return Future.value();
     return _player.setSubtitleTrack(track);
   }

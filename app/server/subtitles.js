@@ -1,7 +1,7 @@
 import express from 'express'
 
 import { requireAuth, getJellyfin } from './auth.js'
-import { BASE } from './jellyfin.js'
+import { BASE, getPlaybackInfo } from './jellyfin.js'
 import { findSessionForMember, publicSession } from './session.js'
 import { refreshPlayback } from './playback.js'
 
@@ -12,6 +12,53 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ])
 
 const MAX_SUBTITLE_BYTES = 5 * 1024 * 1024
+
+export function findExternalSubtitleStream(playback, index, mediaSourceId = null) {
+  for (const source of playback?.MediaSources ?? []) {
+    if (mediaSourceId && source?.Id !== mediaSourceId) continue
+    const stream = source?.MediaStreams?.find(candidate =>
+      candidate?.Type === 'Subtitle' &&
+      candidate.Index === index &&
+      candidate.IsExternal === true &&
+      typeof candidate.DeliveryUrl === 'string' &&
+      candidate.DeliveryUrl.length > 0
+    )
+    if (stream) return stream
+  }
+  return null
+}
+
+export function resolveJellyfinDeliveryUrl(deliveryUrl, token, base = BASE) {
+  if (typeof deliveryUrl !== 'string' || !deliveryUrl) return null
+  try {
+    const configuredBase = new URL(base)
+    const target = new URL(deliveryUrl, `${configuredBase.href.replace(/\/?$/, '/')}`)
+    const basePath = configuredBase.pathname.replace(/\/$/, '')
+    if (target.origin !== configuredBase.origin) return null
+    if (basePath && target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) return null
+    if (target.username || target.password) return null
+    target.searchParams.delete('api_key')
+    target.searchParams.set('api_key', token)
+    target.hash = ''
+    return target
+  } catch {
+    return null
+  }
+}
+
+export function subtitleMutationError(status) {
+  if (status === 400) return { status: 422, error: 'Jellyfin rejected the subtitle file' }
+  if (status === 403) return { status: 403, error: 'Jellyfin denied subtitle changes' }
+  if (status === 404) return { status: 404, error: 'Media item or subtitle was not found' }
+  if (Number.isInteger(status) && status >= 500) return { status: 502, error: 'Jellyfin could not process the subtitle request' }
+  return { status: 502, error: 'Jellyfin subtitle request failed' }
+}
+
+function sendSubtitleMutationError(res, err, operation) {
+  const mapped = subtitleMutationError(err?.status)
+  console.error(`subtitle ${operation} failed`, { jellyfinStatus: err?.status ?? null, message: err?.message })
+  res.status(mapped.status).json({ error: mapped.error })
+}
 
 function filenameFrom(req) {
   const raw = req.get('X-Subtitle-Filename') || ''
@@ -97,6 +144,44 @@ async function jellyfinSubtitleMutation({ token, deviceId, itemId, method, body,
 }
 
 export function registerSubtitleRoutes(app, io) {
+  app.get('/api/library/items/:itemId/subtitles/:index/content', requireAuth, async (req, res) => {
+    const mediaItemId = String(req.params.itemId || '')
+    const indexText = String(req.params.index || '')
+    const index = /^\d+$/.test(indexText) ? Number(indexText) : -1
+    const mediaSourceId = typeof req.query.mediaSourceId === 'string' ? req.query.mediaSourceId : null
+    if (!ITEM_ID.test(mediaItemId) || !Number.isSafeInteger(index) || index < 0) {
+      return res.status(400).json({ error: 'Invalid subtitle' })
+    }
+
+    const { token, userId } = getJellyfin(req)
+    try {
+      const playback = await getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId })
+      const stream = findExternalSubtitleStream(playback, index, mediaSourceId)
+      if (!stream) return res.status(404).json({ error: 'External subtitle was not found' })
+      const target = resolveJellyfinDeliveryUrl(stream.DeliveryUrl, token)
+      if (!target) {
+        console.error('subtitle content rejected unsafe DeliveryUrl', { itemId: mediaItemId, index })
+        return res.status(502).json({ error: 'Jellyfin returned an invalid subtitle URL' })
+      }
+
+      const upstream = await fetch(target, {
+        headers: { 'X-Emby-Token': token },
+        redirect: 'error',
+      })
+      if (!upstream.ok) {
+        console.error('subtitle content fetch failed', { itemId: mediaItemId, index, jellyfinStatus: upstream.status })
+        if (upstream.status === 403 || upstream.status === 404) return res.status(upstream.status).json({ error: 'Subtitle content is unavailable' })
+        return res.status(502).json({ error: 'Could not fetch subtitle content' })
+      }
+      res.set('Content-Type', upstream.headers.get('content-type') || 'text/vtt; charset=utf-8')
+      res.set('Cache-Control', 'private, max-age=300')
+      res.send(await upstream.text())
+    } catch (err) {
+      console.error('subtitle content failed', { jellyfinStatus: err?.status ?? null, message: err?.message })
+      res.status(502).json({ error: 'Could not fetch subtitle content' })
+    }
+  })
+
   // Library detail management. Unlike the party routes below, these are scoped
   // to the authenticated Jellyfin user and can be used before playback starts.
   app.post('/api/library/items/:itemId/subtitles', requireAuth, rawSubtitle, async (req, res) => {
@@ -112,8 +197,7 @@ export function registerSubtitleRoutes(app, io) {
       })
       res.status(201).json({ ok: true, label: cleanLabel(upload.filename) })
     } catch (err) {
-      console.error('library subtitle upload', err.message)
-      res.status(500).json({ error: 'Could not store subtitle file' })
+      sendSubtitleMutationError(res, err, 'library upload')
     }
   })
 
@@ -126,8 +210,7 @@ export function registerSubtitleRoutes(app, io) {
       await jellyfinSubtitleMutation({ token, deviceId, itemId: mediaItemId, method: 'DELETE', subtitleIndex: index })
       res.json({ ok: true })
     } catch (err) {
-      console.error('library subtitle delete', err.message)
-      res.status(500).json({ error: 'Could not delete subtitle file' })
+      sendSubtitleMutationError(res, err, 'library delete')
     }
   })
 
@@ -171,8 +254,7 @@ export function registerSubtitleRoutes(app, io) {
         playback: session.playback,
       })
     } catch (err) {
-      console.error('subtitle upload', err.message)
-      res.status(500).json({ error: 'Could not store subtitle file' })
+      sendSubtitleMutationError(res, err, 'party upload')
     }
   })
 
@@ -203,8 +285,7 @@ export function registerSubtitleRoutes(app, io) {
       })
       res.json({ ok: true, session: publicSession(session), playback: session.playback })
     } catch (err) {
-      console.error('subtitle delete', err.message)
-      res.status(500).json({ error: 'Could not delete subtitle file' })
+      sendSubtitleMutationError(res, err, 'party delete')
     }
   })
 }

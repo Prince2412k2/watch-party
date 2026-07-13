@@ -15,7 +15,12 @@ dependencies:
 
   # Playback (libmpv, all-codec, GPU texture) — proven in the spike.
   media_kit: ^1.2.6
-  media_kit_video: ^2.0.1
+  # Includes the dedicated Linux GL render thread pending an upstream release.
+  media_kit_video:
+    git:
+      url: https://github.com/Predidit/media-kit.git
+      ref: cb869258576f9925d7cc0feebaa961b4c49bd3e1
+      path: media_kit_video
   media_kit_libs_video: ^1.0.7
 
   # Native WebRTC A/V — proven in the spike.
@@ -34,6 +39,8 @@ dependencies:
   flutter_riverpod: ^2.6.1
   go_router: ^14.8.1
   shared_preferences: ^2.5.3
+  url_launcher: ^6.3.1
+  file_picker: ^8.1.7
   # Resumable, background, restart-surviving downloads.
   background_downloader: ^9.2.0
 

@@ -354,7 +354,7 @@ class _ResultCardState extends State<_ResultCard> {
                       fit: StackFit.expand,
                       children: [
                         if (t.posterUrl != null)
-                          Image.network(
+                          AuthedNetworkImage(
                             t.posterUrl!,
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => const _PosterFallback(),
@@ -612,7 +612,7 @@ class _DetailSheet extends StatelessWidget {
                         width: 90,
                         height: 135,
                         child: title.posterUrl != null
-                            ? Image.network(
+                            ? AuthedNetworkImage(
                                 title.posterUrl!,
                                 fit: BoxFit.cover,
                                 errorBuilder: (_, _, _) =>

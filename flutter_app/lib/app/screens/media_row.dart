@@ -149,7 +149,7 @@ class MediaThumb extends StatelessWidget {
         width: width,
         height: height,
         child: posterUrl != null
-            ? Image.network(
+            ? AuthedNetworkImage(
                 posterUrl!,
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => _fallback,

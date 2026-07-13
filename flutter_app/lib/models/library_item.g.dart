@@ -70,6 +70,16 @@ _$LibraryItemImpl _$$LibraryItemImplFromJson(
   parentId: json['ParentId'] as String?,
   indexNumber: (json['IndexNumber'] as num?)?.toInt(),
   parentIndexNumber: (json['ParentIndexNumber'] as num?)?.toInt(),
+  people:
+      (json['People'] as List<dynamic>?)
+          ?.map((e) => Person.fromJson(e as Map<String, dynamic>))
+          .toList() ??
+      const <Person>[],
+  providerIds:
+      (json['ProviderIds'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(k, e as String),
+      ) ??
+      const <String, String>{},
 );
 
 Map<String, dynamic> _$$LibraryItemImplToJson(_$LibraryItemImpl instance) =>
@@ -98,4 +108,6 @@ Map<String, dynamic> _$$LibraryItemImplToJson(_$LibraryItemImpl instance) =>
       'ParentId': instance.parentId,
       'IndexNumber': instance.indexNumber,
       'ParentIndexNumber': instance.parentIndexNumber,
+      'People': instance.people,
+      'ProviderIds': instance.providerIds,
     };

@@ -42,6 +42,8 @@ mixin _$MediaStream {
   int? get height => throw _privateConstructorUsedError;
   @JsonKey(name: 'Width')
   int? get width => throw _privateConstructorUsedError;
+  @JsonKey(name: 'VideoRange')
+  String? get videoRange => throw _privateConstructorUsedError;
   @JsonKey(name: 'IsDefault')
   bool get isDefault => throw _privateConstructorUsedError;
   @JsonKey(name: 'IsForced')
@@ -76,6 +78,7 @@ abstract class $MediaStreamCopyWith<$Res> {
     @JsonKey(name: 'Channels') int? channels,
     @JsonKey(name: 'Height') int? height,
     @JsonKey(name: 'Width') int? width,
+    @JsonKey(name: 'VideoRange') String? videoRange,
     @JsonKey(name: 'IsDefault') bool isDefault,
     @JsonKey(name: 'IsForced') bool isForced,
     @JsonKey(name: 'IsExternal') bool isExternal,
@@ -106,6 +109,7 @@ class _$MediaStreamCopyWithImpl<$Res, $Val extends MediaStream>
     Object? channels = freezed,
     Object? height = freezed,
     Object? width = freezed,
+    Object? videoRange = freezed,
     Object? isDefault = null,
     Object? isForced = null,
     Object? isExternal = null,
@@ -148,6 +152,10 @@ class _$MediaStreamCopyWithImpl<$Res, $Val extends MediaStream>
                 ? _value.width
                 : width // ignore: cast_nullable_to_non_nullable
                       as int?,
+            videoRange: freezed == videoRange
+                ? _value.videoRange
+                : videoRange // ignore: cast_nullable_to_non_nullable
+                      as String?,
             isDefault: null == isDefault
                 ? _value.isDefault
                 : isDefault // ignore: cast_nullable_to_non_nullable
@@ -185,6 +193,7 @@ abstract class _$$MediaStreamImplCopyWith<$Res>
     @JsonKey(name: 'Channels') int? channels,
     @JsonKey(name: 'Height') int? height,
     @JsonKey(name: 'Width') int? width,
+    @JsonKey(name: 'VideoRange') String? videoRange,
     @JsonKey(name: 'IsDefault') bool isDefault,
     @JsonKey(name: 'IsForced') bool isForced,
     @JsonKey(name: 'IsExternal') bool isExternal,
@@ -214,6 +223,7 @@ class __$$MediaStreamImplCopyWithImpl<$Res>
     Object? channels = freezed,
     Object? height = freezed,
     Object? width = freezed,
+    Object? videoRange = freezed,
     Object? isDefault = null,
     Object? isForced = null,
     Object? isExternal = null,
@@ -256,6 +266,10 @@ class __$$MediaStreamImplCopyWithImpl<$Res>
             ? _value.width
             : width // ignore: cast_nullable_to_non_nullable
                   as int?,
+        videoRange: freezed == videoRange
+            ? _value.videoRange
+            : videoRange // ignore: cast_nullable_to_non_nullable
+                  as String?,
         isDefault: null == isDefault
             ? _value.isDefault
             : isDefault // ignore: cast_nullable_to_non_nullable
@@ -286,6 +300,7 @@ class _$MediaStreamImpl implements _MediaStream {
     @JsonKey(name: 'Channels') this.channels,
     @JsonKey(name: 'Height') this.height,
     @JsonKey(name: 'Width') this.width,
+    @JsonKey(name: 'VideoRange') this.videoRange,
     @JsonKey(name: 'IsDefault') this.isDefault = false,
     @JsonKey(name: 'IsForced') this.isForced = false,
     @JsonKey(name: 'IsExternal') this.isExternal = false,
@@ -325,6 +340,9 @@ class _$MediaStreamImpl implements _MediaStream {
   @JsonKey(name: 'Width')
   final int? width;
   @override
+  @JsonKey(name: 'VideoRange')
+  final String? videoRange;
+  @override
   @JsonKey(name: 'IsDefault')
   final bool isDefault;
   @override
@@ -336,7 +354,7 @@ class _$MediaStreamImpl implements _MediaStream {
 
   @override
   String toString() {
-    return 'MediaStream(index: $index, type: $type, codec: $codec, language: $language, displayTitle: $displayTitle, title: $title, channels: $channels, height: $height, width: $width, isDefault: $isDefault, isForced: $isForced, isExternal: $isExternal)';
+    return 'MediaStream(index: $index, type: $type, codec: $codec, language: $language, displayTitle: $displayTitle, title: $title, channels: $channels, height: $height, width: $width, videoRange: $videoRange, isDefault: $isDefault, isForced: $isForced, isExternal: $isExternal)';
   }
 
   @override
@@ -356,6 +374,8 @@ class _$MediaStreamImpl implements _MediaStream {
                 other.channels == channels) &&
             (identical(other.height, height) || other.height == height) &&
             (identical(other.width, width) || other.width == width) &&
+            (identical(other.videoRange, videoRange) ||
+                other.videoRange == videoRange) &&
             (identical(other.isDefault, isDefault) ||
                 other.isDefault == isDefault) &&
             (identical(other.isForced, isForced) ||
@@ -377,6 +397,7 @@ class _$MediaStreamImpl implements _MediaStream {
     channels,
     height,
     width,
+    videoRange,
     isDefault,
     isForced,
     isExternal,
@@ -407,6 +428,7 @@ abstract class _MediaStream implements MediaStream {
     @JsonKey(name: 'Channels') final int? channels,
     @JsonKey(name: 'Height') final int? height,
     @JsonKey(name: 'Width') final int? width,
+    @JsonKey(name: 'VideoRange') final String? videoRange,
     @JsonKey(name: 'IsDefault') final bool isDefault,
     @JsonKey(name: 'IsForced') final bool isForced,
     @JsonKey(name: 'IsExternal') final bool isExternal,
@@ -445,6 +467,9 @@ abstract class _MediaStream implements MediaStream {
   @override
   @JsonKey(name: 'Width')
   int? get width;
+  @override
+  @JsonKey(name: 'VideoRange')
+  String? get videoRange;
   @override
   @JsonKey(name: 'IsDefault')
   bool get isDefault;

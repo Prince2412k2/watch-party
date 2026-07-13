@@ -362,7 +362,11 @@ mixin _$LibraryItem {
   @JsonKey(name: 'IndexNumber')
   int? get indexNumber => throw _privateConstructorUsedError;
   @JsonKey(name: 'ParentIndexNumber')
-  int? get parentIndexNumber => throw _privateConstructorUsedError;
+  int? get parentIndexNumber => throw _privateConstructorUsedError; // Detail-page hero: cast/crew and external (IMDb/TMDb) links.
+  @JsonKey(name: 'People')
+  List<Person> get people => throw _privateConstructorUsedError;
+  @JsonKey(name: 'ProviderIds')
+  Map<String, String> get providerIds => throw _privateConstructorUsedError;
 
   /// Serializes this LibraryItem to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -406,6 +410,8 @@ abstract class $LibraryItemCopyWith<$Res> {
     @JsonKey(name: 'ParentId') String? parentId,
     @JsonKey(name: 'IndexNumber') int? indexNumber,
     @JsonKey(name: 'ParentIndexNumber') int? parentIndexNumber,
+    @JsonKey(name: 'People') List<Person> people,
+    @JsonKey(name: 'ProviderIds') Map<String, String> providerIds,
   });
 
   $UserItemDataCopyWith<$Res>? get userData;
@@ -450,6 +456,8 @@ class _$LibraryItemCopyWithImpl<$Res, $Val extends LibraryItem>
     Object? parentId = freezed,
     Object? indexNumber = freezed,
     Object? parentIndexNumber = freezed,
+    Object? people = null,
+    Object? providerIds = null,
   }) {
     return _then(
       _value.copyWith(
@@ -549,6 +557,14 @@ class _$LibraryItemCopyWithImpl<$Res, $Val extends LibraryItem>
                 ? _value.parentIndexNumber
                 : parentIndexNumber // ignore: cast_nullable_to_non_nullable
                       as int?,
+            people: null == people
+                ? _value.people
+                : people // ignore: cast_nullable_to_non_nullable
+                      as List<Person>,
+            providerIds: null == providerIds
+                ? _value.providerIds
+                : providerIds // ignore: cast_nullable_to_non_nullable
+                      as Map<String, String>,
           )
           as $Val,
     );
@@ -603,6 +619,8 @@ abstract class _$$LibraryItemImplCopyWith<$Res>
     @JsonKey(name: 'ParentId') String? parentId,
     @JsonKey(name: 'IndexNumber') int? indexNumber,
     @JsonKey(name: 'ParentIndexNumber') int? parentIndexNumber,
+    @JsonKey(name: 'People') List<Person> people,
+    @JsonKey(name: 'ProviderIds') Map<String, String> providerIds,
   });
 
   @override
@@ -647,6 +665,8 @@ class __$$LibraryItemImplCopyWithImpl<$Res>
     Object? parentId = freezed,
     Object? indexNumber = freezed,
     Object? parentIndexNumber = freezed,
+    Object? people = null,
+    Object? providerIds = null,
   }) {
     return _then(
       _$LibraryItemImpl(
@@ -746,6 +766,14 @@ class __$$LibraryItemImplCopyWithImpl<$Res>
             ? _value.parentIndexNumber
             : parentIndexNumber // ignore: cast_nullable_to_non_nullable
                   as int?,
+        people: null == people
+            ? _value._people
+            : people // ignore: cast_nullable_to_non_nullable
+                  as List<Person>,
+        providerIds: null == providerIds
+            ? _value._providerIds
+            : providerIds // ignore: cast_nullable_to_non_nullable
+                  as Map<String, String>,
       ),
     );
   }
@@ -781,11 +809,16 @@ class _$LibraryItemImpl implements _LibraryItem {
     @JsonKey(name: 'ParentId') this.parentId,
     @JsonKey(name: 'IndexNumber') this.indexNumber,
     @JsonKey(name: 'ParentIndexNumber') this.parentIndexNumber,
+    @JsonKey(name: 'People') final List<Person> people = const <Person>[],
+    @JsonKey(name: 'ProviderIds')
+    final Map<String, String> providerIds = const <String, String>{},
   }) : _imageTags = imageTags,
        _backdropImageTags = backdropImageTags,
        _genres = genres,
        _taglines = taglines,
-       _mediaSources = mediaSources;
+       _mediaSources = mediaSources,
+       _people = people,
+       _providerIds = providerIds;
 
   factory _$LibraryItemImpl.fromJson(Map<String, dynamic> json) =>
       _$$LibraryItemImplFromJson(json);
@@ -896,10 +929,29 @@ class _$LibraryItemImpl implements _LibraryItem {
   @override
   @JsonKey(name: 'ParentIndexNumber')
   final int? parentIndexNumber;
+  // Detail-page hero: cast/crew and external (IMDb/TMDb) links.
+  final List<Person> _people;
+  // Detail-page hero: cast/crew and external (IMDb/TMDb) links.
+  @override
+  @JsonKey(name: 'People')
+  List<Person> get people {
+    if (_people is EqualUnmodifiableListView) return _people;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_people);
+  }
+
+  final Map<String, String> _providerIds;
+  @override
+  @JsonKey(name: 'ProviderIds')
+  Map<String, String> get providerIds {
+    if (_providerIds is EqualUnmodifiableMapView) return _providerIds;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableMapView(_providerIds);
+  }
 
   @override
   String toString() {
-    return 'LibraryItem(id: $id, name: $name, type: $type, collectionType: $collectionType, serverId: $serverId, overview: $overview, productionYear: $productionYear, premiereDate: $premiereDate, officialRating: $officialRating, communityRating: $communityRating, criticRating: $criticRating, runTimeTicks: $runTimeTicks, container: $container, imageTags: $imageTags, backdropImageTags: $backdropImageTags, genres: $genres, taglines: $taglines, mediaSources: $mediaSources, userData: $userData, seriesId: $seriesId, seriesName: $seriesName, parentId: $parentId, indexNumber: $indexNumber, parentIndexNumber: $parentIndexNumber)';
+    return 'LibraryItem(id: $id, name: $name, type: $type, collectionType: $collectionType, serverId: $serverId, overview: $overview, productionYear: $productionYear, premiereDate: $premiereDate, officialRating: $officialRating, communityRating: $communityRating, criticRating: $criticRating, runTimeTicks: $runTimeTicks, container: $container, imageTags: $imageTags, backdropImageTags: $backdropImageTags, genres: $genres, taglines: $taglines, mediaSources: $mediaSources, userData: $userData, seriesId: $seriesId, seriesName: $seriesName, parentId: $parentId, indexNumber: $indexNumber, parentIndexNumber: $parentIndexNumber, people: $people, providerIds: $providerIds)';
   }
 
   @override
@@ -955,7 +1007,12 @@ class _$LibraryItemImpl implements _LibraryItem {
             (identical(other.indexNumber, indexNumber) ||
                 other.indexNumber == indexNumber) &&
             (identical(other.parentIndexNumber, parentIndexNumber) ||
-                other.parentIndexNumber == parentIndexNumber));
+                other.parentIndexNumber == parentIndexNumber) &&
+            const DeepCollectionEquality().equals(other._people, _people) &&
+            const DeepCollectionEquality().equals(
+              other._providerIds,
+              _providerIds,
+            ));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -986,6 +1043,8 @@ class _$LibraryItemImpl implements _LibraryItem {
     parentId,
     indexNumber,
     parentIndexNumber,
+    const DeepCollectionEquality().hash(_people),
+    const DeepCollectionEquality().hash(_providerIds),
   ]);
 
   /// Create a copy of LibraryItem
@@ -1028,6 +1087,8 @@ abstract class _LibraryItem implements LibraryItem {
     @JsonKey(name: 'ParentId') final String? parentId,
     @JsonKey(name: 'IndexNumber') final int? indexNumber,
     @JsonKey(name: 'ParentIndexNumber') final int? parentIndexNumber,
+    @JsonKey(name: 'People') final List<Person> people,
+    @JsonKey(name: 'ProviderIds') final Map<String, String> providerIds,
   }) = _$LibraryItemImpl;
 
   factory _LibraryItem.fromJson(Map<String, dynamic> json) =
@@ -1104,7 +1165,13 @@ abstract class _LibraryItem implements LibraryItem {
   int? get indexNumber;
   @override
   @JsonKey(name: 'ParentIndexNumber')
-  int? get parentIndexNumber;
+  int? get parentIndexNumber; // Detail-page hero: cast/crew and external (IMDb/TMDb) links.
+  @override
+  @JsonKey(name: 'People')
+  List<Person> get people;
+  @override
+  @JsonKey(name: 'ProviderIds')
+  Map<String, String> get providerIds;
 
   /// Create a copy of LibraryItem
   /// with the given fields replaced by the non-null parameter values.

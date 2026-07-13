@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import 'media_source.dart';
+import 'person.dart';
 
 part 'library_item.freezed.dart';
 part 'library_item.g.dart';
@@ -57,6 +58,11 @@ class LibraryItem with _$LibraryItem {
     @JsonKey(name: 'ParentId') String? parentId,
     @JsonKey(name: 'IndexNumber') int? indexNumber,
     @JsonKey(name: 'ParentIndexNumber') int? parentIndexNumber,
+    // Detail-page hero: cast/crew and external (IMDb/TMDb) links.
+    @JsonKey(name: 'People') @Default(<Person>[]) List<Person> people,
+    @JsonKey(name: 'ProviderIds')
+    @Default(<String, String>{})
+    Map<String, String> providerIds,
   }) = _LibraryItem;
 
   factory LibraryItem.fromJson(Map<String, dynamic> json) =>

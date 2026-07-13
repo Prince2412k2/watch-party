@@ -8,6 +8,7 @@ export 'tokens.dart';
 export 'widgets/app_button.dart';
 export 'widgets/app_dialog.dart';
 export 'widgets/app_text_field.dart';
+export 'widgets/authed_image.dart';
 export 'widgets/camera_grid.dart';
 export 'widgets/chat_panel.dart';
 export 'widgets/chip.dart';
