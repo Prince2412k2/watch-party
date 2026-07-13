@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,6 +21,23 @@ Future<void> showSubtitleManagerDialog(BuildContext context, String itemId) {
     context: context,
     builder: (_) => _SubtitleManagerDialog(itemId: itemId),
   );
+}
+
+/// The server rejects any upload that isn't valid UTF-8 (it decodes the bytes
+/// and 400s if it sees the replacement char). Subtitle files are frequently
+/// shipped in Latin-1 / Windows-1252, so normalise here: pass valid UTF-8
+/// through untouched, otherwise re-encode from Latin-1 (a superset of ASCII
+/// covering the accented Western-European characters typical of SRT files) so
+/// the text survives instead of failing the upload.
+List<int> _toUtf8(List<int> raw) {
+  try {
+    // Strict decode (allowMalformed defaults to false) throws on any byte
+    // sequence that isn't valid UTF-8.
+    final text = utf8.decode(raw);
+    return utf8.encode(text);
+  } on FormatException {
+    return utf8.encode(latin1.decode(raw, allowInvalid: true));
+  }
 }
 
 class _SubtitleManagerDialog extends ConsumerStatefulWidget {
@@ -74,7 +93,7 @@ class _SubtitleManagerDialogState
     try {
       await ref
           .read(apiClientProvider)
-          .uploadSubtitle(widget.itemId, file!.bytes!, file.name);
+          .uploadSubtitle(widget.itemId, _toUtf8(file!.bytes!), file.name);
       await _refresh();
     } catch (e) {
       if (mounted) setState(() => _error = e);
