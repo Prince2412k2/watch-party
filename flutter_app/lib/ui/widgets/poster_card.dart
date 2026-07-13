@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../tokens.dart';
+import 'authed_image.dart';
 
 /// FROZEN CONTRACT (PLAN §3.6). A library poster tile on an `sc.Card` frame with
 /// a hover scale (1.03) and an optional [heroTag] for poster→detail Hero flight.
@@ -53,7 +54,7 @@ class _PosterCardState extends State<PosterCard> {
           fit: StackFit.expand,
           children: [
             if (widget.imageUrl != null)
-              Image.network(
+              AuthedNetworkImage(
                 widget.imageUrl!,
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => const _PosterFallback(),

@@ -1,9 +1,0 @@
-[0m[0;4mWHO           [0m[0m[0;4m UID [0m[0m[0;4m USER       [0m[0m[0;4m PID    [0m[0m[0;4m COMM          [0m[0m[0;4m WHAT                                                    [0m[0m[0;4m WHY                                      [0m[0m[0;4m MODE [0m
-ModemManager   0    root        838     ModemManager   sleep                                                    ModemManager needs to reset devices       delay
-NetworkManager 0    root        741     NetworkManager sleep                                                    NetworkManager needs to turn off networks delay
-UPower         0    root        939     upowerd        sleep                                                    Pause device polling                      delay
-princepatel    1000 princepatel 2574981 gsd-media-keys handle-power-key:handle-suspend-key:handle-hibernate-key GNOME handling keypresses                 block
-princepatel    1000 princepatel 2574981 gsd-media-keys sleep                                                    GNOME handling keypresses                 delay
-princepatel    1000 princepatel 2574983 gsd-power      sleep                                                    GNOME needs to lock the screen            delay
-
-6 inhibitors listed.

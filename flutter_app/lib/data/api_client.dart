@@ -92,6 +92,18 @@ abstract class ApiClient {
   /// resumable download (`purpose: 'download'`).
   Future<StreamUrl> nativeStreamUrl(String itemId, {String purpose = 'stream'});
 
+  /// The audio/subtitle tracks available for [itemId] (`POST
+  /// /api/library/playback-info/:id`), optionally re-selecting a track.
+  Future<PlaybackInfo> playbackInfo(String itemId,
+      {int? audioStreamIndex, int? subtitleStreamIndex});
+
+  /// Upload an external subtitle file for [itemId]. [filename] is used only
+  /// to infer the subtitle format (its extension) and label.
+  Future<void> uploadSubtitle(String itemId, List<int> bytes, String filename);
+
+  /// Delete the external subtitle track at [streamIndex] on [itemId].
+  Future<void> deleteSubtitle(String itemId, int streamIndex);
+
   // ── LiveKit ─────────────────────────────────────────────────────────────
   Future<LiveKitToken> livekitToken(String partyId);
 
@@ -130,6 +142,23 @@ class DioApiClient implements ApiClient {
   final Dio _dio;
   final CookieJar _cookieJar;
 
+  // Flutter's Image.network uses its own HTTP client, not dio's — so it never
+  // carries the session cookie dio_cookie_manager attaches automatically.
+  // Cached here (refreshed on login/session-restore/logout) so image widgets
+  // can attach it explicitly via [cookieHeader]. See [AuthedNetworkImage].
+  String? _cookieHeader;
+
+  /// Current `Cookie:` header value for [baseUrl], or null if no session
+  /// cookie is stored yet. Synchronous — backed by [_cookieHeader], kept
+  /// fresh by [_refreshCookieHeader].
+  String? get cookieHeader => _cookieHeader;
+
+  Future<void> _refreshCookieHeader() async {
+    final cookies = await _cookieJar.loadForRequest(Uri.parse(baseUrl));
+    _cookieHeader =
+        cookies.isEmpty ? null : cookies.map((c) => '${c.name}=${c.value}').join('; ');
+  }
+
   String get _base => _dio.options.baseUrl;
 
   @override
@@ -167,6 +196,7 @@ class DioApiClient implements ApiClient {
     final res = await _dio.post('/api/auth/login',
         data: {'username': username, 'password': password});
     if (res.statusCode != 200) _fail(res, 'login');
+    await _refreshCookieHeader();
     return User.fromJson(res.data as Map<String, dynamic>);
   }
 
@@ -174,12 +204,14 @@ class DioApiClient implements ApiClient {
   Future<User> me() async {
     final res = await _dio.get('/api/auth/me');
     if (res.statusCode != 200) _fail(res, 'me');
+    await _refreshCookieHeader();
     return User.fromJson(res.data as Map<String, dynamic>);
   }
 
   @override
   Future<void> logout() async {
     await _dio.post('/api/auth/logout');
+    _cookieHeader = null;
   }
 
   @override
@@ -244,6 +276,38 @@ class DioApiClient implements ApiClient {
         queryParameters: {'purpose': purpose});
     if (res.statusCode != 200) _fail(res, 'nativeStreamUrl');
     return StreamUrl.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<PlaybackInfo> playbackInfo(String itemId,
+      {int? audioStreamIndex, int? subtitleStreamIndex}) async {
+    final res = await _dio.post('/api/library/playback-info/$itemId', data: {
+      if (audioStreamIndex != null) 'audioStreamIndex': audioStreamIndex,
+      if (subtitleStreamIndex != null) 'subtitleStreamIndex': subtitleStreamIndex,
+    });
+    if (res.statusCode != 200) _fail(res, 'playbackInfo');
+    return PlaybackInfo.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<void> uploadSubtitle(
+      String itemId, List<int> bytes, String filename) async {
+    final res = await _dio.post(
+      '/api/library/items/$itemId/subtitles',
+      data: Stream.fromIterable([bytes]),
+      options: Options(headers: {
+        Headers.contentLengthHeader: bytes.length,
+        'Content-Type': 'application/octet-stream',
+        'X-Subtitle-Filename': Uri.encodeComponent(filename),
+      }),
+    );
+    if (res.statusCode != 201) _fail(res, 'uploadSubtitle');
+  }
+
+  @override
+  Future<void> deleteSubtitle(String itemId, int streamIndex) async {
+    final res = await _dio.delete('/api/library/items/$itemId/subtitles/$streamIndex');
+    if (res.statusCode != 200) _fail(res, 'deleteSubtitle');
   }
 
   @override
