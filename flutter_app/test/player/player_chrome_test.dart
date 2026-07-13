@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/player/player_chrome.dart';
 import 'package:watchparty/player/player_controller.dart';
 import 'package:watchparty/data/mock_api_client.dart';
+import 'package:watchparty/models/playback_info.dart';
 import 'package:watchparty/models/trickplay_manifest.dart';
 import 'package:watchparty/ui/ui.dart';
 
@@ -21,8 +22,10 @@ class _SpyController implements PlayerController {
   final seeks = <Duration>[];
 
   final _tracksCtrl = StreamController<PlayerTracks>.broadcast();
+  final _positionCtrl = StreamController<Duration>.broadcast();
 
   void emitTracks(PlayerTracks t) => _tracksCtrl.add(t);
+  void emitPosition(Duration position) => _positionCtrl.add(position);
 
   @override
   Future<void> setVolume(double volume) async => volumes.add(volume);
@@ -46,10 +49,13 @@ class _SpyController implements PlayerController {
   @override
   Future<void> seek(Duration position) async => seeks.add(position);
   @override
-  Future<void> dispose() async => _tracksCtrl.close();
+  Future<void> dispose() async {
+    await _tracksCtrl.close();
+    await _positionCtrl.close();
+  }
 
   @override
-  Stream<Duration> get position => const Stream.empty();
+  Stream<Duration> get position => _positionCtrl.stream;
   @override
   Stream<Duration> get duration => const Stream.empty();
   @override
@@ -158,6 +164,51 @@ void main() {
     await tester.tap(find.text('Off'));
     await tester.pumpAndSettle();
     expect(c.subtitles, ['s0', null]);
+  });
+
+  testWidgets('external subtitle overlay follows playback and clears on Off', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final api = MockApiClient(
+      playback: const PlaybackInfo(
+        subtitleStreams: [
+          PlaybackTrack(index: 4, title: 'Uploaded English', isExternal: true),
+        ],
+      ),
+      subtitleContents: const {
+        4:
+            '00:00:01.000 --> 00:00:03.000\nFirst\n\n'
+            '00:00:01.500 --> 00:00:02.500\nSecond',
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: PlayerChrome(controller: c, itemId: 'movie', apiClient: api),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.subtitles));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Uploaded English'));
+    await tester.pumpAndSettle();
+    c.emitPosition(const Duration(seconds: 2));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('externalSubtitleOverlay')), findsOneWidget);
+    expect(find.text('First\nSecond'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.subtitles));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Off'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('externalSubtitleOverlay')), findsNothing);
+    expect(c.subtitles, [null]);
   });
 
   testWidgets('audio menu calls setAudioTrack', (tester) async {
