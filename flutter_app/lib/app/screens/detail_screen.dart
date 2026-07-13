@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -627,6 +629,16 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   void initState() {
     super.initState();
     _open();
+  }
+
+  @override
+  void dispose() {
+    // Leaving the solo player (back-navigation): stop playback. The controller
+    // is provider-owned and shared with the party screen, so we don't dispose
+    // it here — but nothing else pauses it when this route pops, which would
+    // otherwise leave audio playing in a screen the user already left.
+    unawaited(ref.read(playerControllerProvider).pause());
+    super.dispose();
   }
 
   Future<void> _open() async {

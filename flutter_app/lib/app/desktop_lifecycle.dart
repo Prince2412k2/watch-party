@@ -37,6 +37,12 @@ class DesktopLifecycle with WindowListener, TrayListener {
   bool _quitting = false;
   SharedPreferences? _prefs;
 
+  /// Invoked just before the window hides to the tray. The process (and libmpv)
+  /// keeps running when close-to-tray hides the window, so callers use this to
+  /// pause media playback — otherwise audio keeps playing from a window the
+  /// user believes they closed. Set from `main.dart` once the providers exist.
+  void Function()? onBeforeHide;
+
   Future<void> init() async {
     await windowManager.ensureInitialized();
     _prefs = await SharedPreferences.getInstance();
@@ -96,11 +102,13 @@ class DesktopLifecycle with WindowListener, TrayListener {
       await trayManager.setToolTip('Watchparty');
     }
     await trayManager.setContextMenu(
-      Menu(items: [
-        MenuItem(key: 'show', label: 'Show Watchparty'),
-        MenuItem.separator(),
-        MenuItem(key: 'quit', label: 'Quit'),
-      ]),
+      Menu(
+        items: [
+          MenuItem(key: 'show', label: 'Show Watchparty'),
+          MenuItem.separator(),
+          MenuItem(key: 'quit', label: 'Quit'),
+        ],
+      ),
     );
   }
 
@@ -123,7 +131,9 @@ class DesktopLifecycle with WindowListener, TrayListener {
       return;
     }
     // Hide instead of exiting: the process (and any in-flight downloads)
-    // keeps running in the tray until "Quit" is chosen explicitly.
+    // keeps running in the tray until "Quit" is chosen explicitly. Pause
+    // playback first so audio doesn't keep going in the hidden window.
+    onBeforeHide?.call();
     await _persistBounds();
     await windowManager.hide();
   }
