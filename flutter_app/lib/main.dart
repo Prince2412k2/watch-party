@@ -59,8 +59,9 @@ Future<void> main() async {
       // not the compile-time default — otherwise, once the user points at a
       // different backend, the socket handshake carries no cookie and the
       // server rejects party/sync actions as unauthenticated.
-      final cookies =
-          await apiClient.cookieJar.loadForRequest(Uri.parse(apiClient.baseUrl));
+      final cookies = await apiClient.cookieJar.loadForRequest(
+        Uri.parse(apiClient.baseUrl),
+      );
       if (cookies.isEmpty) return null;
       return cookies.map((c) => '${c.name}=${c.value}').join('; ');
     },
@@ -75,6 +76,15 @@ Future<void> main() async {
       ),
     ],
   );
+
+  // Pause playback when the window hides to the tray: close-to-tray keeps the
+  // process (and libmpv) alive, so without this, audio keeps playing from a
+  // window the user thinks they closed.
+  if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    DesktopLifecycle.instance.onBeforeHide = () {
+      container.read(playerControllerProvider).pause();
+    };
+  }
 
   // Restore a persisted session (GET /api/auth/me) before the first frame, so
   // the router never flashes `/login` for an already-authenticated user. Only
