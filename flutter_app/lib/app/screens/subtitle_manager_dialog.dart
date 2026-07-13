@@ -23,21 +23,26 @@ Future<void> showSubtitleManagerDialog(BuildContext context, String itemId) {
   );
 }
 
-/// The server rejects any upload that isn't valid UTF-8 (it decodes the bytes
-/// and 400s if it sees the replacement char). Subtitle files are frequently
-/// shipped in Latin-1 / Windows-1252, so normalise here: pass valid UTF-8
-/// through untouched, otherwise re-encode from Latin-1 (a superset of ASCII
-/// covering the accented Western-European characters typical of SRT files) so
-/// the text survives instead of failing the upload.
+/// Normalise subtitle bytes so the server accepts them. The server 400s any
+/// upload whose UTF-8 decode contains the replacement char U+FFFD, which it
+/// treats as "not UTF-8". Two things trip that:
+///   1. Files genuinely in Latin-1 / Windows-1252 (common for SRT) — decode
+///      strictly as UTF-8, and on failure re-decode as Latin-1 (a superset of
+///      ASCII covering the accented Western-European glyphs typical of SRTs).
+///   2. Files that ARE valid UTF-8 but contain a stray U+FFFD baked in by
+///      whatever produced them — strict decode succeeds, so we must strip the
+///      replacement char ourselves or the server rejects an otherwise-fine
+///      file over a single bad glyph.
 List<int> _toUtf8(List<int> raw) {
+  String text;
   try {
     // Strict decode (allowMalformed defaults to false) throws on any byte
     // sequence that isn't valid UTF-8.
-    final text = utf8.decode(raw);
-    return utf8.encode(text);
+    text = utf8.decode(raw);
   } on FormatException {
-    return utf8.encode(latin1.decode(raw, allowInvalid: true));
+    text = latin1.decode(raw, allowInvalid: true);
   }
+  return utf8.encode(text.replaceAll('\u{FFFD}', ''));
 }
 
 class _SubtitleManagerDialog extends ConsumerStatefulWidget {
