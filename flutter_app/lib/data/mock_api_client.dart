@@ -4,10 +4,14 @@ import 'api_client.dart';
 /// In-memory [ApiClient] used by the gallery, widget tests, and any epic that
 /// wants to build UI before its real endpoint lands. Deterministic, no network.
 class MockApiClient implements ApiClient {
-  MockApiClient({this.baseUrl = 'http://mock.local'});
+  MockApiClient({
+    this.baseUrl = 'http://mock.local',
+    this.trickplayManifest,
+  });
 
   @override
   String baseUrl;
+  final TrickplayManifest? trickplayManifest;
 
   static const _user = User(userId: 'mock-user', name: 'root', isAdmin: true);
 
@@ -65,6 +69,22 @@ class MockApiClient implements ApiClient {
     final q = query.toLowerCase();
     return _catalog.where((e) => e.name.toLowerCase().contains(q)).toList();
   }
+
+  @override
+  Future<TrickplayManifest> trickplay(String itemId,
+          {String? mediaSourceId}) async =>
+      trickplayManifest ?? TrickplayManifest(
+        itemId: itemId,
+        mediaSourceId: mediaSourceId ?? itemId,
+        width: 320,
+        height: 180,
+        tileWidth: 10,
+        tileHeight: 10,
+        thumbnailCount: 100,
+        intervalMs: 10000,
+        sheetCount: 1,
+        sheetUrlTemplate: '/sprites/{sheetIndex}.jpg',
+      );
 
   @override
   String imageUrl(String itemId,

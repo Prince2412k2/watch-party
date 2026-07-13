@@ -320,6 +320,9 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     final stage = watching
         ? PlayerView(
             controller: controller,
+            itemId: party.mediaItemId,
+            mediaSourceId: party.mediaSourceId,
+            apiClient: ref.watch(apiClientProvider),
             canControl: canControl,
             title: party.mediaItemId,
             onBack: () => _confirmLeave(context, isHost: isHost),

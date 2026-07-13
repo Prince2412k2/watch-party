@@ -3,6 +3,7 @@ import {
   getItems, getItemChildren, buildHlsUrl, BASE,
   getViews, getResumeItems, getNextUp, getLatest, getItemDetail,
   getPlaybackInfo, normalizePlaybackInfo,
+  selectTrickplayProfile, getTrickplayProfile,
 } from './jellyfin.js'
 
 // Jellyfin item ids are 32-char hex GUIDs (dashless), though the dashed form is
@@ -10,6 +11,11 @@ import {
 const JELLYFIN_ID = /^[0-9a-f]{32}$/i
 const JELLYFIN_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const isJellyfinId = (v) => typeof v === 'string' && (JELLYFIN_ID.test(v) || JELLYFIN_GUID.test(v))
+const parseBoundedInteger = (value, max) => {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed <= max ? parsed : null
+}
 
 // Known Jellyfin image types — the only values allowed to be interpolated into
 // the internal /Items/:id/Images/:type URL.
@@ -31,6 +37,56 @@ function stripApiKey(text) {
 }
 
 export function registerLibraryRoutes(app) {
+  app.get('/api/library/items/:itemId/trickplay', requireAuth, async (req, res) => {
+    const { token, userId } = getJellyfin(req)
+    const { itemId } = req.params
+    const { mediaSourceId } = req.query
+    if (!isJellyfinId(itemId) || (mediaSourceId != null && !isJellyfinId(mediaSourceId))) return res.status(400).end()
+
+    try {
+      const item = await getItemDetail(token, userId, itemId)
+      const profile = selectTrickplayProfile(item, mediaSourceId)
+      if (!profile) return res.status(404).end()
+      res.set('Cache-Control', 'private, max-age=300')
+      res.json({
+        itemId,
+        mediaSourceId: profile.mediaSourceId,
+        ...profile,
+        sheetUrlTemplate: `/api/library/items/${encodeURIComponent(itemId)}/trickplay/${profile.width}/{sheetIndex}.jpg?mediaSourceId=${encodeURIComponent(profile.mediaSourceId)}`,
+      })
+    } catch (err) {
+      console.error('library/trickplay', err.message)
+      res.status(502).json({ error: 'Failed to fetch trickplay metadata' })
+    }
+  })
+
+  app.get('/api/library/items/:itemId/trickplay/:width/:sheetIndex.jpg', requireAuth, async (req, res) => {
+    const { token, userId } = getJellyfin(req)
+    const { itemId } = req.params
+    const { mediaSourceId } = req.query
+    const width = parseBoundedInteger(req.params.width, 8192)
+    const sheetIndex = parseBoundedInteger(req.params.sheetIndex, 1_000_000)
+    if (!isJellyfinId(itemId) || !isJellyfinId(mediaSourceId) || !width || sheetIndex == null) return res.status(400).end()
+
+    try {
+      const item = await getItemDetail(token, userId, itemId)
+      const profile = getTrickplayProfile(item, mediaSourceId, width)
+      if (!profile || sheetIndex >= profile.sheetCount) return res.status(404).end()
+
+      const params = new URLSearchParams({ MediaSourceId: mediaSourceId })
+      const upstream = await fetch(`${BASE}/Videos/${encodeURIComponent(itemId)}/Trickplay/${width}/${sheetIndex}.jpg?${params}`, {
+        headers: { 'X-Emby-Token': token },
+      })
+      if (!upstream.ok) return res.status(upstream.status).end()
+      res.set('Content-Type', upstream.headers.get('content-type') || 'image/jpeg')
+      res.set('Cache-Control', 'private, max-age=86400')
+      res.send(Buffer.from(await upstream.arrayBuffer()))
+    } catch (err) {
+      console.error('library/trickplay-sheet', err.message)
+      res.status(502).end()
+    }
+  })
+
   // Aggregated landing data: libraries + Continue Watching + Next Up
   app.get('/api/library/home', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
