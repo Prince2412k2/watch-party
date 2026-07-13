@@ -54,7 +54,7 @@ services:
     volumes:
       - ./jellyfin/config:/config
       - ./media:/media
-      - ${MEDIA_ROOT:-./media-data}/media:/servarr-media:ro
+      - ${MEDIA_ROOT:-./media-data}/media:/servarr-media
     environment:
       - JELLYFIN_PublishedServerUrl=https://watch.sniffkin.tech/jellyfin
 
