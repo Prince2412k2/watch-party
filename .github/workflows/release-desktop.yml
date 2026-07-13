@@ -15,11 +15,10 @@ on:
   push:
     tags:
       - "v*"
-  pull_request:
-    branches:
-      - main # build (artifacts only) on PRs into main; the release job stays tag-gated
-    paths:
-      - "flutter_app/**"
+  # No pull_request trigger: PR validation (build + package .dmg/.zip) is handled
+  # by the Desktop Apps workflow. This workflow is release-only — building here on
+  # every PR duplicated that build. It runs on version tags (publish a Release)
+  # and on manual dispatch (build artifacts only).
   workflow_dispatch:
     inputs:
       version:
