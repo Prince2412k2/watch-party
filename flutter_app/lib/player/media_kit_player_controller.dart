@@ -118,6 +118,76 @@ class MediaKitPlayerController implements PlayerController {
   /// Current playback rate (1.0 = normal). Additive.
   double get rateNow => _player.state.rate;
 
+  // ── Hardware/software decode toggle (additive) ────────────────────────────
+  // libmpv's `hwdec` property is runtime-settable, so the chrome can flip
+  // between GPU and CPU decode without reopening the file. We mirror the
+  // construction-time rationale (see [videoController]): the "on" value is
+  // `auto-safe` — GPU decode via copy-back methods that stay compatible with
+  // the software-rendering fallback and keep playback realtime. "off" is `no`
+  // (pure software decode). Tracked in a field so the UI can render a
+  // checkmark; seeded from [_enableHwAccel].
+  late bool _hwdecEnabled = _enableHwAccel;
+
+  /// Whether hardware (GPU) video decoding is currently enabled. Additive.
+  bool get hardwareDecodingEnabled => _hwdecEnabled;
+
+  /// Toggle hardware vs software video decoding at runtime via libmpv's
+  /// `hwdec` property. Additive (not in the frozen contract).
+  Future<void> setHardwareDecoding(bool enabled) async {
+    if (_disposed) return;
+    _hwdecEnabled = enabled;
+    await _setMpvProperty('hwdec', enabled ? 'auto-safe' : 'no');
+  }
+
+  /// Set a raw libmpv property. media_kit only exposes arbitrary-property
+  /// access on the native platform player (`NativePlayer.setProperty`), reached
+  /// via `player.platform`; the abstract [mk.Player] surface has no generic
+  /// setter. No-op if the platform player isn't the native one.
+  Future<void> _setMpvProperty(String property, String value) async {
+    final platform = _player.platform;
+    if (platform is mk.NativePlayer) {
+      await platform.setProperty(property, value);
+    }
+  }
+
+  // ── Subtitle appearance (additive) ────────────────────────────────────────
+  // Backed by libmpv properties: `sub-scale` (size), `sub-pos` (0–150, 100 =
+  // bottom), `sub-delay` (seconds, may be negative). Tracked in fields so the
+  // settings panel can reflect current values.
+  double _subScale = 1.0;
+  int _subPos = 100;
+  double _subDelay = 0.0;
+
+  /// Current subtitle scale (1.0 = default). Additive.
+  double get subtitleScale => _subScale;
+
+  /// Current subtitle vertical position (0–150; 100 = bottom). Additive.
+  int get subtitlePosition => _subPos;
+
+  /// Current subtitle timing offset in seconds (may be negative). Additive.
+  double get subtitleDelay => _subDelay;
+
+  /// Set subtitle scale via libmpv `sub-scale`. Additive.
+  Future<void> setSubtitleScale(double scale) async {
+    if (_disposed) return;
+    _subScale = scale;
+    await _setMpvProperty('sub-scale', scale.toString());
+  }
+
+  /// Set subtitle vertical position via libmpv `sub-pos` (0–150). Additive.
+  Future<void> setSubtitlePosition(int pos) async {
+    if (_disposed) return;
+    _subPos = pos;
+    await _setMpvProperty('sub-pos', pos.toString());
+  }
+
+  /// Set subtitle timing offset in seconds via libmpv `sub-delay`. Additive.
+  Future<void> setSubtitleDelay(double seconds) async {
+    if (_disposed) return;
+    _subDelay = seconds;
+    await _setMpvProperty('sub-delay', seconds.toString());
+  }
+
   void _wire() {
     _subs.add(_player.stream.tracks.listen(_onTracks));
     _subs.add(

@@ -30,7 +30,11 @@ class _SpyController implements PlayerController {
   Future<void> setSubtitle(String? trackId) async => subtitles.add(trackId);
 
   @override
-  Future<void> open(String url, {Duration startAt = Duration.zero, bool autoplay = false}) async {}
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {}
   @override
   Future<void> play() async {}
   @override
@@ -81,13 +85,12 @@ void main() {
       PlayerTrack(id: 'a0', type: 'audio', title: 'English'),
       PlayerTrack(id: 'a1', type: 'audio', title: 'Commentary'),
     ],
-    subtitle: [
-      PlayerTrack(id: 's0', type: 'subtitle', title: 'English SDH'),
-    ],
+    subtitle: [PlayerTrack(id: 's0', type: 'subtitle', title: 'English SDH')],
   );
 
-  testWidgets('mute toggle calls setVolume(0) then restores the prior level',
-      (tester) async {
+  testWidgets('mute toggle calls setVolume(0) then restores the prior level', (
+    tester,
+  ) async {
     final c = _SpyController();
     await pumpChrome(tester, c);
 
@@ -107,25 +110,33 @@ void main() {
     final c = _SpyController();
     await pumpChrome(tester, c);
 
-    await tester.drag(find.byKey(const Key('volumeSlider')), const Offset(-40, 0));
+    await tester.drag(
+      find.byKey(const Key('volumeSlider')),
+      const Offset(-40, 0),
+    );
     await tester.pump();
     expect(c.volumes, isNotEmpty);
     expect(c.volumes.last, lessThan(100.0));
   });
 
-  testWidgets('speed menu calls setRate', (tester) async {
+  testWidgets('speed control is gone; decode + subtitle-settings hidden for a '
+      'non-media_kit controller', (tester) async {
     final c = _SpyController();
     await pumpChrome(tester, c);
 
-    await tester.tap(find.byIcon(Icons.speed));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('1.5×'));
-    await tester.pumpAndSettle();
-    expect(c.rates, [1.5]);
+    // The playback-speed affordance was removed entirely.
+    expect(find.byIcon(Icons.speed), findsNothing);
+
+    // Decode (memory) and the subtitle-settings gear (tune) are libmpv-only —
+    // guarded behind `is MediaKitPlayerController`, so a spy/mock controller
+    // renders neither, and nothing throws.
+    expect(find.byIcon(Icons.memory), findsNothing);
+    expect(find.byIcon(Icons.tune), findsNothing);
   });
 
-  testWidgets('subtitle menu calls setSubtitle for a track and for Off',
-      (tester) async {
+  testWidgets('subtitle menu calls setSubtitle for a track and for Off', (
+    tester,
+  ) async {
     final c = _SpyController();
     await pumpChrome(tester, c);
     c.emitTracks(tracks);
@@ -159,8 +170,9 @@ void main() {
     expect(c.audioTracks, ['a1']);
   });
 
-  testWidgets('track menus are hidden when the media has no extra tracks',
-      (tester) async {
+  testWidgets('track menus are hidden when the media has no extra tracks', (
+    tester,
+  ) async {
     final c = _SpyController();
     await pumpChrome(tester, c);
     c.emitTracks(const PlayerTracks());

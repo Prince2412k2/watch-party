@@ -10,8 +10,9 @@ import 'player_controller.dart';
 
 /// The minimal, monochrome transport bar for [PlayerController] (E4.2/E4.3).
 /// Sits as an overlay on top of `VideoView` — play/pause, scrubber, time,
-/// volume, playback rate, fullscreen, and audio/subtitle track menus. Reads
-/// state off the controller's streams; writes back through its methods.
+/// volume, decode toggle, fullscreen, and audio/subtitle track menus (plus a
+/// subtitle appearance panel). Reads state off the controller's streams; writes
+/// back through its methods.
 ///
 /// Auto-hides after a short idle period while playing (mouse movement / tap
 /// wakes it), matches the web `DesktopControlBar`'s flat, single-row layout
@@ -77,9 +78,15 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
   /// Volume to restore when unmuting (last non-zero level the user chose).
   double _preMuteVolume = 100;
-  double _rate = 1.0;
   String? _selectedAudio;
   String? _selectedSubtitle;
+
+  // Decode + subtitle-appearance state — only meaningful for the concrete
+  // MediaKitPlayerController (seeded in initState when it's the live player).
+  bool _hwDecoding = true;
+  double _subScale = 1.0;
+  int _subPos = 100;
+  double _subDelay = 0.0;
 
   Duration? _dragPosition;
 
@@ -100,30 +107,37 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (c is MediaKitPlayerController) {
       _volume = c.volumeNow;
       _preMuteVolume = _volume > 0 ? _volume : 100;
-      _rate = c.rateNow;
       _selectedAudio = c.currentAudioTrackId;
       _selectedSubtitle = c.currentSubtitleTrackId;
+      _hwDecoding = c.hardwareDecodingEnabled;
+      _subScale = c.subtitleScale;
+      _subPos = c.subtitlePosition;
+      _subDelay = c.subtitleDelay;
     }
 
     _subs.add(c.position.listen((p) => setState(() => _position = p)));
     _subs.add(c.duration.listen((d) => setState(() => _duration = d)));
-    _subs.add(c.playing.listen((p) {
-      setState(() => _playing = p);
-      _scheduleIdle();
-    }));
+    _subs.add(
+      c.playing.listen((p) {
+        setState(() => _playing = p);
+        _scheduleIdle();
+      }),
+    );
     _subs.add(c.buffering.listen((b) => setState(() => _buffering = b)));
     _subs.add(c.completed.listen((v) => setState(() => _completed = v)));
-    _subs.add(c.tracks.listen((t) {
-      setState(() {
-        _tracks = t;
-        // Re-read the real selection each time the track set changes (a fresh
-        // file resets libmpv's default audio/subtitle pick).
-        if (c is MediaKitPlayerController) {
-          _selectedAudio = c.currentAudioTrackId;
-          _selectedSubtitle = c.currentSubtitleTrackId;
-        }
-      });
-    }));
+    _subs.add(
+      c.tracks.listen((t) {
+        setState(() {
+          _tracks = t;
+          // Re-read the real selection each time the track set changes (a fresh
+          // file resets libmpv's default audio/subtitle pick).
+          if (c is MediaKitPlayerController) {
+            _selectedAudio = c.currentAudioTrackId;
+            _selectedSubtitle = c.currentSubtitleTrackId;
+          }
+        });
+      }),
+    );
 
     // media_kit surfaces decode/network errors on an additive `errors` stream
     // (not part of the frozen contract) — drive the E4.3 error overlay off it
@@ -177,7 +191,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
     final target = _position + delta;
     final clamped = target < Duration.zero
         ? Duration.zero
-        : (_duration > Duration.zero && target > _duration ? _duration : target);
+        : (_duration > Duration.zero && target > _duration
+              ? _duration
+              : target);
     await widget.controller.seek(clamped);
     widget.onSeek?.call(clamped);
     _wake();
@@ -212,10 +228,57 @@ class _PlayerChromeState extends State<PlayerChrome> {
     }
   }
 
-  Future<void> _setRate(double r) async {
-    if (!widget.canControl) return;
-    setState(() => _rate = r);
-    await widget.controller.setRate(r);
+  Future<void> _setHardwareDecoding(bool enabled) async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    setState(() => _hwDecoding = enabled);
+    await c.setHardwareDecoding(enabled);
+    _wake();
+  }
+
+  Future<void> _setSubtitleScale(double v) async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    setState(() => _subScale = v);
+    await c.setSubtitleScale(v);
+    _wake();
+  }
+
+  Future<void> _setSubtitlePosition(int v) async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    setState(() => _subPos = v);
+    await c.setSubtitlePosition(v);
+    _wake();
+  }
+
+  Future<void> _setSubtitleDelay(double v) async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    setState(() => _subDelay = v);
+    await c.setSubtitleDelay(v);
+    _wake();
+  }
+
+  /// Opens a compact panel with sliders for subtitle size, vertical position,
+  /// and timing offset. Only wired when the live MediaKitPlayerController is in
+  /// use. Kept in a Material dialog (the chrome lives under a Scaffold), so the
+  /// sliders are ordinary Material [Slider]s.
+  Future<void> _openSubtitleSettings() async {
+    if (widget.controller is! MediaKitPlayerController) return;
+    _idleTimer?.cancel(); // keep the chrome awake while the dialog is open
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (_) => _SubtitleSettingsDialog(
+        scale: _subScale,
+        position: _subPos,
+        delay: _subDelay,
+        onScale: _setSubtitleScale,
+        onPosition: _setSubtitlePosition,
+        onDelay: _setSubtitleDelay,
+      ),
+    );
     _wake();
   }
 
@@ -287,12 +350,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
             children: [
               // Center buffering spinner / error state (E4.3).
               if (_error != null)
-                _ErrorOverlay(message: _error!, onDismiss: () => setState(() => _error = null))
+                _ErrorOverlay(
+                  message: _error!,
+                  onDismiss: () => setState(() => _error = null),
+                )
               else if (_buffering && !_completed)
                 const _BufferingSpinner(),
 
-              if (_completed && !_buffering)
-                const SizedBox.shrink(),
+              if (_completed && !_buffering) const SizedBox.shrink(),
 
               // Top bar: back + title.
               _AnimatedEdge(
@@ -311,11 +376,21 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   position: _dragPosition ?? _position,
                   duration: _duration,
                   volume: _volume,
-                  rate: _rate,
                   tracks: _tracks,
                   selectedAudio: _selectedAudio,
                   selectedSubtitle: _selectedSubtitle,
                   isFullscreen: widget.isFullscreen,
+                  // Decode + subtitle-settings are additive libmpv features:
+                  // only surface them when the live MediaKitPlayerController is
+                  // in use (mock/spy controllers get the base bar).
+                  hardwareDecoding: _hwDecoding,
+                  onDecode: widget.controller is MediaKitPlayerController
+                      ? _setHardwareDecoding
+                      : null,
+                  onSubtitleSettings:
+                      widget.controller is MediaKitPlayerController
+                      ? _openSubtitleSettings
+                      : null,
                   onTogglePlay: _togglePlay,
                   onSeekPreview: (p) => setState(() => _dragPosition = p),
                   onSeekCommit: (p) {
@@ -324,7 +399,6 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   },
                   onVolume: _setVolume,
                   onToggleMute: _toggleMute,
-                  onRate: _setRate,
                   onAudio: _setAudio,
                   onSubtitle: _setSubtitle,
                   onToggleFullscreen: widget.onToggleFullscreen,
@@ -339,7 +413,11 @@ class _PlayerChromeState extends State<PlayerChrome> {
 }
 
 class _AnimatedEdge extends StatelessWidget {
-  const _AnimatedEdge({required this.visible, required this.alignment, required this.child});
+  const _AnimatedEdge({
+    required this.visible,
+    required this.alignment,
+    required this.child,
+  });
   final bool visible;
   final Alignment alignment;
   final Widget child;
@@ -370,13 +448,20 @@ class _TopBar extends StatelessWidget {
     if (onBack == null && title == null) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
       // Flat near-black translucent bar — no gradients per the design system.
       decoration: const BoxDecoration(color: _kChromeScrim),
       child: Row(
         children: [
           if (onBack != null)
-            _ChromeIconButton(icon: Icons.arrow_back, tooltip: 'Back', onPressed: onBack),
+            _ChromeIconButton(
+              icon: Icons.arrow_back,
+              tooltip: 'Back',
+              onPressed: onBack,
+            ),
           if (title != null) ...[
             const SizedBox(width: AppSpacing.sm),
             Expanded(
@@ -401,17 +486,18 @@ class _TransportBar extends StatelessWidget {
     required this.position,
     required this.duration,
     required this.volume,
-    required this.rate,
     required this.tracks,
     required this.selectedAudio,
     required this.selectedSubtitle,
     required this.isFullscreen,
+    required this.hardwareDecoding,
+    required this.onDecode,
+    required this.onSubtitleSettings,
     required this.onTogglePlay,
     required this.onSeekPreview,
     required this.onSeekCommit,
     required this.onVolume,
     required this.onToggleMute,
-    required this.onRate,
     required this.onAudio,
     required this.onSubtitle,
     required this.onToggleFullscreen,
@@ -422,17 +508,26 @@ class _TransportBar extends StatelessWidget {
   final Duration position;
   final Duration duration;
   final double volume;
-  final double rate;
   final PlayerTracks tracks;
   final String? selectedAudio;
   final String? selectedSubtitle;
   final bool isFullscreen;
+
+  /// Whether hardware decode is active. Only rendered when [onDecode] != null.
+  final bool hardwareDecoding;
+
+  /// Toggle hardware/software decode. Null hides the decode menu (non-media_kit
+  /// controller).
+  final ValueChanged<bool>? onDecode;
+
+  /// Opens the subtitle appearance panel. Null hides the gear (non-media_kit).
+  final VoidCallback? onSubtitleSettings;
+
   final VoidCallback onTogglePlay;
   final ValueChanged<Duration> onSeekPreview;
   final ValueChanged<Duration> onSeekCommit;
   final ValueChanged<double> onVolume;
   final VoidCallback onToggleMute;
-  final ValueChanged<double> onRate;
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onSubtitle;
   final VoidCallback? onToggleFullscreen;
@@ -441,7 +536,12 @@ class _TransportBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.sm,
+        AppSpacing.md,
+        AppSpacing.sm,
+      ),
       // Flat near-black translucent bar — no gradients per the design system.
       decoration: const BoxDecoration(color: _kChromeBar),
       child: Column(
@@ -464,11 +564,23 @@ class _TransportBar extends StatelessWidget {
               const SizedBox(width: AppSpacing.xs),
               Text(
                 '${_fmt(position)} / ${_fmt(duration)}',
-                style: AppTheme.mono.copyWith(color: AppColors.dim, fontSize: 12),
+                style: AppTheme.mono.copyWith(
+                  color: AppColors.dim,
+                  fontSize: 12,
+                ),
               ),
               const Spacer(),
-              _VolumeControl(volume: volume, onChanged: onVolume, onToggleMute: onToggleMute),
-              _RateMenu(rate: rate, enabled: canControl, onChanged: onRate),
+              _VolumeControl(
+                volume: volume,
+                onChanged: onVolume,
+                onToggleMute: onToggleMute,
+              ),
+              if (onDecode != null)
+                _DecodeMenu(
+                  hardware: hardwareDecoding,
+                  enabled: canControl,
+                  onChanged: onDecode!,
+                ),
               if (tracks.audio.isNotEmpty)
                 _TrackMenu(
                   icon: Icons.audiotrack,
@@ -488,6 +600,12 @@ class _TransportBar extends StatelessWidget {
                   enabled: canControl,
                   allowNone: true,
                   onChanged: onSubtitle,
+                ),
+              if (onSubtitleSettings != null)
+                _ChromeIconButton(
+                  icon: Icons.tune,
+                  tooltip: 'Subtitle settings',
+                  onPressed: canControl ? onSubtitleSettings : null,
                 ),
               if (onToggleFullscreen != null)
                 _ChromeIconButton(
@@ -614,53 +732,194 @@ class _VolumeControl extends StatelessWidget {
   }
 }
 
-class _RateMenu extends StatelessWidget {
-  const _RateMenu({required this.rate, required this.enabled, required this.onChanged});
-  final double rate;
+/// Hardware/software video-decode toggle. Mirrors the audio/subtitle menu
+/// idiom: a `PopupMenuButton` fronted by a `_ChromeIconButton`, with a
+/// checkmark on the active choice.
+class _DecodeMenu extends StatelessWidget {
+  const _DecodeMenu({
+    required this.hardware,
+    required this.enabled,
+    required this.onChanged,
+  });
+  final bool hardware;
   final bool enabled;
-  final ValueChanged<double> onChanged;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<double>(
-      tooltip: 'Playback speed',
+    return PopupMenuButton<bool>(
+      tooltip: 'Decode',
       enabled: enabled,
-      initialValue: rate,
+      initialValue: hardware,
       onSelected: onChanged,
-      itemBuilder: (context) => _PlayerChromeStateAccessor.rates
-          .map((r) => PopupMenuItem<double>(
-                value: r,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (r == rate) const Icon(Icons.check, size: 16, color: AppColors.accent),
-                    if (r == rate) const SizedBox(width: AppSpacing.xs),
-                    Text(_fmtRate(r), style: AppTheme.body),
-                  ],
-                ),
-              ))
-          .toList(),
+      itemBuilder: (context) => [
+        _item(true, 'Hardware'),
+        _item(false, 'Software'),
+      ],
       child: _ChromeIconButton(
-        icon: Icons.speed,
-        tooltip: 'Playback speed',
+        icon: Icons.memory,
+        tooltip: 'Decode',
         onPressed: null,
         forceEnabled: enabled,
-        label: rate == 1.0 ? null : _fmtRate(rate),
       ),
     );
   }
 
-  /// "0.5×", "1×", "1.25×" — drop the trailing ".0" and use a true multiply sign.
-  static String _fmtRate(double r) {
-    final s = r == r.roundToDouble() ? r.toStringAsFixed(0) : r.toString();
-    return '$s×';
-  }
+  PopupMenuItem<bool> _item(bool value, String label) => PopupMenuItem<bool>(
+    value: value,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (value == hardware)
+          const Icon(Icons.check, size: 16, color: AppColors.accent),
+        if (value == hardware) const SizedBox(width: AppSpacing.xs),
+        Text(label, style: AppTheme.body),
+      ],
+    ),
+  );
 }
 
-/// Small holder so [_RateMenu] can reach the canonical rate list without
-/// threading it through another constructor param.
-abstract final class _PlayerChromeStateAccessor {
-  static const rates = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+/// Compact subtitle-appearance panel: size, vertical position, and timing
+/// offset sliders. Written as a Material dialog (the chrome lives under a
+/// Scaffold), so plain Material [Slider]s are safe here.
+class _SubtitleSettingsDialog extends StatefulWidget {
+  const _SubtitleSettingsDialog({
+    required this.scale,
+    required this.position,
+    required this.delay,
+    required this.onScale,
+    required this.onPosition,
+    required this.onDelay,
+  });
+
+  final double scale;
+  final int position;
+  final double delay;
+  final ValueChanged<double> onScale;
+  final ValueChanged<int> onPosition;
+  final ValueChanged<double> onDelay;
+
+  @override
+  State<_SubtitleSettingsDialog> createState() =>
+      _SubtitleSettingsDialogState();
+}
+
+class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
+  late double _scale = widget.scale;
+  late int _position = widget.position;
+  late double _delay = widget.delay;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSpacing.radius),
+        side: const BorderSide(color: AppColors.line),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Subtitle settings', style: AppTheme.titleMedium),
+              const SizedBox(height: AppSpacing.md),
+              _slider(
+                label: 'Size',
+                value: _scale,
+                min: 0.5,
+                max: 2.0,
+                divisions: 30,
+                display: '${(_scale * 100).round()}%',
+                onChanged: (v) {
+                  setState(() => _scale = v);
+                  widget.onScale(v);
+                },
+              ),
+              _slider(
+                // sub-pos: 100 = bottom, lower = higher up. Show a "height"
+                // reading so the slider reads left→low, right→high.
+                label: 'Position',
+                value: _position.toDouble(),
+                min: 0,
+                max: 150,
+                divisions: 150,
+                display: '${150 - _position}',
+                onChanged: (v) {
+                  setState(() => _position = v.round());
+                  widget.onPosition(_position);
+                },
+              ),
+              _slider(
+                label: 'Delay',
+                value: _delay,
+                min: -10.0,
+                max: 10.0,
+                divisions: 200,
+                display:
+                    '${_delay >= 0 ? '+' : ''}${_delay.toStringAsFixed(1)}s',
+                onChanged: (v) {
+                  setState(() => _delay = double.parse(v.toStringAsFixed(1)));
+                  widget.onDelay(_delay);
+                },
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Done', style: AppTheme.body),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _slider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String display,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: AppTheme.dim),
+            Text(display, style: AppTheme.mono.copyWith(color: AppColors.dim)),
+          ],
+        ),
+        SliderTheme(
+          data: SliderThemeData(
+            trackHeight: 3,
+            activeTrackColor: AppColors.accent,
+            inactiveTrackColor: AppColors.line2,
+            thumbColor: AppColors.accent,
+            overlayShape: SliderComponentShape.noOverlay,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+          ),
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            divisions: divisions,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _TrackMenu extends StatelessWidget {
@@ -700,7 +959,8 @@ class _TrackMenu extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (selected == null) const Icon(Icons.check, size: 16, color: AppColors.accent),
+                if (selected == null)
+                  const Icon(Icons.check, size: 16, color: AppColors.accent),
                 if (selected == null) const SizedBox(width: AppSpacing.xs),
                 const Text('Off', style: AppTheme.body),
               ],
@@ -712,14 +972,20 @@ class _TrackMenu extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (t.id == selected) const Icon(Icons.check, size: 16, color: AppColors.accent),
+                if (t.id == selected)
+                  const Icon(Icons.check, size: 16, color: AppColors.accent),
                 if (t.id == selected) const SizedBox(width: AppSpacing.xs),
                 Text(t.title ?? t.language ?? t.id, style: AppTheme.body),
               ],
             ),
           ),
       ],
-      child: _ChromeIconButton(icon: icon, tooltip: tooltip, onPressed: null, forceEnabled: enabled),
+      child: _ChromeIconButton(
+        icon: icon,
+        tooltip: tooltip,
+        onPressed: null,
+        forceEnabled: enabled,
+      ),
     );
   }
 }
@@ -730,14 +996,12 @@ class _ChromeIconButton extends StatelessWidget {
     required this.tooltip,
     required this.onPressed,
     this.forceEnabled = false,
-    this.label,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
   final bool forceEnabled;
-  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -746,16 +1010,7 @@ class _ChromeIconButton extends StatelessWidget {
       message: tooltip,
       child: IconButton(
         onPressed: onPressed,
-        icon: label == null
-            ? Icon(icon, size: 20)
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, size: 20),
-                  const SizedBox(width: 2),
-                  Text(label!, style: AppTheme.caption),
-                ],
-              ),
+        icon: Icon(icon, size: 20),
         color: enabled ? AppColors.dim : AppColors.faint,
         splashRadius: 20,
         hoverColor: Colors.transparent,
@@ -779,7 +1034,10 @@ class _BufferingSpinner extends StatelessWidget {
             SizedBox(
               width: 32,
               height: 32,
-              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.text),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.text,
+              ),
             ),
             SizedBox(height: AppSpacing.md),
             Text('Buffering…', style: AppTheme.dim),
