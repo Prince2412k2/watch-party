@@ -693,6 +693,8 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
             )
           : PlayerView(
               controller: ref.watch(playerControllerProvider),
+              itemId: widget.itemId,
+              apiClient: ref.watch(apiClientProvider),
               title: widget.title,
               onBack: () => Navigator.of(context).maybePop(),
             ),
