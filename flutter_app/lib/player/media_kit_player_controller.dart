@@ -35,7 +35,10 @@ class MediaKitPlayerController implements PlayerController {
 
   MediaKitPlayerController({bool? enableHardwareAcceleration})
     : _player = mk.Player(
-        configuration: const mk.PlayerConfiguration(bufferSize: _bufferSize),
+        configuration: const mk.PlayerConfiguration(
+          bufferSize: _bufferSize,
+          libass: true,
+        ),
       ),
       _enableHwAccel =
           enableHardwareAcceleration ??
