@@ -20,10 +20,9 @@ class HomeData {
   final List<LibraryItem> nextUp;
 
   factory HomeData.fromJson(Map<String, dynamic> json) {
-    List<LibraryItem> parse(String key) =>
-        ((json[key] as List?) ?? const [])
-            .map((e) => LibraryItem.fromJson(e as Map<String, dynamic>))
-            .toList();
+    List<LibraryItem> parse(String key) => ((json[key] as List?) ?? const [])
+        .map((e) => LibraryItem.fromJson(e as Map<String, dynamic>))
+        .toList();
     return HomeData(
       views: parse('views'),
       resume: parse('resume'),
@@ -41,11 +40,10 @@ class LiveKitToken {
   final List<Map<String, dynamic>>? iceServers;
 
   factory LiveKitToken.fromJson(Map<String, dynamic> json) => LiveKitToken(
-        token: json['token'] as String,
-        url: json['url'] as String,
-        iceServers: (json['iceServers'] as List?)
-            ?.cast<Map<String, dynamic>>(),
-      );
+    token: json['token'] as String,
+    url: json['url'] as String,
+    iceServers: (json['iceServers'] as List?)?.cast<Map<String, dynamic>>(),
+  );
 }
 
 /// Image kinds the server's `/api/library/image` proxy accepts.
@@ -53,13 +51,13 @@ enum ImageType { primary, backdrop, thumb, logo, banner, art }
 
 extension on ImageType {
   String get jellyfin => switch (this) {
-        ImageType.primary => 'Primary',
-        ImageType.backdrop => 'Backdrop',
-        ImageType.thumb => 'Thumb',
-        ImageType.logo => 'Logo',
-        ImageType.banner => 'Banner',
-        ImageType.art => 'Art',
-      };
+    ImageType.primary => 'Primary',
+    ImageType.backdrop => 'Backdrop',
+    ImageType.thumb => 'Thumb',
+    ImageType.logo => 'Logo',
+    ImageType.banner => 'Banner',
+    ImageType.art => 'Art',
+  };
 }
 
 /// FROZEN CONTRACT (PLAN §3.2). The full surface the app uses to talk to the
@@ -86,7 +84,11 @@ abstract class ApiClient {
   Future<TrickplayManifest> trickplay(String itemId, {String? mediaSourceId});
 
   /// Absolute URL to a proxied poster/backdrop image.
-  String imageUrl(String itemId, {ImageType type = ImageType.primary, String? tag});
+  String imageUrl(
+    String itemId, {
+    ImageType type = ImageType.primary,
+    String? tag,
+  });
 
   // ── Playback / offline ─────────────────────────────────────────────────
   /// Mint a short-lived signed URL for direct-play (`purpose: 'stream'`) or
@@ -95,8 +97,19 @@ abstract class ApiClient {
 
   /// The audio/subtitle tracks available for [itemId] (`POST
   /// /api/library/playback-info/:id`), optionally re-selecting a track.
-  Future<PlaybackInfo> playbackInfo(String itemId,
-      {int? audioStreamIndex, int? subtitleStreamIndex});
+  Future<PlaybackInfo> playbackInfo(
+    String itemId, {
+    String? mediaSourceId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  });
+
+  /// Raw subtitle text for a Jellyfin stream index.
+  Future<String> subtitleContent(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  });
 
   /// Upload an external subtitle file for [itemId]. [filename] is used only
   /// to infer the subtitle format (its extension) and label.
@@ -126,9 +139,11 @@ abstract class ApiClient {
 /// session cookie across restarts, so login survives an app relaunch.
 class DioApiClient implements ApiClient {
   DioApiClient({Dio? dio, CookieJar? cookieJar, String? baseUrl})
-      : _cookieJar = cookieJar ?? CookieJar(),
-        _dio = dio ??
-            Dio(BaseOptions(
+    : _cookieJar = cookieJar ?? CookieJar(),
+      _dio =
+          dio ??
+          Dio(
+            BaseOptions(
               baseUrl: baseUrl ?? AppConfig.apiBase,
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 30),
@@ -136,7 +151,8 @@ class DioApiClient implements ApiClient {
               // Handle every HTTP response below ourselves so the UI receives
               // the API's concise error instead of Dio's exception dump.
               validateStatus: (s) => s != null && s < 600,
-            )) {
+            ),
+          ) {
     _dio.interceptors.add(CookieManager(_cookieJar));
   }
 
@@ -156,8 +172,9 @@ class DioApiClient implements ApiClient {
 
   Future<void> _refreshCookieHeader() async {
     final cookies = await _cookieJar.loadForRequest(Uri.parse(baseUrl));
-    _cookieHeader =
-        cookies.isEmpty ? null : cookies.map((c) => '${c.name}=${c.value}').join('; ');
+    _cookieHeader = cookies.isEmpty
+        ? null
+        : cookies.map((c) => '${c.name}=${c.value}').join('; ');
   }
 
   String get _base => _dio.options.baseUrl;
@@ -194,8 +211,10 @@ class DioApiClient implements ApiClient {
 
   @override
   Future<User> login(String username, String password) async {
-    final res = await _dio.post('/api/auth/login',
-        data: {'username': username, 'password': password});
+    final res = await _dio.post(
+      '/api/auth/login',
+      data: {'username': username, 'password': password},
+    );
     if (res.statusCode != 200) _fail(res, 'login');
     await _refreshCookieHeader();
     return User.fromJson(res.data as Map<String, dynamic>);
@@ -224,8 +243,10 @@ class DioApiClient implements ApiClient {
 
   @override
   Future<List<LibraryItem>> items({String? parentId}) async {
-    final res = await _dio.get('/api/library/items',
-        queryParameters: parentId != null ? {'parentId': parentId} : null);
+    final res = await _dio.get(
+      '/api/library/items',
+      queryParameters: parentId != null ? {'parentId': parentId} : null,
+    );
     if (res.statusCode != 200) _fail(res, 'items');
     return _items(res.data);
   }
@@ -246,8 +267,10 @@ class DioApiClient implements ApiClient {
 
   @override
   Future<List<LibraryItem>> latest({String? parentId}) async {
-    final res = await _dio.get('/api/library/latest',
-        queryParameters: parentId != null ? {'parentId': parentId} : null);
+    final res = await _dio.get(
+      '/api/library/latest',
+      queryParameters: parentId != null ? {'parentId': parentId} : null,
+    );
     if (res.statusCode != 200) _fail(res, 'latest');
     return _items(res.data);
   }
@@ -262,18 +285,26 @@ class DioApiClient implements ApiClient {
   }
 
   @override
-  Future<TrickplayManifest> trickplay(String itemId,
-      {String? mediaSourceId}) async {
-    final res = await _dio.get('/api/library/items/$itemId/trickplay',
-        queryParameters:
-            mediaSourceId == null ? null : {'mediaSourceId': mediaSourceId});
+  Future<TrickplayManifest> trickplay(
+    String itemId, {
+    String? mediaSourceId,
+  }) async {
+    final res = await _dio.get(
+      '/api/library/items/$itemId/trickplay',
+      queryParameters: mediaSourceId == null
+          ? null
+          : {'mediaSourceId': mediaSourceId},
+    );
     if (res.statusCode != 200) _fail(res, 'trickplay');
     return TrickplayManifest.fromJson(res.data as Map<String, dynamic>);
   }
 
   @override
-  String imageUrl(String itemId,
-      {ImageType type = ImageType.primary, String? tag}) {
+  String imageUrl(
+    String itemId, {
+    ImageType type = ImageType.primary,
+    String? tag,
+  }) {
     final params = <String, String>{'type': type.jellyfin};
     if (tag != null) params['tag'] = tag;
     final qs = Uri(queryParameters: params).query;
@@ -281,58 +312,95 @@ class DioApiClient implements ApiClient {
   }
 
   @override
-  Future<StreamUrl> nativeStreamUrl(String itemId,
-      {String purpose = 'stream'}) async {
-    final res = await _dio.get('/api/library/native/stream-url/$itemId',
-        queryParameters: {'purpose': purpose});
+  Future<StreamUrl> nativeStreamUrl(
+    String itemId, {
+    String purpose = 'stream',
+  }) async {
+    final res = await _dio.get(
+      '/api/library/native/stream-url/$itemId',
+      queryParameters: {'purpose': purpose},
+    );
     if (res.statusCode != 200) _fail(res, 'nativeStreamUrl');
     return StreamUrl.fromJson(res.data as Map<String, dynamic>);
   }
 
   @override
-  Future<PlaybackInfo> playbackInfo(String itemId,
-      {int? audioStreamIndex, int? subtitleStreamIndex}) async {
-    final res = await _dio.post('/api/library/playback-info/$itemId', data: {
-      if (audioStreamIndex != null) 'audioStreamIndex': audioStreamIndex,
-      if (subtitleStreamIndex != null) 'subtitleStreamIndex': subtitleStreamIndex,
-    });
+  Future<PlaybackInfo> playbackInfo(
+    String itemId, {
+    String? mediaSourceId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) async {
+    final res = await _dio.post(
+      '/api/library/playback-info/$itemId',
+      data: {
+        'mediaSourceId': ?mediaSourceId,
+        'audioStreamIndex': ?audioStreamIndex,
+        'subtitleStreamIndex': ?subtitleStreamIndex,
+      },
+    );
     if (res.statusCode != 200) _fail(res, 'playbackInfo');
     return PlaybackInfo.fromJson(res.data as Map<String, dynamic>);
   }
 
   @override
+  Future<String> subtitleContent(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  }) async {
+    final res = await _dio.get<String>(
+      '/api/library/items/$itemId/subtitles/$streamIndex/content',
+      queryParameters: mediaSourceId == null
+          ? null
+          : {'mediaSourceId': mediaSourceId},
+      options: Options(responseType: ResponseType.plain),
+    );
+    if (res.statusCode != 200) _fail(res, 'subtitleContent');
+    return res.data ?? '';
+  }
+
+  @override
   Future<void> uploadSubtitle(
-      String itemId, List<int> bytes, String filename) async {
+    String itemId,
+    List<int> bytes,
+    String filename,
+  ) async {
     final res = await _dio.post(
       '/api/library/items/$itemId/subtitles',
       data: Stream.fromIterable([bytes]),
-      options: Options(headers: {
-        Headers.contentLengthHeader: bytes.length,
-        'Content-Type': 'application/octet-stream',
-        'X-Subtitle-Filename': Uri.encodeComponent(filename),
-      }),
+      options: Options(
+        headers: {
+          Headers.contentLengthHeader: bytes.length,
+          'Content-Type': 'application/octet-stream',
+          'X-Subtitle-Filename': Uri.encodeComponent(filename),
+        },
+      ),
     );
     if (res.statusCode != 201) _fail(res, 'uploadSubtitle');
   }
 
   @override
   Future<void> deleteSubtitle(String itemId, int streamIndex) async {
-    final res = await _dio.delete('/api/library/items/$itemId/subtitles/$streamIndex');
+    final res = await _dio.delete(
+      '/api/library/items/$itemId/subtitles/$streamIndex',
+    );
     if (res.statusCode != 200) _fail(res, 'deleteSubtitle');
   }
 
   @override
   Future<LiveKitToken> livekitToken(String partyId) async {
-    final res = await _dio
-        .get('/api/livekit/token', queryParameters: {'partyId': partyId});
+    final res = await _dio.get(
+      '/api/livekit/token',
+      queryParameters: {'partyId': partyId},
+    );
     if (res.statusCode != 200) _fail(res, 'livekitToken');
     return LiveKitToken.fromJson(res.data as Map<String, dynamic>);
   }
 
   @override
   Future<dynamic> servarrGet(String path, {Map<String, dynamic>? query}) async {
-    final res =
-        await _dio.get('/api/servarr/$path', queryParameters: query);
+    final res = await _dio.get('/api/servarr/$path', queryParameters: query);
     if (res.statusCode != null && res.statusCode! >= 400) {
       _fail(res, 'servarr GET $path');
     }
@@ -349,10 +417,11 @@ class DioApiClient implements ApiClient {
   }
 
   @override
-  Future<dynamic> servarrDelete(String path,
-      {Map<String, dynamic>? query}) async {
-    final res =
-        await _dio.delete('/api/servarr/$path', queryParameters: query);
+  Future<dynamic> servarrDelete(
+    String path, {
+    Map<String, dynamic>? query,
+  }) async {
+    final res = await _dio.delete('/api/servarr/$path', queryParameters: query);
     if (res.statusCode != null && res.statusCode! >= 400) {
       _fail(res, 'servarr DELETE $path');
     }

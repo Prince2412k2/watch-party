@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/api_client.dart';
+import '../models/playback_info.dart';
 import '../models/trickplay_manifest.dart';
 import '../ui/ui.dart';
 import 'media_kit_player_controller.dart';
@@ -84,6 +86,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
   bool _buffering = false;
   bool _completed = false;
   PlayerTracks _tracks = const PlayerTracks();
+  List<PlayerTrack> _externalSubtitles = const [];
+  final Map<String, PlaybackTrack> _externalSubtitleById = {};
+  int _subtitleSelectionVersion = 0;
 
   double _volume = 100;
 
@@ -98,6 +103,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
   double _subScale = 1.0;
   int _subPos = 100;
   double _subDelay = 0.0;
+  String _subFont = 'sans-serif';
 
   Duration? _dragPosition;
   Duration? _previewPosition;
@@ -119,6 +125,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     // Seed the mixer/track UI from the real player state so the controls match
     // what's actually playing (rather than assuming 100% / 1.0× / no track).
     if (c is MediaKitPlayerController) {
+      _tracks = c.latestTracks;
       _volume = c.volumeNow;
       _preMuteVolume = _volume > 0 ? _volume : 100;
       _selectedAudio = c.currentAudioTrackId;
@@ -127,6 +134,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
       _subScale = c.subtitleScale;
       _subPos = c.subtitlePosition;
       _subDelay = c.subtitleDelay;
+      _subFont = c.subtitleFont;
     }
 
     _subs.add(c.position.listen((p) => setState(() => _position = p)));
@@ -147,7 +155,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
           // file resets libmpv's default audio/subtitle pick).
           if (c is MediaKitPlayerController) {
             _selectedAudio = c.currentAudioTrackId;
-            _selectedSubtitle = c.currentSubtitleTrackId;
+            if (!_externalSubtitleById.containsKey(_selectedSubtitle)) {
+              _selectedSubtitle = c.currentSubtitleTrackId;
+            }
           }
         });
       }),
@@ -162,6 +172,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
     _scheduleIdle();
     _loadTrickplay();
+    _loadExternalSubtitles();
   }
 
   @override
@@ -171,6 +182,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
         oldWidget.mediaSourceId != widget.mediaSourceId ||
         oldWidget.apiClient != widget.apiClient) {
       _loadTrickplay();
+      _loadExternalSubtitles();
     }
   }
 
@@ -198,6 +210,63 @@ class _PlayerChromeState extends State<PlayerChrome> {
       if (mounted && widget.itemId == itemId) {
         setState(() => _trickplay = null);
       }
+    }
+  }
+
+  static String _externalSubtitleId(int index) => 'jellyfin-external:$index';
+
+  Future<void> _loadExternalSubtitles() async {
+    final itemId = widget.itemId;
+    final mediaSourceId = widget.mediaSourceId;
+    final api = widget.apiClient;
+    _subtitleSelectionVersion++;
+    _externalSubtitleById.clear();
+    if (mounted) {
+      setState(() {
+        _externalSubtitles = const [];
+        if (_selectedSubtitle?.startsWith('jellyfin-external:') ?? false) {
+          _selectedSubtitle = null;
+        }
+      });
+    }
+    if (itemId == null || api == null) {
+      return;
+    }
+    try {
+      final info = await api.playbackInfo(itemId, mediaSourceId: mediaSourceId);
+      if (!mounted ||
+          widget.itemId != itemId ||
+          widget.mediaSourceId != mediaSourceId ||
+          widget.apiClient != api) {
+        return;
+      }
+      final external = info.subtitleStreams.where((track) => track.isExternal);
+      _externalSubtitleById.clear();
+      for (final track in external) {
+        _externalSubtitleById[_externalSubtitleId(track.index)] = track;
+      }
+      setState(() {
+        _externalSubtitles = [
+          for (final track in external)
+            PlayerTrack(
+              id: _externalSubtitleId(track.index),
+              type: 'subtitle',
+              title: track.displayTitle ?? track.title,
+              language: track.language,
+              codec: track.codec,
+              isDefault: track.isDefault,
+            ),
+        ];
+      });
+      if (_selectedSubtitle == null &&
+          widget.controller is MediaKitPlayerController) {
+        final defaults = external.where((track) => track.isDefault);
+        if (defaults.isNotEmpty) {
+          await _setSubtitle(_externalSubtitleId(defaults.first.index));
+        }
+      }
+    } catch (e) {
+      if (mounted && widget.itemId == itemId) setState(() => _error = '$e');
     }
   }
 
@@ -312,6 +381,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _wake();
   }
 
+  Future<void> _setSubtitleFont(String font) async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    setState(() => _subFont = font);
+    await c.setSubtitleFont(font);
+    _wake();
+  }
+
   /// Opens a compact panel with sliders for subtitle size, vertical position,
   /// and timing offset. Only wired when the live MediaKitPlayerController is in
   /// use. Kept in a Material dialog (the chrome lives under a Scaffold), so the
@@ -326,25 +403,66 @@ class _PlayerChromeState extends State<PlayerChrome> {
         scale: _subScale,
         position: _subPos,
         delay: _subDelay,
+        font: _subFont,
         onScale: _setSubtitleScale,
         onPosition: _setSubtitlePosition,
         onDelay: _setSubtitleDelay,
+        onFont: _setSubtitleFont,
       ),
     );
     _wake();
   }
 
   Future<void> _setAudio(String? id) async {
-    if (!widget.canControl) return;
     setState(() => _selectedAudio = id);
     await widget.controller.setAudioTrack(id);
     _wake();
   }
 
   Future<void> _setSubtitle(String? id) async {
-    if (!widget.canControl) return;
-    setState(() => _selectedSubtitle = id);
-    await widget.controller.setSubtitle(id);
+    final previous = _selectedSubtitle;
+    final version = ++_subtitleSelectionVersion;
+    final external = id == null ? null : _externalSubtitleById[id];
+    final c = widget.controller;
+    if (external != null && c is MediaKitPlayerController) {
+      final itemId = widget.itemId;
+      final mediaSourceId = widget.mediaSourceId;
+      final api = widget.apiClient;
+      if (itemId == null || api == null) return;
+      try {
+        final content = await api.subtitleContent(
+          itemId,
+          external.index,
+          mediaSourceId: mediaSourceId,
+        );
+        if (!mounted ||
+            version != _subtitleSelectionVersion ||
+            widget.itemId != itemId ||
+            widget.mediaSourceId != mediaSourceId ||
+            widget.apiClient != api ||
+            widget.controller != c) {
+          return;
+        }
+        await c.addExternalSubtitle(
+          content,
+          title: external.displayTitle ?? external.title,
+          language: external.language,
+        );
+      } catch (e) {
+        if (mounted && version == _subtitleSelectionVersion) {
+          setState(() {
+            _selectedSubtitle = previous;
+            _error = '$e';
+          });
+        }
+        return;
+      }
+    } else {
+      await widget.controller.setSubtitle(id);
+    }
+    if (mounted && version == _subtitleSelectionVersion) {
+      setState(() => _selectedSubtitle = id);
+    }
     _wake();
   }
 
@@ -358,13 +476,18 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (c is! MediaKitPlayerController) return;
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa', 'sub'],
+      allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa'],
       withData: true,
     );
     final file = picked?.files.single;
-    final bytes = file?.bytes;
-    if (bytes == null) return;
-    await c.addExternalSubtitle(_subtitleToUtf8(bytes), title: file!.name);
+    if (file == null) return;
+    try {
+      final bytes = file.bytes ?? await File(file.path!).readAsBytes();
+      await c.addExternalSubtitle(_subtitleToUtf8(bytes), title: file.name);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Failed to load subtitle: $e');
+      return;
+    }
     _wake();
   }
 
@@ -448,7 +571,11 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   position: _dragPosition ?? _position,
                   duration: _duration,
                   volume: _volume,
-                  tracks: _tracks,
+                  tracks: PlayerTracks(
+                    video: _tracks.video,
+                    audio: _tracks.audio,
+                    subtitle: [..._tracks.subtitle, ..._externalSubtitles],
+                  ),
                   selectedAudio: _selectedAudio,
                   selectedSubtitle: _selectedSubtitle,
                   isFullscreen: widget.isFullscreen,
@@ -716,7 +843,7 @@ class _TransportBar extends StatelessWidget {
                   tooltip: 'Audio track',
                   tracks: tracks.audio,
                   selected: selectedAudio,
-                  enabled: canControl,
+                  enabled: true,
                   allowNone: false,
                   onChanged: onAudio,
                 ),
@@ -724,7 +851,7 @@ class _TransportBar extends StatelessWidget {
                 _SubtitleControl(
                   tracks: tracks.subtitle,
                   selected: selectedSubtitle,
-                  enabled: canControl,
+                  enabled: true,
                   onChanged: onSubtitle,
                   onAddFile: onAddSubtitle,
                 ),
@@ -732,7 +859,7 @@ class _TransportBar extends StatelessWidget {
                 _ChromeIconButton(
                   icon: Icons.tune,
                   tooltip: 'Subtitle settings',
-                  onPressed: canControl ? onSubtitleSettings : null,
+                  onPressed: onSubtitleSettings,
                 ),
               if (onToggleFullscreen != null)
                 _ChromeIconButton(
@@ -936,17 +1063,21 @@ class _SubtitleSettingsDialog extends StatefulWidget {
     required this.scale,
     required this.position,
     required this.delay,
+    required this.font,
     required this.onScale,
     required this.onPosition,
     required this.onDelay,
+    required this.onFont,
   });
 
   final double scale;
   final int position;
   final double delay;
+  final String font;
   final ValueChanged<double> onScale;
   final ValueChanged<int> onPosition;
   final ValueChanged<double> onDelay;
+  final ValueChanged<String> onFont;
 
   @override
   State<_SubtitleSettingsDialog> createState() =>
@@ -957,6 +1088,7 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
   late double _scale = widget.scale;
   late int _position = widget.position;
   late double _delay = widget.delay;
+  late String _font = widget.font;
 
   @override
   Widget build(BuildContext context) {
@@ -976,6 +1108,30 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
             children: [
               Text('Subtitle settings', style: AppTheme.titleMedium),
               const SizedBox(height: AppSpacing.md),
+              Text('Font', style: AppTheme.dim),
+              DropdownButton<String>(
+                key: const Key('subtitleFont'),
+                value: _font,
+                isExpanded: true,
+                dropdownColor: AppColors.surface,
+                items: const [
+                  DropdownMenuItem(
+                    value: 'sans-serif',
+                    child: Text('Sans serif'),
+                  ),
+                  DropdownMenuItem(value: 'serif', child: Text('Serif')),
+                  DropdownMenuItem(
+                    value: 'monospace',
+                    child: Text('Monospace'),
+                  ),
+                ],
+                onChanged: (font) {
+                  if (font == null) return;
+                  setState(() => _font = font);
+                  widget.onFont(font);
+                },
+              ),
+              const SizedBox(height: AppSpacing.sm),
               _slider(
                 label: 'Size',
                 value: _scale,
@@ -1016,12 +1172,29 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
                 },
               ),
               const SizedBox(height: AppSpacing.sm),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Done', style: AppTheme.body),
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _font = 'sans-serif';
+                        _scale = 1;
+                        _position = 100;
+                        _delay = 0;
+                      });
+                      widget.onFont(_font);
+                      widget.onScale(_scale);
+                      widget.onPosition(_position);
+                      widget.onDelay(_delay);
+                    },
+                    child: const Text('Reset', style: AppTheme.body),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Done', style: AppTheme.body),
+                  ),
+                ],
               ),
             ],
           ),
