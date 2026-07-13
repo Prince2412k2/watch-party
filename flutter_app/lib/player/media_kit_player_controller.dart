@@ -78,6 +78,7 @@ class MediaKitPlayerController implements PlayerController {
   // id → libmpv track, for resolving contract track ids back to selections.
   final Map<String, mk.AudioTrack> _audioById = {};
   final Map<String, mk.SubtitleTrack> _subtitleById = {};
+  PlayerTracks _latestTracks = const PlayerTracks();
 
   final List<StreamSubscription<dynamic>> _subs = [];
   String? _lastError;
@@ -89,6 +90,9 @@ class MediaKitPlayerController implements PlayerController {
 
   /// Error text stream. Additive.
   Stream<String> get errors => _errorCtrl.stream;
+
+  /// Most recent track list, including events emitted before the chrome mounts.
+  PlayerTracks get latestTracks => _latestTracks;
 
   // ── Current selection / mixer snapshots (additive) ────────────────────────
   // The frozen contract expresses track *availability* via [tracks] and lets
@@ -157,6 +161,7 @@ class MediaKitPlayerController implements PlayerController {
   double _subScale = 1.0;
   int _subPos = 100;
   double _subDelay = 0.0;
+  String _subFont = 'sans-serif';
 
   /// Current subtitle scale (1.0 = default). Additive.
   double get subtitleScale => _subScale;
@@ -166,6 +171,8 @@ class MediaKitPlayerController implements PlayerController {
 
   /// Current subtitle timing offset in seconds (may be negative). Additive.
   double get subtitleDelay => _subDelay;
+
+  String get subtitleFont => _subFont;
 
   /// Set subtitle scale via libmpv `sub-scale`. Additive.
   Future<void> setSubtitleScale(double scale) async {
@@ -186,6 +193,12 @@ class MediaKitPlayerController implements PlayerController {
     if (_disposed) return;
     _subDelay = seconds;
     await _setMpvProperty('sub-delay', seconds.toString());
+  }
+
+  Future<void> setSubtitleFont(String font) async {
+    if (_disposed) return;
+    _subFont = font;
+    await _setMpvProperty('sub-font', font);
   }
 
   /// Load an external subtitle from raw text (SRT / WebVTT / ASS) and select
@@ -225,18 +238,15 @@ class MediaKitPlayerController implements PlayerController {
     for (final s in t.subtitle) {
       if (!_isPseudo(s.id)) _subtitleById[s.id] = s;
     }
-    if (!_tracksCtrl.isClosed) {
-      _tracksCtrl.add(
-        PlayerTracks(
-          video: [
-            for (final v in t.video)
-              if (!_isPseudo(v.id)) _mapVideo(v),
-          ],
-          audio: [for (final a in _audioById.values) _mapAudio(a)],
-          subtitle: [for (final s in _subtitleById.values) _mapSubtitle(s)],
-        ),
-      );
-    }
+    _latestTracks = PlayerTracks(
+      video: [
+        for (final v in t.video)
+          if (!_isPseudo(v.id)) _mapVideo(v),
+      ],
+      audio: [for (final a in _audioById.values) _mapAudio(a)],
+      subtitle: [for (final s in _subtitleById.values) _mapSubtitle(s)],
+    );
+    if (!_tracksCtrl.isClosed) _tracksCtrl.add(_latestTracks);
   }
 
   static bool _isPseudo(String id) => id == 'auto' || id == 'no';
