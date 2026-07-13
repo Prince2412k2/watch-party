@@ -176,7 +176,7 @@ class _Hero extends StatelessWidget {
                     icon: const Icon(Icons.arrow_back, color: AppColors.dim),
                   ),
                   const Spacer(),
-                  Text(item.name, style: AppTheme.displaySmall),
+                  _TitleOrLogo(item: item, api: api),
                   const SizedBox(height: AppSpacing.sm),
                   Wrap(
                     spacing: AppSpacing.sm,
@@ -254,6 +254,31 @@ class _Hero extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The title, replaced by the title-treatment `Logo` art Jellyfin exposes for
+/// most movies/shows, when one exists (falls back to plain text otherwise —
+/// mirrors web's `DetailLogo`).
+class _TitleOrLogo extends StatelessWidget {
+  const _TitleOrLogo({required this.item, required this.api});
+  final LibraryItem item;
+  final ApiClient api;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 360, maxHeight: 110),
+      child: Align(
+        alignment: Alignment.bottomLeft,
+        child: AuthedNetworkImage(
+          api.imageUrl(item.seriesId ?? item.id, type: ImageType.logo),
+          fit: BoxFit.contain,
+          errorBuilder: (_, _, _) =>
+              Text(item.name, style: AppTheme.displaySmall),
+        ),
+      ),
     );
   }
 }
