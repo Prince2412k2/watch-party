@@ -4,9 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../data/api_client.dart';
+import '../models/trickplay_manifest.dart';
 import '../ui/ui.dart';
 import 'media_kit_player_controller.dart';
 import 'player_controller.dart';
+import 'trickplay_preview.dart';
 
 /// The minimal, monochrome transport bar for [PlayerController] (E4.2/E4.3).
 /// Sits as an overlay on top of `VideoView` — play/pause, scrubber, time,
@@ -37,6 +40,9 @@ class PlayerChrome extends StatefulWidget {
     this.isFullscreen = false,
     this.idleTimeout = const Duration(seconds: 3),
     this.onSeek,
+    this.itemId,
+    this.mediaSourceId,
+    this.apiClient,
   });
 
   final PlayerController controller;
@@ -49,6 +55,9 @@ class PlayerChrome extends StatefulWidget {
   /// `requestSeek` so the host's seek is authored to the server and mirrored to
   /// every other client (web + Flutter). Null for solo playback (local only).
   final ValueChanged<Duration>? onSeek;
+  final String? itemId;
+  final String? mediaSourceId;
+  final ApiClient? apiClient;
 
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
@@ -82,6 +91,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
   String? _selectedSubtitle;
 
   Duration? _dragPosition;
+  Duration? _previewPosition;
+  double _previewFraction = 0;
+  TrickplayManifest? _trickplay;
 
   final _subs = <StreamSubscription<dynamic>>[];
   String? _error;
@@ -107,23 +119,27 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
     _subs.add(c.position.listen((p) => setState(() => _position = p)));
     _subs.add(c.duration.listen((d) => setState(() => _duration = d)));
-    _subs.add(c.playing.listen((p) {
-      setState(() => _playing = p);
-      _scheduleIdle();
-    }));
+    _subs.add(
+      c.playing.listen((p) {
+        setState(() => _playing = p);
+        _scheduleIdle();
+      }),
+    );
     _subs.add(c.buffering.listen((b) => setState(() => _buffering = b)));
     _subs.add(c.completed.listen((v) => setState(() => _completed = v)));
-    _subs.add(c.tracks.listen((t) {
-      setState(() {
-        _tracks = t;
-        // Re-read the real selection each time the track set changes (a fresh
-        // file resets libmpv's default audio/subtitle pick).
-        if (c is MediaKitPlayerController) {
-          _selectedAudio = c.currentAudioTrackId;
-          _selectedSubtitle = c.currentSubtitleTrackId;
-        }
-      });
-    }));
+    _subs.add(
+      c.tracks.listen((t) {
+        setState(() {
+          _tracks = t;
+          // Re-read the real selection each time the track set changes (a fresh
+          // file resets libmpv's default audio/subtitle pick).
+          if (c is MediaKitPlayerController) {
+            _selectedAudio = c.currentAudioTrackId;
+            _selectedSubtitle = c.currentSubtitleTrackId;
+          }
+        });
+      }),
+    );
 
     // media_kit surfaces decode/network errors on an additive `errors` stream
     // (not part of the frozen contract) — drive the E4.3 error overlay off it
@@ -133,6 +149,44 @@ class _PlayerChromeState extends State<PlayerChrome> {
     }
 
     _scheduleIdle();
+    _loadTrickplay();
+  }
+
+  @override
+  void didUpdateWidget(PlayerChrome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemId != widget.itemId ||
+        oldWidget.mediaSourceId != widget.mediaSourceId ||
+        oldWidget.apiClient != widget.apiClient) {
+      _loadTrickplay();
+    }
+  }
+
+  Future<void> _loadTrickplay() async {
+    final itemId = widget.itemId;
+    final mediaSourceId = widget.mediaSourceId;
+    final apiClient = widget.apiClient;
+    if (mounted) setState(() => _trickplay = null);
+    if (itemId == null || apiClient == null) {
+      if (mounted) setState(() => _trickplay = null);
+      return;
+    }
+    try {
+      final manifest = await apiClient.trickplay(
+        itemId,
+        mediaSourceId: mediaSourceId,
+      );
+      if (mounted &&
+          widget.itemId == itemId &&
+          widget.mediaSourceId == mediaSourceId &&
+          widget.apiClient == apiClient) {
+        setState(() => _trickplay = manifest);
+      }
+    } catch (_) {
+      if (mounted && widget.itemId == itemId) {
+        setState(() => _trickplay = null);
+      }
+    }
   }
 
   @override
@@ -177,7 +231,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
     final target = _position + delta;
     final clamped = target < Duration.zero
         ? Duration.zero
-        : (_duration > Duration.zero && target > _duration ? _duration : target);
+        : (_duration > Duration.zero && target > _duration
+              ? _duration
+              : target);
     await widget.controller.seek(clamped);
     widget.onSeek?.call(clamped);
     _wake();
@@ -287,12 +343,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
             children: [
               // Center buffering spinner / error state (E4.3).
               if (_error != null)
-                _ErrorOverlay(message: _error!, onDismiss: () => setState(() => _error = null))
+                _ErrorOverlay(
+                  message: _error!,
+                  onDismiss: () => setState(() => _error = null),
+                )
               else if (_buffering && !_completed)
                 const _BufferingSpinner(),
 
-              if (_completed && !_buffering)
-                const SizedBox.shrink(),
+              if (_completed && !_buffering) const SizedBox.shrink(),
 
               // Top bar: back + title.
               _AnimatedEdge(
@@ -328,6 +386,15 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   onAudio: _setAudio,
                   onSubtitle: _setSubtitle,
                   onToggleFullscreen: widget.onToggleFullscreen,
+                  trickplay: _trickplay,
+                  apiClient: widget.apiClient,
+                  previewPosition: _previewPosition,
+                  previewFraction: _previewFraction,
+                  onHoverPreview: (position, fraction) => setState(() {
+                    _previewPosition = position;
+                    _previewFraction = fraction;
+                  }),
+                  onHoverEnd: () => setState(() => _previewPosition = null),
                 ),
               ),
             ],
@@ -339,7 +406,11 @@ class _PlayerChromeState extends State<PlayerChrome> {
 }
 
 class _AnimatedEdge extends StatelessWidget {
-  const _AnimatedEdge({required this.visible, required this.alignment, required this.child});
+  const _AnimatedEdge({
+    required this.visible,
+    required this.alignment,
+    required this.child,
+  });
   final bool visible;
   final Alignment alignment;
   final Widget child;
@@ -370,13 +441,20 @@ class _TopBar extends StatelessWidget {
     if (onBack == null && title == null) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
       // Flat near-black translucent bar — no gradients per the design system.
       decoration: const BoxDecoration(color: _kChromeScrim),
       child: Row(
         children: [
           if (onBack != null)
-            _ChromeIconButton(icon: Icons.arrow_back, tooltip: 'Back', onPressed: onBack),
+            _ChromeIconButton(
+              icon: Icons.arrow_back,
+              tooltip: 'Back',
+              onPressed: onBack,
+            ),
           if (title != null) ...[
             const SizedBox(width: AppSpacing.sm),
             Expanded(
@@ -415,6 +493,12 @@ class _TransportBar extends StatelessWidget {
     required this.onAudio,
     required this.onSubtitle,
     required this.onToggleFullscreen,
+    required this.trickplay,
+    required this.apiClient,
+    required this.previewPosition,
+    required this.previewFraction,
+    required this.onHoverPreview,
+    required this.onHoverEnd,
   });
 
   final bool canControl;
@@ -436,23 +520,61 @@ class _TransportBar extends StatelessWidget {
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onSubtitle;
   final VoidCallback? onToggleFullscreen;
+  final TrickplayManifest? trickplay;
+  final ApiClient? apiClient;
+  final Duration? previewPosition;
+  final double previewFraction;
+  final void Function(Duration position, double fraction) onHoverPreview;
+  final VoidCallback onHoverEnd;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.sm,
+        AppSpacing.md,
+        AppSpacing.sm,
+      ),
       // Flat near-black translucent bar — no gradients per the design system.
       decoration: const BoxDecoration(color: _kChromeBar),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _Scrubber(
-            position: position,
-            duration: duration,
-            enabled: canControl,
-            onPreview: onSeekPreview,
-            onCommit: onSeekCommit,
+          LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              clipBehavior: Clip.none,
+              children: [
+                _Scrubber(
+                  key: const Key('playbackScrubber'),
+                  position: position,
+                  duration: duration,
+                  enabled: canControl,
+                  onPreview: onSeekPreview,
+                  onCommit: onSeekCommit,
+                  onHoverPreview: onHoverPreview,
+                  onHoverEnd: onHoverEnd,
+                ),
+                if (previewPosition != null &&
+                    trickplay != null &&
+                    apiClient != null)
+                  Positioned(
+                    bottom: 28,
+                    left: (previewFraction * constraints.maxWidth - 90).clamp(
+                      0.0,
+                      math.max(0.0, constraints.maxWidth - 180),
+                    ),
+                    child: IgnorePointer(
+                      child: TrickplayPreview(
+                        manifest: trickplay!,
+                        frame: trickplay!.frameAt(previewPosition!),
+                        apiClient: apiClient!,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           Row(
             children: [
@@ -464,10 +586,17 @@ class _TransportBar extends StatelessWidget {
               const SizedBox(width: AppSpacing.xs),
               Text(
                 '${_fmt(position)} / ${_fmt(duration)}',
-                style: AppTheme.mono.copyWith(color: AppColors.dim, fontSize: 12),
+                style: AppTheme.mono.copyWith(
+                  color: AppColors.dim,
+                  fontSize: 12,
+                ),
               ),
               const Spacer(),
-              _VolumeControl(volume: volume, onChanged: onVolume, onToggleMute: onToggleMute),
+              _VolumeControl(
+                volume: volume,
+                onChanged: onVolume,
+                onToggleMute: onToggleMute,
+              ),
               _RateMenu(rate: rate, enabled: canControl, onChanged: onRate),
               if (tracks.audio.isNotEmpty)
                 _TrackMenu(
@@ -515,11 +644,14 @@ class _TransportBar extends StatelessWidget {
 
 class _Scrubber extends StatelessWidget {
   const _Scrubber({
+    super.key,
     required this.position,
     required this.duration,
     required this.enabled,
     required this.onPreview,
     required this.onCommit,
+    required this.onHoverPreview,
+    required this.onHoverEnd,
   });
 
   final Duration position;
@@ -527,6 +659,8 @@ class _Scrubber extends StatelessWidget {
   final bool enabled;
   final ValueChanged<Duration> onPreview;
   final ValueChanged<Duration> onCommit;
+  final void Function(Duration position, double fraction) onHoverPreview;
+  final VoidCallback onHoverEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -534,27 +668,44 @@ class _Scrubber extends StatelessWidget {
     final value = totalMs > 0
         ? (position.inMilliseconds / totalMs).clamp(0.0, 1.0)
         : 0.0;
-    return SizedBox(
-      height: 24,
-      child: SliderTheme(
-        data: SliderThemeData(
-          trackHeight: 3,
-          activeTrackColor: AppColors.accent,
-          inactiveTrackColor: AppColors.line2,
-          thumbColor: AppColors.accent,
-          overlayShape: SliderComponentShape.noOverlay,
-          thumbShape: enabled
-              ? const RoundSliderThumbShape(enabledThumbRadius: 6)
-              : const RoundSliderThumbShape(enabledThumbRadius: 0),
-        ),
-        child: Slider(
-          value: value,
-          onChanged: (!enabled || totalMs <= 0)
-              ? null
-              : (v) => onPreview(Duration(milliseconds: (v * totalMs).round())),
-          onChangeEnd: (!enabled || totalMs <= 0)
-              ? null
-              : (v) => onCommit(Duration(milliseconds: (v * totalMs).round())),
+    return MouseRegion(
+      onHover: (event) {
+        if (totalMs <= 0) return;
+        final box = context.findRenderObject()! as RenderBox;
+        final fraction = (event.localPosition.dx / box.size.width).clamp(
+          0.0,
+          1.0,
+        );
+        onHoverPreview(
+          Duration(milliseconds: (fraction * totalMs).round()),
+          fraction,
+        );
+      },
+      onExit: (_) => onHoverEnd(),
+      child: SizedBox(
+        height: 24,
+        child: SliderTheme(
+          data: SliderThemeData(
+            trackHeight: 3,
+            activeTrackColor: AppColors.accent,
+            inactiveTrackColor: AppColors.line2,
+            thumbColor: AppColors.accent,
+            overlayShape: SliderComponentShape.noOverlay,
+            thumbShape: enabled
+                ? const RoundSliderThumbShape(enabledThumbRadius: 6)
+                : const RoundSliderThumbShape(enabledThumbRadius: 0),
+          ),
+          child: Slider(
+            value: value,
+            onChanged: (!enabled || totalMs <= 0)
+                ? null
+                : (v) =>
+                      onPreview(Duration(milliseconds: (v * totalMs).round())),
+            onChangeEnd: (!enabled || totalMs <= 0)
+                ? null
+                : (v) =>
+                      onCommit(Duration(milliseconds: (v * totalMs).round())),
+          ),
         ),
       ),
     );
@@ -615,7 +766,11 @@ class _VolumeControl extends StatelessWidget {
 }
 
 class _RateMenu extends StatelessWidget {
-  const _RateMenu({required this.rate, required this.enabled, required this.onChanged});
+  const _RateMenu({
+    required this.rate,
+    required this.enabled,
+    required this.onChanged,
+  });
   final double rate;
   final bool enabled;
   final ValueChanged<double> onChanged;
@@ -628,17 +783,20 @@ class _RateMenu extends StatelessWidget {
       initialValue: rate,
       onSelected: onChanged,
       itemBuilder: (context) => _PlayerChromeStateAccessor.rates
-          .map((r) => PopupMenuItem<double>(
-                value: r,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (r == rate) const Icon(Icons.check, size: 16, color: AppColors.accent),
-                    if (r == rate) const SizedBox(width: AppSpacing.xs),
-                    Text(_fmtRate(r), style: AppTheme.body),
-                  ],
-                ),
-              ))
+          .map(
+            (r) => PopupMenuItem<double>(
+              value: r,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (r == rate)
+                    const Icon(Icons.check, size: 16, color: AppColors.accent),
+                  if (r == rate) const SizedBox(width: AppSpacing.xs),
+                  Text(_fmtRate(r), style: AppTheme.body),
+                ],
+              ),
+            ),
+          )
           .toList(),
       child: _ChromeIconButton(
         icon: Icons.speed,
@@ -700,7 +858,8 @@ class _TrackMenu extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (selected == null) const Icon(Icons.check, size: 16, color: AppColors.accent),
+                if (selected == null)
+                  const Icon(Icons.check, size: 16, color: AppColors.accent),
                 if (selected == null) const SizedBox(width: AppSpacing.xs),
                 const Text('Off', style: AppTheme.body),
               ],
@@ -712,14 +871,20 @@ class _TrackMenu extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (t.id == selected) const Icon(Icons.check, size: 16, color: AppColors.accent),
+                if (t.id == selected)
+                  const Icon(Icons.check, size: 16, color: AppColors.accent),
                 if (t.id == selected) const SizedBox(width: AppSpacing.xs),
                 Text(t.title ?? t.language ?? t.id, style: AppTheme.body),
               ],
             ),
           ),
       ],
-      child: _ChromeIconButton(icon: icon, tooltip: tooltip, onPressed: null, forceEnabled: enabled),
+      child: _ChromeIconButton(
+        icon: icon,
+        tooltip: tooltip,
+        onPressed: null,
+        forceEnabled: enabled,
+      ),
     );
   }
 }
@@ -779,7 +944,10 @@ class _BufferingSpinner extends StatelessWidget {
             SizedBox(
               width: 32,
               height: 32,
-              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.text),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.text,
+              ),
             ),
             SizedBox(height: AppSpacing.md),
             Text('Buffering…', style: AppTheme.dim),
