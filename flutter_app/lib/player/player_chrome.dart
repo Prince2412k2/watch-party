@@ -4,9 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../data/api_client.dart';
+import '../models/trickplay_manifest.dart';
 import '../ui/ui.dart';
 import 'media_kit_player_controller.dart';
 import 'player_controller.dart';
+import 'trickplay_preview.dart';
 
 /// The minimal, monochrome transport bar for [PlayerController] (E4.2/E4.3).
 /// Sits as an overlay on top of `VideoView` — play/pause, scrubber, time,
@@ -38,6 +41,9 @@ class PlayerChrome extends StatefulWidget {
     this.isFullscreen = false,
     this.idleTimeout = const Duration(seconds: 3),
     this.onSeek,
+    this.itemId,
+    this.mediaSourceId,
+    this.apiClient,
   });
 
   final PlayerController controller;
@@ -50,6 +56,9 @@ class PlayerChrome extends StatefulWidget {
   /// `requestSeek` so the host's seek is authored to the server and mirrored to
   /// every other client (web + Flutter). Null for solo playback (local only).
   final ValueChanged<Duration>? onSeek;
+  final String? itemId;
+  final String? mediaSourceId;
+  final ApiClient? apiClient;
 
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
@@ -89,6 +98,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
   double _subDelay = 0.0;
 
   Duration? _dragPosition;
+  Duration? _previewPosition;
+  double _previewFraction = 0;
+  TrickplayManifest? _trickplay;
 
   final _subs = <StreamSubscription<dynamic>>[];
   String? _error;
@@ -147,6 +159,44 @@ class _PlayerChromeState extends State<PlayerChrome> {
     }
 
     _scheduleIdle();
+    _loadTrickplay();
+  }
+
+  @override
+  void didUpdateWidget(PlayerChrome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemId != widget.itemId ||
+        oldWidget.mediaSourceId != widget.mediaSourceId ||
+        oldWidget.apiClient != widget.apiClient) {
+      _loadTrickplay();
+    }
+  }
+
+  Future<void> _loadTrickplay() async {
+    final itemId = widget.itemId;
+    final mediaSourceId = widget.mediaSourceId;
+    final apiClient = widget.apiClient;
+    if (mounted) setState(() => _trickplay = null);
+    if (itemId == null || apiClient == null) {
+      if (mounted) setState(() => _trickplay = null);
+      return;
+    }
+    try {
+      final manifest = await apiClient.trickplay(
+        itemId,
+        mediaSourceId: mediaSourceId,
+      );
+      if (mounted &&
+          widget.itemId == itemId &&
+          widget.mediaSourceId == mediaSourceId &&
+          widget.apiClient == apiClient) {
+        setState(() => _trickplay = manifest);
+      }
+    } catch (_) {
+      if (mounted && widget.itemId == itemId) {
+        setState(() => _trickplay = null);
+      }
+    }
   }
 
   @override
@@ -402,6 +452,15 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   onAudio: _setAudio,
                   onSubtitle: _setSubtitle,
                   onToggleFullscreen: widget.onToggleFullscreen,
+                  trickplay: _trickplay,
+                  apiClient: widget.apiClient,
+                  previewPosition: _previewPosition,
+                  previewFraction: _previewFraction,
+                  onHoverPreview: (position, fraction) => setState(() {
+                    _previewPosition = position;
+                    _previewFraction = fraction;
+                  }),
+                  onHoverEnd: () => setState(() => _previewPosition = null),
                 ),
               ),
             ],
@@ -501,6 +560,12 @@ class _TransportBar extends StatelessWidget {
     required this.onAudio,
     required this.onSubtitle,
     required this.onToggleFullscreen,
+    required this.trickplay,
+    required this.apiClient,
+    required this.previewPosition,
+    required this.previewFraction,
+    required this.onHoverPreview,
+    required this.onHoverEnd,
   });
 
   final bool canControl;
@@ -531,6 +596,12 @@ class _TransportBar extends StatelessWidget {
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onSubtitle;
   final VoidCallback? onToggleFullscreen;
+  final TrickplayManifest? trickplay;
+  final ApiClient? apiClient;
+  final Duration? previewPosition;
+  final double previewFraction;
+  final void Function(Duration position, double fraction) onHoverPreview;
+  final VoidCallback onHoverEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -547,12 +618,39 @@ class _TransportBar extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _Scrubber(
-            position: position,
-            duration: duration,
-            enabled: canControl,
-            onPreview: onSeekPreview,
-            onCommit: onSeekCommit,
+          LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              clipBehavior: Clip.none,
+              children: [
+                _Scrubber(
+                  key: const Key('playbackScrubber'),
+                  position: position,
+                  duration: duration,
+                  enabled: canControl,
+                  onPreview: onSeekPreview,
+                  onCommit: onSeekCommit,
+                  onHoverPreview: onHoverPreview,
+                  onHoverEnd: onHoverEnd,
+                ),
+                if (previewPosition != null &&
+                    trickplay != null &&
+                    apiClient != null)
+                  Positioned(
+                    bottom: 28,
+                    left: (previewFraction * constraints.maxWidth - 90).clamp(
+                      0.0,
+                      math.max(0.0, constraints.maxWidth - 180),
+                    ),
+                    child: IgnorePointer(
+                      child: TrickplayPreview(
+                        manifest: trickplay!,
+                        frame: trickplay!.frameAt(previewPosition!),
+                        apiClient: apiClient!,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           Row(
             children: [
@@ -633,11 +731,14 @@ class _TransportBar extends StatelessWidget {
 
 class _Scrubber extends StatelessWidget {
   const _Scrubber({
+    super.key,
     required this.position,
     required this.duration,
     required this.enabled,
     required this.onPreview,
     required this.onCommit,
+    required this.onHoverPreview,
+    required this.onHoverEnd,
   });
 
   final Duration position;
@@ -645,6 +746,8 @@ class _Scrubber extends StatelessWidget {
   final bool enabled;
   final ValueChanged<Duration> onPreview;
   final ValueChanged<Duration> onCommit;
+  final void Function(Duration position, double fraction) onHoverPreview;
+  final VoidCallback onHoverEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -652,27 +755,44 @@ class _Scrubber extends StatelessWidget {
     final value = totalMs > 0
         ? (position.inMilliseconds / totalMs).clamp(0.0, 1.0)
         : 0.0;
-    return SizedBox(
-      height: 24,
-      child: SliderTheme(
-        data: SliderThemeData(
-          trackHeight: 3,
-          activeTrackColor: AppColors.accent,
-          inactiveTrackColor: AppColors.line2,
-          thumbColor: AppColors.accent,
-          overlayShape: SliderComponentShape.noOverlay,
-          thumbShape: enabled
-              ? const RoundSliderThumbShape(enabledThumbRadius: 6)
-              : const RoundSliderThumbShape(enabledThumbRadius: 0),
-        ),
-        child: Slider(
-          value: value,
-          onChanged: (!enabled || totalMs <= 0)
-              ? null
-              : (v) => onPreview(Duration(milliseconds: (v * totalMs).round())),
-          onChangeEnd: (!enabled || totalMs <= 0)
-              ? null
-              : (v) => onCommit(Duration(milliseconds: (v * totalMs).round())),
+    return MouseRegion(
+      onHover: (event) {
+        if (totalMs <= 0) return;
+        final box = context.findRenderObject()! as RenderBox;
+        final fraction = (event.localPosition.dx / box.size.width).clamp(
+          0.0,
+          1.0,
+        );
+        onHoverPreview(
+          Duration(milliseconds: (fraction * totalMs).round()),
+          fraction,
+        );
+      },
+      onExit: (_) => onHoverEnd(),
+      child: SizedBox(
+        height: 24,
+        child: SliderTheme(
+          data: SliderThemeData(
+            trackHeight: 3,
+            activeTrackColor: AppColors.accent,
+            inactiveTrackColor: AppColors.line2,
+            thumbColor: AppColors.accent,
+            overlayShape: SliderComponentShape.noOverlay,
+            thumbShape: enabled
+                ? const RoundSliderThumbShape(enabledThumbRadius: 6)
+                : const RoundSliderThumbShape(enabledThumbRadius: 0),
+          ),
+          child: Slider(
+            value: value,
+            onChanged: (!enabled || totalMs <= 0)
+                ? null
+                : (v) =>
+                      onPreview(Duration(milliseconds: (v * totalMs).round())),
+            onChangeEnd: (!enabled || totalMs <= 0)
+                ? null
+                : (v) =>
+                      onCommit(Duration(milliseconds: (v * totalMs).round())),
+          ),
         ),
       ),
     );
