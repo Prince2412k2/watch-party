@@ -19,6 +19,7 @@ class MediaStream with _$MediaStream {
     @JsonKey(name: 'Channels') int? channels,
     @JsonKey(name: 'Height') int? height,
     @JsonKey(name: 'Width') int? width,
+    @JsonKey(name: 'VideoRange') String? videoRange,
     @JsonKey(name: 'IsDefault') @Default(false) bool isDefault,
     @JsonKey(name: 'IsForced') @Default(false) bool isForced,
     @JsonKey(name: 'IsExternal') @Default(false) bool isExternal,
