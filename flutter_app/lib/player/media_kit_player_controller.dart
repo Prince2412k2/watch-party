@@ -188,6 +188,24 @@ class MediaKitPlayerController implements PlayerController {
     await _setMpvProperty('sub-delay', seconds.toString());
   }
 
+  /// Load an external subtitle from raw text (SRT / WebVTT / ASS) and select
+  /// it. This is how subtitles reach the player without transcoding: the video
+  /// is direct-played untouched, and libmpv side-loads the subtitle and times
+  /// it against playback by the subtitle's own timestamps — so it follows the
+  /// video (including seeks) automatically. The added track shows up on the
+  /// next [tracks] emission, so the chrome's subtitle menu can re-select it.
+  /// Additive (not in the frozen contract).
+  Future<void> addExternalSubtitle(
+    String data, {
+    String? title,
+    String? language,
+  }) async {
+    if (_disposed) return;
+    await _player.setSubtitleTrack(
+      mk.SubtitleTrack.data(data, title: title, language: language),
+    );
+  }
+
   void _wire() {
     _subs.add(_player.stream.tracks.listen(_onTracks));
     _subs.add(
