@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -346,6 +348,26 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _wake();
   }
 
+  /// Pick a local subtitle file and side-load it into the player. The video is
+  /// direct-played untouched (no transcode); libmpv renders the subtitle and
+  /// times it to playback by its own timestamps, so it follows the video. The
+  /// added track surfaces on the next [PlayerTracks] emission, which updates
+  /// the subtitle menu. Only meaningful for the concrete MediaKit controller.
+  Future<void> _addSubtitleFile() async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa', 'sub'],
+      withData: true,
+    );
+    final file = picked?.files.single;
+    final bytes = file?.bytes;
+    if (bytes == null) return;
+    await c.addExternalSubtitle(_subtitleToUtf8(bytes), title: file!.name);
+    _wake();
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     _wake();
@@ -440,6 +462,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   onSubtitleSettings:
                       widget.controller is MediaKitPlayerController
                       ? _openSubtitleSettings
+                      : null,
+                  onAddSubtitle: widget.controller is MediaKitPlayerController
+                      ? _addSubtitleFile
                       : null,
                   onTogglePlay: _togglePlay,
                   onSeekPreview: (p) => setState(() => _dragPosition = p),
@@ -552,6 +577,7 @@ class _TransportBar extends StatelessWidget {
     required this.hardwareDecoding,
     required this.onDecode,
     required this.onSubtitleSettings,
+    required this.onAddSubtitle,
     required this.onTogglePlay,
     required this.onSeekPreview,
     required this.onSeekCommit,
@@ -587,6 +613,11 @@ class _TransportBar extends StatelessWidget {
 
   /// Opens the subtitle appearance panel. Null hides the gear (non-media_kit).
   final VoidCallback? onSubtitleSettings;
+
+  /// Picks a local subtitle file to side-load. Null on non-media_kit
+  /// controllers; when non-null the subtitle menu is always shown (so the user
+  /// can load a file even when the media carries no subtitle tracks).
+  final VoidCallback? onAddSubtitle;
 
   final VoidCallback onTogglePlay;
   final ValueChanged<Duration> onSeekPreview;
@@ -689,15 +720,13 @@ class _TransportBar extends StatelessWidget {
                   allowNone: false,
                   onChanged: onAudio,
                 ),
-              if (tracks.subtitle.isNotEmpty)
-                _TrackMenu(
-                  icon: Icons.subtitles,
-                  tooltip: 'Subtitles',
+              if (onAddSubtitle != null || tracks.subtitle.isNotEmpty)
+                _SubtitleControl(
                   tracks: tracks.subtitle,
                   selected: selectedSubtitle,
                   enabled: canControl,
-                  allowNone: true,
                   onChanged: onSubtitle,
+                  onAddFile: onAddSubtitle,
                 ),
               if (onSubtitleSettings != null)
                 _ChromeIconButton(
@@ -1108,6 +1137,108 @@ class _TrackMenu extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Subtitle control for the transport bar. Unlike the generic [_TrackMenu] it
+/// is shown even when the media carries no subtitle tracks — so the user can
+/// side-load a local file — and its popup offers a "Load subtitle file…"
+/// action above the Off + track list.
+class _SubtitleControl extends StatelessWidget {
+  const _SubtitleControl({
+    required this.tracks,
+    required this.selected,
+    required this.enabled,
+    required this.onChanged,
+    required this.onAddFile,
+  });
+
+  final List<PlayerTrack> tracks;
+  final String? selected;
+  final bool enabled;
+  final ValueChanged<String?> onChanged;
+
+  /// Picks a local subtitle file to side-load, or null if unsupported.
+  final VoidCallback? onAddFile;
+
+  static const _none = ' none';
+  static const _addFile = ' addfile';
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Subtitles',
+      enabled: enabled,
+      onSelected: (v) {
+        if (v == _addFile) {
+          onAddFile?.call();
+        } else if (v == _none) {
+          onChanged(null);
+        } else {
+          onChanged(v);
+        }
+      },
+      itemBuilder: (context) => [
+        if (onAddFile != null)
+          const PopupMenuItem<String>(
+            value: _addFile,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.upload_file, size: 16, color: AppColors.dim),
+                SizedBox(width: AppSpacing.xs),
+                Text('Load subtitle file…', style: AppTheme.body),
+              ],
+            ),
+          ),
+        if (onAddFile != null) const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: _none,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (selected == null)
+                const Icon(Icons.check, size: 16, color: AppColors.accent),
+              if (selected == null) const SizedBox(width: AppSpacing.xs),
+              const Text('Off', style: AppTheme.body),
+            ],
+          ),
+        ),
+        for (final t in tracks)
+          PopupMenuItem<String>(
+            value: t.id,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (t.id == selected)
+                  const Icon(Icons.check, size: 16, color: AppColors.accent),
+                if (t.id == selected) const SizedBox(width: AppSpacing.xs),
+                Text(t.title ?? t.language ?? t.id, style: AppTheme.body),
+              ],
+            ),
+          ),
+      ],
+      child: _ChromeIconButton(
+        icon: Icons.subtitles,
+        tooltip: 'Subtitles',
+        onPressed: null,
+        forceEnabled: enabled,
+      ),
+    );
+  }
+}
+
+/// Normalise picked subtitle bytes to UTF-8 text for side-loading (mirrors the
+/// upload path in subtitle_manager_dialog): pass valid UTF-8 through, otherwise
+/// re-decode as Latin-1, and strip any stray U+FFFD so one bad glyph doesn't
+/// corrupt rendering.
+String _subtitleToUtf8(List<int> raw) {
+  String text;
+  try {
+    text = utf8.decode(raw);
+  } on FormatException {
+    text = latin1.decode(raw, allowInvalid: true);
+  }
+  return text.replaceAll('\u{FFFD}', '');
 }
 
 class _ChromeIconButton extends StatelessWidget {
