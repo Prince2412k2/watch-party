@@ -691,13 +691,81 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                 ),
               ),
             )
-          : PlayerView(
-              controller: ref.watch(playerControllerProvider),
-              itemId: widget.itemId,
-              apiClient: ref.watch(apiClientProvider),
-              title: widget.title,
-              onBack: () => Navigator.of(context).maybePop(),
+          : Stack(
+              children: [
+                PlayerView(
+                  controller: ref.watch(playerControllerProvider),
+                  itemId: widget.itemId,
+                  apiClient: ref.watch(apiClientProvider),
+                  title: widget.title,
+                  onBack: () => Navigator.of(context).maybePop(),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: SafeArea(
+                    child: _StartPartyButton(
+                      itemId: widget.itemId,
+                    ),
+                  ),
+                ),
+              ],
             ),
+    );
+  }
+}
+
+/// "Start a party" affordance floated over solo playback (E3 title detail),
+/// so a party can be spun up MID-MOVIE instead of only from the party
+/// screen's lobby. Carries the currently-playing item + its live position
+/// into [PartyNotifier.createFromCurrentPlayback] (`party:create` pre-selects
+/// the media, then a `sync:seek` restores the position), then hands off to
+/// the immersive party screen — the party stays alive from here on regardless
+/// of further navigation.
+class _StartPartyButton extends ConsumerStatefulWidget {
+  const _StartPartyButton({required this.itemId});
+  final String itemId;
+
+  @override
+  ConsumerState<_StartPartyButton> createState() => _StartPartyButtonState();
+}
+
+class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
+  bool _busy = false;
+
+  Future<void> _start() async {
+    setState(() => _busy = true);
+    try {
+      final position = ref.read(playerControllerProvider).positionNow;
+      final partyId = await ref
+          .read(partyProvider.notifier)
+          .createFromCurrentPlayback(
+            mediaItemId: widget.itemId,
+            position: position,
+          );
+      if (!mounted) return;
+      context.go('/party/$partyId');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not start a party: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Already in a party (e.g. re-entering solo playback from elsewhere) —
+    // nothing to start.
+    if (ref.watch(partyProvider) != null) return const SizedBox.shrink();
+    return AppButton(
+      label: 'Start party',
+      icon: Icons.groups_outlined,
+      variant: AppButtonVariant.secondary,
+      busy: _busy,
+      onPressed: _busy ? null : _start,
     );
   }
 }

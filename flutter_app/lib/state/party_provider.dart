@@ -305,6 +305,25 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     }
   }
 
+  /// Starts a brand-new party pre-seeded with whatever is already playing
+  /// solo (e.g. from the detail screen's player) — `mediaItemId` + the
+  /// current playback [position] carry straight in, so converting a solo
+  /// watch into a party doesn't restart the movie. Reuses [create] (which
+  /// pre-selects the media over `party:create`) and then re-asserts the
+  /// carried-over position over the same `sync:seek` path the in-party
+  /// scrubber uses — `create()`'s `party:state` reopens the stream at 0 via
+  /// [_syncPlayerToMedia], so without this the position would be lost.
+  Future<String> createFromCurrentPlayback({
+    required String mediaItemId,
+    required Duration position,
+  }) async {
+    final partyId = await create(mediaItemId: mediaItemId);
+    if (position > Duration.zero) {
+      await _ref.read(syncEngineProvider).requestSeek(position);
+    }
+    return partyId;
+  }
+
   Future<void> setSyncMode(String mode) async {
     await _ack(ClientEvent.partySetSyncMode, {'mode': mode});
     final s = state;
@@ -339,6 +358,13 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     final engine = _ref.read(syncEngineProvider);
     await engine.detach();
     if (engine is SyncEngineImpl) engine.isHost = false;
+    // The shared PlayerController lives for the app's lifetime (it's a plain
+    // Provider, not scoped to the party) — detaching the sync engine only
+    // stops the party from *driving* it, so without an explicit stop here the
+    // movie (and its audio) keeps playing after leaving/ending the party.
+    await _ref.read(playerControllerProvider).pause();
+    await _ref.read(playerControllerProvider).seek(Duration.zero);
+    _openedMediaId = null;
     await _ref.read(livekitProvider.notifier).leave();
     _ref.read(livekitProvider.notifier).reset();
     _ref.read(chatProvider.notifier).clear();
