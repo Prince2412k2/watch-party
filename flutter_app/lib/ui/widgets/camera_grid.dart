@@ -108,39 +108,47 @@ class _CameraTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(AppSpacing.radius);
     return Container(
-      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radius),
-        border: Border.all(
-          color: track.isSpeaking ? AppColors.live : AppColors.line,
-          width: track.isSpeaking ? 1.5 : 1,
-        ),
+        borderRadius: radius,
+        boxShadow: track.isSpeaking
+            ? [
+                BoxShadow(
+                  color: AppColors.live.withValues(alpha: 0.55),
+                  blurRadius: 12,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
       ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          CameraVideoView(track: track),
-          Positioned(
-            left: AppSpacing.xs,
-            bottom: AppSpacing.xs,
-            child: _NameTag(track: track),
-          ),
-          if (track.isSpeaking)
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CameraVideoView(track: track),
             Positioned(
-              right: AppSpacing.xs,
-              top: AppSpacing.xs,
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: AppColors.live,
-                  shape: BoxShape.circle,
+              left: AppSpacing.xs,
+              bottom: AppSpacing.xs,
+              child: _NameTag(track: track),
+            ),
+            if (track.isSpeaking)
+              Positioned(
+                right: AppSpacing.xs,
+                top: AppSpacing.xs,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: AppColors.live,
+                    shape: BoxShape.circle,
+                  ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
