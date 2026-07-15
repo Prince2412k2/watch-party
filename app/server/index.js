@@ -28,6 +28,7 @@ import { registerNativeRoutes } from './native.js'
 import { registerSubtitleRoutes } from './subtitles.js'
 import { registerLiveKitRoutes } from './livekit.js'
 import { registerServarrRoutes } from './servarr/index.js'
+import { registerDesktopBuildRoutes } from './desktop-builds.js'
 import { refreshPlayback } from './playback.js'
 import {
   createSession, getSession, deleteSession,
@@ -195,6 +196,7 @@ registerSubtitleRoutes(app, io)
 registerLiveKitRoutes(app)
 registerServarrRoutes(app)
 registerNativeRoutes(app)
+registerDesktopBuildRoutes(app)
 
 // ── Dev-only observability (gated: 404 unless WP_TEST_MODE=1) ───────────────
 // Exposes session internals for the sync test harness. MUST stay off in prod.
