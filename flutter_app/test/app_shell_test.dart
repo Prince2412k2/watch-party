@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/app_shell.dart';
+import 'package:watchparty/models/models.dart';
+import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
 
 /// NavRail renders a shadcn badge/tooltip, so it needs a shadcn `Theme`
@@ -12,6 +14,21 @@ Widget _shadcn(BuildContext context, Widget? child) => sc.ShadcnLayer(
   themeMode: sc.ThemeMode.dark,
   child: child!,
 );
+
+/// A bare `ProviderScope` defaults `authProvider` to its un-initialized,
+/// logged-out `AuthState()` — since AppShell now shows a two-tab guest rail
+/// when logged out, the "authenticated" tests below need a signed-in override
+/// to exercise the full rail instead.
+List<Override> _signedIn() => [
+  authProvider.overrideWith((ref) {
+    final notifier = AuthNotifier(ref);
+    notifier.state = const AuthState(
+      user: User(userId: 'u1', name: 'Test User'),
+      initialized: true,
+    );
+    return notifier;
+  }),
+];
 
 void main() {
   testWidgets('AppShell shows full nav labels at desktop width', (
@@ -23,8 +40,9 @@ void main() {
       MaterialApp(
         theme: AppTheme.dark,
         builder: _shadcn,
-        home: const ProviderScope(
-          child: AppShell(location: '/home', child: SizedBox()),
+        home: ProviderScope(
+          overrides: _signedIn(),
+          child: const AppShell(location: '/home', child: SizedBox()),
         ),
       ),
     );
@@ -45,8 +63,9 @@ void main() {
         MaterialApp(
           theme: AppTheme.dark,
           builder: _shadcn,
-          home: const ProviderScope(
-            child: AppShell(location: '/home', child: SizedBox()),
+          home: ProviderScope(
+            overrides: _signedIn(),
+            child: const AppShell(location: '/home', child: SizedBox()),
           ),
         ),
       );
@@ -58,6 +77,30 @@ void main() {
       expect(find.byIcon(Icons.home_outlined), findsOneWidget);
     },
   );
+
+  testWidgets('AppShell shows only Home + Downloaded when logged out', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        builder: _shadcn,
+        home: const ProviderScope(
+          child: AppShell(location: '/home', child: SizedBox()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('Downloaded'), findsOneWidget);
+    expect(find.text('Browse'), findsNothing);
+    // Top-right chrome is the Login button, not the Profile avatar.
+    expect(find.byIcon(Icons.login), findsOneWidget);
+    expect(find.byIcon(Icons.person_outline), findsNothing);
+  });
 
   group('shellSectionTitle', () {
     test('maps shelled locations (incl. nested paths) to their section', () {

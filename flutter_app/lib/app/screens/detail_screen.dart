@@ -11,6 +11,7 @@ import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../player/offline_playback.dart';
 import '../../player/player_view.dart';
+import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import 'subtitle_manager_dialog.dart';
@@ -26,6 +27,38 @@ class DetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Guest offline-browse (PLAN §E): a logged-out user has no Jellyfin
+    // session, so `itemDetailProvider`'s server fetch would just error. Their
+    // detail view is sourced entirely from the offline manifest instead, and
+    // goes straight to local playback — never touching the network.
+    final isAuthenticated = ref.watch(
+      authProvider.select((s) => s.isAuthenticated),
+    );
+    if (!isAuthenticated) {
+      final offline = ref.watch(offlineProvider);
+      OfflineRecord? record;
+      for (final r in offline) {
+        if (r.itemId == itemId) {
+          record = r;
+          break;
+        }
+      }
+      return Scaffold(
+        backgroundColor: AppColors.bg,
+        body: SafeArea(
+          child: record == null
+              ? EmptyState(
+                  icon: Icons.wifi_off_outlined,
+                  title: 'Not available offline',
+                  message: 'Sign in to browse and download this title.',
+                  actionLabel: 'Login',
+                  onAction: () => context.go('/login'),
+                )
+              : _GuestOfflineDetailBody(record: record),
+        ),
+      );
+    }
+
     final detail = ref.watch(itemDetailProvider(itemId));
     final api = ref.watch(apiClientProvider);
 
@@ -41,6 +74,51 @@ class DetailScreen extends ConsumerWidget {
           ),
         ),
         data: (item) => _DetailBody(item: item, api: api),
+      ),
+    );
+  }
+}
+
+/// A guest's detail view for a downloaded title — no server, no session, just
+/// what's already on disk (PLAN §E). Mirrors the authenticated hero's title +
+/// Play affordance without any of the metadata that needs Jellyfin (cast,
+/// backdrop, provider links).
+class _GuestOfflineDetailBody extends StatelessWidget {
+  const _GuestOfflineDetailBody({required this.record});
+  final OfflineRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final runtime = record.runTimeTicks > 0
+        ? '${(record.runTimeTicks / 600000000).round()}m'
+        : null;
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.xxl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          sc.IconButton.ghost(
+            onPressed: () =>
+                context.canPop() ? context.pop() : context.go('/home'),
+            icon: const Icon(Icons.arrow_back, color: AppColors.dim),
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          Text(record.title, style: AppTheme.displaySmall),
+          if (runtime != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(runtime, style: AppTheme.mono.copyWith(color: AppColors.dim)),
+          ],
+          const SizedBox(height: AppSpacing.lg),
+          AppButton(
+            label: 'Play',
+            icon: Icons.play_arrow,
+            variant: AppButtonVariant.primary,
+            onPressed: () => Navigator.of(context).push(
+              _playerRouteFor(itemId: record.itemId, title: record.title),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -571,12 +649,15 @@ class _LinkPill extends StatelessWidget {
 
 /// Fade transition into the solo player (per the redesign's motion system),
 /// replacing the hard-cut `MaterialPageRoute`.
-Route<void> _playerRoute(LibraryItem item) {
+Route<void> _playerRoute(LibraryItem item) =>
+    _playerRouteFor(itemId: item.id, title: item.name);
+
+Route<void> _playerRouteFor({required String itemId, required String title}) {
   return PageRouteBuilder<void>(
     transitionDuration: AppMotion.page,
     reverseTransitionDuration: AppMotion.page,
     pageBuilder: (context, animation, secondaryAnimation) =>
-        _SoloPlayer(itemId: item.id, title: item.name),
+        _SoloPlayer(itemId: itemId, title: title),
     transitionsBuilder: (context, animation, secondaryAnimation, child) =>
         FadeTransition(
           opacity: CurvedAnimation(
@@ -656,17 +737,25 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
       _ready = false;
     });
     try {
-      final api = ref.read(apiClientProvider);
-      final stream = await api.nativeStreamUrl(
-        widget.itemId,
-        purpose: 'stream',
+      // A logged-out guest has no session, so there's no signed stream URL to
+      // fetch — this path is only ever reached with the title already fully
+      // downloaded (`_GuestOfflineDetailBody` only offers Play once the
+      // offline manifest has a record), so the local file is all we need.
+      final isAuthenticated = ref.read(
+        authProvider.select((s) => s.isAuthenticated),
       );
+      final streamUrl = isAuthenticated
+          ? (await ref
+                    .read(apiClientProvider)
+                    .nativeStreamUrl(widget.itemId, purpose: 'stream'))
+                .url
+          : '';
       final controller = ref.read(playerControllerProvider);
       await openPreferringOffline(
         ref,
         controller,
         itemId: widget.itemId,
-        streamUrl: stream.url,
+        streamUrl: streamUrl,
         autoplay: true,
       );
       if (mounted) setState(() => _ready = true);
@@ -766,9 +855,15 @@ class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
 
   @override
   Widget build(BuildContext context) {
-    // Already in a party (e.g. re-entering solo playback from elsewhere) —
-    // nothing to start.
-    if (ref.watch(partyProvider) != null) return const SizedBox.shrink();
+    // A party needs a session (and someone to invite); nothing to offer a
+    // logged-out guest. Already-in-a-party (e.g. re-entering solo playback
+    // from elsewhere) is likewise nothing to start.
+    final isAuthenticated = ref.watch(
+      authProvider.select((s) => s.isAuthenticated),
+    );
+    if (!isAuthenticated || ref.watch(partyProvider) != null) {
+      return const SizedBox.shrink();
+    }
     return AppButton(
       label: 'Start party',
       icon: Icons.groups_outlined,
