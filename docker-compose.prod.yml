@@ -108,6 +108,12 @@ services:
       # container recreate. See app/server/index.js's sessionStoreDir.
       - ./data/sessions:/data/sessions
       - ./data/subtitles:/data/subtitles
+      # Desktop build artifacts served by GET /api/downloads (see
+      # app/server/desktop-builds.js). Mounted read-only at the same path the
+      # route defaults to (DESKTOP_BUILDS_DIR), so no env override is needed;
+      # without this mount the container can't see the host's builds and the
+      # endpoint returns an empty list.
+      - /opt/watch-party/builds/desktop/latest:/opt/watch-party/builds/desktop/latest:ro
     env_file:
       - ./secrets/.env
       - ./secrets/.env.local
