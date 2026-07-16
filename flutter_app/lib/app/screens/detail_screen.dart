@@ -744,11 +744,10 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
       final isAuthenticated = ref.read(
         authProvider.select((s) => s.isAuthenticated),
       );
+      // Routed through the on-device caching proxy (Phase 2) instead of a
+      // direct signed URL — it mints/re-mints one itself on demand.
       final streamUrl = isAuthenticated
-          ? (await ref
-                    .read(apiClientProvider)
-                    .nativeStreamUrl(widget.itemId, purpose: 'stream'))
-                .url
+          ? ref.read(mediaCacheProxyProvider).urlFor(widget.itemId)
           : '';
       final controller = ref.read(playerControllerProvider);
       await openPreferringOffline(
