@@ -222,5 +222,51 @@ void main() {
       final second = await store.open('item-5');
       expect(first, same(second));
     });
+
+    test('cachedSpansFor updates as an entry is written to', () async {
+      final store = RangeCacheStore(overrideDir: tmpDir);
+      final spans = store.cachedSpansFor('item-6');
+      expect(spans.value, isEmpty);
+
+      final entry = await store.open('item-6');
+      expect(spans.value, isEmpty); // totalLength still unknown
+
+      entry.setTotalLength(1000);
+      expect(spans.value, isEmpty); // total length known, but no bytes written yet
+
+      await entry.write(0, List.filled(100, 1));
+      expect(spans.value, [const CachedSpan(0, 0.1)]);
+
+      await entry.write(500, List.filled(100, 1));
+      expect(spans.value, [const CachedSpan(0, 0.1), const CachedSpan(0.5, 0.6)]);
+    });
+  });
+
+  group('cachedSpansFromIntervals', () {
+    test('totalLength null => empty', () {
+      expect(cachedSpansFromIntervals([[0, 100]], null), isEmpty);
+    });
+
+    test('totalLength unknown/zero-or-negative => empty', () {
+      expect(cachedSpansFromIntervals([[0, 100]], 0), isEmpty);
+    });
+
+    test('no intervals => empty', () {
+      expect(cachedSpansFromIntervals([], 1000), isEmpty);
+    });
+
+    test('full file => a single 0..1 span', () {
+      expect(
+        cachedSpansFromIntervals([[0, 1000]], 1000),
+        [const CachedSpan(0, 1)],
+      );
+    });
+
+    test('a middle gap => two spans around it', () {
+      expect(
+        cachedSpansFromIntervals([[0, 250], [750, 1000]], 1000),
+        [const CachedSpan(0, 0.25), const CachedSpan(0.75, 1)],
+      );
+    });
   });
 }

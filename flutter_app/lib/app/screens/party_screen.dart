@@ -353,6 +353,14 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             // other client (web + Flutter). Without this the drag only moves
             // the local player and never propagates.
             onSeek: (pos) => ref.read(syncEngineProvider).requestSeek(pos),
+            // Party playback is always routed through MediaCacheProxy (see
+            // party_provider.dart), so the "downloaded" indicator is always
+            // available here (unlike the detail screen's offline-guest path).
+            cachedSpans: party.mediaItemId == null
+                ? null
+                : ref
+                      .watch(mediaCacheProxyProvider)
+                      .cachedSpansFor(party.mediaItemId!),
           )
         : _LobbyStage(party: party);
 

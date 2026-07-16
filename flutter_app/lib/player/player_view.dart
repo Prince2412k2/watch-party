@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../ui/tokens.dart';
 import '../ui/widgets/error_state.dart';
@@ -36,6 +38,7 @@ class PlayerView extends StatefulWidget {
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
+    this.cachedSpans,
   })  : _controller = controller,
         _itemId = null,
         _apiClient = null,
@@ -56,6 +59,7 @@ class PlayerView extends StatefulWidget {
     this.onBack,
     this.onToggleFullscreen,
     this.isFullscreen = false,
+    this.cachedSpans,
     Duration startAt = Duration.zero,
     bool autoplay = true,
     String purpose = 'stream',
@@ -101,6 +105,11 @@ class PlayerView extends StatefulWidget {
   final String? itemId;
   final String? mediaSourceId;
   final ApiClient? apiClient;
+
+  /// Cached ("downloaded") byte-range spans for [itemId], forwarded straight
+  /// to [PlayerChrome]'s seek-bar overlay. Null for the offline-local-file
+  /// path (nothing to indicate) or when the caller has no cache proxy.
+  final ValueListenable<List<CachedSpan>>? cachedSpans;
 
   @override
   State<PlayerView> createState() => _PlayerViewState();
@@ -209,6 +218,7 @@ class _PlayerViewState extends State<PlayerView> {
             itemId: widget.itemId ?? widget._itemId,
             mediaSourceId: widget.mediaSourceId,
             apiClient: widget.apiClient ?? widget._apiClient,
+            cachedSpans: widget.cachedSpans,
           ),
         ],
       ),

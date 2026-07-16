@@ -4,9 +4,11 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
 import '../models/trickplay_manifest.dart';
@@ -49,12 +51,20 @@ class PlayerChrome extends StatefulWidget {
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
+    this.cachedSpans,
   });
 
   final PlayerController controller;
   final bool canControl;
   final String? title;
   final VoidCallback? onBack;
+
+  /// Cached ("downloaded") byte-range spans for [itemId], as 0..1 fractions
+  /// of total length, painted behind the scrubber's play-progress as a
+  /// buffered-style indicator. Null for the offline-local-file playback path
+  /// (nothing to show — the whole file is already local) and for
+  /// tests/mocks that don't wire a cache proxy.
+  final ValueListenable<List<CachedSpan>>? cachedSpans;
 
   /// Fired (in addition to the local seek) whenever the user scrubs or uses a
   /// keyboard seek. In a watch party this is wired to the sync engine's
@@ -634,6 +644,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   onToggleFullscreen: widget.onToggleFullscreen,
                   trickplay: _trickplay,
                   apiClient: widget.apiClient,
+                  cachedSpans: widget.cachedSpans,
                   previewPosition: _previewPosition,
                   previewFraction: _previewFraction,
                   onHoverPreview: (position, fraction) => setState(() {
@@ -798,6 +809,7 @@ class _TransportBar extends StatelessWidget {
     required this.onToggleFullscreen,
     required this.trickplay,
     required this.apiClient,
+    this.cachedSpans,
     required this.previewPosition,
     required this.previewFraction,
     required this.onHoverPreview,
@@ -839,6 +851,7 @@ class _TransportBar extends StatelessWidget {
   final VoidCallback? onToggleFullscreen;
   final TrickplayManifest? trickplay;
   final ApiClient? apiClient;
+  final ValueListenable<List<CachedSpan>>? cachedSpans;
   final Duration? previewPosition;
   final double previewFraction;
   final void Function(Duration position, double fraction) onHoverPreview;
@@ -872,6 +885,7 @@ class _TransportBar extends StatelessWidget {
                   onCommit: onSeekCommit,
                   onHoverPreview: onHoverPreview,
                   onHoverEnd: onHoverEnd,
+                  cachedSpans: cachedSpans,
                 ),
                 if (previewPosition != null &&
                     trickplay != null &&
@@ -978,6 +992,7 @@ class _Scrubber extends StatelessWidget {
     required this.onCommit,
     required this.onHoverPreview,
     required this.onHoverEnd,
+    this.cachedSpans,
   });
 
   final Duration position;
@@ -987,6 +1002,17 @@ class _Scrubber extends StatelessWidget {
   final ValueChanged<Duration> onCommit;
   final void Function(Duration position, double fraction) onHoverPreview;
   final VoidCallback onHoverEnd;
+
+  /// Cached ("downloaded") spans to paint behind the play-progress track, as
+  /// an indicator of what's already on disk. Null/empty renders nothing.
+  final ValueListenable<List<CachedSpan>>? cachedSpans;
+
+  /// The Material [Slider]'s track is inset from the full widget width by
+  /// roughly the thumb radius on each side (it never draws all the way to
+  /// the edge). 6px matches the enabled thumb radius used below closely
+  /// enough for an indicator overlay — not pixel-exact, but visually
+  /// aligned with the play-progress track.
+  static const double _trackInset = 6;
 
   @override
   Widget build(BuildContext context) {
@@ -1010,28 +1036,75 @@ class _Scrubber extends StatelessWidget {
       onExit: (_) => onHoverEnd(),
       child: SizedBox(
         height: 24,
-        child: SliderTheme(
-          data: SliderThemeData(
-            trackHeight: 3,
-            activeTrackColor: AppColors.accent,
-            inactiveTrackColor: AppColors.line2,
-            thumbColor: AppColors.accent,
-            overlayShape: SliderComponentShape.noOverlay,
-            thumbShape: enabled
-                ? const RoundSliderThumbShape(enabledThumbRadius: 6)
-                : const RoundSliderThumbShape(enabledThumbRadius: 0),
-          ),
-          child: Slider(
-            value: value,
-            onChanged: (!enabled || totalMs <= 0)
-                ? null
-                : (v) =>
-                      onPreview(Duration(milliseconds: (v * totalMs).round())),
-            onChangeEnd: (!enabled || totalMs <= 0)
-                ? null
-                : (v) =>
-                      onCommit(Duration(milliseconds: (v * totalMs).round())),
-          ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (cachedSpans != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: _trackInset),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    return ValueListenableBuilder<List<CachedSpan>>(
+                      valueListenable: cachedSpans!,
+                      builder: (context, spans, _) {
+                        if (spans.isEmpty || !width.isFinite) {
+                          return const SizedBox.shrink();
+                        }
+                        return SizedBox(
+                          height: 3,
+                          child: Stack(
+                            children: [
+                              for (final span in spans)
+                                Positioned(
+                                  left: span.start.clamp(0.0, 1.0) * width,
+                                  width:
+                                      (span.end.clamp(0.0, 1.0) -
+                                              span.start.clamp(0.0, 1.0))
+                                          .clamp(0.0, 1.0) *
+                                      width,
+                                  top: 0,
+                                  bottom: 0,
+                                  child: const DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white24,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            SliderTheme(
+              data: SliderThemeData(
+                trackHeight: 3,
+                activeTrackColor: AppColors.accent,
+                inactiveTrackColor: AppColors.line2,
+                thumbColor: AppColors.accent,
+                overlayShape: SliderComponentShape.noOverlay,
+                thumbShape: enabled
+                    ? const RoundSliderThumbShape(enabledThumbRadius: 6)
+                    : const RoundSliderThumbShape(enabledThumbRadius: 0),
+              ),
+              child: Slider(
+                value: value,
+                onChanged: (!enabled || totalMs <= 0)
+                    ? null
+                    : (v) => onPreview(
+                        Duration(milliseconds: (v * totalMs).round()),
+                      ),
+                onChangeEnd: (!enabled || totalMs <= 0)
+                    ? null
+                    : (v) => onCommit(
+                        Duration(milliseconds: (v * totalMs).round()),
+                      ),
+              ),
+            ),
+          ],
         ),
       ),
     );

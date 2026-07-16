@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import '../data/api_client.dart';
 import 'range_cache_store.dart';
 
@@ -90,6 +92,13 @@ class MediaCacheProxy {
     }
     return 'http://127.0.0.1:$p/m/$itemId';
   }
+
+  /// Cached spans for [itemId] as 0..1 fractions of its total length, for the
+  /// player's seek-bar "downloaded" overlay. Safe to call before playback has
+  /// started for this title — starts empty and fills in as the proxy serves
+  /// and read-aheads bytes.
+  ValueListenable<List<CachedSpan>> cachedSpansFor(String itemId) =>
+      _store.cachedSpansFor(itemId);
 
   // ── Request handling ──────────────────────────────────────────────────
 
