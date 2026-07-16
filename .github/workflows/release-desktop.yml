@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   windows:
-    name: Build Windows (.zip)
+    name: Build Windows (.zip + installer)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -218,10 +218,30 @@ jobs:
           Compress-Archive -Path "dist/stage/Watchparty" -DestinationPath $zip -Force
           Get-ChildItem dist
 
+      - name: Package installer (.exe)
+        working-directory: flutter_app
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          choco install innosetup --no-progress -y
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { $iscc = Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe' }
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe not found after installing innosetup' }
+          # Build a classic Setup.exe from the SAME staged tree the zip used
+          # (watchparty.exe + Flutter DLLs + data\ + the bundled VC++ DLLs).
+          $src = (Resolve-Path 'dist/stage/Watchparty').Path
+          $out = (Resolve-Path 'dist').Path
+          & $iscc "/DMyAppVersion=$env:VERSION" "/DMySourceDir=$src" "/DMyOutputDir=$out" "/DMyOutputBase=Watchparty-$env:VERSION-windows-setup" 'packaging/windows/watchparty.iss'
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed ($LASTEXITCODE)" }
+          Get-ChildItem dist
+
       - uses: actions/upload-artifact@v6
         with:
           name: watchparty-windows
-          path: flutter_app/dist/*.zip
+          path: |
+            flutter_app/dist/*.zip
+            flutter_app/dist/*.exe
           if-no-files-found: error
 
   release:
@@ -260,4 +280,6 @@ jobs:
 
             (The old right-click → Open trick no longer works on macOS 15+.)
 
-            **Windows** — `Watchparty-<version>-windows-x64.zip`: extract the `Watchparty` folder and run `watchparty.exe`. If SmartScreen warns: **More info → Run anyway**.
+            **Windows** — two options (both unsigned; if SmartScreen warns: **More info → Run anyway**):
+            - `Watchparty-<version>-windows-setup.exe`: the installer — run it, then launch from the Start menu.
+            - `Watchparty-<version>-windows-x64.zip`: portable — extract the `Watchparty` folder and run `watchparty.exe`.
