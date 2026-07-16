@@ -1039,51 +1039,61 @@ class _Scrubber extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            if (cachedSpans != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: _trackInset),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth;
-                    return ValueListenableBuilder<List<CachedSpan>>(
-                      valueListenable: cachedSpans!,
-                      builder: (context, spans, _) {
-                        if (spans.isEmpty || !width.isFinite) {
-                          return const SizedBox.shrink();
-                        }
-                        return SizedBox(
-                          height: 3,
-                          child: Stack(
-                            children: [
-                              for (final span in spans)
-                                Positioned(
-                                  left: span.start.clamp(0.0, 1.0) * width,
-                                  width:
-                                      (span.end.clamp(0.0, 1.0) -
-                                              span.start.clamp(0.0, 1.0))
-                                          .clamp(0.0, 1.0) *
-                                      width,
-                                  top: 0,
-                                  bottom: 0,
-                                  child: const DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: Colors.white24,
-                                    ),
-                                  ),
-                                ),
-                            ],
+            // Track background + "downloaded" overlay, UNDER the slider. The
+            // slider's inactive track is transparent (below), so these show
+            // through the un-played region: dim base = not cached, lighter
+            // gray = cached on disk, accent (the slider) = played.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _trackInset),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = constraints.maxWidth;
+                  return SizedBox(
+                    height: 3,
+                    child: Stack(
+                      children: [
+                        const Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(color: AppColors.line2),
                           ),
-                        );
-                      },
-                    );
-                  },
-                ),
+                        ),
+                        if (cachedSpans != null && width.isFinite)
+                          ValueListenableBuilder<List<CachedSpan>>(
+                            valueListenable: cachedSpans!,
+                            builder: (context, spans, _) {
+                              return Stack(
+                                children: [
+                                  for (final span in spans)
+                                    Positioned(
+                                      left: span.start.clamp(0.0, 1.0) * width,
+                                      width:
+                                          (span.end.clamp(0.0, 1.0) -
+                                                  span.start.clamp(0.0, 1.0))
+                                              .clamp(0.0, 1.0) *
+                                          width,
+                                      top: 0,
+                                      bottom: 0,
+                                      child: const DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: Colors.white54,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
+                          ),
+                      ],
+                    ),
+                  );
+                },
               ),
+            ),
             SliderTheme(
               data: SliderThemeData(
                 trackHeight: 3,
                 activeTrackColor: AppColors.accent,
-                inactiveTrackColor: AppColors.line2,
+                inactiveTrackColor: Colors.transparent,
                 thumbColor: AppColors.accent,
                 overlayShape: SliderComponentShape.noOverlay,
                 thumbShape: enabled
