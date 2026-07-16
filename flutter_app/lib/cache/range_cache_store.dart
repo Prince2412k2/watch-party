@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,6 +6,12 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'range_set.dart';
+
+/// On-disk cache format version. Bump to invalidate previously-written caches
+/// whose bytes can't be trusted. v2 discards v1 caches, which were written
+/// before the per-entry I/O lock and could contain bytes at wrong offsets from
+/// interleaved concurrent writes.
+const _cacheVersion = 2;
 
 /// A cached byte range expressed as a fraction (`0..1`) of a title's total
 /// length — what the player's seek bar overlay draws.
@@ -105,14 +112,31 @@ class CacheEntry {
   List<Gap> missingRanges(int start, int end) =>
       rangeSet.missingWithin(start, end);
 
+  // Serializes access to [_raf]. Every file op is a `setPosition` followed by
+  // a read/write across two awaits; the serve path, the fire-and-forget
+  // read-ahead, and any parallel player connections all share this one handle,
+  // so without a lock their setPositions interleave and bytes land at the
+  // wrong offsets — corrupting the cache (playback works the first time from
+  // the forwarded remote bytes, then fails on a later open served from cache).
+  Future<void> _ioLock = Future<void>.value();
+
+  Future<T> _locked<T>(Future<T> Function() action) {
+    final prev = _ioLock;
+    final completer = Completer<void>();
+    _ioLock = completer.future;
+    return prev.then((_) => action()).whenComplete(completer.complete);
+  }
+
   /// Writes [bytes] at [offset] into the sparse data file and marks that
   /// range present. Does NOT persist metadata — call [flushMetadata] once
   /// after a batch of writes (the proxy does this after each served/read-
   /// ahead range, not per-chunk, to avoid a syscall-per-network-packet).
   Future<void> write(int offset, List<int> bytes) async {
     if (bytes.isEmpty) return;
-    await _raf.setPosition(offset);
-    await _raf.writeFrom(bytes);
+    await _locked(() async {
+      await _raf.setPosition(offset);
+      await _raf.writeFrom(bytes);
+    });
     rangeSet.add(offset, offset + bytes.length);
     _recomputeCachedSpans();
   }
@@ -123,8 +147,10 @@ class CacheEntry {
   /// bytes for a range that was never fetched.
   Future<List<int>> read(int start, int end) async {
     if (end <= start) return const [];
-    await _raf.setPosition(start);
-    return _raf.read(end - start);
+    return _locked(() async {
+      await _raf.setPosition(start);
+      return _raf.read(end - start);
+    });
   }
 
   /// Bumps [lastAccess] to now and immediately persists it, so an entry that
@@ -142,6 +168,7 @@ class CacheEntry {
   Future<void> flushMetadata() async {
     final tmp = File('${_metaFile.path}.tmp');
     final json = <String, dynamic>{
+      'version': _cacheVersion,
       'itemId': itemId,
       'totalLength': _totalLength,
       'createdAt': createdAt.toIso8601String(),
@@ -296,13 +323,24 @@ class RangeCacheStore {
       try {
         final raw =
             jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
-        totalLength = (raw['totalLength'] as num?)?.toInt();
-        createdAt =
-            DateTime.tryParse(raw['createdAt'] as String? ?? '') ?? createdAt;
-        lastAccess =
-            DateTime.tryParse(raw['lastAccess'] as String? ?? '') ??
-                lastAccess;
-        rangeSet = RangeSet.fromJson({'intervals': raw['ranges'] ?? const []});
+        final version = (raw['version'] as num?)?.toInt() ?? 1;
+        if (version == _cacheVersion) {
+          totalLength = (raw['totalLength'] as num?)?.toInt();
+          createdAt =
+              DateTime.tryParse(raw['createdAt'] as String? ?? '') ?? createdAt;
+          lastAccess =
+              DateTime.tryParse(raw['lastAccess'] as String? ?? '') ??
+                  lastAccess;
+          rangeSet = RangeSet.fromJson({
+            'intervals': raw['ranges'] ?? const [],
+          });
+        } else {
+          // Stale cache from an older format (e.g. pre-lock v1, whose bytes may
+          // sit at the wrong offsets). Discard its ranges and drop the data
+          // file so we start clean and re-fetch correct bytes.
+          rangeSet = RangeSet();
+          if (await dataFile.exists()) await dataFile.delete();
+        }
       } catch (_) {
         // Corrupt sidecar — treat this title as an empty cache rather than
         // failing playback; the proxy will just re-fetch everything.
