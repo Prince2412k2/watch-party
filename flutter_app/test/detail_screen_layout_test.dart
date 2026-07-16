@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/detail_screen.dart';
 import 'package:watchparty/data/mock_api_client.dart';
+import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
 
@@ -19,7 +20,20 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [apiClientProvider.overrideWithValue(MockApiClient())],
+        // A bare `authProvider` defaults to logged-out, which now renders the
+        // guest offline-only branch instead of the server-backed hero this
+        // test exercises — sign in so the real layout is what's under test.
+        overrides: [
+          apiClientProvider.overrideWithValue(MockApiClient()),
+          authProvider.overrideWith((ref) {
+            final notifier = AuthNotifier(ref);
+            notifier.state = const AuthState(
+              user: User(userId: 'u1', name: 'Test User'),
+              initialized: true,
+            );
+            return notifier;
+          }),
+        ],
         child: MaterialApp(
           builder: (context, child) => sc.ShadcnLayer(
             theme: AppShadcnTheme.dark,
