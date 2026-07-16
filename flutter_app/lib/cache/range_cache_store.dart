@@ -127,8 +127,14 @@ class CacheEntry {
     return _raf.read(end - start);
   }
 
+  /// Bumps [lastAccess] to now and immediately persists it, so an entry that
+  /// is only ever read (never written — e.g. it was already fully cached)
+  /// still gets its recency tracked for eviction; [write] paths persist via
+  /// [flushMetadata] separately after a batch of writes, but a touch-only
+  /// request has no other flush point.
   Future<void> touch() async {
     lastAccess = DateTime.now();
+    await flushMetadata();
   }
 
   /// Atomically persists the sidecar metadata (temp file + rename), so a
@@ -152,15 +158,94 @@ class CacheEntry {
   Future<void> close() => _raf.close();
 }
 
+/// A snapshot of one title's cache footprint, as seen by [selectEvictions] —
+/// deliberately just the three fields eviction cares about, so the selection
+/// logic stays decoupled from how/where those numbers were read from.
+class CacheStat {
+  const CacheStat({
+    required this.itemId,
+    required this.cachedBytes,
+    required this.lastAccess,
+  });
+
+  final String itemId;
+
+  /// Sum of present-range lengths (NOT the sparse file's logical length,
+  /// which can be the whole title's size while only a sliver is downloaded).
+  final int cachedBytes;
+  final DateTime lastAccess;
+}
+
+/// Picks which itemIds an eviction pass should remove, given a snapshot of
+/// every entry's size/recency. Pure and deterministic — no I/O, no clock
+/// reads — so the size-cap and TTL policy is fully covered by unit tests
+/// without touching the filesystem.
+///
+/// Two-phase policy:
+///  1. Any non-protected entry whose [CacheStat.lastAccess] is older than
+///     `now - ttl` is evicted outright (TTL sweep).
+///  2. If the remaining total still exceeds [maxBytes], the remaining
+///     non-protected entries are evicted oldest-`lastAccess`-first until back
+///     under the cap (LRU sweep).
+///
+/// A protected itemId (currently open/in-use) is never evicted by either
+/// phase, even if it's the oldest or the sole thing over cap.
+List<String> selectEvictions({
+  required List<CacheStat> stats,
+  required int maxBytes,
+  required DateTime now,
+  required Duration ttl,
+  required Set<String> protected,
+}) {
+  final cutoff = now.subtract(ttl);
+  final evicted = <String>{};
+  final remaining = <CacheStat>[];
+  var remainingBytes = 0;
+
+  for (final stat in stats) {
+    if (!protected.contains(stat.itemId) && stat.lastAccess.isBefore(cutoff)) {
+      evicted.add(stat.itemId);
+    } else {
+      remaining.add(stat);
+      remainingBytes += stat.cachedBytes;
+    }
+  }
+
+  if (remainingBytes > maxBytes) {
+    final byAge = remaining.where((s) => !protected.contains(s.itemId)).toList()
+      ..sort((a, b) => a.lastAccess.compareTo(b.lastAccess));
+    for (final stat in byAge) {
+      if (remainingBytes <= maxBytes) break;
+      evicted.add(stat.itemId);
+      remainingBytes -= stat.cachedBytes;
+    }
+  }
+
+  return evicted.toList(growable: false);
+}
+
 /// Opens/creates per-title [CacheEntry]s under a `media-cache/` subdirectory
 /// of the app's support directory (overridable for tests). Keeps opened
-/// entries (and their file handles) alive for the process lifetime — Phase 3
-/// will add closing/evicting idle entries.
+/// entries (and their file handles) alive for the process lifetime.
+///
+/// Phase 3a adds bounded-size, LRU/TTL [evict]ion on top of the Phase 2
+/// storage shape above — nothing about [open]/[CacheEntry] changed shape for
+/// it.
 class RangeCacheStore {
   RangeCacheStore({Directory? overrideDir}) : _overrideDir = overrideDir;
 
   final Directory? _overrideDir;
   static const _subdirName = 'media-cache';
+
+  /// Total on-disk cache size (summed over actually-present bytes, not
+  /// sparse-file logical length) above which [evict] starts removing
+  /// least-recently-accessed entries. A plain const so it's a one-line change
+  /// later without touching call sites.
+  static const maxCacheBytes = 20 * 1024 * 1024 * 1024; // 20 GiB
+
+  /// Entries idle longer than this are evicted outright by [evict],
+  /// regardless of total cache size.
+  static const ttl = Duration(days: 30);
 
   final Map<String, CacheEntry> _open = {};
 
@@ -249,4 +334,107 @@ class RangeCacheStore {
     _open[itemId] = entry;
     return entry;
   }
+
+  /// Runs one size-cap + TTL eviction pass (see [selectEvictions] for the
+  /// policy). Scans the on-disk `.meta.json` sidecars rather than assuming
+  /// every entry has been [open]ed this run — a title downloaded in a past
+  /// session and never touched since must still be eligible for TTL removal.
+  ///
+  /// [protected] itemIds (typically whatever the caller is about to play or
+  /// is mid-download-fill) are never evicted; every currently-[_open] entry
+  /// is protected automatically on top of that, since an open handle means
+  /// "in use" regardless of what the caller passed.
+  ///
+  /// Safe to call with no titles cached (no-op) and safe to call repeatedly —
+  /// it's a plain scan-and-delete, not incremental state.
+  Future<void> evict({Set<String> protected = const {}}) async {
+    final dir = await _cacheDir();
+    if (!await dir.exists()) return;
+
+    final effectiveProtected = {...protected, ..._open.keys};
+
+    final stats = <CacheStat>[];
+    await for (final entity in dir.list()) {
+      if (entity is! File || !entity.path.endsWith('.meta.json')) continue;
+      final name = entity.path.split(Platform.pathSeparator).last;
+      final itemId = name.substring(0, name.length - '.meta.json'.length);
+
+      final openEntry = _open[itemId];
+      if (openEntry != null) {
+        stats.add(
+          CacheStat(
+            itemId: itemId,
+            cachedBytes: _cachedBytesOf(openEntry.rangeSet.intervals),
+            lastAccess: openEntry.lastAccess,
+          ),
+        );
+        continue;
+      }
+
+      try {
+        final raw = jsonDecode(await entity.readAsString()) as Map<String, dynamic>;
+        final rawRanges = (raw['ranges'] as List?) ?? const [];
+        final intervals = rawRanges
+            .map((pair) => [
+                  ((pair as List)[0] as num).toInt(),
+                  (pair[1] as num).toInt(),
+                ])
+            .toList();
+        final lastAccess =
+            DateTime.tryParse(raw['lastAccess'] as String? ?? '') ??
+                DateTime.now();
+        stats.add(
+          CacheStat(
+            itemId: itemId,
+            cachedBytes: _cachedBytesOf(intervals),
+            lastAccess: lastAccess,
+          ),
+        );
+      } catch (_) {
+        // Corrupt/unreadable sidecar — treat as evictable-safe: unknown size
+        // (contributes nothing to the size-cap accounting either way) and
+        // "ancient" recency so the TTL sweep clears it out rather than the
+        // scan crashing.
+        stats.add(
+          CacheStat(
+            itemId: itemId,
+            cachedBytes: 0,
+            lastAccess: DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+      }
+    }
+
+    final toEvict = selectEvictions(
+      stats: stats,
+      maxBytes: maxCacheBytes,
+      now: DateTime.now(),
+      ttl: ttl,
+      protected: effectiveProtected,
+    );
+
+    for (final itemId in toEvict) {
+      final openEntry = _open.remove(itemId);
+      if (openEntry != null) {
+        try {
+          await openEntry.close();
+        } catch (_) {
+          // Best-effort — the files are being deleted regardless.
+        }
+      }
+      _cachedSpansNotifiers.remove(itemId);
+
+      final dataFile = File('${dir.path}/$itemId.data');
+      final metaFile = File('${dir.path}/$itemId.meta.json');
+      try {
+        if (await dataFile.exists()) await dataFile.delete();
+      } catch (_) {}
+      try {
+        if (await metaFile.exists()) await metaFile.delete();
+      } catch (_) {}
+    }
+  }
+
+  int _cachedBytesOf(List<List<int>> intervals) =>
+      intervals.fold<int>(0, (sum, iv) => sum + (iv[1] - iv[0]));
 }

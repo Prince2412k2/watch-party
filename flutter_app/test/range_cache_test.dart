@@ -242,6 +242,191 @@ void main() {
     });
   });
 
+  group('selectEvictions', () {
+    final now = DateTime(2026, 7, 16);
+    const ttl = Duration(days: 30);
+
+    test('nothing over cap and all fresh => evicts nothing', () {
+      final stats = [
+        CacheStat(itemId: 'a', cachedBytes: 100, lastAccess: now),
+        CacheStat(itemId: 'b', cachedBytes: 100, lastAccess: now.subtract(const Duration(days: 1))),
+      ];
+      expect(
+        selectEvictions(stats: stats, maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
+        isEmpty,
+      );
+    });
+
+    test('entry older than TTL is evicted even though total is under cap', () {
+      final stats = [
+        CacheStat(itemId: 'old', cachedBytes: 10, lastAccess: now.subtract(const Duration(days: 31))),
+        CacheStat(itemId: 'fresh', cachedBytes: 10, lastAccess: now),
+      ];
+      expect(
+        selectEvictions(stats: stats, maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
+        ['old'],
+      );
+    });
+
+    test('an entry exactly at the TTL boundary is not evicted (isBefore, not isBefore-or-equal)', () {
+      final stats = [
+        CacheStat(itemId: 'boundary', cachedBytes: 10, lastAccess: now.subtract(ttl)),
+      ];
+      expect(
+        selectEvictions(stats: stats, maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
+        isEmpty,
+      );
+    });
+
+    test('over cap evicts oldest-first until back under the cap', () {
+      final stats = [
+        CacheStat(itemId: 'oldest', cachedBytes: 40, lastAccess: now.subtract(const Duration(days: 3))),
+        CacheStat(itemId: 'middle', cachedBytes: 40, lastAccess: now.subtract(const Duration(days: 2))),
+        CacheStat(itemId: 'newest', cachedBytes: 40, lastAccess: now.subtract(const Duration(days: 1))),
+      ];
+      // Total = 120, cap = 90 -> must evict at least 30 bytes; evicting just
+      // "oldest" (40) brings it to 80, which is <= 90, so only one eviction
+      // is needed and it must be the oldest.
+      expect(
+        selectEvictions(stats: stats, maxBytes: 90, now: now, ttl: ttl, protected: const {}),
+        ['oldest'],
+      );
+    });
+
+    test('over cap keeps evicting oldest-first until under, not just one', () {
+      final stats = [
+        CacheStat(itemId: 'a', cachedBytes: 50, lastAccess: now.subtract(const Duration(days: 5))),
+        CacheStat(itemId: 'b', cachedBytes: 50, lastAccess: now.subtract(const Duration(days: 4))),
+        CacheStat(itemId: 'c', cachedBytes: 50, lastAccess: now.subtract(const Duration(days: 3))),
+      ];
+      // Total = 150, cap = 40 -> must evict a, then b, then c to fit.
+      expect(
+        selectEvictions(stats: stats, maxBytes: 40, now: now, ttl: ttl, protected: const {}),
+        ['a', 'b', 'c'],
+      );
+    });
+
+    test('protected entries are never evicted, even if oldest and over cap', () {
+      final stats = [
+        CacheStat(itemId: 'protected-old', cachedBytes: 100, lastAccess: now.subtract(const Duration(days: 40))),
+        CacheStat(itemId: 'newer', cachedBytes: 100, lastAccess: now),
+      ];
+      // The protected entry is both past TTL and would be the LRU pick, but
+      // must survive both sweeps. The non-protected 'newer' is still a valid
+      // candidate reclaimed under cap pressure — what matters here is that the
+      // protected entry is never in the result.
+      expect(
+        selectEvictions(
+          stats: stats,
+          maxBytes: 50,
+          now: now,
+          ttl: ttl,
+          protected: {'protected-old'},
+        ),
+        isNot(contains('protected-old')),
+      );
+    });
+
+    test('empty stats list evicts nothing', () {
+      expect(
+        selectEvictions(stats: const [], maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
+        isEmpty,
+      );
+    });
+
+    test('ties in lastAccess are both eligible and evicted in encounter order', () {
+      final sameTime = now.subtract(const Duration(days: 1));
+      final stats = [
+        CacheStat(itemId: 'x', cachedBytes: 60, lastAccess: sameTime),
+        CacheStat(itemId: 'y', cachedBytes: 60, lastAccess: sameTime),
+      ];
+      // Total = 120, cap = 50 -> both must go since even removing one (60)
+      // leaves 60 > 50.
+      expect(
+        selectEvictions(stats: stats, maxBytes: 50, now: now, ttl: ttl, protected: const {}),
+        containsAll(['x', 'y']),
+      );
+    });
+  });
+
+  group('RangeCacheStore.evict (filesystem)', () {
+    late Directory tmpDir;
+
+    setUp(() {
+      tmpDir = Directory.systemTemp.createTempSync('range_cache_evict_test_');
+    });
+
+    tearDown(() {
+      tmpDir.deleteSync(recursive: true);
+    });
+
+    test('evicts a TTL-expired entry\'s files while leaving a fresh one intact', () async {
+      final store = RangeCacheStore(overrideDir: tmpDir);
+
+      final oldEntry = await store.open('old-item');
+      oldEntry.setTotalLength(1000);
+      await oldEntry.write(0, List.filled(100, 1));
+      oldEntry.lastAccess = DateTime.now().subtract(const Duration(days: 40));
+      await oldEntry.flushMetadata();
+      await oldEntry.close();
+
+      final freshEntry = await store.open('fresh-item');
+      freshEntry.setTotalLength(1000);
+      await freshEntry.write(0, List.filled(100, 1));
+      await freshEntry.flushMetadata();
+      await freshEntry.close();
+
+      // Reopen with a brand-new store so neither entry is in the `_open` map
+      // (simulating a cold-boot eviction scan over on-disk sidecars).
+      final freshStore = RangeCacheStore(overrideDir: tmpDir);
+      await freshStore.evict();
+
+      final cacheDir = Directory('${tmpDir.path}/media-cache');
+      final names = cacheDir.listSync().map((f) => f.path.split('/').last).toSet();
+
+      expect(names.where((n) => n.startsWith('old-item')), isEmpty);
+      expect(names, contains('fresh-item.data'));
+      expect(names, contains('fresh-item.meta.json'));
+    });
+
+    test('a currently-open entry is never evicted even if it is TTL-expired', () async {
+      final store = RangeCacheStore(overrideDir: tmpDir);
+
+      final entry = await store.open('playing-item');
+      entry.setTotalLength(1000);
+      await entry.write(0, List.filled(100, 1));
+      entry.lastAccess = DateTime.now().subtract(const Duration(days: 40));
+      await entry.flushMetadata();
+      // Deliberately left open (no close()) — still in store's `_open` map.
+
+      await store.evict();
+
+      final cacheDir = Directory('${tmpDir.path}/media-cache');
+      final names = cacheDir.listSync().map((f) => f.path.split('/').last).toSet();
+      expect(names, contains('playing-item.data'));
+      expect(names, contains('playing-item.meta.json'));
+    });
+
+    test('a corrupt sidecar is evicted rather than crashing the scan', () async {
+      final store = RangeCacheStore(overrideDir: tmpDir);
+      final entry = await store.open('corrupt-item');
+      entry.setTotalLength(1000);
+      await entry.write(0, List.filled(50, 1));
+      await entry.flushMetadata();
+      await entry.close();
+
+      final cacheDir = Directory('${tmpDir.path}/media-cache');
+      final metaFile = File('${cacheDir.path}/corrupt-item.meta.json');
+      await metaFile.writeAsString('{not valid json');
+
+      final freshStore = RangeCacheStore(overrideDir: tmpDir);
+      await freshStore.evict(); // must not throw
+
+      final names = cacheDir.listSync().map((f) => f.path.split('/').last).toSet();
+      expect(names.where((n) => n.startsWith('corrupt-item')), isEmpty);
+    });
+  });
+
   group('cachedSpansFromIntervals', () {
     test('totalLength null => empty', () {
       expect(cachedSpansFromIntervals([[0, 100]], null), isEmpty);
