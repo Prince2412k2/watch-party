@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/models.dart';
 import '../../state/downloads_provider.dart';
+import '../../state/providers.dart';
 import '../../ui/ui.dart';
 import 'media_row.dart';
 
@@ -95,7 +96,8 @@ class _DownloadRow extends ConsumerWidget {
         trailing: AppButton(
           label: 'Retry',
           icon: Icons.refresh,
-          onPressed: () => notifier.resume(record.taskId),
+          onPressed: () =>
+              notifier.resume(record.taskId, api: ref.read(apiClientProvider)),
         ),
       );
     }
@@ -116,7 +118,7 @@ class _DownloadRow extends ConsumerWidget {
             icon: paused ? Icons.play_arrow : Icons.pause,
             tooltip: paused ? 'Resume' : 'Pause',
             onPressed: () => paused
-                ? notifier.resume(record.taskId)
+                ? notifier.resume(record.taskId, api: ref.read(apiClientProvider))
                 : notifier.pause(record.taskId),
           ),
           MediaRowIconButton(

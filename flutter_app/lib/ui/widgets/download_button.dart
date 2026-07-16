@@ -105,8 +105,9 @@ class DownloadButton extends ConsumerWidget {
       record: download,
       onPause: () =>
           ref.read(downloadsProvider.notifier).pause(download.taskId),
-      onResume: () =>
-          ref.read(downloadsProvider.notifier).resume(download.taskId),
+      onResume: () => ref
+          .read(downloadsProvider.notifier)
+          .resume(download.taskId, api: ref.read(apiClientProvider)),
       onCancel: () =>
           ref.read(downloadsProvider.notifier).cancel(download.taskId),
     );

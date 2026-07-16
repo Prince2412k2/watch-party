@@ -107,7 +107,7 @@ void main() {
     );
 
     if (rehydratedRecord.status == DownloadStatus.paused) {
-      final resumedOk = await downloader.resume(target.id);
+      final resumedOk = await downloader.resume(target.id, api: api);
       expect(resumedOk, isTrue);
 
       // Confirm it's moving again after the simulated restart. Poll the DB
