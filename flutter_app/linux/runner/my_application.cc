@@ -41,21 +41,13 @@ static void my_application_activate(GApplication* application) {
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
   self->window = window;
 
-  // Frameless + rounded window: no OS title bar / decorations (Flutter draws a
-  // custom drag + min/max/close bar and window_manager's VirtualWindowFrame
-  // paints the 6px rounded corners + drop shadow). For the rounded corners to
-  // show, the window must be transparent — apply an RGBA visual. This needs a
-  // compositing window manager (GNOME/KDE/most modern Linux desktops); without
-  // one the corners fall back to square/opaque rather than breaking.
+  // Native window: keep the OS title bar / decorations so the desktop
+  // environment draws the min/maximize/close controls and provides normal
+  // move/resize + fullscreen. (An undecorated top-level window also makes some
+  // compositors ignore gtk_window_fullscreen requests, which broke the
+  // in-player Full screen control.)
   gtk_window_set_title(window, "Watchparty");
-  gtk_window_set_decorated(window, FALSE);
-  {
-    GdkScreen* wscreen = gtk_widget_get_screen(GTK_WIDGET(window));
-    GdkVisual* rgba_visual = gdk_screen_get_rgba_visual(wscreen);
-    if (rgba_visual != nullptr && gdk_screen_is_composited(wscreen)) {
-      gtk_widget_set_visual(GTK_WIDGET(window), rgba_visual);
-    }
-  }
+  gtk_window_set_decorated(window, TRUE);
 
   gtk_window_set_default_size(window, 1280, 720);
   gtk_widget_set_size_request(GTK_WIDGET(window), 960, 600);

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:window_manager/window_manager.dart';
 
 import '../../models/models.dart';
 import '../../player/player_view.dart';
@@ -286,12 +287,32 @@ class _ImmersiveParty extends ConsumerStatefulWidget {
 class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   bool _chatOpen = false;
   bool _chromeVisible = true;
+  bool _isFullscreen = false;
   Timer? _idleTimer;
 
   @override
   void dispose() {
     _idleTimer?.cancel();
+    // Don't leave the OS window stuck in fullscreen after navigating away
+    // from the party (e.g. the host ends the party mid-fullscreen). This is
+    // purely a window-chrome toggle — it never touches the party/LiveKit
+    // state, so the call itself is unaffected either way.
+    if (_isFullscreen) {
+      unawaited(windowManager.setFullScreen(false));
+    }
     super.dispose();
+  }
+
+  /// Toggles OS-level window fullscreen for the movie. The LiveKit
+  /// room/camera tiles and the party socket connection are entirely
+  /// unaffected — this only asks `window_manager` to resize the window and
+  /// flips local UI state so [PlayerChrome] renders the right icon.
+  /// [FloatingCameraLayer] is a fixed layer of the immersive [Stack] below,
+  /// so the camera PiP tiles keep rendering over the video in both states.
+  Future<void> _toggleFullscreen() async {
+    final next = !_isFullscreen;
+    await windowManager.setFullScreen(next);
+    if (mounted) setState(() => _isFullscreen = next);
   }
 
   /// Wake the chrome and re-arm the idle hide. Only auto-hides while watching;
@@ -326,10 +347,20 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             canControl: canControl,
             title: party.mediaItemId,
             onBack: () => _confirmLeave(context, isHost: isHost),
+            onToggleFullscreen: _toggleFullscreen,
+            isFullscreen: _isFullscreen,
             // Author the host's scrubs to the sync engine → server → every
             // other client (web + Flutter). Without this the drag only moves
             // the local player and never propagates.
             onSeek: (pos) => ref.read(syncEngineProvider).requestSeek(pos),
+            // Party playback is always routed through MediaCacheProxy (see
+            // party_provider.dart), so the "downloaded" indicator is always
+            // available here (unlike the detail screen's offline-guest path).
+            cachedSpans: party.mediaItemId == null
+                ? null
+                : ref
+                      .watch(mediaCacheProxyProvider)
+                      .cachedSpansFor(party.mediaItemId!),
           )
         : _LobbyStage(party: party);
 
@@ -486,19 +517,28 @@ class _LobbyStage extends ConsumerWidget {
     );
   }
 
-  Future<void> _openPicker(BuildContext context, WidgetRef ref) async {
-    final itemId = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => const _MediaPickerSheet(),
-    );
-    if (itemId != null && itemId.isNotEmpty) {
-      await ref.read(partyProvider.notifier).selectMedia(itemId);
-    }
+  Future<void> _openPicker(BuildContext context, WidgetRef ref) =>
+      pickAndSwitchPartyMedia(context, ref);
+}
+
+/// Opens the movie picker and, on a pick, calls [PartyNotifier.selectMedia] —
+/// shared by the lobby's "Choose a movie" and the host controls' "Switch
+/// movie" (watching-stage) so a host can change titles either before anyone's
+/// watching or mid-movie, without leaving/ending the party. `selectMedia` is a
+/// plain `party:selectMedia` ack (PLAN §3.5) with no lobby-only guard on
+/// either the client or server, so it's safe to call from `watching` too.
+Future<void> pickAndSwitchPartyMedia(BuildContext context, WidgetRef ref) async {
+  final itemId = await showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (_) => const _MediaPickerSheet(),
+  );
+  if (itemId != null && itemId.isNotEmpty) {
+    await ref.read(partyProvider.notifier).selectMedia(itemId);
   }
 }
 
@@ -1248,7 +1288,20 @@ class _HostControlsDialog extends ConsumerWidget {
                     ),
                     const SizedBox(height: AppSpacing.lg),
                     AppButton(
-                      label: '← Pick something else',
+                      label: 'Switch movie',
+                      icon: Icons.swap_horiz,
+                      variant: AppButtonVariant.primary,
+                      expand: true,
+                      onPressed: () async {
+                        Navigator.of(context).pop();
+                        if (context.mounted) {
+                          await pickAndSwitchPartyMedia(context, ref);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    AppButton(
+                      label: '← Back to lobby',
                       variant: AppButtonVariant.secondary,
                       expand: true,
                       onPressed: () {

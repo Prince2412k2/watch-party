@@ -46,11 +46,24 @@ class _AuthRefresh extends ChangeNotifier {
   }
 }
 
-/// E2: unauthenticated → `/login`; authenticated visiting `/login` → the
-/// route they were headed to (or home). Waits on `auth.initialized` (the
-/// boot-time `/me` session-restore probe) before redirecting away from
-/// whatever route the app opened to, so a valid persisted session isn't
-/// bounced through the login screen.
+/// Routes a logged-out guest may stay on: `/home` (renders the login page
+/// inline, PLAN guest-browse), `/offline` (the downloaded-titles library),
+/// `/detail/:id` (offline playback of a downloaded title), and `/login`
+/// itself. Anything else (browse, downloads, party, servarr, gallery) needs a
+/// session.
+bool _guestAllowed(String location) =>
+    location == Routes.home ||
+    location == Routes.login ||
+    location == Routes.offline ||
+    location.startsWith('${Routes.detail}/');
+
+/// E2/guest-browse: a logged-out user may browse `/home` (which renders the
+/// login page inline) and the offline library/detail without signing in;
+/// every other shelled/top-level route bounces them to `/home`. Authenticated
+/// visiting `/login` → the route they were headed to (or home). Waits on
+/// `auth.initialized` (the boot-time `/me` session-restore probe) before
+/// redirecting away from whatever route the app opened to, so a valid
+/// persisted session isn't bounced through the login screen.
 GoRouter buildRouter(WidgetRef ref) {
   return GoRouter(
     navigatorKey: rootNavigatorKey,
@@ -62,7 +75,7 @@ GoRouter buildRouter(WidgetRef ref) {
 
       final loggingIn = state.matchedLocation == Routes.login;
       if (!auth.isAuthenticated) {
-        return loggingIn ? null : Routes.login;
+        return _guestAllowed(state.matchedLocation) ? null : Routes.home;
       }
       if (loggingIn) {
         final redirectTo = state.uri.queryParameters['from'];

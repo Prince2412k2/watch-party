@@ -15,6 +15,7 @@ export 'widgets/chip.dart';
 export 'widgets/download_button.dart';
 export 'widgets/empty_state.dart';
 export 'widgets/error_state.dart';
+export 'widgets/global_party_bar.dart';
 export 'widgets/loading_skeleton.dart';
 export 'widgets/nav_rail.dart';
 export 'widgets/poster_card.dart';

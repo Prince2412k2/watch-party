@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app/app.dart';
 import 'app/config.dart';
 import 'app/desktop_lifecycle.dart';
+import 'cache/media_cache_proxy.dart';
 import 'data/api_client.dart';
 import 'net/socket_client.dart';
 import 'state/state.dart';
@@ -67,10 +68,23 @@ Future<void> main() async {
     },
   );
 
+  // The on-device caching media proxy (Phase 2): mints/re-mints signed
+  // stream URLs off [apiClient] itself, so it must be built after it. Started
+  // before the container exists so `mediaCacheProxyProvider.urlFor` is usable
+  // the moment any screen reads it — no screen awaits proxy startup itself.
+  final mediaCacheProxy = MediaCacheProxy(apiClient: apiClient);
+  await mediaCacheProxy.start();
+  // Bound the on-device cache (size cap + 30-day LRU, Phase 3a) once at
+  // boot. Nothing is open/playing yet at this point, so there's nothing to
+  // protect; a small, one-shot scan-and-delete, not worth blocking on in the
+  // background but also cheap enough not to bother deferring.
+  await mediaCacheProxy.evict();
+
   final container = ProviderContainer(
     overrides: [
       apiClientProvider.overrideWithValue(apiClient),
       socketClientProvider.overrideWithValue(socketClient),
+      mediaCacheProxyProvider.overrideWithValue(mediaCacheProxy),
       serverConfigProvider.overrideWith(
         (ref) => ServerConfigNotifier(ref, savedServerUrl),
       ),

@@ -7,6 +7,7 @@ import Login from './pages/Login'
 import Library from './pages/Library'
 import FindDownload from './pages/FindDownload'
 import Downloads from './pages/Downloads'
+import DesktopApp from './pages/DesktopApp'
 import MobileApp from './mobile/MobileApp'
 import { WatchRoute } from './mobile/screens/Watch'
 
@@ -71,6 +72,7 @@ function Router() {
   if (path === '/library') return <Library />
   if (path === '/discover') return <FindDownload />
   if (path === '/downloads') return <Downloads />
+  if (path === '/desktop-app') return <DesktopApp />
 
   return <div>404</div>
 }

@@ -4,9 +4,11 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
 import '../models/trickplay_manifest.dart';
@@ -49,12 +51,20 @@ class PlayerChrome extends StatefulWidget {
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
+    this.cachedSpans,
   });
 
   final PlayerController controller;
   final bool canControl;
   final String? title;
   final VoidCallback? onBack;
+
+  /// Cached ("downloaded") byte-range spans for [itemId], as 0..1 fractions
+  /// of total length, painted behind the scrubber's play-progress as a
+  /// buffered-style indicator. Null for the offline-local-file playback path
+  /// (nothing to show — the whole file is already local) and for
+  /// tests/mocks that don't wire a cache proxy.
+  final ValueListenable<List<CachedSpan>>? cachedSpans;
 
   /// Fired (in addition to the local seek) whenever the user scrubs or uses a
   /// keyboard seek. In a watch party this is wired to the sync engine's
@@ -634,6 +644,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   onToggleFullscreen: widget.onToggleFullscreen,
                   trickplay: _trickplay,
                   apiClient: widget.apiClient,
+                  cachedSpans: widget.cachedSpans,
                   previewPosition: _previewPosition,
                   previewFraction: _previewFraction,
                   onHoverPreview: (position, fraction) => setState(() {
@@ -798,6 +809,7 @@ class _TransportBar extends StatelessWidget {
     required this.onToggleFullscreen,
     required this.trickplay,
     required this.apiClient,
+    this.cachedSpans,
     required this.previewPosition,
     required this.previewFraction,
     required this.onHoverPreview,
@@ -839,6 +851,7 @@ class _TransportBar extends StatelessWidget {
   final VoidCallback? onToggleFullscreen;
   final TrickplayManifest? trickplay;
   final ApiClient? apiClient;
+  final ValueListenable<List<CachedSpan>>? cachedSpans;
   final Duration? previewPosition;
   final double previewFraction;
   final void Function(Duration position, double fraction) onHoverPreview;
@@ -872,6 +885,7 @@ class _TransportBar extends StatelessWidget {
                   onCommit: onSeekCommit,
                   onHoverPreview: onHoverPreview,
                   onHoverEnd: onHoverEnd,
+                  cachedSpans: cachedSpans,
                 ),
                 if (previewPosition != null &&
                     trickplay != null &&
@@ -978,6 +992,7 @@ class _Scrubber extends StatelessWidget {
     required this.onCommit,
     required this.onHoverPreview,
     required this.onHoverEnd,
+    this.cachedSpans,
   });
 
   final Duration position;
@@ -987,6 +1002,10 @@ class _Scrubber extends StatelessWidget {
   final ValueChanged<Duration> onCommit;
   final void Function(Duration position, double fraction) onHoverPreview;
   final VoidCallback onHoverEnd;
+
+  /// Cached ("downloaded") spans to paint behind the play-progress track, as
+  /// an indicator of what's already on disk. Null/empty renders nothing.
+  final ValueListenable<List<CachedSpan>>? cachedSpans;
 
   @override
   Widget build(BuildContext context) {
@@ -1010,31 +1029,112 @@ class _Scrubber extends StatelessWidget {
       onExit: (_) => onHoverEnd(),
       child: SizedBox(
         height: 24,
-        child: SliderTheme(
-          data: SliderThemeData(
-            trackHeight: 3,
-            activeTrackColor: AppColors.accent,
-            inactiveTrackColor: AppColors.line2,
-            thumbColor: AppColors.accent,
-            overlayShape: SliderComponentShape.noOverlay,
-            thumbShape: enabled
-                ? const RoundSliderThumbShape(enabledThumbRadius: 6)
-                : const RoundSliderThumbShape(enabledThumbRadius: 0),
-          ),
-          child: Slider(
-            value: value,
-            onChanged: (!enabled || totalMs <= 0)
-                ? null
-                : (v) =>
-                      onPreview(Duration(milliseconds: (v * totalMs).round())),
-            onChangeEnd: (!enabled || totalMs <= 0)
-                ? null
-                : (v) =>
-                      onCommit(Duration(milliseconds: (v * totalMs).round())),
-          ),
-        ),
+        child: cachedSpans == null
+            ? _buildSlider(value, totalMs, const [])
+            : ValueListenableBuilder<List<CachedSpan>>(
+                valueListenable: cachedSpans!,
+                builder: (context, spans, _) =>
+                    _buildSlider(value, totalMs, spans),
+              ),
       ),
     );
+  }
+
+  Widget _buildSlider(double value, int totalMs, List<CachedSpan> spans) {
+    return SliderTheme(
+      data: SliderThemeData(
+        trackHeight: 3,
+        activeTrackColor: AppColors.accent,
+        inactiveTrackColor: AppColors.line2,
+        thumbColor: AppColors.accent,
+        overlayShape: SliderComponentShape.noOverlay,
+        thumbShape: enabled
+            ? const RoundSliderThumbShape(enabledThumbRadius: 6)
+            : const RoundSliderThumbShape(enabledThumbRadius: 0),
+        // Paint the cached ("downloaded") spans inside the slider's own track
+        // rect so the gray bar lines up exactly with the accent play-progress
+        // and thumb — no inset guesswork / horizontal offset.
+        trackShape: _CachedRangesTrackShape(spans),
+      ),
+      child: Slider(
+        value: value,
+        onChanged: (!enabled || totalMs <= 0)
+            ? null
+            : (v) => onPreview(Duration(milliseconds: (v * totalMs).round())),
+        onChangeEnd: (!enabled || totalMs <= 0)
+            ? null
+            : (v) => onCommit(Duration(milliseconds: (v * totalMs).round())),
+      ),
+    );
+  }
+}
+
+/// A slider track that also paints [CachedSpan]s (downloaded byte ranges) in
+/// the SAME track rect the active track + thumb use, so the "downloaded"
+/// overlay lines up exactly with the play-progress highlight. Draw order:
+/// inactive base -> cached spans -> active (played) portion.
+class _CachedRangesTrackShape extends SliderTrackShape
+    with BaseSliderTrackShape {
+  const _CachedRangesTrackShape(this.cachedSpans);
+
+  final List<CachedSpan> cachedSpans;
+
+  static const Color _cachedColor = Colors.white54;
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset offset, {
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required Animation<double> enableAnimation,
+    required Offset thumbCenter,
+    Offset? secondaryOffset,
+    bool isEnabled = false,
+    bool isDiscrete = false,
+    required TextDirection textDirection,
+  }) {
+    final rect = getPreferredRect(
+      parentBox: parentBox,
+      offset: offset,
+      sliderTheme: sliderTheme,
+      isEnabled: isEnabled,
+      isDiscrete: isDiscrete,
+    );
+    if (rect.width <= 0 || rect.height <= 0) return;
+    final canvas = context.canvas;
+    final radius = Radius.circular(rect.height / 2);
+
+    // Inactive base (whole track).
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, radius),
+      Paint()..color = sliderTheme.inactiveTrackColor ?? AppColors.line2,
+    );
+
+    // Cached ("downloaded") spans, in the same track coordinate space.
+    final cachedPaint = Paint()..color = _cachedColor;
+    for (final span in cachedSpans) {
+      final s = span.start.clamp(0.0, 1.0);
+      final e = span.end.clamp(0.0, 1.0);
+      if (e <= s) continue;
+      final l = rect.left + s * rect.width;
+      final r = rect.left + e * rect.width;
+      canvas.drawRect(Rect.fromLTRB(l, rect.top, r, rect.bottom), cachedPaint);
+    }
+
+    // Active (played) portion: left edge -> thumb center.
+    if (thumbCenter.dx > rect.left) {
+      final activeRect = Rect.fromLTRB(
+        rect.left,
+        rect.top,
+        thumbCenter.dx.clamp(rect.left, rect.right),
+        rect.bottom,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(activeRect, radius),
+        Paint()..color = sliderTheme.activeTrackColor ?? AppColors.accent,
+      );
+    }
   }
 }
 
