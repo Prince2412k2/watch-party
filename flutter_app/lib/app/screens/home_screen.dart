@@ -7,6 +7,7 @@ import '../../data/mock_api_client.dart';
 import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
+import 'login_screen.dart';
 
 /// The real Home screen (E3 T3.1): Continue Watching / Next Up / Libraries
 /// rails over the real [homeProvider] (`GET /api/library/home`). Replaces the
@@ -23,6 +24,15 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Guest offline-browse (PLAN): a logged-out user's "Home" tab IS the
+    // login page — there's no server-backed home to show without a session,
+    // and this keeps the guest shell at just two tabs (Home, Downloaded)
+    // instead of a dedicated /login route swap.
+    final isAuthenticated = ref.watch(
+      authProvider.select((s) => s.isAuthenticated),
+    );
+    if (!isAuthenticated) return const LoginScreen();
+
     final home = ref.watch(homeProvider);
     final latest = ref.watch(latestProvider);
     final api = ref.watch(apiClientProvider);

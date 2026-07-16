@@ -6,8 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../state/state.dart';
 import '../ui/command_palette.dart';
-import 'screens/app_shell.dart' show kShellDestinations;
+import '../ui/ui.dart' show NavDestination;
+import 'screens/app_shell.dart' show kGuestShellDestinations, kShellDestinations;
 
 /// Jump to the nth primary destination (keys 1–6).
 class NavigateToIndexIntent extends Intent {
@@ -58,11 +60,15 @@ class AppShortcuts extends ConsumerWidget {
         ctx.findAncestorStateOfType<EditableTextState>() != null;
   }
 
-  void _openPalette(BuildContext context, WidgetRef ref) {
+  void _openPalette(
+    BuildContext context,
+    WidgetRef ref,
+    List<NavDestination> destinations,
+  ) {
     showCommandPalette(
       context: context,
       ref: ref,
-      destinations: kShellDestinations,
+      destinations: destinations,
       onNavigate: (route) => context.go(route),
     );
   }
@@ -75,12 +81,18 @@ class AppShortcuts extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // A logged-out guest only gets Home + Downloaded (PLAN guest-browse) — the
+    // digit shortcuts, the arrow-key nav action, and the command palette must
+    // all stick to that subset so a guest can't jump to a gated route.
+    final isAuthenticated = ref.watch(
+      authProvider.select((s) => s.isAuthenticated),
+    );
+    final destinations = isAuthenticated
+        ? kShellDestinations
+        : kGuestShellDestinations;
+
     final shortcuts = <ShortcutActivator, Intent>{
-      for (
-        var i = 0;
-        i < _digitKeys.length && i < kShellDestinations.length;
-        i++
-      )
+      for (var i = 0; i < _digitKeys.length && i < destinations.length; i++)
         SingleActivator(_digitKeys[i]): NavigateToIndexIntent(i),
       const SingleActivator(LogicalKeyboardKey.keyK, control: true):
           const OpenCommandPaletteIntent(),
@@ -101,22 +113,22 @@ class AppShortcuts extends ConsumerWidget {
           NavigateToIndexIntent: CallbackAction<NavigateToIndexIntent>(
             onInvoke: (intent) {
               if (_isEditing()) return null;
-              if (intent.index < kShellDestinations.length) {
-                context.go(kShellDestinations[intent.index].route);
+              if (intent.index < destinations.length) {
+                context.go(destinations[intent.index].route);
               }
               return null;
             },
           ),
           OpenCommandPaletteIntent: CallbackAction<OpenCommandPaletteIntent>(
             onInvoke: (_) {
-              _openPalette(context, ref);
+              _openPalette(context, ref, destinations);
               return null;
             },
           ),
           FocusSearchIntent: CallbackAction<FocusSearchIntent>(
             onInvoke: (_) {
               if (_isEditing()) return null;
-              _openPalette(context, ref);
+              _openPalette(context, ref, destinations);
               return null;
             },
           ),
