@@ -100,6 +100,15 @@ class MediaCacheProxy {
   ValueListenable<List<CachedSpan>> cachedSpansFor(String itemId) =>
       _store.cachedSpansFor(itemId);
 
+  /// Runs one size-cap + 30-day-TTL eviction pass over the on-device cache
+  /// (see [RangeCacheStore.evict]). Called once at boot (after [start]) so
+  /// the cache doesn't grow unbounded across app runs; Phase 3b's
+  /// download-fill can call this again after writing to keep the cap honest
+  /// between app launches too. [protected] itemIds (e.g. whatever's about to
+  /// play) are never evicted, on top of anything currently open/in-use.
+  Future<void> evict({Set<String> protected = const {}}) =>
+      _store.evict(protected: protected);
+
   // ── Request handling ──────────────────────────────────────────────────
 
   Future<void> _handleRequest(HttpRequest request) async {
