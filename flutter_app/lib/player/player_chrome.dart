@@ -1007,13 +1007,6 @@ class _Scrubber extends StatelessWidget {
   /// an indicator of what's already on disk. Null/empty renders nothing.
   final ValueListenable<List<CachedSpan>>? cachedSpans;
 
-  /// The Material [Slider]'s track is inset from the full widget width by
-  /// roughly the thumb radius on each side (it never draws all the way to
-  /// the edge). 6px matches the enabled thumb radius used below closely
-  /// enough for an indicator overlay — not pixel-exact, but visually
-  /// aligned with the play-progress track.
-  static const double _trackInset = 6;
-
   @override
   Widget build(BuildContext context) {
     final totalMs = duration.inMilliseconds;
@@ -1036,88 +1029,112 @@ class _Scrubber extends StatelessWidget {
       onExit: (_) => onHoverEnd(),
       child: SizedBox(
         height: 24,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Track background + "downloaded" overlay, UNDER the slider. The
-            // slider's inactive track is transparent (below), so these show
-            // through the un-played region: dim base = not cached, lighter
-            // gray = cached on disk, accent (the slider) = played.
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: _trackInset),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = constraints.maxWidth;
-                  return SizedBox(
-                    height: 3,
-                    child: Stack(
-                      children: [
-                        const Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(color: AppColors.line2),
-                          ),
-                        ),
-                        if (cachedSpans != null && width.isFinite)
-                          ValueListenableBuilder<List<CachedSpan>>(
-                            valueListenable: cachedSpans!,
-                            builder: (context, spans, _) {
-                              return Stack(
-                                children: [
-                                  for (final span in spans)
-                                    Positioned(
-                                      left: span.start.clamp(0.0, 1.0) * width,
-                                      width:
-                                          (span.end.clamp(0.0, 1.0) -
-                                                  span.start.clamp(0.0, 1.0))
-                                              .clamp(0.0, 1.0) *
-                                          width,
-                                      top: 0,
-                                      bottom: 0,
-                                      child: const DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: Colors.white54,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              );
-                            },
-                          ),
-                      ],
-                    ),
-                  );
-                },
+        child: cachedSpans == null
+            ? _buildSlider(value, totalMs, const [])
+            : ValueListenableBuilder<List<CachedSpan>>(
+                valueListenable: cachedSpans!,
+                builder: (context, spans, _) =>
+                    _buildSlider(value, totalMs, spans),
               ),
-            ),
-            SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 3,
-                activeTrackColor: AppColors.accent,
-                inactiveTrackColor: Colors.transparent,
-                thumbColor: AppColors.accent,
-                overlayShape: SliderComponentShape.noOverlay,
-                thumbShape: enabled
-                    ? const RoundSliderThumbShape(enabledThumbRadius: 6)
-                    : const RoundSliderThumbShape(enabledThumbRadius: 0),
-              ),
-              child: Slider(
-                value: value,
-                onChanged: (!enabled || totalMs <= 0)
-                    ? null
-                    : (v) => onPreview(
-                        Duration(milliseconds: (v * totalMs).round()),
-                      ),
-                onChangeEnd: (!enabled || totalMs <= 0)
-                    ? null
-                    : (v) => onCommit(
-                        Duration(milliseconds: (v * totalMs).round()),
-                      ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
+  }
+
+  Widget _buildSlider(double value, int totalMs, List<CachedSpan> spans) {
+    return SliderTheme(
+      data: SliderThemeData(
+        trackHeight: 3,
+        activeTrackColor: AppColors.accent,
+        inactiveTrackColor: AppColors.line2,
+        thumbColor: AppColors.accent,
+        overlayShape: SliderComponentShape.noOverlay,
+        thumbShape: enabled
+            ? const RoundSliderThumbShape(enabledThumbRadius: 6)
+            : const RoundSliderThumbShape(enabledThumbRadius: 0),
+        // Paint the cached ("downloaded") spans inside the slider's own track
+        // rect so the gray bar lines up exactly with the accent play-progress
+        // and thumb — no inset guesswork / horizontal offset.
+        trackShape: _CachedRangesTrackShape(spans),
+      ),
+      child: Slider(
+        value: value,
+        onChanged: (!enabled || totalMs <= 0)
+            ? null
+            : (v) => onPreview(Duration(milliseconds: (v * totalMs).round())),
+        onChangeEnd: (!enabled || totalMs <= 0)
+            ? null
+            : (v) => onCommit(Duration(milliseconds: (v * totalMs).round())),
+      ),
+    );
+  }
+}
+
+/// A slider track that also paints [CachedSpan]s (downloaded byte ranges) in
+/// the SAME track rect the active track + thumb use, so the "downloaded"
+/// overlay lines up exactly with the play-progress highlight. Draw order:
+/// inactive base -> cached spans -> active (played) portion.
+class _CachedRangesTrackShape extends SliderTrackShape
+    with BaseSliderTrackShape {
+  const _CachedRangesTrackShape(this.cachedSpans);
+
+  final List<CachedSpan> cachedSpans;
+
+  static const Color _cachedColor = Colors.white54;
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset offset, {
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required Animation<double> enableAnimation,
+    required Offset thumbCenter,
+    Offset? secondaryOffset,
+    bool isEnabled = false,
+    bool isDiscrete = false,
+    required TextDirection textDirection,
+  }) {
+    final rect = getPreferredRect(
+      parentBox: parentBox,
+      offset: offset,
+      sliderTheme: sliderTheme,
+      isEnabled: isEnabled,
+      isDiscrete: isDiscrete,
+    );
+    if (rect.width <= 0 || rect.height <= 0) return;
+    final canvas = context.canvas;
+    final radius = Radius.circular(rect.height / 2);
+
+    // Inactive base (whole track).
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, radius),
+      Paint()..color = sliderTheme.inactiveTrackColor ?? AppColors.line2,
+    );
+
+    // Cached ("downloaded") spans, in the same track coordinate space.
+    final cachedPaint = Paint()..color = _cachedColor;
+    for (final span in cachedSpans) {
+      final s = span.start.clamp(0.0, 1.0);
+      final e = span.end.clamp(0.0, 1.0);
+      if (e <= s) continue;
+      final l = rect.left + s * rect.width;
+      final r = rect.left + e * rect.width;
+      canvas.drawRect(Rect.fromLTRB(l, rect.top, r, rect.bottom), cachedPaint);
+    }
+
+    // Active (played) portion: left edge -> thumb center.
+    if (thumbCenter.dx > rect.left) {
+      final activeRect = Rect.fromLTRB(
+        rect.left,
+        rect.top,
+        thumbCenter.dx.clamp(rect.left, rect.right),
+        rect.bottom,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(activeRect, radius),
+        Paint()..color = sliderTheme.activeTrackColor ?? AppColors.accent,
+      );
+    }
   }
 }
 
