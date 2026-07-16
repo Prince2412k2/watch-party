@@ -1,9 +1,46 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'range_set.dart';
+
+/// A cached byte range expressed as a fraction (`0..1`) of a title's total
+/// length — what the player's seek bar overlay draws.
+///
+/// Byte-fraction only approximates time-fraction for variable-bitrate media
+/// (a byte range near the start of a VBR file doesn't necessarily cover the
+/// same fraction of *duration* as one near the end); that's an acceptable
+/// approximation for an indicator, not for anything that needs to be exact.
+class CachedSpan {
+  const CachedSpan(this.start, this.end);
+  final double start;
+  final double end;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CachedSpan && other.start == start && other.end == end;
+
+  @override
+  int get hashCode => Object.hash(start, end);
+
+  @override
+  String toString() => 'CachedSpan($start, $end)';
+}
+
+/// Pure computation of [CachedSpan]s from a set of present byte intervals and
+/// a title's total length. Kept top-level/pure so it's unit-testable without
+/// touching a [RangeSet] or any I/O.
+List<CachedSpan> cachedSpansFromIntervals(
+  List<List<int>> intervals,
+  int? totalLength,
+) {
+  if (totalLength == null || totalLength <= 0) return const [];
+  return intervals
+      .map((iv) => CachedSpan(iv[0] / totalLength, iv[1] / totalLength))
+      .toList(growable: false);
+}
 
 /// One title's on-disk cache: a sparse data file (only the byte ranges we've
 /// actually fetched are non-zero-cost on disk — most filesystems keep
@@ -23,7 +60,10 @@ class CacheEntry {
     this._totalLength,
     this.createdAt,
     this.lastAccess,
-  );
+    this._cachedSpans,
+  ) {
+    _recomputeCachedSpans();
+  }
 
   final String itemId;
   final RandomAccessFile _raf;
@@ -37,9 +77,28 @@ class CacheEntry {
   DateTime createdAt;
   DateTime lastAccess;
 
+  /// Cached spans as 0..1 fractions of [totalLength], kept in sync with
+  /// [rangeSet]/[totalLength] so the player's seek-bar overlay can observe
+  /// the cache growing. Shared with (and owned by) the [RangeCacheStore] that
+  /// opened this entry, so a listener attached before [open] completes keeps
+  /// working afterwards.
+  final ValueNotifier<List<CachedSpan>> _cachedSpans;
+
+  ValueListenable<List<CachedSpan>> get cachedSpans => _cachedSpans;
+
+  void _recomputeCachedSpans() {
+    _cachedSpans.value = cachedSpansFromIntervals(
+      rangeSet.intervals,
+      _totalLength,
+    );
+  }
+
   int? get totalLength => _totalLength;
 
-  void setTotalLength(int length) => _totalLength = length;
+  void setTotalLength(int length) {
+    _totalLength = length;
+    _recomputeCachedSpans();
+  }
 
   bool hasRange(int start, int end) => rangeSet.contains(start, end);
 
@@ -55,6 +114,7 @@ class CacheEntry {
     await _raf.setPosition(offset);
     await _raf.writeFrom(bytes);
     rangeSet.add(offset, offset + bytes.length);
+    _recomputeCachedSpans();
   }
 
   /// Reads `[start, end)` from the data file. Callers must only call this for
@@ -86,6 +146,9 @@ class CacheEntry {
     await tmp.rename(_metaFile.path);
   }
 
+  // Note: does NOT dispose [_cachedSpans] — that notifier is owned by the
+  // [RangeCacheStore] (keyed by itemId, outliving any single open/close of
+  // this entry), not by this entry.
   Future<void> close() => _raf.close();
 }
 
@@ -100,6 +163,26 @@ class RangeCacheStore {
   static const _subdirName = 'media-cache';
 
   final Map<String, CacheEntry> _open = {};
+
+  /// Per-itemId cached-spans notifiers, created lazily and kept alive across
+  /// [open] calls — [cachedSpansFor] may be called before an entry is open
+  /// (e.g. the player mounts before the proxy has served a byte), so the
+  /// notifier is created up front and handed to the [CacheEntry] once it
+  /// opens, rather than the entry owning a fresh one.
+  final Map<String, ValueNotifier<List<CachedSpan>>> _cachedSpansNotifiers =
+      {};
+
+  /// A [ValueListenable] of [CachedSpan]s for [itemId], as fractions of the
+  /// title's total length, updating as the on-device cache grows. Empty
+  /// until the entry is open and its total length is known.
+  ValueListenable<List<CachedSpan>> cachedSpansFor(String itemId) =>
+      _notifierFor(itemId);
+
+  ValueNotifier<List<CachedSpan>> _notifierFor(String itemId) =>
+      _cachedSpansNotifiers.putIfAbsent(
+        itemId,
+        () => ValueNotifier<List<CachedSpan>>(const []),
+      );
 
   Future<Directory> _cacheDir() async {
     final base = _overrideDir ?? await getApplicationSupportDirectory();
@@ -161,6 +244,7 @@ class RangeCacheStore {
       totalLength,
       createdAt,
       lastAccess,
+      _notifierFor(itemId),
     );
     _open[itemId] = entry;
     return entry;

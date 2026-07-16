@@ -708,6 +708,11 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   bool _ready = false;
   bool _isFullscreen = false;
 
+  // Only the authenticated path is routed through `MediaCacheProxy` (see
+  // `_open`) — an offline guest plays straight from a fully-downloaded local
+  // file, which has no partial-cache concept to show an indicator for.
+  bool _usesCacheProxy = false;
+
   // Capture the shared, provider-owned controller once so dispose() can pause
   // it WITHOUT touching `ref` — reading a provider via `ref` during/after
   // widget teardown throws "Cannot use ref after the widget was disposed",
@@ -757,6 +762,7 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
       final streamUrl = isAuthenticated
           ? ref.read(mediaCacheProxyProvider).urlFor(widget.itemId)
           : '';
+      _usesCacheProxy = isAuthenticated;
       await openPreferringOffline(
         ref,
         _controller,
@@ -805,6 +811,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                   onBack: () => Navigator.of(context).maybePop(),
                   onToggleFullscreen: _toggleFullscreen,
                   isFullscreen: _isFullscreen,
+                  cachedSpans: _usesCacheProxy
+                      ? ref.watch(mediaCacheProxyProvider).cachedSpansFor(widget.itemId)
+                      : null,
                 ),
                 Positioned(
                   top: 8,
