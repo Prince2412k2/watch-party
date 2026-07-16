@@ -5,11 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../player/offline_playback.dart';
 import '../../player/player_view.dart';
+import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import 'subtitle_manager_dialog.dart';
@@ -25,6 +27,38 @@ class DetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Guest offline-browse (PLAN §E): a logged-out user has no Jellyfin
+    // session, so `itemDetailProvider`'s server fetch would just error. Their
+    // detail view is sourced entirely from the offline manifest instead, and
+    // goes straight to local playback — never touching the network.
+    final isAuthenticated = ref.watch(
+      authProvider.select((s) => s.isAuthenticated),
+    );
+    if (!isAuthenticated) {
+      final offline = ref.watch(offlineProvider);
+      OfflineRecord? record;
+      for (final r in offline) {
+        if (r.itemId == itemId) {
+          record = r;
+          break;
+        }
+      }
+      return Scaffold(
+        backgroundColor: AppColors.bg,
+        body: SafeArea(
+          child: record == null
+              ? EmptyState(
+                  icon: Icons.wifi_off_outlined,
+                  title: 'Not available offline',
+                  message: 'Sign in to browse and download this title.',
+                  actionLabel: 'Login',
+                  onAction: () => context.go('/login'),
+                )
+              : _GuestOfflineDetailBody(record: record),
+        ),
+      );
+    }
+
     final detail = ref.watch(itemDetailProvider(itemId));
     final api = ref.watch(apiClientProvider);
 
@@ -40,6 +74,51 @@ class DetailScreen extends ConsumerWidget {
           ),
         ),
         data: (item) => _DetailBody(item: item, api: api),
+      ),
+    );
+  }
+}
+
+/// A guest's detail view for a downloaded title — no server, no session, just
+/// what's already on disk (PLAN §E). Mirrors the authenticated hero's title +
+/// Play affordance without any of the metadata that needs Jellyfin (cast,
+/// backdrop, provider links).
+class _GuestOfflineDetailBody extends StatelessWidget {
+  const _GuestOfflineDetailBody({required this.record});
+  final OfflineRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final runtime = record.runTimeTicks > 0
+        ? '${(record.runTimeTicks / 600000000).round()}m'
+        : null;
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.xxl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          sc.IconButton.ghost(
+            onPressed: () =>
+                context.canPop() ? context.pop() : context.go('/home'),
+            icon: const Icon(Icons.arrow_back, color: AppColors.dim),
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          Text(record.title, style: AppTheme.displaySmall),
+          if (runtime != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Text(runtime, style: AppTheme.mono.copyWith(color: AppColors.dim)),
+          ],
+          const SizedBox(height: AppSpacing.lg),
+          AppButton(
+            label: 'Play',
+            icon: Icons.play_arrow,
+            variant: AppButtonVariant.primary,
+            onPressed: () => Navigator.of(context).push(
+              _playerRouteFor(itemId: record.itemId, title: record.title),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -570,12 +649,15 @@ class _LinkPill extends StatelessWidget {
 
 /// Fade transition into the solo player (per the redesign's motion system),
 /// replacing the hard-cut `MaterialPageRoute`.
-Route<void> _playerRoute(LibraryItem item) {
+Route<void> _playerRoute(LibraryItem item) =>
+    _playerRouteFor(itemId: item.id, title: item.name);
+
+Route<void> _playerRouteFor({required String itemId, required String title}) {
   return PageRouteBuilder<void>(
     transitionDuration: AppMotion.page,
     reverseTransitionDuration: AppMotion.page,
     pageBuilder: (context, animation, secondaryAnimation) =>
-        _SoloPlayer(itemId: item.id, title: item.name),
+        _SoloPlayer(itemId: itemId, title: title),
     transitionsBuilder: (context, animation, secondaryAnimation, child) =>
         FadeTransition(
           opacity: CurvedAnimation(
@@ -624,10 +706,24 @@ class _SoloPlayer extends ConsumerStatefulWidget {
 class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   Object? _error;
   bool _ready = false;
+  bool _isFullscreen = false;
+
+  // Only the authenticated path is routed through `MediaCacheProxy` (see
+  // `_open`) — an offline guest plays straight from a fully-downloaded local
+  // file, which has no partial-cache concept to show an indicator for.
+  bool _usesCacheProxy = false;
+
+  // Capture the shared, provider-owned controller once so dispose() can pause
+  // it WITHOUT touching `ref` — reading a provider via `ref` during/after
+  // widget teardown throws "Cannot use ref after the widget was disposed",
+  // which previously aborted dispose before pause() ran and left the shared
+  // controller playing the old media (breaking the next open/resume).
+  late final _controller = ref.read(playerControllerProvider);
 
   @override
   void initState() {
     super.initState();
+    _controller; // force initialization here, where ref.read is valid
     _open();
   }
 
@@ -637,8 +733,15 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
     // is provider-owned and shared with the party screen, so we don't dispose
     // it here — but nothing else pauses it when this route pops, which would
     // otherwise leave audio playing in a screen the user already left.
-    unawaited(ref.read(playerControllerProvider).pause());
+    unawaited(_controller.pause());
+    if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
     super.dispose();
+  }
+
+  Future<void> _toggleFullscreen() async {
+    final next = !_isFullscreen;
+    await windowManager.setFullScreen(next);
+    if (mounted) setState(() => _isFullscreen = next);
   }
 
   Future<void> _open() async {
@@ -647,17 +750,24 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
       _ready = false;
     });
     try {
-      final api = ref.read(apiClientProvider);
-      final stream = await api.nativeStreamUrl(
-        widget.itemId,
-        purpose: 'stream',
+      // A logged-out guest has no session, so there's no signed stream URL to
+      // fetch — this path is only ever reached with the title already fully
+      // downloaded (`_GuestOfflineDetailBody` only offers Play once the
+      // offline manifest has a record), so the local file is all we need.
+      final isAuthenticated = ref.read(
+        authProvider.select((s) => s.isAuthenticated),
       );
-      final controller = ref.read(playerControllerProvider);
+      // Routed through the on-device caching proxy (Phase 2) instead of a
+      // direct signed URL — it mints/re-mints one itself on demand.
+      final streamUrl = isAuthenticated
+          ? ref.read(mediaCacheProxyProvider).urlFor(widget.itemId)
+          : '';
+      _usesCacheProxy = isAuthenticated;
       await openPreferringOffline(
         ref,
-        controller,
+        _controller,
         itemId: widget.itemId,
-        streamUrl: stream.url,
+        streamUrl: streamUrl,
         autoplay: true,
       );
       if (mounted) setState(() => _ready = true);
@@ -691,13 +801,90 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                 ),
               ),
             )
-          : PlayerView(
-              controller: ref.watch(playerControllerProvider),
-              itemId: widget.itemId,
-              apiClient: ref.watch(apiClientProvider),
-              title: widget.title,
-              onBack: () => Navigator.of(context).maybePop(),
+          : Stack(
+              children: [
+                PlayerView(
+                  controller: ref.watch(playerControllerProvider),
+                  itemId: widget.itemId,
+                  apiClient: ref.watch(apiClientProvider),
+                  title: widget.title,
+                  onBack: () => Navigator.of(context).maybePop(),
+                  onToggleFullscreen: _toggleFullscreen,
+                  isFullscreen: _isFullscreen,
+                  cachedSpans: _usesCacheProxy
+                      ? ref.watch(mediaCacheProxyProvider).cachedSpansFor(widget.itemId)
+                      : null,
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: SafeArea(
+                    child: _StartPartyButton(itemId: widget.itemId),
+                  ),
+                ),
+              ],
             ),
+    );
+  }
+}
+
+/// "Start a party" affordance floated over solo playback (E3 title detail),
+/// so a party can be spun up MID-MOVIE instead of only from the party
+/// screen's lobby. Carries the currently-playing item + its live position
+/// into [PartyNotifier.createFromCurrentPlayback] (`party:create` pre-selects
+/// the media, then a `sync:seek` restores the position), then hands off to
+/// the immersive party screen — the party stays alive from here on regardless
+/// of further navigation.
+class _StartPartyButton extends ConsumerStatefulWidget {
+  const _StartPartyButton({required this.itemId});
+  final String itemId;
+
+  @override
+  ConsumerState<_StartPartyButton> createState() => _StartPartyButtonState();
+}
+
+class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
+  bool _busy = false;
+
+  Future<void> _start() async {
+    setState(() => _busy = true);
+    try {
+      final position = ref.read(playerControllerProvider).positionNow;
+      final partyId = await ref
+          .read(partyProvider.notifier)
+          .createFromCurrentPlayback(
+            mediaItemId: widget.itemId,
+            position: position,
+          );
+      if (!mounted) return;
+      context.go('/party/$partyId');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not start a party: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // A party needs a session (and someone to invite); nothing to offer a
+    // logged-out guest. Already-in-a-party (e.g. re-entering solo playback
+    // from elsewhere) is likewise nothing to start.
+    final isAuthenticated = ref.watch(
+      authProvider.select((s) => s.isAuthenticated),
+    );
+    if (!isAuthenticated || ref.watch(partyProvider) != null) {
+      return const SizedBox.shrink();
+    }
+    return AppButton(
+      label: 'Start party',
+      icon: Icons.groups_outlined,
+      variant: AppButtonVariant.secondary,
+      busy: _busy,
+      onPressed: _busy ? null : _start,
     );
   }
 }

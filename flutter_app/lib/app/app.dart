@@ -52,9 +52,28 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
       supportedLocales: sc.ShadcnLocalizations.supportedLocales,
       routerConfig: _router,
       builder: (context, child) {
-        final content = child ?? const SizedBox.shrink();
+        final rawContent = child ?? const SizedBox.shrink();
+        // The global party bar sits ABOVE the router's Navigator (same tier as
+        // the window title bar below), so it renders over every route — the
+        // shelled tabs AND the top-level `/party/:id`/`/detail/:id` pushes —
+        // rather than only the shelled `AppShell`. It tracks the live route via
+        // the router's route-information provider (same pattern _WindowBar uses
+        // for its section title) so it can hide itself while the party screen
+        // is already on screen.
+        final content = ListenableBuilder(
+          listenable: _router.routeInformationProvider,
+          builder: (context, _) => Column(
+            children: [
+              GlobalPartyBar(
+                currentLocation:
+                    _router.routeInformationProvider.value.uri.path,
+              ),
+              Expanded(child: rawContent),
+            ],
+          ),
+        );
         final Widget framed;
-        if (!_isDesktop || !widget.enableWindowFrame) {
+        if (_isDesktop || !widget.enableWindowFrame) {
           framed = content;
         } else {
           // The title bar + content live ABOVE the router's Navigator, so they
@@ -78,6 +97,18 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
             ),
           );
         }
+        // Everything above (the title bar, GlobalPartyBar, and — on desktop —
+        // the Overlay housing them) sits ABOVE the router's Navigator, so none
+        // of it inherits the Material ancestor MaterialApp.router only
+        // provides inside its routes. Without one, every Text in that chrome
+        // paints with the debug "no Material ancestor" style: yellow double
+        // underlines. `MaterialType.transparency` supplies the text style /
+        // Material inkwell plumbing without painting any background, so the
+        // existing chrome look is unchanged.
+        final materialFramed = Material(
+          type: MaterialType.transparency,
+          child: framed,
+        );
         // ShadcnLayer wraps the ENTIRE frame (title bar + content) so shadcn
         // components everywhere — including the window-bar tooltips — resolve
         // their theme and overlay/tooltip infrastructure. PKG-E owns the
@@ -85,7 +116,7 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
         return sc.ShadcnLayer(
           theme: AppShadcnTheme.dark,
           themeMode: sc.ThemeMode.dark,
-          child: framed,
+          child: materialFramed,
         );
       },
     );
@@ -146,6 +177,7 @@ class _WindowBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authed = ref.watch(authProvider.select((s) => s.isAuthenticated));
+    final isMac = Platform.isMacOS;
     return Container(
       height: height,
       decoration: const BoxDecoration(
@@ -154,6 +186,14 @@ class _WindowBar extends ConsumerWidget {
       ),
       child: Row(
         children: [
+          // macOS convention: traffic lights on the LEFT. Windows/Linux keep
+          // theirs on the right (below) in the "— ▢ ✕" arrangement.
+          if (isMac)
+            _TrafficLights(
+              onClose: windowManager.close,
+              onMinimize: windowManager.minimize,
+              onMaximize: _toggleMaximize,
+            ),
           // Draggable section-title strip. The title reacts to navigation via
           // the router's route-information provider; double-tap maximizes.
           Expanded(
@@ -199,24 +239,118 @@ class _WindowBar extends ConsumerWidget {
             ),
             const SizedBox(width: AppSpacing.sm),
           ],
-          _WindowButton(
-            icon: Icons.remove,
-            tooltip: 'Minimize',
-            onPressed: windowManager.minimize,
-          ),
-          _WindowButton(
-            icon: Icons.crop_square,
-            tooltip: 'Maximize',
-            iconSize: 13,
-            onPressed: _toggleMaximize,
-          ),
-          _WindowButton(
-            icon: Icons.close,
-            tooltip: 'Close',
-            hoverColor: AppColors.red,
-            onPressed: windowManager.close,
-          ),
+          // Windows/Linux window controls live on the right; macOS gets its
+          // traffic lights on the left instead (above).
+          if (!isMac) ...[
+            _WindowButton(
+              icon: Icons.remove,
+              tooltip: 'Minimize',
+              onPressed: windowManager.minimize,
+            ),
+            _WindowButton(
+              icon: Icons.crop_square,
+              tooltip: 'Maximize',
+              iconSize: 13,
+              onPressed: _toggleMaximize,
+            ),
+            _WindowButton(
+              icon: Icons.close,
+              tooltip: 'Close',
+              hoverColor: AppColors.red,
+              onPressed: windowManager.close,
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// macOS-style traffic lights: three small colored dots (close/minimize/
+/// zoom) pinned to the left edge of the title bar. Hover reveals the
+/// standard glyphs (×, −, +) the way macOS does; the dots themselves stay
+/// solid-colored otherwise so the bar reads as native chrome at a glance.
+class _TrafficLights extends StatefulWidget {
+  const _TrafficLights({
+    required this.onClose,
+    required this.onMinimize,
+    required this.onMaximize,
+  });
+
+  final VoidCallback onClose;
+  final VoidCallback onMinimize;
+  final VoidCallback onMaximize;
+
+  @override
+  State<_TrafficLights> createState() => _TrafficLightsState();
+}
+
+class _TrafficLightsState extends State<_TrafficLights> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _TrafficLightDot(
+              color: const Color(0xFFFF5F57),
+              glyph: Icons.close,
+              showGlyph: _hover,
+              onPressed: widget.onClose,
+            ),
+            const SizedBox(width: 8),
+            _TrafficLightDot(
+              color: const Color(0xFFFEBC2E),
+              glyph: Icons.remove,
+              showGlyph: _hover,
+              onPressed: widget.onMinimize,
+            ),
+            const SizedBox(width: 8),
+            _TrafficLightDot(
+              color: const Color(0xFF28C840),
+              glyph: Icons.add,
+              showGlyph: _hover,
+              onPressed: widget.onMaximize,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrafficLightDot extends StatelessWidget {
+  const _TrafficLightDot({
+    required this.color,
+    required this.glyph,
+    required this.showGlyph,
+    required this.onPressed,
+  });
+
+  final Color color;
+  final IconData glyph;
+  final bool showGlyph;
+  final VoidCallback onPressed;
+
+  static const double _size = 12;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        width: _size,
+        height: _size,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        child: showGlyph
+            ? Icon(glyph, size: 8, color: const Color(0x8A000000))
+            : null,
       ),
     );
   }

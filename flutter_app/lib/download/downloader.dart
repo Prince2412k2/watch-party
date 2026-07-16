@@ -136,11 +136,23 @@ class Downloader {
     return _fd.pause(task);
   }
 
-  Future<bool> resume(String taskId) async {
+  /// Resumes a paused/failed download. The task's stored `url` is the signed
+  /// URL captured at [startDownload] time, which can have since expired
+  /// (native stream tokens are TTL-bound, see `app/server/native.js`) — a
+  /// stale token would 401/403 partway through the Range GET that resume
+  /// issues. `background_downloader`'s `resume()` sends whatever `task.url`
+  /// is on the object passed in (the byte offset it resumes from is tracked
+  /// separately, keyed by `taskId`, so it survives regardless), so re-minting
+  /// just means calling `resume()` with a `copyWith(url: fresh)` of the
+  /// stored task rather than the stored task itself. `taskId` == `itemId`
+  /// (see class doc), so the stored `task.taskId` is the item to re-sign for.
+  Future<bool> resume(String taskId, {required ApiClient api}) async {
     final record = await _fd.database.recordForId(taskId);
     final task = record?.task;
     if (task is! DownloadTask) return false;
-    return _fd.resume(task);
+
+    final fresh = await api.nativeStreamUrl(task.taskId, purpose: 'download');
+    return _fd.resume(task.copyWith(url: fresh.url));
   }
 
   Future<bool> cancel(String taskId) => _fd.cancelTaskWithId(taskId);

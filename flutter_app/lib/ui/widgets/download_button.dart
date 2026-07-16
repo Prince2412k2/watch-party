@@ -21,9 +21,10 @@ import 'chip.dart';
 ///   failed                → error text + "Retry".
 ///   in the offline manifest → "Downloaded" chip + remove.
 ///
-/// Starting a download resolves the `purpose=download` signed URL internally
-/// (via `Downloader.startDownload` → `ApiClient.nativeStreamUrl`), so callers
-/// only need the item's id/title/metadata.
+/// Starting a download fills the same on-device media cache playback streams
+/// through (`CacheFillController.start`, Phase 3b-wiring) — a "download" is
+/// just a fully-cached title, watchable while downloading and playable
+/// offline once complete. Callers only need the item's id/title/metadata.
 class DownloadButton extends ConsumerWidget {
   const DownloadButton({
     super.key,
@@ -105,8 +106,9 @@ class DownloadButton extends ConsumerWidget {
       record: download,
       onPause: () =>
           ref.read(downloadsProvider.notifier).pause(download.taskId),
-      onResume: () =>
-          ref.read(downloadsProvider.notifier).resume(download.taskId),
+      onResume: () => ref
+          .read(downloadsProvider.notifier)
+          .resume(download.taskId, api: ref.read(apiClientProvider)),
       onCancel: () =>
           ref.read(downloadsProvider.notifier).cancel(download.taskId),
     );
