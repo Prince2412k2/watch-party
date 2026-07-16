@@ -708,9 +708,17 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   bool _ready = false;
   bool _isFullscreen = false;
 
+  // Capture the shared, provider-owned controller once so dispose() can pause
+  // it WITHOUT touching `ref` — reading a provider via `ref` during/after
+  // widget teardown throws "Cannot use ref after the widget was disposed",
+  // which previously aborted dispose before pause() ran and left the shared
+  // controller playing the old media (breaking the next open/resume).
+  late final _controller = ref.read(playerControllerProvider);
+
   @override
   void initState() {
     super.initState();
+    _controller; // force initialization here, where ref.read is valid
     _open();
   }
 
@@ -720,7 +728,7 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
     // is provider-owned and shared with the party screen, so we don't dispose
     // it here — but nothing else pauses it when this route pops, which would
     // otherwise leave audio playing in a screen the user already left.
-    unawaited(ref.read(playerControllerProvider).pause());
+    unawaited(_controller.pause());
     if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
     super.dispose();
   }
@@ -749,10 +757,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
       final streamUrl = isAuthenticated
           ? ref.read(mediaCacheProxyProvider).urlFor(widget.itemId)
           : '';
-      final controller = ref.read(playerControllerProvider);
       await openPreferringOffline(
         ref,
-        controller,
+        _controller,
         itemId: widget.itemId,
         streamUrl: streamUrl,
         autoplay: true,
