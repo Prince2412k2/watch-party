@@ -4,6 +4,7 @@ import '../data/api_client.dart';
 import '../data/mock_api_client.dart';
 import '../net/socket_client.dart';
 import '../download/downloader.dart';
+import '../cache/media_cache_proxy.dart';
 
 /// Core dependency-injection seams (PLAN §3.8). Phase 0 wires MOCK
 /// implementations so the app boots and every epic has something to build
@@ -22,3 +23,13 @@ final socketClientProvider =
 /// shared by [downloadsProvider] and [offlineProvider]; both rehydrate from
 /// its persisted state on first read.
 final downloaderProvider = Provider<Downloader>((ref) => Downloader());
+
+/// The on-device caching media proxy (Phase 2) playback routes network
+/// streams through instead of a direct signed URL. `main.dart` builds the
+/// real instance around the persistent [DioApiClient] and calls `start()`
+/// before overriding this — the default here (built lazily off whatever
+/// [apiClientProvider] resolves to, un-started) only exists so tests that
+/// don't touch playback don't need to override it.
+final mediaCacheProxyProvider = Provider<MediaCacheProxy>(
+  (ref) => MediaCacheProxy(apiClient: ref.watch(apiClientProvider)),
+);
