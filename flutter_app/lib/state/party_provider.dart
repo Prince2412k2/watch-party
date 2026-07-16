@@ -199,11 +199,12 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       if (mediaId == _openedMediaId) return; // already open
       _openedMediaId = mediaId;
       try {
-        final stream =
-            await _ref.read(apiClientProvider).nativeStreamUrl(mediaId!);
+        // Routed through the on-device caching proxy (Phase 2), not a direct
+        // signed URL — it mints/re-mints one itself as bytes are requested.
+        final url = _ref.read(mediaCacheProxyProvider).urlFor(mediaId!);
         // autoplay:false — the sync engine starts/positions playback from the
         // authoritative schedule, so playback stays in sync across clients.
-        await controller.open(stream.url, autoplay: false);
+        await controller.open(url, autoplay: false);
       } catch (_) {
         _openedMediaId = null; // allow a retry on the next party:state
       }
