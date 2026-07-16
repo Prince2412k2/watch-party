@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/app_shell.dart';
@@ -22,7 +23,9 @@ void main() {
       MaterialApp(
         theme: AppTheme.dark,
         builder: _shadcn,
-        home: AppShell(location: '/home', child: const SizedBox()),
+        home: const ProviderScope(
+          child: AppShell(location: '/home', child: SizedBox()),
+        ),
       ),
     );
     await tester.pump();
@@ -42,7 +45,9 @@ void main() {
         MaterialApp(
           theme: AppTheme.dark,
           builder: _shadcn,
-          home: AppShell(location: '/home', child: const SizedBox()),
+          home: const ProviderScope(
+            child: AppShell(location: '/home', child: SizedBox()),
+          ),
         ),
       );
       await tester.pump();

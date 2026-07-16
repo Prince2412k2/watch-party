@@ -52,15 +52,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
       minimumSize: _minSize,
       center: _prefs!.getDouble(_kWindowX) == null,
       title: 'Watchparty',
-      // Frameless: hide the OS title bar; the app draws its own (a drag bar +
-      // window controls) and VirtualWindowFrame renders the rounded corners.
-      titleBarStyle: TitleBarStyle.hidden,
+      titleBarStyle: TitleBarStyle.normal,
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {
-      // Remove the remaining OS frame/border so only the custom rounded frame
-      // shows. No-op / harmless on platforms that ignore it.
-      await windowManager.setAsFrameless();
       final x = _prefs!.getDouble(_kWindowX);
       final y = _prefs!.getDouble(_kWindowY);
       if (x != null && y != null) {

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../data/api_client.dart';
 import '../../models/models.dart';
@@ -624,6 +625,7 @@ class _SoloPlayer extends ConsumerStatefulWidget {
 class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   Object? _error;
   bool _ready = false;
+  bool _isFullscreen = false;
 
   @override
   void initState() {
@@ -638,7 +640,14 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
     // it here — but nothing else pauses it when this route pops, which would
     // otherwise leave audio playing in a screen the user already left.
     unawaited(ref.read(playerControllerProvider).pause());
+    if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
     super.dispose();
+  }
+
+  Future<void> _toggleFullscreen() async {
+    final next = !_isFullscreen;
+    await windowManager.setFullScreen(next);
+    if (mounted) setState(() => _isFullscreen = next);
   }
 
   Future<void> _open() async {
@@ -699,14 +708,14 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                   apiClient: ref.watch(apiClientProvider),
                   title: widget.title,
                   onBack: () => Navigator.of(context).maybePop(),
+                  onToggleFullscreen: _toggleFullscreen,
+                  isFullscreen: _isFullscreen,
                 ),
                 Positioned(
                   top: 8,
                   right: 8,
                   child: SafeArea(
-                    child: _StartPartyButton(
-                      itemId: widget.itemId,
-                    ),
+                    child: _StartPartyButton(itemId: widget.itemId),
                   ),
                 ),
               ],
