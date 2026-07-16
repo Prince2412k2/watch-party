@@ -56,7 +56,12 @@ class MediaCacheProxy {
   /// How far past a served request to keep fetching in the background so the
   /// next chunk of playback is already cached by the time mpv asks for it.
   static const _readAheadWindow = 96 * 1024 * 1024; // 96 MiB
-  static const _fetchChunkSize = 1 * 1024 * 1024; // 1 MiB per upstream call
+
+  /// 1 MiB per upstream call. Public so other cache-filling code (the
+  /// download-fill controller) can default to the same chunk size without
+  /// duplicating the constant.
+  static const fetchChunkSize = 1 * 1024 * 1024;
+  static const _fetchChunkSize = fetchChunkSize;
 
   /// Titles with a read-ahead pass currently running — guards against
   /// stacking up unbounded background fetches for the same title (one
@@ -99,6 +104,20 @@ class MediaCacheProxy {
   /// and read-aheads bytes.
   ValueListenable<List<CachedSpan>> cachedSpansFor(String itemId) =>
       _store.cachedSpansFor(itemId);
+
+  /// Opens (or returns the already-open) [CacheEntry] for [itemId]. Exposed
+  /// so callers that need to plan fetches against the raw entry (the
+  /// download-fill controller, in particular) don't need their own
+  /// [RangeCacheStore] — there's exactly one per proxy.
+  Future<CacheEntry> openEntry(String itemId) => _store.open(itemId);
+
+  /// Bumps [itemId]'s [CacheEntry.lastAccess] to now, without touching cache
+  /// contents — used by the fill controller to mark a just-completed
+  /// download as freshest before running an eviction pass.
+  Future<void> touch(String itemId) async {
+    final entry = await _store.open(itemId);
+    await entry.touch();
+  }
 
   /// Runs one size-cap + 30-day-TTL eviction pass over the on-device cache
   /// (see [RangeCacheStore.evict]). Called once at boot (after [start]) so
@@ -259,30 +278,57 @@ class MediaCacheProxy {
       if (windowEnd <= from) return;
       final gaps = entry.missingRanges(from, windowEnd);
       for (final gap in gaps) {
-        var pos = gap.start;
-        while (pos < gap.end) {
-          final chunkEnd = (pos + _fetchChunkSize) > gap.end ? gap.end : pos + _fetchChunkSize;
-          try {
-            final upstream = await _fetchRemoteRange(itemId, pos, chunkEnd);
-            try {
-              var offset = pos;
-              await for (final chunk in upstream.response) {
-                await entry.write(offset, chunk);
-                offset += chunk.length;
-              }
-            } finally {
-              upstream.close();
-            }
-          } catch (_) {
-            return; // give up this pass; on-demand fetches will fill gaps later
-          }
-          pos = chunkEnd;
+        try {
+          await fetchAndStore(itemId, entry, gap.start, gap.end);
+        } catch (_) {
+          return; // give up this pass; on-demand fetches will fill gaps later
         }
       }
-      await entry.flushMetadata();
     } finally {
       _readAheadInFlight.remove(itemId);
     }
+  }
+
+  /// Ensures [entry]'s [CacheEntry.totalLength] is known, learning it from
+  /// the remote if necessary. Reusable by anything that needs the title's
+  /// size before it can plan a fetch (the fill controller, in particular).
+  Future<int?> ensureTotalLength(String itemId, CacheEntry entry) async {
+    final known = entry.totalLength;
+    if (known != null) return known;
+    return _learnTotalLength(itemId, entry);
+  }
+
+  /// Fetches `[start, end)` from the remote and writes it into [entry],
+  /// chunked at [_fetchChunkSize] per upstream call (so a single caller-sized
+  /// gap doesn't hold one giant HTTP response open, and a failure partway
+  /// through still leaves earlier chunks cached). Persists metadata once at
+  /// the end. Extracted out of the read-ahead loop so both it and the
+  /// download-fill controller (Phase 3b) share one "fetch a range from remote
+  /// and store it" implementation, including the single re-mint-on-401/403
+  /// baked into [_fetchRemoteRange].
+  ///
+  /// Does NOT forward bytes anywhere — this is the cache-filling half only.
+  /// The live-request path (`_fetchAndForward`) stays as its own thing since
+  /// it also has to stream bytes to the client response as they arrive;
+  /// unifying that with this method isn't worth the risk of changing live
+  /// playback's fetch cadence.
+  Future<void> fetchAndStore(String itemId, CacheEntry entry, int start, int end) async {
+    var pos = start;
+    while (pos < end) {
+      final chunkEnd = (pos + _fetchChunkSize) > end ? end : pos + _fetchChunkSize;
+      final upstream = await _fetchRemoteRange(itemId, pos, chunkEnd);
+      try {
+        var offset = pos;
+        await for (final chunk in upstream.response) {
+          await entry.write(offset, chunk);
+          offset += chunk.length;
+        }
+      } finally {
+        upstream.close();
+      }
+      pos = chunkEnd;
+    }
+    await entry.flushMetadata();
   }
 
   // ── Remote fetch (mint + re-mint on expiry) ───────────────────────────
