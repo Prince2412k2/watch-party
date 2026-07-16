@@ -20,9 +20,12 @@ final apiClientProvider = Provider<ApiClient>((ref) => MockApiClient());
 final socketClientProvider =
     Provider<SocketClient>((ref) => MockSocketClient());
 
-/// The resumable-download service (E8.1). A single [Downloader] instance is
-/// shared by [downloadsProvider] and [offlineProvider]; both rehydrate from
-/// its persisted state on first read.
+/// The old `background_downloader`-backed download service (E8.1). Retired
+/// from the download/offline UI as of Phase 3b-wiring — [downloadsProvider]
+/// and [offlineProvider] are now backed by [cacheFillControllerProvider] /
+/// [mediaCacheProxyProvider] instead (download == filling the on-device
+/// cache). Kept only so the class/provider still exist for anything that
+/// still references them; nothing in the app reads this provider anymore.
 final downloaderProvider = Provider<Downloader>((ref) => Downloader());
 
 /// The on-device caching media proxy (Phase 2) playback routes network
@@ -37,8 +40,8 @@ final mediaCacheProxyProvider = Provider<MediaCacheProxy>(
 
 /// The proactive whole-title cache-fill engine ("download = fill the
 /// cache", Phase 3b) built off whatever [mediaCacheProxyProvider] resolves
-/// to. Additive alongside the existing [downloaderProvider]-based
-/// download/offline stack — nothing here is wired into that UI yet.
+/// to. This is what [downloadsProvider] drives to fill a title's cache, and
+/// what [offlineProvider] treats as complete-or-not.
 final cacheFillControllerProvider = Provider<CacheFillController>(
   (ref) => CacheFillController(proxy: ref.watch(mediaCacheProxyProvider)),
 );

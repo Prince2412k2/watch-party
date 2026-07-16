@@ -119,6 +119,19 @@ class MediaCacheProxy {
     await entry.touch();
   }
 
+  /// Whether [itemId]'s cache entry fully covers the title — i.e. it's
+  /// "downloaded" and playable with no network (Phase 3b: download == a
+  /// fully-filled cache entry, so this is the single source of truth
+  /// `offlineProvider` rehydrates from).
+  Future<bool> isComplete(String itemId) => _store.isComplete(itemId);
+
+  /// Every itemId whose cache entry is fully present on disk.
+  Future<List<String>> completedItemIds() => _store.completedItemIds();
+
+  /// Deletes [itemId]'s cached bytes entirely — used when the user removes an
+  /// offline title.
+  Future<void> deleteEntry(String itemId) => _store.delete(itemId);
+
   /// Runs one size-cap + 30-day-TTL eviction pass over the on-device cache
   /// (see [RangeCacheStore.evict]). Called once at boot (after [start]) so
   /// the cache doesn't grow unbounded across app runs; Phase 3b's
