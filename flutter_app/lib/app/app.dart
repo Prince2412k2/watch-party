@@ -65,14 +65,15 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
           builder: (context, _) => Column(
             children: [
               GlobalPartyBar(
-                currentLocation: _router.routeInformationProvider.value.uri.path,
+                currentLocation:
+                    _router.routeInformationProvider.value.uri.path,
               ),
               Expanded(child: rawContent),
             ],
           ),
         );
         final Widget framed;
-        if (!_isDesktop || !widget.enableWindowFrame) {
+        if (_isDesktop || !widget.enableWindowFrame) {
           framed = content;
         } else {
           // The title bar + content live ABOVE the router's Navigator, so they

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../shortcuts.dart';
 
@@ -53,7 +55,7 @@ String shellSectionTitle(String location) {
 /// no longer lives here — it was consolidated into the single app-wide bar in
 /// `app.dart`, above this shell. The shell now owns only the rail + content and
 /// the app-wide keyboard layer ([AppShortcuts]).
-class AppShell extends StatelessWidget {
+class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.child, required this.location});
 
   final Widget child;
@@ -69,17 +71,22 @@ class AppShell extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       body: AppShortcuts(
         child: LayoutBuilder(
           builder: (context, constraints) {
             final compact = constraints.maxWidth < _compactBreakpoint;
-            return Row(
+            return Stack(
               children: [
-                _collapsibleRail(context, compact),
-                const VerticalDivider(width: 1, color: AppColors.line),
-                Expanded(child: child),
+                Row(
+                  children: [
+                    _collapsibleRail(context, compact),
+                    const VerticalDivider(width: 1, color: AppColors.line),
+                    Expanded(child: child),
+                  ],
+                ),
+                Positioned(top: 16, right: 20, child: _ProfileButton(ref: ref)),
               ],
             );
           },
@@ -110,6 +117,44 @@ class AppShell extends StatelessWidget {
           currentRoute: _current,
           compact: compact,
           onSelect: (route) => context.go(route),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileButton extends StatelessWidget {
+  const _ProfileButton({required this.ref});
+
+  final WidgetRef ref;
+
+  Future<void> _signOut(BuildContext context) async {
+    final confirmed = await showConfirm(
+      context,
+      title: 'Sign out?',
+      body: 'You will need to pick your server and sign in again.',
+      confirmLabel: 'Sign out',
+    );
+    if (confirmed) await ref.read(authProvider.notifier).logout();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = ref.watch(
+      authProvider.select((state) => state.user?.name ?? 'Profile'),
+    );
+    return Tooltip(
+      message: '$name · Sign out',
+      child: Material(
+        color: AppColors.bg,
+        shape: const CircleBorder(side: BorderSide(color: AppColors.line2)),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => _signOut(context),
+          child: const SizedBox.square(
+            dimension: 40,
+            child: Icon(Icons.person_outline, size: 20, color: AppColors.text),
+          ),
         ),
       ),
     );
