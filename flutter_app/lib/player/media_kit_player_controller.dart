@@ -44,6 +44,25 @@ class MediaKitPlayerController implements PlayerController {
           enableHardwareAcceleration ??
           (Platform.environment['WP_HWACCEL'] != '0') {
     _wire();
+    unawaited(_applyReadAheadProperties());
+  }
+
+  // `bufferSize` above only sizes media_kit's in-memory network buffer; it
+  // does not tell libmpv's demuxer how far ahead of playback position to
+  // prefetch. Left at mpv's defaults, the demuxer stops reading ahead well
+  // short of a full movie, so a long direct-play stalls partway through even
+  // though the network buffer itself never filled up. These four properties
+  // (set once, via the same raw-property path as [_setMpvProperty]) push that
+  // prefetch distance out to cover a whole movie's remote fetch instead:
+  // `cache`/`cache-secs` turn on and size mpv's own stream cache,
+  // `demuxer-max-bytes`/`demuxer-max-back-bytes` raise the forward/backward
+  // demuxer cache ceilings so the readahead has somewhere to land.
+  Future<void> _applyReadAheadProperties() async {
+    await _setMpvProperty('cache', 'yes');
+    await _setMpvProperty('cache-secs', '300');
+    await _setMpvProperty('demuxer-readahead-secs', '300');
+    await _setMpvProperty('demuxer-max-bytes', '512MiB');
+    await _setMpvProperty('demuxer-max-back-bytes', '128MiB');
   }
 
   final mk.Player _player;

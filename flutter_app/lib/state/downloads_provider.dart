@@ -58,7 +58,8 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
   }
 
   Future<void> pause(String taskId) => _downloader.pause(taskId);
-  Future<void> resume(String taskId) => _downloader.resume(taskId);
+  Future<void> resume(String taskId, {required ApiClient api}) =>
+      _downloader.resume(taskId, api: api);
   Future<void> cancel(String taskId) async {
     await _downloader.cancel(taskId);
     remove(taskId);
