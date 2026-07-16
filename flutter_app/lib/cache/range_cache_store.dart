@@ -303,6 +303,18 @@ class RangeCacheStore {
     return dir;
   }
 
+  /// Lists [dir], tolerating it disappearing mid-scan. Real installs never
+  /// delete the cache dir out from under the app, but a background scan
+  /// (eviction, offline rehydrate) racing a teardown shouldn't throw an
+  /// unhandled error — best-effort listing keeps those paths robust.
+  Future<List<FileSystemEntity>> _listSafely(Directory dir) async {
+    try {
+      return await dir.list().toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// Loads (or creates) the cache entry for [itemId]. Safe to call
   /// repeatedly — subsequent calls for an already-open entry return the same
   /// instance rather than reopening the file.
@@ -392,7 +404,7 @@ class RangeCacheStore {
     final effectiveProtected = {...protected, ..._open.keys};
 
     final stats = <CacheStat>[];
-    await for (final entity in dir.list()) {
+    for (final entity in await _listSafely(dir)) {
       if (entity is! File || !entity.path.endsWith('.meta.json')) continue;
       final name = entity.path.split(Platform.pathSeparator).last;
       final itemId = name.substring(0, name.length - '.meta.json'.length);
@@ -475,4 +487,74 @@ class RangeCacheStore {
 
   int _cachedBytesOf(List<List<int>> intervals) =>
       intervals.fold<int>(0, (sum, iv) => sum + (iv[1] - iv[0]));
+
+  /// Whether [itemId]'s cache entry fully covers `[0, totalLength)` — i.e. the
+  /// title is "downloaded" (Phase 3b: download == a fully-filled cache entry).
+  /// Reads the open entry if there is one, otherwise the on-disk sidecar
+  /// directly, so this is cheap to call for every title at boot without
+  /// opening a file handle for each.
+  Future<bool> isComplete(String itemId) async {
+    final open = _open[itemId];
+    if (open != null) {
+      final total = open.totalLength;
+      return total != null && total > 0 && open.hasRange(0, total);
+    }
+
+    final dir = await _cacheDir();
+    final metaFile = File('${dir.path}/$itemId.meta.json');
+    if (!await metaFile.exists()) return false;
+    try {
+      final raw = jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+      final total = (raw['totalLength'] as num?)?.toInt();
+      if (total == null || total <= 0) return false;
+      final rangeSet = RangeSet.fromJson({'intervals': raw['ranges'] ?? const []});
+      return rangeSet.contains(0, total);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Every itemId with a fully-present cache entry on disk — the source of
+  /// truth for "available offline" (Phase 3b), independent of any download UI
+  /// state. Scans the on-disk sidecars the same way [evict] does.
+  Future<List<String>> completedItemIds() async {
+    final dir = await _cacheDir();
+    if (!await dir.exists()) return const [];
+
+    final result = <String>[];
+    for (final entity in await _listSafely(dir)) {
+      if (entity is! File || !entity.path.endsWith('.meta.json')) continue;
+      final name = entity.path.split(Platform.pathSeparator).last;
+      final itemId = name.substring(0, name.length - '.meta.json'.length);
+      if (await isComplete(itemId)) result.add(itemId);
+    }
+    return result;
+  }
+
+  /// Deletes [itemId]'s cache entirely (data + sidecar), closing an open
+  /// handle first if there is one. Used when the user removes an offline
+  /// title — unlike [evict], this is an explicit, unconditional delete of one
+  /// title regardless of size/TTL policy.
+  Future<void> delete(String itemId) async {
+    final dir = await _cacheDir();
+
+    final openEntry = _open.remove(itemId);
+    if (openEntry != null) {
+      try {
+        await openEntry.close();
+      } catch (_) {
+        // Best-effort — the files are being deleted regardless.
+      }
+    }
+    _cachedSpansNotifiers.remove(itemId);
+
+    final dataFile = File('${dir.path}/$itemId.data');
+    final metaFile = File('${dir.path}/$itemId.meta.json');
+    try {
+      if (await dataFile.exists()) await dataFile.delete();
+    } catch (_) {}
+    try {
+      if (await metaFile.exists()) await metaFile.delete();
+    } catch (_) {}
+  }
 }

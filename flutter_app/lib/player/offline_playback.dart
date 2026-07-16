@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/offline_provider.dart';
+import '../state/providers.dart';
 import 'player_controller.dart';
 
 /// Offline-playback wiring (PLAN §4 E8.3). Opens [itemId] on [controller],
@@ -38,14 +39,14 @@ Future<bool> openPreferringOffline(
   bool autoplay = false,
 }) async {
   // Same rule as [resolveOfflinePlayback], resolved from a widget's [WidgetRef]
-  // (the detail/party playback path is a Consumer, not a provider): prefer the
-  // downloaded file over the network stream when the title is fully offline.
+  // (the detail/party playback path is a Consumer, not a provider): once the
+  // title is fully offline, playback always opens the on-device cache proxy
+  // (which serves it straight from disk, no network) rather than [streamUrl].
   final offline = ref.read(offlineProvider);
-  final localPath = offline
-      .where((r) => r.itemId == itemId)
-      .map((r) => r.filePath)
-      .cast<String?>()
-      .firstWhere((_) => true, orElse: () => null);
-  await controller.open(localPath ?? streamUrl, startAt: startAt, autoplay: autoplay);
-  return localPath != null;
+  final isOffline = offline.any((r) => r.itemId == itemId);
+  final url = isOffline
+      ? ref.read(mediaCacheProxyProvider).urlFor(itemId)
+      : streamUrl;
+  await controller.open(url, startAt: startAt, autoplay: autoplay);
+  return isOffline;
 }
