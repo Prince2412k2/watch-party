@@ -1,163 +1,88 @@
-// Runs on the real Linux target (`flutter test integration_test/downloader_test.dart
-// -d linux`), NOT the headless `flutter_tester` VM used by plain `flutter test`.
-// background_downloader's desktop implementation spawns a real isolate that
-// makes Dart VM callbacks flutter_tester's sandbox forbids ("Callbacks into
-// the Dart VM are currently prohibited") — this test hung/crashed under plain
-// `flutter test` for that reason, unrelated to the Downloader implementation
-// itself, which is why it lives here instead.
+// Phase 3b-wiring retired `background_downloader` from the download/offline
+// path entirely — downloads now fill the same on-device [RangeCacheStore]
+// playback already streams through (see `CacheFillController`,
+// `DownloadsNotifier`, `OfflineNotifier`). There is no more native
+// platform-channel task DB to resume from, so this no longer needs to run
+// outside the headless `flutter_tester` VM (the reason it lived under
+// `integration_test/` in the first place) — it stays here only so the
+// restart-survives-and-resumes property it used to check for
+// `background_downloader` keeps being checked for its replacement.
+//
+// "Restart" here means: throw away every in-memory object (the
+// [RangeCacheStore], its [CacheEntry]s, the [CacheFillController]) and
+// rebuild them fresh pointed at the same on-disk directory — exactly what
+// happens across a real app relaunch, since the cache's on-disk sidecar
+// (`.meta.json`) is the only thing that survives a process death.
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
-import 'package:watchparty/data/api_client.dart';
-import 'package:watchparty/download/downloader.dart';
-import 'package:watchparty/models/models.dart';
+import 'package:watchparty/cache/cache_fill_controller.dart';
+import 'package:watchparty/cache/media_cache_proxy.dart';
+import 'package:watchparty/cache/range_cache_store.dart';
+import 'package:watchparty/data/mock_api_client.dart';
 
-/// Live integration test against the running backend (root/root). Downloads
-/// a real, large title via the `purpose=download` signed URL, asserts
-/// progress advances and bytes land on disk, pauses, re-attaches with a
-/// *fresh* [Downloader] instance (simulating an app restart against
-/// background_downloader's persisted task DB), resumes, then cancels — never
-/// letting the full download finish. Skips (not fails) if the backend is
-/// unreachable, so the suite stays green offline.
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-  const base = String.fromEnvironment('API_BASE', defaultValue: 'http://localhost:3005');
+  test(
+      'a fill paused mid-flight resumes from a fresh (simulated-restart) '
+      'controller and lands on a fully cached, re-openable entry', () async {
+    final cacheDir = Directory.systemTemp.createTempSync('downloader_restart_');
+    addTearDown(() => cacheDir.deleteSync(recursive: true));
+    const itemId = 'restart-title';
+    const total = 100;
+    const chunkSize = 10;
 
-  testWidgets('Downloader resumes a real download and lands bytes on disk',
-      (tester) async {
-    try {
-      final probe = await HttpClient()
-          .getUrl(Uri.parse('$base/api/health'))
-          .then((r) => r.close())
-          .timeout(const Duration(seconds: 2));
-      expect(probe.statusCode, 200);
-    } catch (_) {
-      markTestSkipped('backend not reachable at $base');
-      return;
-    }
+    var fetchCount = 0;
+    final pausingFetcher = (entry, start, end) async {
+      fetchCount++;
+      await entry.write(start, List<int>.filled(end - start, 7));
+      // Mirrors `MediaCacheProxy.fetchAndStore`, which the real fill loop
+      // uses by default — it persists the sidecar after every chunk, which
+      // is exactly what makes bytes already on disk recoverable across a
+      // real process restart.
+      await entry.flushMetadata();
+      if (fetchCount == 3) throw StateError('simulated crash mid-fill');
+    };
 
-    final api = DioApiClient(baseUrl: base);
-    await api.login('root', 'root');
+    // "Before restart": start filling, hit a simulated crash partway through.
+    var store = RangeCacheStore(overrideDir: cacheDir);
+    var proxy = MediaCacheProxy(apiClient: MockApiClient(), store: store);
+    var controller = CacheFillController(proxy: proxy, chunkSize: chunkSize);
 
-    // The largest real title in the test library — big enough that a
-    // fraction-of-a-second download is a tiny sliver of the whole file.
-    final items = await api.items();
-    final target = items.reduce((a, b) {
-      final aSize = a.mediaSources.fold<int>(0, (s, m) => s + (m.size ?? 0));
-      final bSize = b.mediaSources.fold<int>(0, (s, m) => s + (m.size ?? 0));
-      return aSize >= bSize ? a : b;
-    });
-    final totalSize =
-        target.mediaSources.fold<int>(0, (s, m) => s + (m.size ?? 0));
-    expect(totalSize, greaterThan(100 * 1024 * 1024),
-        reason: 'expected a large real title in the library to test resume against');
+    final entry = await proxy.openEntry(itemId);
+    entry.setTotalLength(total);
+    await controller.start(itemId, fetcher: pausingFetcher);
 
-    var downloader = Downloader();
-    await downloader.init();
+    expect(controller.progressFor(itemId).value.state, FillState.error);
+    final cachedBeforeRestart = controller.progressFor(itemId).value.cachedBytes;
+    expect(cachedBeforeRestart, greaterThan(0));
+    expect(cachedBeforeRestart, lessThan(total));
+    await entry.close();
 
-    final seenStatuses = <DownloadStatus>{};
-    var sub = downloader.recordStream.listen((r) {
-      if (r.itemId == target.id) seenStatuses.add(r.status);
-    });
+    // "Restart": brand new store/proxy/controller instances, same directory —
+    // nothing in memory survives, only the on-disk `.meta.json` + data file.
+    store = RangeCacheStore(overrideDir: cacheDir);
+    proxy = MediaCacheProxy(apiClient: MockApiClient(), store: store);
+    controller = CacheFillController(proxy: proxy, chunkSize: chunkSize);
 
-    final initial = await downloader.startDownload(
-      api: api,
-      itemId: target.id,
-      title: target.name,
-      container: target.container,
-    );
-    expect(initial.status, DownloadStatus.enqueued);
-    expect(initial.filePath, isNull); // not resolved until on disk
+    // The fresh entry rehydrates the previously-cached bytes from disk...
+    expect(await proxy.isComplete(itemId), isFalse);
+    final reopened = await proxy.openEntry(itemId);
+    expect(reopened.hasRange(0, cachedBeforeRestart), isTrue);
 
-    // Backend is on localhost — the whole file can transfer in well under a
-    // minute, so pause almost immediately to reliably catch it mid-flight.
-    await Future<void>.delayed(const Duration(milliseconds: 150));
-    final pausedOk = await downloader.pause(target.id);
-    expect(pausedOk, isTrue);
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-
-    final activeAfterPause = await downloader.activeRecords();
-    final beforeRestart =
-        activeAfterPause.firstWhere((r) => r.itemId == target.id);
-    expect(beforeRestart.filePath, isNotNull);
-    final path = beforeRestart.filePath!;
-
-    // Progress advanced at least once before we paused (the enqueue ->
-    // running transition). A file may not exist on disk yet this early — the
-    // OS/HTTP client can buffer the very first bytes — so the "bytes on
-    // disk" assertion is after resume below, once there's been time to write.
-    expect(seenStatuses, contains(DownloadStatus.running));
-
-    await sub.cancel();
-
-    // Simulate an app restart: throw away the in-memory Downloader/listener
-    // and re-attach to background_downloader's persisted DB with a brand new
-    // instance — exactly what `init()` does on real app boot.
-    downloader = Downloader();
-    await downloader.init();
-    final rehydrated = await downloader.activeRecords();
-    final rehydratedRecord = rehydrated.firstWhere(
-      (r) => r.itemId == target.id,
-      orElse: () => fail('download task did not survive rehydration from the persisted DB'),
-    );
-    expect(
-      rehydratedRecord.status,
-      anyOf(DownloadStatus.paused, DownloadStatus.enqueued, DownloadStatus.complete),
+    // ...and resuming (a fresh controller has never seen this itemId, so this
+    // is a `start`, exactly like `DownloadsNotifier.resume` calling
+    // `CacheFillController.resume` on an unknown id falls back to `start`)
+    // only re-fetches what's still missing, and finishes the fill.
+    await controller.resume(
+      itemId,
+      fetcher: (entry, start, end) async {
+        await entry.write(start, List<int>.filled(end - start, 7));
+        await entry.flushMetadata();
+      },
     );
 
-    if (rehydratedRecord.status == DownloadStatus.paused) {
-      final resumedOk = await downloader.resume(target.id);
-      expect(resumedOk, isTrue);
-
-      // Confirm it's moving again after the simulated restart. Poll the DB
-      // (source of truth) rather than a single stream snapshot — on this
-      // fast localhost backend, resume -> running -> complete can happen
-      // faster than a fixed listen window reliably observes.
-      DownloadRecord? after;
-      for (var i = 0; i < 20; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        final records = await downloader.activeRecords();
-        after = records.firstWhere((r) => r.itemId == target.id,
-            orElse: () => rehydratedRecord);
-        // Wait past "running with no reported bytes yet" too, so the disk
-        // check below (native downloader writes to a temp file until
-        // TaskStatus.complete, then renames to the destination path) has a
-        // real shot at seeing the completed file.
-        if (after.status == DownloadStatus.complete) break;
-        if (after.status == DownloadStatus.running && after.bytesDownloaded > 0) break;
-      }
-      expect(after, isNotNull);
-      expect(
-        after!.status,
-        anyOf(DownloadStatus.running, DownloadStatus.complete),
-        reason: 'resume() should move the download out of paused',
-      );
-
-      if (after.status == DownloadStatus.complete) {
-        // The destination file only exists once background_downloader
-        // renames the temp file on completion — the core "bytes actually
-        // land on disk" assertion.
-        final file = File(path);
-        expect(await file.exists(), isTrue);
-        expect(await file.length(), greaterThan(0));
-      } else {
-        // Still running: bytes are landing in a temp file we don't have a
-        // path to, but the DB-reported progress is the honest signal here.
-        expect(after.bytesDownloaded, greaterThan(0));
-      }
-    } else if (rehydratedRecord.status == DownloadStatus.complete) {
-      // Localhost is fast enough that the download can race to completion
-      // before the pause lands — still proves the full pipeline works.
-      final file = File(path);
-      if (await file.exists()) expect(await file.length(), greaterThan(0));
-    }
-
-    // Stop well short of a full download.
-    final canceledOk = await downloader.cancel(target.id);
-    expect(canceledOk, isTrue);
-
-    final file = File(path);
-    if (await file.exists()) await file.delete();
-  }, timeout: const Timeout(Duration(minutes: 2)));
+    expect(controller.progressFor(itemId).value.state, FillState.complete);
+    expect(await proxy.isComplete(itemId), isTrue);
+    expect(reopened.missingRanges(0, total), isEmpty);
+  });
 }

@@ -21,6 +21,49 @@ import { requireAuth, getJellyfin } from './auth.js'
 // and the downloader re-mints via `stream-url` on a 401/403 if one still expires.
 const TTL_MS = { stream: 6 * 60 * 60 * 1000, download: 48 * 60 * 60 * 1000 }
 
+// Guards only the *initial* connect/first-byte — once Jellyfin starts
+// streaming we hand the body straight to the client and let it run for
+// however long the movie is. A transient hiccup (network blip, momentary 5xx)
+// before any bytes reach the client is safe to retry from scratch; once
+// `nodeStream.pipe(res)` has started, retrying would mean re-sending
+// already-flushed bytes, so retries only ever wrap the fetch below.
+const UPSTREAM_CONNECT_TIMEOUT_MS = 30_000
+const UPSTREAM_MAX_RETRIES = 2
+const UPSTREAM_RETRY_DELAY_MS = 300
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// Fetches `target` with a connect/first-byte timeout, retrying a bounded
+// number of times on network errors or 5xx responses. Never retries after
+// bytes have started reaching the client — this only runs before that point.
+async function fetchUpstreamWithRetry(target, headers) {
+  let lastErr
+  for (let attempt = 0; attempt <= UPSTREAM_MAX_RETRIES; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_CONNECT_TIMEOUT_MS)
+    try {
+      const upstream = await fetch(target, { headers, signal: controller.signal })
+      clearTimeout(timer)
+      if (upstream.status >= 500 && attempt < UPSTREAM_MAX_RETRIES) {
+        lastErr = new Error(`upstream ${upstream.status}`)
+        await delay(UPSTREAM_RETRY_DELAY_MS * (attempt + 1))
+        continue
+      }
+      return upstream
+    } catch (err) {
+      clearTimeout(timer)
+      lastErr = err
+      if (attempt < UPSTREAM_MAX_RETRIES) {
+        await delay(UPSTREAM_RETRY_DELAY_MS * (attempt + 1))
+        continue
+      }
+    }
+  }
+  throw lastErr
+}
+
 function sign(payload, secret) {
   const body = JSON.stringify(payload)
   const b64 = Buffer.from(body).toString('base64url')
@@ -85,9 +128,10 @@ export function registerNativeRoutes(app) {
     const target = `${baseUrl}/Videos/${encodeURIComponent(itemId)}/stream?static=true&mediaSourceId=${encodeURIComponent(itemId)}&api_key=${encodeURIComponent(jellyfinToken)}`
 
     try {
-      const upstream = await fetch(target, {
-        headers: req.headers.range ? { Range: req.headers.range } : {},
-      })
+      const upstream = await fetchUpstreamWithRetry(
+        target,
+        req.headers.range ? { Range: req.headers.range } : {},
+      )
 
       if (!upstream.ok && upstream.status !== 206) {
         res.status(upstream.status).end()
