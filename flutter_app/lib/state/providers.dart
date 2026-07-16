@@ -5,6 +5,7 @@ import '../data/mock_api_client.dart';
 import '../net/socket_client.dart';
 import '../download/downloader.dart';
 import '../cache/media_cache_proxy.dart';
+import '../cache/cache_fill_controller.dart';
 
 /// Core dependency-injection seams (PLAN §3.8). Phase 0 wires MOCK
 /// implementations so the app boots and every epic has something to build
@@ -32,4 +33,12 @@ final downloaderProvider = Provider<Downloader>((ref) => Downloader());
 /// don't touch playback don't need to override it.
 final mediaCacheProxyProvider = Provider<MediaCacheProxy>(
   (ref) => MediaCacheProxy(apiClient: ref.watch(apiClientProvider)),
+);
+
+/// The proactive whole-title cache-fill engine ("download = fill the
+/// cache", Phase 3b) built off whatever [mediaCacheProxyProvider] resolves
+/// to. Additive alongside the existing [downloaderProvider]-based
+/// download/offline stack — nothing here is wired into that UI yet.
+final cacheFillControllerProvider = Provider<CacheFillController>(
+  (ref) => CacheFillController(proxy: ref.watch(mediaCacheProxyProvider)),
 );
