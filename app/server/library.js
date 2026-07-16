@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { requireAuth, getJellyfin } from './auth.js'
 import {
   getItems, getItemChildren, buildHlsUrl, BASE,
@@ -11,6 +13,28 @@ import {
 const JELLYFIN_ID = /^[0-9a-f]{32}$/i
 const JELLYFIN_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const isJellyfinId = (v) => typeof v === 'string' && (JELLYFIN_ID.test(v) || JELLYFIN_GUID.test(v))
+const responseCache = new Map()
+
+async function sendCachedJson(req, res, key, maxAgeSeconds, load) {
+  const cacheKey = `${req.session.jellyfin.userId}:${key}`
+  let cached = responseCache.get(cacheKey)
+
+  if (!cached || cached.expiresAt <= Date.now()) {
+    const body = await load()
+    const serialized = JSON.stringify(body)
+    cached = {
+      body,
+      etag: `"${createHash('sha256').update(serialized).digest('base64url')}"`,
+      expiresAt: Date.now() + maxAgeSeconds * 1000,
+    }
+    responseCache.set(cacheKey, cached)
+  }
+
+  res.set('Cache-Control', `private, max-age=${maxAgeSeconds}`)
+  res.set('ETag', cached.etag)
+  if (req.get('If-None-Match') === cached.etag) return res.status(304).end()
+  return res.json(cached.body)
+}
 const parseBoundedInteger = (value, max) => {
   if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) return null
   const parsed = Number(value)
@@ -91,15 +115,17 @@ export function registerLibraryRoutes(app) {
   app.get('/api/library/home', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
     try {
-      const [views, resume, nextUp] = await Promise.all([
-        getViews(token, userId).catch(() => ({ Items: [] })),
-        getResumeItems(token, userId).catch(() => ({ Items: [] })),
-        getNextUp(token, userId).catch(() => ({ Items: [] })),
-      ])
-      res.json({
-        views: views.Items ?? [],
-        resume: resume.Items ?? [],
-        nextUp: nextUp.Items ?? [],
+      await sendCachedJson(req, res, 'home', 30, async () => {
+        const [views, resume, nextUp] = await Promise.all([
+          getViews(token, userId).catch(() => ({ Items: [] })),
+          getResumeItems(token, userId).catch(() => ({ Items: [] })),
+          getNextUp(token, userId).catch(() => ({ Items: [] })),
+        ])
+        return {
+          views: views.Items ?? [],
+          resume: resume.Items ?? [],
+          nextUp: nextUp.Items ?? [],
+        }
       })
     } catch (err) {
       console.error('library/home', err.message)
@@ -111,8 +137,10 @@ export function registerLibraryRoutes(app) {
   app.get('/api/library/latest', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
     try {
-      const data = await getLatest(token, userId, req.query.parentId)
-      res.json(Array.isArray(data) ? data : (data.Items ?? []))
+      await sendCachedJson(req, res, `latest:${req.query.parentId ?? ''}`, 120, async () => {
+        const data = await getLatest(token, userId, req.query.parentId)
+        return Array.isArray(data) ? data : (data.Items ?? [])
+      })
     } catch (err) {
       console.error('library/latest', err.message)
       res.status(502).json({ error: 'Failed to fetch latest' })
@@ -123,8 +151,8 @@ export function registerLibraryRoutes(app) {
   app.get('/api/library/item/:id', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
     try {
-      const data = await getItemDetail(token, userId, req.params.id)
-      res.json(data)
+      await sendCachedJson(req, res, `item:${req.params.id}`, 300, () =>
+        getItemDetail(token, userId, req.params.id))
     } catch (err) {
       console.error('library/item', err.message)
       res.status(502).json({ error: 'Failed to fetch item' })
@@ -155,8 +183,10 @@ export function registerLibraryRoutes(app) {
   app.get('/api/library/items', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
     try {
-      const data = await getItems(token, userId, req.query.parentId ? { ParentId: req.query.parentId } : {})
-      res.json(data.Items ?? [])
+      await sendCachedJson(req, res, `items:${req.query.parentId ?? ''}`, 120, async () => {
+        const data = await getItems(token, userId, req.query.parentId ? { ParentId: req.query.parentId } : {})
+        return data.Items ?? []
+      })
     } catch (err) {
       console.error('library/items', err.message)
       res.status(502).json({ error: 'Failed to fetch library' })
@@ -166,8 +196,10 @@ export function registerLibraryRoutes(app) {
   app.get('/api/library/items/:id/children', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
     try {
-      const data = await getItemChildren(token, userId, req.params.id)
-      res.json(data.Items ?? [])
+      await sendCachedJson(req, res, `children:${req.params.id}`, 300, async () => {
+        const data = await getItemChildren(token, userId, req.params.id)
+        return data.Items ?? []
+      })
     } catch (err) {
       console.error('library/children', err.message)
       res.status(502).json({ error: 'Failed to fetch children' })
