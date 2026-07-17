@@ -7,6 +7,10 @@ import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import '../app/config.dart';
 import '../models/models.dart';
 
+/// Server cap on a manual `.torrent` upload body (`MAX_TORRENT_BYTES`,
+/// app/server/servarr/manual.js).
+const int maxTorrentBytes = 2 * 1024 * 1024;
+
 /// Aggregated landing payload from `GET /api/library/home`.
 class HomeData {
   const HomeData({
@@ -128,11 +132,31 @@ abstract class ApiClient {
   /// Generic passthrough to `POST /api/servarr/<path>`.
   Future<dynamic> servarrPost(String path, {Object? body});
 
-  /// Generic passthrough to `DELETE /api/servarr/<path>`.
-  Future<dynamic> servarrDelete(String path, {Map<String, dynamic>? query});
+  /// Generic passthrough to `DELETE /api/servarr/<path>`. An optional JSON
+  /// [body] rides along for routes that read one — e.g. `DELETE
+  /// .../queue/:id` with `{ blocklist }` to blocklist a release on removal.
+  Future<dynamic> servarrDelete(
+    String path, {
+    Map<String, dynamic>? query,
+    Object? body,
+  });
 
-  /// Absolute URL to the servarr poster proxy (`/api/servarr/image`).
-  String servarrImageUrl(String remoteUrl);
+  /// Submit a raw `.torrent` file to `POST /api/servarr/manual/torrent`
+  /// (`application/x-bittorrent` body + `?service=&targetId=&title=` query,
+  /// with optional `seasonNumber`/`episodeNumber` for series). [bytes] must be
+  /// under the server's 2 MiB cap.
+  Future<dynamic> manualTorrentUpload(
+    List<int> bytes, {
+    required String service,
+    required String targetId,
+    required String title,
+    int? seasonNumber,
+    int? episodeNumber,
+  });
+
+  /// Absolute URL to the servarr poster proxy
+  /// (`/api/servarr/image?service=&path=`) for an *arr `/MediaCover/…` path.
+  String servarrImageUrl(String service, String path);
 }
 
 /// Concrete dio-backed client. A [PersistCookieJar] keeps the `connect.sid`
@@ -420,8 +444,13 @@ class DioApiClient implements ApiClient {
   Future<dynamic> servarrDelete(
     String path, {
     Map<String, dynamic>? query,
+    Object? body,
   }) async {
-    final res = await _dio.delete('/api/servarr/$path', queryParameters: query);
+    final res = await _dio.delete(
+      '/api/servarr/$path',
+      queryParameters: query,
+      data: body,
+    );
     if (res.statusCode != null && res.statusCode! >= 400) {
       _fail(res, 'servarr DELETE $path');
     }
@@ -429,8 +458,47 @@ class DioApiClient implements ApiClient {
   }
 
   @override
-  String servarrImageUrl(String remoteUrl) =>
-      '$_base/api/servarr/image?url=${Uri.encodeQueryComponent(remoteUrl)}';
+  Future<dynamic> manualTorrentUpload(
+    List<int> bytes, {
+    required String service,
+    required String targetId,
+    required String title,
+    int? seasonNumber,
+    int? episodeNumber,
+  }) async {
+    if (bytes.length > maxTorrentBytes) {
+      throw ArgumentError('torrent exceeds $maxTorrentBytes bytes');
+    }
+    final res = await _dio.post(
+      '/api/servarr/manual/torrent',
+      queryParameters: {
+        'service': service,
+        'targetId': targetId,
+        'title': title,
+        if (seasonNumber != null) 'seasonNumber': seasonNumber,
+        if (episodeNumber != null) 'episodeNumber': episodeNumber,
+      },
+      data: Stream.fromIterable([bytes]),
+      options: Options(
+        headers: {
+          Headers.contentLengthHeader: bytes.length,
+          'Content-Type': 'application/x-bittorrent',
+        },
+      ),
+    );
+    if (res.statusCode != null && res.statusCode! >= 400) {
+      _fail(res, 'manualTorrentUpload');
+    }
+    return res.data;
+  }
+
+  @override
+  String servarrImageUrl(String service, String path) {
+    final qs = Uri(
+      queryParameters: {'service': service, 'path': path},
+    ).query;
+    return '$_base/api/servarr/image?$qs';
+  }
 }
 
 /// Thrown on a non-success API response.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../palette.dart';
 import '../tokens.dart';
 
 /// Semantic tone for [AppChip]. [neutral] is the default surface chip (genre,
@@ -31,8 +32,9 @@ class AppChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
     final (fg, dot) = switch (tone) {
-      AppChipTone.neutral => (selected ? AppColors.text : AppColors.dim, null),
+      AppChipTone.neutral => (selected ? wp.text : wp.dim, null),
       AppChipTone.live => (AppColors.red, AppColors.live),
       AppChipTone.danger => (AppColors.red, null),
       AppChipTone.success => (AppColors.green, null),
