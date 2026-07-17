@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../palette.dart';
 import '../tokens.dart';
 import 'app_button.dart';
 
@@ -39,10 +40,11 @@ class AppDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
     return sc.AlertDialog(
       surfaceBlur: AppBlur.overlay,
       surfaceOpacity: 0.9,
-      title: Text(title, style: kDialogTitleStyle),
+      title: Text(title, style: kDialogTitleStyle.copyWith(color: wp.text)),
       content: (body != null || child != null)
           ? Column(
               mainAxisSize: MainAxisSize.min,
@@ -51,11 +53,7 @@ class AppDialog extends StatelessWidget {
                 if (body != null)
                   Text(
                     body!,
-                    style: const TextStyle(
-                      color: AppColors.dim,
-                      fontSize: 14,
-                      height: 1.5,
-                    ),
+                    style: TextStyle(color: wp.dim, fontSize: 14, height: 1.5),
                   ),
                 if (child != null) ...[
                   const SizedBox(height: AppSpacing.lg),

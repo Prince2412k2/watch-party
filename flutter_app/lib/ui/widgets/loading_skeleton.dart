@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../palette.dart';
 import '../tokens.dart';
 
 /// FROZEN CONTRACT (PLAN §3.6). A shimmering placeholder block. E1 tunes the
@@ -34,13 +35,14 @@ class _LoadingSkeletonState extends State<LoadingSkeleton>
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) => Container(
         width: widget.width,
         height: widget.height,
         decoration: BoxDecoration(
-          color: Color.lerp(AppColors.surface, AppColors.surface2, _c.value),
+          color: Color.lerp(wp.surface, wp.surface2, _c.value),
           borderRadius: BorderRadius.circular(widget.borderRadius),
         ),
       ),
