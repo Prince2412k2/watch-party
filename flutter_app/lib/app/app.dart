@@ -11,17 +11,12 @@ import 'router.dart';
 /// widget builds, boot-time session restore has already resolved, so the
 /// router's auth redirect never flashes the wrong screen.
 ///
-/// The desktop window keeps its native OS decorations (see
-/// `linux/runner/my_application.cc` + `desktop_lifecycle.dart`), which draw the
-/// drag region and min/maximize/close controls — so the redesigned shell carries
-/// NO app-level top bar, left rail, or outer frame: it is edge-to-edge, matching
-/// the redesigned web `WebShell`.
+/// Desktop controls are integrated over edge-to-edge content rather than living
+/// in a separate title bar.
 class WatchpartyApp extends ConsumerStatefulWidget {
   const WatchpartyApp({super.key, this.enableWindowFrame = true});
 
-  /// Retained for test construction. The window frame is the platform's native
-  /// decoration now, so this no longer gates any custom chrome; it stays so
-  /// existing tests (`WatchpartyApp(enableWindowFrame: false)`) keep compiling.
+  /// Disabled by widget tests so they do not call desktop platform channels.
   final bool enableWindowFrame;
 
   @override
@@ -55,13 +50,16 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
         // + overlay infrastructure. MaterialType.transparency supplies the
         // Material text/ink plumbing for any chrome that renders above a route's
         // own Scaffold, without painting a background.
+        final content = Material(
+          type: MaterialType.transparency,
+          child: child ?? const SizedBox.shrink(),
+        );
         return sc.ShadcnLayer(
           theme: scTheme,
           themeMode: isLight ? sc.ThemeMode.light : sc.ThemeMode.dark,
-          child: Material(
-            type: MaterialType.transparency,
-            child: child ?? const SizedBox.shrink(),
-          ),
+          child: widget.enableWindowFrame
+              ? DesktopWindowChrome(child: content)
+              : content,
         );
       },
     );

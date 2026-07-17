@@ -6,6 +6,9 @@ import '../net/socket_client.dart';
 import '../download/downloader.dart';
 import '../cache/media_cache_proxy.dart';
 import '../cache/cache_fill_controller.dart';
+import '../cache/artwork_cache.dart';
+import '../cache/catalog_cache_store.dart';
+import '../data/catalog_repository.dart';
 
 /// Core dependency-injection seams (PLAN §3.8). Phase 0 wires MOCK
 /// implementations so the app boots and every epic has something to build
@@ -16,9 +19,21 @@ import '../cache/cache_fill_controller.dart';
 /// is wired; defaults to an in-memory mock so the app runs with no backend.
 final apiClientProvider = Provider<ApiClient>((ref) => MockApiClient());
 
+final catalogCacheProvider = Provider<CatalogCacheStore?>((ref) => null);
+
+final catalogRepositoryProvider = Provider<CatalogRepository>(
+  (ref) => CatalogRepository(
+    api: ref.watch(apiClientProvider),
+    cache: ref.watch(catalogCacheProvider),
+  ),
+);
+
+final artworkCacheProvider = Provider<ArtworkCache?>((ref) => null);
+
 /// The socket.io client for sync/chat. Mock by default.
-final socketClientProvider =
-    Provider<SocketClient>((ref) => MockSocketClient());
+final socketClientProvider = Provider<SocketClient>(
+  (ref) => MockSocketClient(),
+);
 
 /// The old `background_downloader`-backed download service (E8.1). Retired
 /// from the download/offline UI as of Phase 3b-wiring — [downloadsProvider]

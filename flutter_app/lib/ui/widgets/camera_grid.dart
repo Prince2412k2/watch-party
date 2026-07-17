@@ -108,7 +108,7 @@ class _CameraTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(AppSpacing.radius);
+    final radius = BorderRadius.circular(AppSpacing.radiusLg);
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,

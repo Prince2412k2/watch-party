@@ -221,8 +221,16 @@ class ServarrDiscover {
 final servarrDiscoverProvider =
     FutureProvider.family.autoDispose<ServarrDiscover, ServarrKind>((ref, kind) async {
   final api = ref.watch(apiClientProvider);
-  final data = await api.servarrGet('${kind.service}/discover', query: {'page': 1});
-  final map = (data as Map);
+  dynamic data;
+  try {
+    data = await api.servarrGet('${kind.service}/discover', query: {'page': 1});
+    if (data is! Map || (data['items'] as List? ?? const []).isEmpty) {
+      data = await api.servarrGet('${kind.service}/popular');
+    }
+  } catch (_) {
+    data = await api.servarrGet('${kind.service}/popular');
+  }
+  final map = data as Map;
   final items = (map['items'] as List? ?? const [])
       .cast<Map<String, dynamic>>()
       .map(ServarrTitle.new)
@@ -231,6 +239,20 @@ final servarrDiscoverProvider =
     source: (map['source'] as String?) ?? 'curated',
     items: items,
   );
+});
+
+final servarrSearchProvider = FutureProvider.family.autoDispose<
+    List<ServarrTitle>, ({ServarrKind kind, String query})>((ref, request) async {
+  final query = request.query.trim();
+  if (query.isEmpty) return const [];
+  final data = await ref.watch(apiClientProvider).servarrGet(
+    '${request.kind.service}/search',
+    query: {'term': query},
+  );
+  return (data as List)
+      .cast<Map<String, dynamic>>()
+      .map(ServarrTitle.new)
+      .toList();
 });
 
 /// Per-title request state for the acquire flow, keyed by `keyOf(kind, item)`.

@@ -112,22 +112,29 @@ class _NavTabState extends State<_NavTab> {
                   left: 18,
                   right: 18,
                   bottom: 0,
-                  child: AnimatedContainer(
-                    duration: AppMotion.hover,
-                    curve: AppMotion.standard,
-                    transformAlignment: Alignment.center,
-                    transform: Matrix4.diagonal3Values(
-                      active ? 1.0 : 0.0,
-                      1.0,
-                      1.0,
-                    ),
-                    height: 3,
-                    decoration: const BoxDecoration(
-                      color: kBrandRed,
-                      borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(2),
-                      ),
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      return TweenAnimationBuilder<double>(
+                        tween: Tween(end: active ? 1.0 : 0.0),
+                        duration: AppMotion.hover,
+                        curve: AppMotion.standard,
+                        builder: (context, factor, child) => Center(
+                          child: SizedBox(
+                            width: constraints.maxWidth * factor,
+                            child: child,
+                          ),
+                        ),
+                        child: Container(
+                          height: 3,
+                          decoration: const BoxDecoration(
+                            color: kBrandRed,
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(2),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],

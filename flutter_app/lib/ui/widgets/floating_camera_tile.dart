@@ -269,7 +269,7 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
     final track = widget.track;
     final speaking = track.isSpeaking;
     final showChrome = _hover || speaking || widget.collapsed;
-    final radius = BorderRadius.circular(AppSpacing.radius);
+    final radius = BorderRadius.circular(AppSpacing.radiusLg);
 
     final body = widget.collapsed
         // Collapsed: no video, just a compact strip carrying the chrome

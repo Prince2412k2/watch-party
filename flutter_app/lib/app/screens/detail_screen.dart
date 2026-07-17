@@ -61,18 +61,40 @@ class DetailScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: wp.bg,
-      body: DetailStage(
-        itemId: itemId,
-        onBack: () =>
-            context.canPop() ? context.pop() : context.go('/movies'),
-        onWatch: (playItem, tracks) => Navigator.of(context).push(
-          _playerRouteFor(
-            itemId: playItem.id,
-            title: playItem.name,
-            audioStreamIndex: tracks.audioStreamIndex,
-            subtitleStreamIndex: tracks.subtitleStreamIndex,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: DetailStage(
+              itemId: itemId,
+              onBack: () =>
+                  context.canPop() ? context.pop() : context.go('/movies'),
+              onWatch: (playItem, tracks) async {
+                final party = ref.read(partyProvider);
+                if (party != null) {
+                  final notifier = ref.read(partyProvider.notifier);
+                  if (notifier.canControl) {
+                    await notifier.selectMedia(
+                      playItem.id,
+                      audioStreamIndex: tracks.audioStreamIndex,
+                      subtitleStreamIndex: tracks.subtitleStreamIndex,
+                    );
+                  }
+                  if (context.mounted) context.go('/party/${party.id}');
+                  return;
+                }
+                await Navigator.of(context).push(
+                  _playerRouteFor(
+                    itemId: playItem.id,
+                    title: playItem.name,
+                    audioStreamIndex: tracks.audioStreamIndex,
+                    subtitleStreamIndex: tracks.subtitleStreamIndex,
+                  ),
+                );
+              },
+            ),
           ),
-        ),
+          const Positioned(right: 22, bottom: 18, child: PopcornControl()),
+        ],
       ),
     );
   }
@@ -175,6 +197,11 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   Object? _error;
   bool _ready = false;
   bool _isFullscreen = false;
+  bool _exiting = false;
+  bool _allowPop = false;
+  bool _popping = false;
+  bool _handoffToParty = false;
+  Future<void>? _openFuture;
 
   bool _usesCacheProxy = false;
 
@@ -186,14 +213,40 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   void initState() {
     super.initState();
     _controller; // force initialization here, where ref.read is valid
-    _open();
+    _openFuture = _open();
   }
 
   @override
   void dispose() {
-    unawaited(_controller.pause());
+    unawaited(_stopPlayback());
     if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
     super.dispose();
+  }
+
+  Future<void> _stopPlayback() async {
+    if (_handoffToParty) return;
+    _exiting = true;
+    try {
+      await _openFuture;
+    } catch (_) {}
+    await _controller.pause();
+    await _controller.seek(Duration.zero);
+    if (_isFullscreen) await windowManager.setFullScreen(false);
+  }
+
+  Future<void> _exit() async {
+    if (_popping) return;
+    _popping = true;
+    await _stopPlayback();
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    await Navigator.of(context).maybePop();
+  }
+
+  void _retry() {
+    _exiting = false;
+    _popping = false;
+    _openFuture = _open();
   }
 
   Future<void> _toggleFullscreen() async {
@@ -237,9 +290,18 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
         _controller,
         itemId: widget.itemId,
         streamUrl: streamUrl,
-        autoplay: true,
+        autoplay: false,
       );
-      if (mounted) setState(() => _ready = true);
+      if (_exiting || !mounted) {
+        await _controller.pause();
+        return;
+      }
+      await _controller.play();
+      if (_exiting || !mounted) {
+        await _controller.pause();
+        return;
+      }
+      setState(() => _ready = true);
     } catch (e) {
       if (mounted) setState(() => _error = e);
     }
@@ -247,16 +309,21 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: _error != null
+    return PopScope<void>(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_exit());
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: _error != null
           ? Center(
               child: ErrorState(
                 title: 'Playback failed',
                 message: _error is ApiException
                     ? (_error as ApiException).message
                     : 'Could not open this title. Check your connection and try again.',
-                onRetry: _open,
+                onRetry: _retry,
               ),
             )
           : !_ready
@@ -277,7 +344,7 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                   itemId: widget.itemId,
                   apiClient: ref.watch(apiClientProvider),
                   title: widget.title,
-                  onBack: () => Navigator.of(context).maybePop(),
+                  onBack: _exit,
                   onToggleFullscreen: _toggleFullscreen,
                   isFullscreen: _isFullscreen,
                   cachedSpans: _usesCacheProxy
@@ -288,13 +355,17 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                 ),
                 Positioned(
                   top: 8,
-                  right: 8,
+                  right: 8 + desktopTrailingControlInset,
                   child: SafeArea(
-                    child: _StartPartyButton(itemId: widget.itemId),
+                    child: _StartPartyButton(
+                      itemId: widget.itemId,
+                      onHandoff: () => _handoffToParty = true,
+                    ),
                   ),
                 ),
               ],
             ),
+      ),
     );
   }
 }
@@ -304,8 +375,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
 /// into [PartyNotifier.createFromCurrentPlayback], then hands off to the
 /// immersive party screen.
 class _StartPartyButton extends ConsumerStatefulWidget {
-  const _StartPartyButton({required this.itemId});
+  const _StartPartyButton({required this.itemId, required this.onHandoff});
   final String itemId;
+  final VoidCallback onHandoff;
 
   @override
   ConsumerState<_StartPartyButton> createState() => _StartPartyButtonState();
@@ -325,6 +397,7 @@ class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
             position: position,
           );
       if (!mounted) return;
+      widget.onHandoff();
       context.go('/party/$partyId');
     } catch (e) {
       if (!mounted) return;

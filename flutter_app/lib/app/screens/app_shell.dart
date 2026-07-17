@@ -116,7 +116,7 @@ class AppShell extends ConsumerWidget {
             ),
             Positioned(
               top: 20,
-              right: 28,
+              right: 28 + desktopTrailingControlInset,
               child: isAuthenticated ? const ProfileMenu() : const _LoginButton(),
             ),
             if (isAuthenticated)

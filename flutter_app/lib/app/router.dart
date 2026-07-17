@@ -147,14 +147,18 @@ GoRouter buildRouter(WidgetRef ref) {
           // page identity so the Navigator replaces rather than reuses it.
           GoRoute(
             path: Routes.movies,
-            pageBuilder: (_, state) =>
-                NoTransitionPage(key: state.pageKey, child: const HomeScreen()),
+            pageBuilder: (_, state) => NoTransitionPage(
+              key: state.pageKey,
+              child: ref.read(authProvider).isAuthenticated
+                  ? const BrowseScreen(type: BrowseTypeFilter.movie)
+                  : const HomeScreen(),
+            ),
           ),
           GoRoute(
             path: Routes.series,
             pageBuilder: (_, state) => NoTransitionPage(
               key: state.pageKey,
-              child: const BrowseScreen(),
+              child: const BrowseScreen(type: BrowseTypeFilter.series),
             ),
           ),
           GoRoute(
