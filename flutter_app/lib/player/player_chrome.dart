@@ -34,7 +34,6 @@ import 'trickplay_preview.dart';
 /// Near-black translucent scrims for the chrome edges (design system: flat,
 /// no gradients/glass). Both are [AppColors.bg] at different opacities.
 const Color _kChromeScrim = Color(0xB30A0A0B); // top bar (~70%)
-const Color _kChromeBar = Color(0xD90A0A0B); // transport bar (~85%)
 const Color _kBufferingScrim = Color(0x8C0A0A0B); // centered spinner backdrop
 
 class PlayerChrome extends StatefulWidget {
@@ -52,12 +51,30 @@ class PlayerChrome extends StatefulWidget {
     this.mediaSourceId,
     this.apiClient,
     this.cachedSpans,
+    this.visible,
+    this.onWake,
+    this.onToggleChat,
+    this.onPushToTalkStart,
+    this.onPushToTalkStop,
   });
 
   final PlayerController controller;
   final bool canControl;
   final String? title;
   final VoidCallback? onBack;
+
+  /// When non-null, chrome visibility is owned by the PARENT (the party screen's
+  /// single unified auto-hide) and this widget stops running its own idle timer
+  /// — it renders at [visible] and forwards activity via [onWake]. Null (solo
+  /// playback / detail screen) keeps the built-in idle behaviour intact.
+  final bool? visible;
+  final VoidCallback? onWake;
+
+  /// Party-only key bindings, independent of playback control: `c` toggles chat,
+  /// hold-`T` is push-to-talk. Null in solo playback (the keys do nothing).
+  final VoidCallback? onToggleChat;
+  final VoidCallback? onPushToTalkStart;
+  final VoidCallback? onPushToTalkStop;
 
   /// Cached ("downloaded") byte-range spans for [itemId], as 0..1 fractions
   /// of total length, painted behind the scrubber's play-progress as a
@@ -300,6 +317,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
   }
 
   void _scheduleIdle() {
+    // Parent-owned visibility (party path): the single unified timer lives in
+    // the party screen, so don't run a second one here.
+    if (widget.visible != null) return;
     _idleTimer?.cancel();
     if (!_playing) {
       // Stay visible while paused/buffering — nothing to hide from.
@@ -312,6 +332,11 @@ class _PlayerChromeState extends State<PlayerChrome> {
   }
 
   void _wake() {
+    // Parent-owned visibility: forward the activity so the single timer re-arms.
+    if (widget.visible != null) {
+      widget.onWake?.call();
+      return;
+    }
     setState(() => _visible = true);
     _scheduleIdle();
   }
@@ -525,8 +550,30 @@ class _PlayerChromeState extends State<PlayerChrome> {
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    // Push-to-talk releases on key up — independent of playback-control rights.
+    if (event is KeyUpEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.keyT &&
+          widget.onPushToTalkStop != null) {
+        widget.onPushToTalkStop!();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     _wake();
+    // Chat + push-to-talk are A/V-layer bindings available to guests too, so
+    // they run before the canControl transport gate. Key-repeat arrives as a
+    // KeyRepeatEvent (not KeyDownEvent), so hold-T fires start exactly once.
+    if (event.logicalKey == LogicalKeyboardKey.keyC &&
+        widget.onToggleChat != null) {
+      widget.onToggleChat!();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyT &&
+        widget.onPushToTalkStart != null) {
+      widget.onPushToTalkStart!();
+      return KeyEventResult.handled;
+    }
     if (!widget.canControl) return KeyEventResult.ignored;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.space:
@@ -568,12 +615,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
       _position,
       delay: Duration(milliseconds: (_subDelay * 1000).round()),
     );
+    // Parent-owned visibility (party) wins; otherwise the internal idle state.
+    final visible = widget.visible ?? _visible;
     return Focus(
       focusNode: _focusNode,
       autofocus: true,
       onKeyEvent: _onKey,
       child: MouseRegion(
-        cursor: _visible ? MouseCursor.defer : SystemMouseCursors.none,
+        cursor: visible ? MouseCursor.defer : SystemMouseCursors.none,
         onHover: (_) => _wake(),
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
@@ -594,14 +643,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
               // Top bar: back + title.
               _AnimatedEdge(
-                visible: _visible,
+                visible: visible,
                 alignment: Alignment.topCenter,
                 child: _TopBar(title: widget.title, onBack: widget.onBack),
               ),
 
               // Bottom transport bar.
               _AnimatedEdge(
-                visible: _visible,
+                visible: visible,
                 alignment: Alignment.bottomCenter,
                 child: _TransportBar(
                   canControl: widget.canControl,
@@ -863,12 +912,20 @@ class _TransportBar extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
-        AppSpacing.sm,
+        AppSpacing.xxl,
         AppSpacing.md,
         AppSpacing.sm,
       ),
-      // Flat near-black translucent bar — no gradients per the design system.
-      decoration: const BoxDecoration(color: _kChromeBar),
+      // The one allowed legibility exception: a bottom-up black-alpha scrim
+      // behind the transport row (mirrors the redesigned web control bar's
+      // `linear-gradient(0deg, rgba(0,0,0,.8), transparent)`).
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Color(0xCC000000), Color(0x00000000)],
+        ),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
