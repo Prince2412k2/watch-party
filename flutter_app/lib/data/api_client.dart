@@ -33,6 +33,12 @@ class HomeData {
       nextUp: parse('nextUp'),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'views': views.map((item) => item.toJson()).toList(),
+    'resume': resume.map((item) => item.toJson()).toList(),
+    'nextUp': nextUp.map((item) => item.toJson()).toList(),
+  };
 }
 
 /// Credentials for joining a LiveKit room, from `GET /api/livekit/token`.
@@ -494,9 +500,7 @@ class DioApiClient implements ApiClient {
 
   @override
   String servarrImageUrl(String service, String path) {
-    final qs = Uri(
-      queryParameters: {'service': service, 'path': path},
-    ).query;
+    final qs = Uri(queryParameters: {'service': service, 'path': path}).query;
     return '$_base/api/servarr/image?$qs';
   }
 }

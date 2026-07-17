@@ -12,6 +12,8 @@ import 'app/app.dart';
 import 'app/config.dart';
 import 'app/desktop_lifecycle.dart';
 import 'cache/media_cache_proxy.dart';
+import 'cache/artwork_cache.dart';
+import 'cache/catalog_cache_store.dart';
 import 'data/api_client.dart';
 import 'net/socket_client.dart';
 import 'state/state.dart';
@@ -48,6 +50,14 @@ Future<void> main() async {
     '${supportDir.path}/cookies',
     baseUrl: savedServerUrl, // null → DioApiClient falls back to its default
   );
+  final catalogCache = CatalogCacheStore(
+    Directory('${supportDir.path}/catalog-cache'),
+  );
+  final artworkCache = ArtworkCache(
+    apiClient.raw,
+    directory: Directory('${supportDir.path}/artwork-cache'),
+  );
+  await artworkCache.evict();
 
   // The real socket.io client (E5). Its handshake needs the session cookie,
   // but dart:io sockets don't share dio's cookie jar and login happens well
@@ -83,6 +93,8 @@ Future<void> main() async {
   final container = ProviderContainer(
     overrides: [
       apiClientProvider.overrideWithValue(apiClient),
+      catalogCacheProvider.overrideWithValue(catalogCache),
+      artworkCacheProvider.overrideWithValue(artworkCache),
       socketClientProvider.overrideWithValue(socketClient),
       mediaCacheProxyProvider.overrideWithValue(mediaCacheProxy),
       serverConfigProvider.overrideWith(

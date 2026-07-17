@@ -107,7 +107,9 @@ class _DetailStageState extends ConsumerState<DetailStage> {
         ),
         Positioned(
           top: 25,
-          left: 40,
+          left: desktopLeadingControlInset > 0
+              ? desktopLeadingControlInset
+              : 40,
           child: _GlassBackButton(onTap: widget.onBack),
         ),
       ],
@@ -1323,20 +1325,17 @@ List<String> _infoLine(LibraryItem item) {
     }
   }
   final res = video != null ? _resolutionLabel(video.height) : null;
-  final hdr = video?.videoRange != null && video!.videoRange != 'SDR'
-      ? video.videoRange
-      : null;
-  final size = ms?.size != null ? '${(ms!.size! / 1000000).round()}M' : null;
+  final videoRange = video?.videoRange;
+  final hdr = videoRange != null && videoRange != 'SDR' ? videoRange : null;
+  final mediaSize = ms?.size;
+  final size = mediaSize != null ? '${(mediaSize / 1000000).round()}M' : null;
   final premiere = item.premiereDate != null
       ? _formatDate(item.premiereDate!)
       : null;
-  return [
-    if (item.runTimeTicks != null) _fmtRuntime(item.runTimeTicks!)!,
-    if (premiere != null) premiere,
-    if (res != null) res,
-    if (hdr != null) hdr,
-    if (size != null) size,
-  ];
+  final runtime = item.runTimeTicks == null
+      ? null
+      : _fmtRuntime(item.runTimeTicks!);
+  return [?runtime, ?premiere, ?res, ?hdr, ?size];
 }
 
 String? _fmtRuntime(int ticks) {

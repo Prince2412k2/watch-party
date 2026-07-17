@@ -43,20 +43,55 @@ class AmbientWash extends ConsumerWidget {
           fit: StackFit.expand,
           children: [
             const _Fallback(),
-            if (url != null)
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 350),
-                child: _WashImage(
-                  key: ValueKey(url),
-                  url: url,
-                  blur: wp.ambientBlur,
-                  brightness: wp.ambientBrightness,
-                ),
-              ),
+            _AnimatedWash(
+              url: url,
+              blur: wp.ambientBlur,
+              brightness: wp.ambientBrightness,
+            ),
             const _WashGradient(),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AnimatedWash extends StatefulWidget {
+  const _AnimatedWash({
+    required this.url,
+    required this.blur,
+    required this.brightness,
+  });
+
+  final String? url;
+  final double blur;
+  final double brightness;
+
+  @override
+  State<_AnimatedWash> createState() => _AnimatedWashState();
+}
+
+class _AnimatedWashState extends State<_AnimatedWash> {
+  var _revision = 0;
+
+  @override
+  void didUpdateWidget(_AnimatedWash oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) _revision++;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 350),
+      child: widget.url == null
+          ? const SizedBox.expand()
+          : _WashImage(
+              key: ValueKey(_revision),
+              url: widget.url!,
+              blur: widget.blur,
+              brightness: widget.brightness,
+            ),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api_client.dart';
 import '../models/models.dart';
+import 'auth_provider.dart';
 import 'providers.dart';
 
 /// Home/browse data (PLAN §3.8 / E3). Async providers over [apiClientProvider].
@@ -9,41 +10,49 @@ import 'providers.dart';
 /// filter state (query + type) that drives [browseItemsProvider].
 
 /// The aggregated home payload (views + resume + next-up).
-final homeProvider = FutureProvider<HomeData>((ref) async {
-  return ref.read(apiClientProvider).home();
+final homeProvider = StreamProvider<HomeData>((ref) {
+  return ref.watch(catalogRepositoryProvider).home(_catalogNamespace(ref));
 });
 
 /// The same catalog rail the web home shows. Unlike Continue Watching / Next
 /// Up, it is populated for a brand-new account with no playback history.
-final latestProvider = FutureProvider<List<LibraryItem>>((ref) async {
-  return ref.read(apiClientProvider).latest();
+final latestProvider = StreamProvider<List<LibraryItem>>((ref) {
+  return ref.watch(catalogRepositoryProvider).latest(_catalogNamespace(ref));
 });
 
 /// The flat library list, optionally scoped to a parent (library view) id.
 final libraryProvider =
-    FutureProvider.family<List<LibraryItem>, String?>((ref, parentId) async {
-  return ref.read(apiClientProvider).items(parentId: parentId);
+    StreamProvider.family<List<LibraryItem>, String?>((ref, parentId) {
+  return ref
+      .watch(catalogRepositoryProvider)
+      .items(_catalogNamespace(ref), parentId: parentId);
 });
 
 /// A single title's full detail.
 final itemDetailProvider =
-    FutureProvider.family<LibraryItem, String>((ref, id) async {
-  return ref.read(apiClientProvider).item(id);
+    StreamProvider.family<LibraryItem, String>((ref, id) {
+  return ref.watch(catalogRepositoryProvider).item(_catalogNamespace(ref), id);
 });
 
 /// Search results for a query.
 final searchProvider =
     FutureProvider.family<List<LibraryItem>, String>((ref, query) async {
   if (query.trim().isEmpty) return const [];
-  return ref.read(apiClientProvider).search(query);
+  final items = await ref.watch(libraryProvider(null).future);
+  final normalized = query.toLowerCase();
+  return items
+      .where((item) => item.name.toLowerCase().contains(normalized))
+      .toList();
 });
 
 /// A parent item's direct children — a Series' Seasons, or a Season's
 /// Episodes. Used by the detail screen to browse a Series instead of playing
 /// it directly.
 final itemChildrenProvider =
-    FutureProvider.family<List<LibraryItem>, String>((ref, parentId) async {
-  return ref.read(apiClientProvider).children(parentId);
+    StreamProvider.family<List<LibraryItem>, String>((ref, parentId) {
+  return ref
+      .watch(catalogRepositoryProvider)
+      .children(_catalogNamespace(ref), parentId);
 });
 
 /// A season paired with its episodes — one row of the show-detail season
@@ -168,3 +177,22 @@ final browseItemsProvider = FutureProvider<List<LibraryItem>>((ref) async {
   if (type == null) return items;
   return items.where((i) => i.type == type).toList();
 });
+
+/// A route-owned catalog slice. Unlike [browseItemsProvider], this has no
+/// mutable global filter, so Movies and Shows cannot leak state into each other.
+final browseByTypeProvider =
+    StreamProvider.family<List<LibraryItem>, BrowseTypeFilter>((ref, filter) {
+  final type = filter.jellyfinType;
+  return ref
+      .watch(catalogRepositoryProvider)
+      .items(_catalogNamespace(ref))
+      .map((items) => type == null
+          ? items
+          : items.where((item) => item.type == type).toList());
+});
+
+String? _catalogNamespace(Ref ref) {
+  final userId = ref.watch(authProvider).user?.userId;
+  if (userId == null) return null;
+  return '${ref.watch(apiClientProvider).baseUrl}|$userId';
+}

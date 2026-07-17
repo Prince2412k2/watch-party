@@ -5,8 +5,7 @@ import '../theme.dart';
 
 /// A horizontal poster shelf — the library/discover primitive (design guide
 /// §Library and discovery shelves). A Circular-Light section heading with the
-/// scroll arrows on its right, over a horizontally scrolling rail of
-/// [PosterCard]s. Never a poster grid.
+/// a horizontally scrolling rail of [PosterCard]s. Never a poster grid.
 ///
 /// The rail pads generously and does NOT clip (`clipBehavior: Clip.none`) so
 /// the emphasized first poster's scale and the hover shadow are contained
@@ -44,20 +43,6 @@ class _PosterShelfState extends State<PosterShelf> {
     super.dispose();
   }
 
-  void _nudge(int direction) {
-    if (!_controller.hasClients) return;
-    final extent = _controller.position.viewportDimension * 0.8;
-    final target = (_controller.offset + direction * extent).clamp(
-      _controller.position.minScrollExtent,
-      _controller.position.maxScrollExtent,
-    );
-    _controller.animateTo(
-      target,
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
@@ -73,21 +58,11 @@ class _PosterShelfState extends State<PosterShelf> {
       children: [
         Padding(
           padding: EdgeInsets.only(left: widget.leftInset, right: 24),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: Text(
-                  widget.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.headlineLarge.copyWith(color: wp.text),
-                ),
-              ),
-              _ShelfArrow(icon: Icons.chevron_left, onTap: () => _nudge(-1)),
-              const SizedBox(width: 7),
-              _ShelfArrow(icon: Icons.chevron_right, onTap: () => _nudge(1)),
-            ],
+          child: Text(
+            widget.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTheme.headlineLarge.copyWith(color: wp.text),
           ),
         ),
         const SizedBox(height: 12),
@@ -127,45 +102,5 @@ class _PosterShelfState extends State<PosterShelf> {
     const posterWidth = 190.0;
     const artHeight = posterWidth * 5 / 3;
     return artHeight + 68 + 50;
-  }
-}
-
-class _ShelfArrow extends StatefulWidget {
-  const _ShelfArrow({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  State<_ShelfArrow> createState() => _ShelfArrowState();
-}
-
-class _ShelfArrowState extends State<_ShelfArrow> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          width: 31,
-          height: 31,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: _hover ? wp.surface : Colors.transparent,
-          ),
-          child: Icon(
-            widget.icon,
-            size: 22,
-            color: _hover ? wp.text : wp.dim,
-          ),
-        ),
-      ),
-    );
   }
 }
