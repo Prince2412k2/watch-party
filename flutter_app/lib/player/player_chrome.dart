@@ -1506,7 +1506,7 @@ class _TrackMenu extends StatelessWidget {
   /// Sentinel for the "Off"/auto entry. Real track ids are used verbatim;
   /// `PopupMenuButton` treats a `null` menu value as a *cancel* (it never fires
   /// `onSelected`), so the disable option cannot use `value: null` directly.
-  static const _none = ' none';
+  static const _none = '\u{0}none';
 
   @override
   Widget build(BuildContext context) {
@@ -1537,7 +1537,14 @@ class _TrackMenu extends StatelessWidget {
                 if (t.id == selected)
                   const Icon(Icons.check, size: 16, color: AppColors.accent),
                 if (t.id == selected) const SizedBox(width: AppSpacing.xs),
-                Text(t.title ?? t.language ?? t.id, style: AppTheme.body),
+                Flexible(
+                  child: Text(
+                    t.title ?? t.language ?? t.id,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1625,7 +1632,14 @@ class _SubtitleControl extends StatelessWidget {
                 if (t.id == selected)
                   const Icon(Icons.check, size: 16, color: AppColors.accent),
                 if (t.id == selected) const SizedBox(width: AppSpacing.xs),
-                Text(t.title ?? t.language ?? t.id, style: AppTheme.body),
+                Flexible(
+                  child: Text(
+                    t.title ?? t.language ?? t.id,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body,
+                  ),
+                ),
               ],
             ),
           ),
