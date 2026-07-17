@@ -30,7 +30,7 @@ export const T = {
   glassHi:   '#1e1e21',
 }
 
-export const SANS = "'Hanken Grotesk', system-ui, -apple-system, sans-serif"
+export const SANS = "'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
 export const R = { sm: 12, md: 16, lg: 22, pill: 999 }
