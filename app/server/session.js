@@ -1,12 +1,91 @@
 import { randomUUID } from 'crypto'
+import { loadParties, removeParty, saveParty } from './party-store.js'
 
-// In-memory store
 const sessions = new Map() // partyId → Session
+
+function durableState(session) {
+  const durableGuest = ({ userId, name, token, deviceId, joinedAt }) => ({
+    userId, name, token, deviceId, joinedAt,
+  })
+
+  return {
+    id: session.id,
+    originalHostId: session.originalHostId,
+    hostId: session.hostId,
+    hostName: session.hostName,
+    hostToken: session.hostToken,
+    hostDeviceId: session.hostDeviceId,
+    mediaItemId: session.mediaItemId,
+    mediaSourceId: session.mediaSourceId,
+    playback: session.playback,
+    stage: session.stage,
+    browse: session.browse,
+    guests: session.guests.map(durableGuest),
+    approved: [...session.approved],
+    messages: session.messages,
+    collaborativeControl: session.collaborativeControl,
+    mediaGeneration: session.mediaGeneration,
+    schedule: session.schedule,
+    syncMode: session.syncMode,
+    intent: session.intent,
+    pos: session.pos,
+    playT0: session.playT0,
+    effPlaying: session.effPlaying,
+  }
+}
+
+function runtimeState(saved) {
+  const mediaGeneration = saved.mediaGeneration ?? 0
+  return {
+    id: saved.id,
+    originalHostId: saved.originalHostId ?? saved.hostId,
+    hostId: saved.hostId,
+    hostName: saved.hostName,
+    hostToken: saved.hostToken,
+    hostDeviceId: saved.hostDeviceId,
+    hostSocketId: null,
+    mediaItemId: saved.mediaItemId ?? null,
+    mediaSourceId: saved.mediaSourceId ?? null,
+    playback: saved.playback ?? null,
+    stage: saved.stage ?? (saved.mediaItemId ? 'watching' : 'lobby'),
+    browse: saved.browse ?? { stack: [] },
+    guests: (saved.guests ?? []).map(guest => ({ ...guest, socketId: null })),
+    waiting: [],
+    approved: new Set(saved.approved ?? [saved.hostId]),
+    messages: saved.messages ?? [],
+    collaborativeControl: saved.collaborativeControl ?? false,
+    hostDisconnectTimer: null,
+    mediaGeneration,
+    syncMode: saved.syncMode ?? 'hopping',
+    stalled: new Set(),
+    stallFallback: new Set(),
+    seenCommandIds: new Set(),
+    reports: new Map(),
+    intent: saved.intent ?? { playing: false },
+    schedule: saved.schedule ?? { positionTicks: 0, t0: 0, rate: 0, paused: true, phase: 'paused', version: 0, mediaGeneration },
+    pos: saved.pos ?? 0,
+    playT0: saved.playT0 ?? 0,
+    effPlaying: saved.effPlaying ?? false,
+  }
+}
+
+const restoreGraceMs = Number(process.env.PARTY_RESTORE_GRACE_MS) || 60_000
+for (const saved of loadParties()) {
+  const session = runtimeState(saved)
+  session.hostDisconnectTimer = setTimeout(() => deleteSession(session.id), restoreGraceMs)
+  session.hostDisconnectTimer.unref()
+  sessions.set(saved.id, session)
+}
+
+export function persistSession(session) {
+  saveParty(durableState(session))
+}
 
 export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostSocketId, mediaItemId = null, mediaSourceId = null }) {
   const id = randomUUID().slice(0, 8).toUpperCase()
   const session = {
     id,
+    originalHostId: hostId,
     hostId,
     hostName,         // display name of the current host
     hostToken,        // never sent to client
@@ -43,6 +122,7 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     reports: new Map(),   // userId → { position, drift, rate, at } (debug telemetry)
   }
   sessions.set(id, session)
+  persistSession(session)
   return session
 }
 
@@ -52,6 +132,7 @@ export function getSession(id) {
 
 export function deleteSession(id) {
   sessions.delete(id)
+  removeParty(id)
 }
 
 export function findSessionByUser(userId) {
@@ -116,20 +197,58 @@ export function removeGuest(session, userId) {
   return g
 }
 
+export function randomConnectedGuest(session, isConnected, random = Math.random) {
+  const connected = session.guests.filter(guest => isConnected(guest.socketId))
+  return connected[Math.floor(random() * connected.length)] ?? null
+}
+
 export function transferHost(session, newHostUserId, newHostSocketId, newHostToken) {
   const guest = session.guests.find(g => g.userId === newHostUserId)
   if (!guest) return false
+  const previousHost = {
+    userId: session.hostId,
+    name: session.hostName,
+    socketId: session.hostSocketId,
+    token: session.hostToken,
+    deviceId: session.hostDeviceId,
+    joinedAt: Date.now(),
+  }
   session.hostId = newHostUserId
   session.hostName = guest.name
   session.hostSocketId = newHostSocketId
   session.hostToken = newHostToken
+  session.hostDeviceId = guest.deviceId
   session.guests = session.guests.filter(g => g.userId !== newHostUserId)
+  session.guests.push(previousHost)
+  persistSession(session)
+  return true
+}
+
+export function reclaimOriginalHost(session, { socketId, token, deviceId, name }) {
+  if (session.hostId === session.originalHostId) return false
+  const currentHost = {
+    userId: session.hostId,
+    name: session.hostName,
+    socketId: session.hostSocketId,
+    token: session.hostToken,
+    deviceId: session.hostDeviceId,
+    joinedAt: Date.now(),
+  }
+  session.guests = session.guests.filter(guest => guest.userId !== session.originalHostId)
+  session.guests.push(currentHost)
+  session.hostId = session.originalHostId
+  session.hostName = name
+  session.hostSocketId = socketId
+  session.hostToken = token
+  session.hostDeviceId = deviceId
+  persistSession(session)
   return true
 }
 
 export function pushMessage(session, msg) {
   session.messages.push(msg)
   if (session.messages.length > 200) session.messages.shift()
+  persistSession(session)
 }
 
 export function isHost(session, userId) {

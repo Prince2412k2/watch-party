@@ -1,6 +1,4 @@
-import { PartyProvider } from '../../context/PartyContext'
 import Party from '../../pages/Party'
-import type { AuthUser } from '../../types'
 
 /**
  * Watch = WRAP, do not rebuild (MOBILE-SPEC §2.4). There is NO separate mobile
@@ -17,7 +15,7 @@ import type { AuthUser } from '../../types'
  * Any mobile watch-screen polish is done ADDITIVELY inside the existing Party/
  * Player components (keeping desktop branches intact) — never forked into here.
  */
-export function WatchRoute({ user, path }: { user: AuthUser; path: string }) {
+export function WatchRoute({ path }: { path: string }) {
   const segment = path.slice('/party/'.length)
   const qs = new URLSearchParams(window.location.search)
   if (segment === 'new') {
@@ -25,21 +23,13 @@ export function WatchRoute({ user, path }: { user: AuthUser; path: string }) {
     const subtitleParam = qs.get('subtitleStreamIndex')
     const audioStreamIndex = audioParam == null ? NaN : Number(audioParam)
     const subtitleStreamIndex = subtitleParam == null ? NaN : Number(subtitleParam)
-    return (
-      <PartyProvider userId={user.userId}>
-        <Party isNew itemId={qs.get('itemId') ?? undefined}
-          initialTracks={{
-            audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
-            subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
-          }} />
-      </PartyProvider>
-    )
+    return <Party isNew itemId={qs.get('itemId') ?? undefined}
+      initialTracks={{
+        audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
+        subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+      }} />
   }
-  return (
-    <PartyProvider userId={user.userId}>
-      <Party partyId={segment} />
-    </PartyProvider>
-  )
+  return <Party partyId={segment} />
 }
 
 export default WatchRoute

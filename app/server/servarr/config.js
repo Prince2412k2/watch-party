@@ -25,6 +25,11 @@ export function qbitConfig() {
   return { baseUrl, user, pass, configured: !!(baseUrl && user) }
 }
 
+export function tmdbConfig() {
+  const apiKey = trim(process.env.TMDB_API_KEY)
+  return { apiKey, configured: !!apiKey }
+}
+
 // The five services keyed by the id used in routes + health output.
 export function serviceConfig(service) {
   switch (service) {

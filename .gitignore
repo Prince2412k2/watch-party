@@ -18,9 +18,9 @@ dist/
 servarr-config/
 media-data/
 
-# persistent session store (session cookies/data, not app secrets — still
-# private, keep out of git)
+# persistent session stores and runtime databases (private, generated data)
 /data/
+/app/data/
 
 # VPN / WireGuard / OpenVPN configs — contain private keys, never commit
 *.conf
