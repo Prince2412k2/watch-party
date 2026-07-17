@@ -364,8 +364,10 @@ class _CopyColumn extends StatelessWidget {
             ),
           if (playItem != null) ...[
             const SizedBox(height: 23),
-            Row(
-              mainAxisSize: MainAxisSize.min,
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 AppButton(
                   label: resumeLabel != null && playItem.id == active.id
@@ -389,12 +391,10 @@ class _CopyColumn extends StatelessWidget {
                   },
                 ),
                 if (active.type != 'Series') ...[
-                  const SizedBox(width: 10),
                   _TrackButton(
                     open: state._trackMenuOpen,
                     onTap: state._toggleTrackMenu,
                   ),
-                  const SizedBox(width: 10),
                   DownloadButton(
                     itemId: active.id,
                     title: active.name,

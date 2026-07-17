@@ -1,10 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:watchparty/app/app.dart';
 import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('app boots to the mock home screen', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -33,9 +37,9 @@ void main() {
     // Let the mock homeProvider future resolve and the rails render.
     await tester.pumpAndSettle();
 
-    // The nav rail brand is present.
-    expect(find.text('Watchparty'), findsWidgets);
+    // The bottom nav renders the primary tabs.
+    expect(find.text('Movies'), findsWidgets);
     // A mock section from HomeData renders on the home screen.
-    expect(find.text('Continue Watching'), findsOneWidget);
+    expect(find.text('Continue watching'), findsOneWidget);
   });
 }

@@ -105,6 +105,7 @@ Map<String, dynamic> _session({
     };
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late _ScriptedSocket socket;
   late ProviderContainer container;
 
