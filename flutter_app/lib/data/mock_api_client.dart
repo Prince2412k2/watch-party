@@ -151,10 +151,41 @@ class MockApiClient implements ApiClient {
       const LiveKitToken(token: 'mock-token', url: 'ws://localhost:7880');
 
   @override
-  Future<dynamic> servarrGet(
-    String path, {
-    Map<String, dynamic>? query,
-  }) async => const [];
+  Future<dynamic> servarrGet(String path, {Map<String, dynamic>? query}) async {
+    if (path == 'health') return const {'services': {}};
+    if (path.endsWith('/discover') || path.endsWith('/popular')) {
+      return {
+        'source': 'curated',
+        'items': [
+          for (var i = 0; i < 8; i++)
+            {
+              'title': _titles[i],
+              'year': 1990 + i,
+              if (path.startsWith('radarr')) 'tmdbId': 1000 + i,
+              if (path.startsWith('sonarr')) 'tvdbId': 2000 + i,
+              'genres': const ['Drama'],
+              'images': const [],
+            },
+        ],
+      };
+    }
+    if (path.endsWith('/search')) {
+      final term = (query?['term'] ?? '').toString().toLowerCase();
+      return [
+        for (var i = 0; i < 8; i++)
+          if (_titles[i].toLowerCase().contains(term))
+            {
+              'title': _titles[i],
+              'year': 1990 + i,
+              if (path.startsWith('radarr')) 'tmdbId': 1000 + i,
+              if (path.startsWith('sonarr')) 'tvdbId': 2000 + i,
+              'genres': const ['Drama'],
+              'images': const [],
+            },
+      ];
+    }
+    return const [];
+  }
 
   @override
   Future<dynamic> servarrPost(String path, {Object? body}) async => {
@@ -165,8 +196,19 @@ class MockApiClient implements ApiClient {
   Future<dynamic> servarrDelete(
     String path, {
     Map<String, dynamic>? query,
+    Object? body,
   }) async => {'ok': true};
 
   @override
-  String servarrImageUrl(String remoteUrl) => remoteUrl;
+  String servarrImageUrl(String service, String path) => path;
+
+  @override
+  Future<dynamic> manualTorrentUpload(
+    List<int> bytes, {
+    required String service,
+    required String targetId,
+    required String title,
+    int? seasonNumber,
+    int? episodeNumber,
+  }) async => {'ok': true};
 }

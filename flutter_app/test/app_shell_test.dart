@@ -7,8 +7,8 @@ import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
 
-/// NavRail renders a shadcn badge/tooltip, so it needs a shadcn `Theme`
-/// ancestor — mirror the app's `ShadcnLayer` wrap here (assertions unchanged).
+/// AppShell chrome renders shadcn tooltips/badges, so it needs a shadcn `Theme`
+/// ancestor — mirror the app's `ShadcnLayer` wrap here.
 Widget _shadcn(BuildContext context, Widget? child) => sc.ShadcnLayer(
   theme: AppShadcnTheme.dark,
   themeMode: sc.ThemeMode.dark,
@@ -16,9 +16,8 @@ Widget _shadcn(BuildContext context, Widget? child) => sc.ShadcnLayer(
 );
 
 /// A bare `ProviderScope` defaults `authProvider` to its un-initialized,
-/// logged-out `AuthState()` — since AppShell now shows a two-tab guest rail
-/// when logged out, the "authenticated" tests below need a signed-in override
-/// to exercise the full rail instead.
+/// logged-out `AuthState()`. Signed-in tests need an authenticated override to
+/// exercise the full four-tab nav.
 List<Override> _signedIn() => [
   authProvider.overrideWith((ref) {
     final notifier = AuthNotifier(ref);
@@ -30,88 +29,57 @@ List<Override> _signedIn() => [
   }),
 ];
 
+Widget _shell({
+  required List<Override> overrides,
+  String location = '/movies',
+}) => MaterialApp(
+  theme: AppTheme.dark,
+  builder: _shadcn,
+  home: ProviderScope(
+    overrides: overrides,
+    child: AppShell(location: location, child: const SizedBox()),
+  ),
+);
+
 void main() {
-  testWidgets('AppShell shows full nav labels at desktop width', (
+  testWidgets('AppShell shows the four web nav tabs when signed in', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.binding.setSurfaceSize(const Size(1200, 800));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.dark,
-        builder: _shadcn,
-        home: ProviderScope(
-          overrides: _signedIn(),
-          child: const AppShell(location: '/home', child: SizedBox()),
-        ),
-      ),
-    );
+    await tester.pumpWidget(_shell(overrides: _signedIn()));
     await tester.pump();
 
-    // The section title now lives in the unified title bar (app.dart, above the
-    // shell), so within AppShell "Home" appears once: the nav rail label.
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Browse'), findsOneWidget);
+    expect(find.text('Movies'), findsOneWidget);
+    expect(find.text('Shows'), findsOneWidget);
+    expect(find.text('Discover'), findsOneWidget);
+    expect(find.text('Downloads'), findsOneWidget);
   });
 
-  testWidgets(
-    'AppShell collapses to a compact icon rail below the breakpoint',
-    (tester) async {
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      await tester.binding.setSurfaceSize(const Size(600, 800));
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark,
-          builder: _shadcn,
-          home: ProviderScope(
-            overrides: _signedIn(),
-            child: const AppShell(location: '/home', child: SizedBox()),
-          ),
-        ),
-      );
-      await tester.pump();
-
-      // Compact rail is icon-only: the "Home" label collapses to a tooltip
-      // (not in the tree at rest) and the icon remains.
-      expect(find.text('Home'), findsNothing);
-      expect(find.byIcon(Icons.home_outlined), findsOneWidget);
-    },
-  );
-
-  testWidgets('AppShell shows only Home + Downloaded when logged out', (
+  testWidgets('AppShell shows the guest tabs + login when logged out', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.binding.setSurfaceSize(const Size(1200, 800));
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.dark,
-        builder: _shadcn,
-        home: const ProviderScope(
-          child: AppShell(location: '/home', child: SizedBox()),
-        ),
-      ),
-    );
+    await tester.pumpWidget(_shell(overrides: const []));
     await tester.pump();
 
-    expect(find.text('Home'), findsOneWidget);
+    // Guest nav is just browse + downloaded; no Shows/Discover tabs.
+    expect(find.text('Movies'), findsOneWidget);
     expect(find.text('Downloaded'), findsOneWidget);
-    expect(find.text('Browse'), findsNothing);
-    // Top-right chrome is the Login button, not the Profile avatar.
+    expect(find.text('Shows'), findsNothing);
+    expect(find.text('Discover'), findsNothing);
+    // Top-right chrome is the login control, not the profile avatar.
     expect(find.byIcon(Icons.login), findsOneWidget);
-    expect(find.byIcon(Icons.person_outline), findsNothing);
   });
 
   group('shellSectionTitle', () {
     test('maps shelled locations (incl. nested paths) to their section', () {
-      expect(shellSectionTitle('/home'), 'Home');
-      expect(shellSectionTitle('/browse'), 'Browse');
-      expect(shellSectionTitle('/party'), 'Party');
-      expect(shellSectionTitle('/party/abc123'), 'Party');
+      expect(shellSectionTitle('/movies'), 'Movies');
+      expect(shellSectionTitle('/series'), 'Shows');
+      expect(shellSectionTitle('/discover'), 'Discover');
+      expect(shellSectionTitle('/discover/abc123'), 'Discover');
       expect(shellSectionTitle('/downloads'), 'Downloads');
-      expect(shellSectionTitle('/offline'), 'Offline');
-      expect(shellSectionTitle('/servarr'), 'Find');
-      expect(shellSectionTitle('/servarr/queue'), 'Find');
     });
 
     test('falls back to the app name off the shell', () {

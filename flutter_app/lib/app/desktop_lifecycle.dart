@@ -52,7 +52,10 @@ class DesktopLifecycle with WindowListener, TrayListener {
       minimumSize: _minSize,
       center: _prefs!.getDouble(_kWindowX) == null,
       title: 'Watchparty',
-      titleBarStyle: TitleBarStyle.normal,
+      titleBarStyle: Platform.isMacOS || Platform.isWindows
+          ? TitleBarStyle.hidden
+          : TitleBarStyle.normal,
+      windowButtonVisibility: Platform.isMacOS,
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {

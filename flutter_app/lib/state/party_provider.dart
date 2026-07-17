@@ -1,10 +1,14 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../app/router.dart';
 import '../models/models.dart';
 import '../net/events.dart';
 import '../net/socket_client.dart';
 import '../sync/sync_engine.dart';
 import '../sync/sync_engine_impl.dart';
+import '../ui/tokens.dart';
 import 'chat_provider.dart';
 import 'livekit_provider.dart';
 import 'player_provider.dart';
@@ -82,8 +86,10 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       final json = Map<String, dynamic>.from(data);
       final userId = json['userId']?.toString();
       if (userId == null) return;
+      final name = json['name']?.toString() ?? userId;
       _ref.read(partyWaitingProvider.notifier).add(
-          Participant(userId: userId, name: json['name']?.toString() ?? userId));
+          Participant(userId: userId, name: name));
+      _toast('$name wants to join', level: 'warning');
     }));
     _unsubs.add(socket.on(ServerEvent.partyApproved, (data) {
       if (data is Map && data['session'] is Map) {
@@ -91,32 +97,46 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       }
       _postJoinSetup();
     }));
-    _unsubs.add(socket.on(ServerEvent.partyRejected, (_) => _leaveLocal()));
+    _unsubs.add(socket.on(ServerEvent.partyRejected, (_) {
+      _toast('The host declined your request');
+      _leaveLocal();
+    }));
     _unsubs.add(socket.on(ServerEvent.partyKicked, (data) {
       final userId = (data is Map) ? data['userId']?.toString() : null;
       if (userId != null && userId == _myUserId) {
+        _toast('You were removed from the party');
         _leaveLocal();
       } else if (userId != null) {
         removeParticipant(userId);
       }
     }));
-    _unsubs.add(socket.on(ServerEvent.partyEnded, (_) => _leaveLocal()));
+    _unsubs.add(socket.on(ServerEvent.partyEnded, (_) {
+      _toast('The host ended the party');
+      _leaveLocal();
+    }));
     _unsubs.add(socket.on(ServerEvent.hostChanged, (data) {
       final hostId = (data is Map) ? data['hostId']?.toString() : null;
       final s = state;
       if (s == null || hostId == null) return;
       state = s.copyWith(hostId: hostId);
       _syncRoleToEngine();
+      if (hostId == _myUserId) _toast('You are now the host', level: 'success');
     }));
     _unsubs.add(socket.on(ServerEvent.userJoined, (data) {
       if (data is! Map) return;
       final userId = data['userId']?.toString();
       if (userId == null) return;
-      upsertParticipant(Participant(userId: userId, name: data['name']?.toString() ?? userId));
+      final name = data['name']?.toString() ?? userId;
+      upsertParticipant(Participant(userId: userId, name: name));
+      _toast('$name joined');
     }));
     _unsubs.add(socket.on(ServerEvent.userLeft, (data) {
-      final userId = (data is Map) ? data['userId']?.toString() : null;
-      if (userId != null) removeParticipant(userId);
+      if (data is! Map) return;
+      final userId = data['userId']?.toString();
+      if (userId == null) return;
+      final name = data['name']?.toString() ?? _participantName(userId);
+      removeParticipant(userId);
+      _toast('$name left');
     }));
   }
 
@@ -135,7 +155,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     final hostId = json['hostId']?.toString() ?? '';
     final hostName = json['hostName']?.toString();
     final guestsJson = (json['guests'] as List?) ?? const [];
-    final participants = <Participant>[
+    final participantCandidates = <Participant>[
       if (hostId.isNotEmpty) Participant(userId: hostId, name: hostName ?? 'Host', isHost: true),
       ...guestsJson.whereType<Map>().map((g) {
         final m = Map<String, dynamic>.from(g);
@@ -143,6 +163,11 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         return Participant(userId: userId, name: m['name']?.toString() ?? 'Guest');
       }).where((p) => p.userId.isNotEmpty && p.userId != hostId),
     ];
+    final participantsById = <String, Participant>{
+      for (final participant in participantCandidates)
+        participant.userId: participant,
+    };
+    final participants = participantsById.values.toList(growable: false);
 
     final scheduleJson = json['schedule'];
     final schedule = scheduleJson is Map
@@ -333,8 +358,20 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     if (engine is SyncEngineImpl) engine.syncMode = mode;
   }
 
-  Future<void> selectMedia(String mediaItemId) =>
-      _ack(ClientEvent.partySelectMedia, {'mediaItemId': mediaItemId});
+  Future<void> selectMedia(
+    String mediaItemId, {
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) {
+    final payload = <String, dynamic>{'mediaItemId': mediaItemId};
+    if (audioStreamIndex != null) {
+      payload['audioStreamIndex'] = audioStreamIndex;
+    }
+    if (subtitleStreamIndex != null) {
+      payload['subtitleStreamIndex'] = subtitleStreamIndex;
+    }
+    return _ack(ClientEvent.partySelectMedia, payload);
+  }
 
   /// "Stop Movie": back to the lobby, session (party/socket/A/V) stays alive.
   Future<void> backToLobby() => _ack(ClientEvent.partyBackToLobby);
@@ -374,6 +411,62 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     clear();
   }
 
+  String _participantName(String userId) {
+    final s = state;
+    if (s == null) return userId;
+    for (final p in s.participants) {
+      if (p.userId == userId) return p.name;
+    }
+    return userId;
+  }
+
+  /// App-wide party activity toast (mirrors `PartyContext`'s reducer toasts):
+  /// fired from the socket handlers, which run for the whole app lifetime, so it
+  /// resolves the root navigator context rather than a screen's. The discrete
+  /// join/leave/host/kick/reject/end events are one-shot server broadcasts (not
+  /// part of the `party:state` resync), so a reconnect never re-fires them.
+  void _toast(String message, {String level = 'info'}) {
+    final ctx = rootNavigatorKey.currentContext;
+    if (ctx == null) return;
+    final Color dot = switch (level) {
+      'success' => AppColors.green,
+      'warning' || 'error' => AppColors.red,
+      _ => AppColors.faint,
+    };
+    sc.showToast(
+      context: ctx,
+      location: sc.ToastLocation.topCenter,
+      builder: (context, overlay) => sc.SurfaceCard(
+        surfaceBlur: AppBlur.overlay,
+        surfaceOpacity: 0.9,
+        borderColor: AppColors.line2,
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Text(
+              message,
+              style: const TextStyle(
+                color: AppColors.text,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _unsubscribe();
@@ -396,7 +489,11 @@ class PartyWaitingNotifier extends StateNotifier<List<Participant>> {
 
   void remove(String userId) => state = state.where((e) => e.userId != userId).toList();
 
-  void setAll(List<Participant> list) => state = list;
+  void setAll(List<Participant> list) {
+    state = <String, Participant>{
+      for (final participant in list) participant.userId: participant,
+    }.values.toList(growable: false);
+  }
 
   void clear() => state = const [];
 }

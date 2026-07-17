@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
-import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../data/api_client.dart';
@@ -14,23 +13,24 @@ import '../../player/player_view.dart';
 import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
-import 'subtitle_manager_dialog.dart';
+import 'detail_stage.dart';
 
-/// Real title-detail screen. Full-bleed backdrop hero (matches the web
-/// client's `Library.tsx` Detail view) with title/logo, rating/genre line,
-/// runtime/resolution/HDR/size info line, a Play (or, for a Series, "Browse
-/// episodes") button, plus Cast and external-link sections below. Series show
-/// a Seasons rail instead of Play; a Season shows its Episodes as a list.
+/// Title-detail screen. For an authenticated user this is the fullscreen
+/// cinematic [DetailStage] (movie / show / episode); a logged-out guest gets a
+/// minimal offline-only body sourced from the on-device manifest. Watching
+/// hands the play target + selected audio/subtitle indices into the solo player
+/// route; the mid-movie "Start party" affordance stays wired over playback.
 class DetailScreen extends ConsumerWidget {
   const DetailScreen({super.key, required this.itemId});
   final String itemId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final wp = context.wp;
+
     // Guest offline-browse (PLAN §E): a logged-out user has no Jellyfin
-    // session, so `itemDetailProvider`'s server fetch would just error. Their
-    // detail view is sourced entirely from the offline manifest instead, and
-    // goes straight to local playback — never touching the network.
+    // session, so their detail view is sourced entirely from the offline
+    // manifest and goes straight to local playback — never touching the network.
     final isAuthenticated = ref.watch(
       authProvider.select((s) => s.isAuthenticated),
     );
@@ -44,7 +44,7 @@ class DetailScreen extends ConsumerWidget {
         }
       }
       return Scaffold(
-        backgroundColor: AppColors.bg,
+        backgroundColor: wp.bg,
         body: SafeArea(
           child: record == null
               ? EmptyState(
@@ -59,36 +59,56 @@ class DetailScreen extends ConsumerWidget {
       );
     }
 
-    final detail = ref.watch(itemDetailProvider(itemId));
-    final api = ref.watch(apiClientProvider);
-
     return Scaffold(
-      backgroundColor: AppColors.bg,
-      body: detail.when(
-        loading: () => const SafeArea(child: _DetailSkeleton()),
-        error: (e, _) => SafeArea(
-          child: ErrorState(
-            title: 'Failed to load title',
-            message: '$e',
-            onRetry: () => ref.invalidate(itemDetailProvider(itemId)),
+      backgroundColor: wp.bg,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: DetailStage(
+              itemId: itemId,
+              onBack: () =>
+                  context.canPop() ? context.pop() : context.go('/movies'),
+              onWatch: (playItem, tracks) async {
+                final party = ref.read(partyProvider);
+                if (party != null) {
+                  final notifier = ref.read(partyProvider.notifier);
+                  if (notifier.canControl) {
+                    await notifier.selectMedia(
+                      playItem.id,
+                      audioStreamIndex: tracks.audioStreamIndex,
+                      subtitleStreamIndex: tracks.subtitleStreamIndex,
+                    );
+                  }
+                  if (context.mounted) context.go('/party/${party.id}');
+                  return;
+                }
+                await Navigator.of(context).push(
+                  _playerRouteFor(
+                    itemId: playItem.id,
+                    title: playItem.name,
+                    audioStreamIndex: tracks.audioStreamIndex,
+                    subtitleStreamIndex: tracks.subtitleStreamIndex,
+                  ),
+                );
+              },
+            ),
           ),
-        ),
-        data: (item) => _DetailBody(item: item, api: api),
+          const Positioned(right: 22, bottom: 18, child: PopcornControl()),
+        ],
       ),
     );
   }
 }
 
 /// A guest's detail view for a downloaded title — no server, no session, just
-/// what's already on disk (PLAN §E). Mirrors the authenticated hero's title +
-/// Play affordance without any of the metadata that needs Jellyfin (cast,
-/// backdrop, provider links).
+/// what's already on disk (PLAN §E).
 class _GuestOfflineDetailBody extends StatelessWidget {
   const _GuestOfflineDetailBody({required this.record});
   final OfflineRecord record;
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
     final runtime = record.runTimeTicks > 0
         ? '${(record.runTimeTicks / 600000000).round()}m'
         : null;
@@ -100,14 +120,14 @@ class _GuestOfflineDetailBody extends StatelessWidget {
         children: [
           sc.IconButton.ghost(
             onPressed: () =>
-                context.canPop() ? context.pop() : context.go('/home'),
-            icon: const Icon(Icons.arrow_back, color: AppColors.dim),
+                context.canPop() ? context.pop() : context.go('/movies'),
+            icon: Icon(Icons.arrow_back, color: wp.dim),
           ),
           const SizedBox(height: AppSpacing.xl),
-          Text(record.title, style: AppTheme.displaySmall),
+          Text(record.title, style: AppTheme.displaySmall.copyWith(color: wp.text)),
           if (runtime != null) ...[
             const SizedBox(height: AppSpacing.sm),
-            Text(runtime, style: AppTheme.mono.copyWith(color: AppColors.dim)),
+            Text(runtime, style: AppTheme.mono.copyWith(color: wp.dim)),
           ],
           const SizedBox(height: AppSpacing.lg),
           AppButton(
@@ -124,540 +144,24 @@ class _GuestOfflineDetailBody extends StatelessWidget {
   }
 }
 
-class _DetailBody extends ConsumerWidget {
-  const _DetailBody({required this.item, required this.api});
-  final LibraryItem item;
-  final ApiClient api;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isSeries = item.type == 'Series';
-    final isSeason = item.type == 'Season';
-    final cast = item.people.where((p) => p.type == 'Actor').take(16).toList();
-    final imdb = item.providerIds['Imdb'];
-    final tmdb = item.providerIds['Tmdb'];
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _Hero(item: item, api: api, isSeries: isSeries),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (isSeries || isSeason)
-                  _ChildrenSection(parent: item, isSeason: isSeason),
-                if (cast.isNotEmpty) _CastSection(cast: cast, api: api),
-                if (imdb != null || tmdb != null)
-                  _LinksSection(imdb: imdb, tmdb: tmdb, isSeries: isSeries),
-                const SizedBox(height: AppSpacing.xxl),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Full-bleed backdrop with legibility gradient, title/logo, rating/genre
-/// line, info line, overview, and the primary action.
-class _Hero extends StatelessWidget {
-  const _Hero({required this.item, required this.api, required this.isSeries});
-  final LibraryItem item;
-  final ApiClient api;
-  final bool isSeries;
-
-  @override
-  Widget build(BuildContext context) {
-    final ms = item.mediaSources.isNotEmpty ? item.mediaSources.first : null;
-    final video = ms?.mediaStreams.firstWhere(
-      (s) => s.type == 'Video',
-      orElse: () => const MediaStream(),
-    );
-    final hasVideo = video?.type == 'Video';
-    final resLabel = hasVideo ? _resolutionLabel(video!.height) : null;
-    final hdr =
-        hasVideo && video!.videoRange != null && video.videoRange != 'SDR'
-        ? video.videoRange
-        : null;
-    final sizeLabel = ms?.size != null
-        ? '${(ms!.size! / 1000000).round()}M'
-        : null;
-    final premiere = item.premiereDate != null
-        ? _formatDate(item.premiereDate!)
-        : null;
-    final runtime = item.runTimeTicks != null
-        ? '${(item.runTimeTicks! / 600000000).round()}m'
-        : null;
-    final infoLine = [
-      runtime,
-      premiere,
-      resLabel,
-      hdr,
-      sizeLabel,
-    ].whereType<String>().toList();
-
-    final resumeTicks = item.userData?.playbackPositionTicks ?? 0;
-    final resumeLabel = resumeTicks > 0
-        ? '${(resumeTicks / 600000000).round()}m'
-        : null;
-
-    return Stack(
-      children: [
-        SizedBox(
-          height: 520,
-          width: double.infinity,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              AuthedNetworkImage(
-                api.imageUrl(
-                  item.seriesId ?? item.id,
-                  type: ImageType.backdrop,
-                ),
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    const ColoredBox(color: AppColors.surface2),
-              ),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      AppColors.bg,
-                      AppColors.bg.withValues(alpha: 0.82),
-                      AppColors.bg.withValues(alpha: 0.15),
-                    ],
-                    stops: const [0.0, 0.14, 0.62],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Positioned.fill(
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.xxl,
-                AppSpacing.md,
-                AppSpacing.xxl,
-                AppSpacing.xl,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  sc.IconButton.ghost(
-                    onPressed: () =>
-                        context.canPop() ? context.pop() : context.go('/home'),
-                    icon: const Icon(Icons.arrow_back, color: AppColors.dim),
-                  ),
-                  const Spacer(),
-                  _TitleOrLogo(item: item, api: api),
-                  const SizedBox(height: AppSpacing.sm),
-                  Wrap(
-                    spacing: AppSpacing.sm,
-                    runSpacing: AppSpacing.sm,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      if (item.communityRating != null)
-                        AppChip(
-                          label: item.communityRating!.toStringAsFixed(1),
-                          icon: Icons.star_outline,
-                        ),
-                      if (item.criticRating != null)
-                        AppChip(label: '${item.criticRating!.round()}%'),
-                      if (item.officialRating != null)
-                        AppChip(label: item.officialRating!),
-                      for (final genre in item.genres.take(2))
-                        AppChip(label: genre),
-                    ],
-                  ),
-                  if (infoLine.isNotEmpty) ...[
-                    const SizedBox(height: AppSpacing.sm),
-                    Text(
-                      infoLine.join('   ·   '),
-                      style: AppTheme.mono.copyWith(color: AppColors.dim),
-                    ),
-                  ],
-                  if (item.overview != null) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 820),
-                      child: Text(
-                        item.overview!,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.body.copyWith(height: 1.5),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: AppSpacing.lg),
-                  Row(
-                    children: [
-                      AppButton(
-                        label: isSeries
-                            ? 'Browse episodes'
-                            : resumeLabel != null
-                            ? 'Resume · $resumeLabel'
-                            : 'Play',
-                        icon: Icons.play_arrow,
-                        variant: AppButtonVariant.primary,
-                        onPressed: isSeries
-                            ? null
-                            : () => Navigator.of(
-                                context,
-                              ).push(_playerRoute(item)),
-                      ),
-                      if (!isSeries) ...[
-                        const SizedBox(width: AppSpacing.md),
-                        DownloadButton(
-                          itemId: item.id,
-                          title: item.name,
-                          runTimeTicks: item.runTimeTicks,
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        sc.IconButton.outline(
-                          icon: const Icon(Icons.subtitles_outlined),
-                          onPressed: () =>
-                              showSubtitleManagerDialog(context, item.id),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// The title, replaced by the title-treatment `Logo` art Jellyfin exposes for
-/// most movies/shows, when one exists (falls back to plain text otherwise —
-/// mirrors web's `DetailLogo`).
-class _TitleOrLogo extends StatelessWidget {
-  const _TitleOrLogo({required this.item, required this.api});
-  final LibraryItem item;
-  final ApiClient api;
-
-  @override
-  Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 360, maxHeight: 110),
-      child: Align(
-        alignment: Alignment.bottomLeft,
-        child: AuthedNetworkImage(
-          api.imageUrl(item.seriesId ?? item.id, type: ImageType.logo),
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, _) =>
-              Text(item.name, style: AppTheme.displaySmall),
-        ),
-      ),
-    );
-  }
-}
-
-String _resolutionLabel(int? height) {
-  final h = height ?? 0;
-  if (h >= 2160) return '4K';
-  if (h >= 1080) return '1080P';
-  if (h >= 720) return '720P';
-  return h > 0 ? '${h}P' : '?P';
-}
-
-String _formatDate(String iso) {
-  final d = DateTime.tryParse(iso);
-  if (d == null) return iso;
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  return '${months[d.month - 1]} ${d.day}, ${d.year}';
-}
-
-/// Seasons (for a Series) or Episodes (for a Season) below the hero.
-class _ChildrenSection extends ConsumerWidget {
-  const _ChildrenSection({required this.parent, required this.isSeason});
-  final LibraryItem parent;
-  final bool isSeason;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final children = ref.watch(itemChildrenProvider(parent.id));
-    return children.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
-        child: LoadingSkeleton(width: 160, height: 240),
-      ),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (items) {
-        if (items.isEmpty) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(top: AppSpacing.xl),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SectionHeader(title: isSeason ? 'Episodes' : 'Seasons'),
-              const SizedBox(height: AppSpacing.md),
-              if (isSeason)
-                Column(
-                  children: [for (final ep in items) _EpisodeRow(episode: ep)],
-                )
-              else
-                SizedBox(
-                  height: 250,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: items.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(width: AppSpacing.md),
-                    itemBuilder: (context, i) {
-                      final season = items[i];
-                      final api = ref.watch(apiClientProvider);
-                      return PosterCard(
-                        title: season.name,
-                        imageUrl: api.imageUrl(season.id),
-                        width: 160,
-                        onTap: () => context.push('/detail/${season.id}'),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _EpisodeRow extends ConsumerWidget {
-  const _EpisodeRow({required this.episode});
-  final LibraryItem episode;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final api = ref.watch(apiClientProvider);
-    final runtime = episode.runTimeTicks != null
-        ? '${(episode.runTimeTicks! / 600000000).round()}m'
-        : null;
-    return sc.Card(
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      child: InkWell(
-        onTap: () => Navigator.of(context).push(_playerRoute(episode)),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-              child: SizedBox(
-                width: 128,
-                height: 72,
-                child: AuthedNetworkImage(
-                  api.imageUrl(episode.id, type: ImageType.primary),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      const ColoredBox(color: AppColors.surface2),
-                ),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    episode.indexNumber != null
-                        ? '${episode.indexNumber}. ${episode.name}'
-                        : episode.name,
-                    style: AppTheme.body.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                  if (episode.overview != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        episode.overview!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.caption.copyWith(color: AppColors.dim),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (runtime != null)
-              Padding(
-                padding: const EdgeInsets.only(left: AppSpacing.sm),
-                child: Text(
-                  runtime,
-                  style: AppTheme.caption.copyWith(color: AppColors.faint),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CastSection extends StatelessWidget {
-  const _CastSection({required this.cast, required this.api});
-  final List<Person> cast;
-  final ApiClient api;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.xl),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionHeader(title: 'Cast'),
-          const SizedBox(height: AppSpacing.md),
-          SizedBox(
-            height: 178,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: cast.length,
-              separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.md),
-              itemBuilder: (context, i) {
-                final p = cast[i];
-                return SizedBox(
-                  width: 120,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipOval(
-                        child: SizedBox(
-                          width: 96,
-                          height: 96,
-                          child: AuthedNetworkImage(
-                            api.imageUrl(p.id, type: ImageType.primary),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => const ColoredBox(
-                              color: AppColors.surface2,
-                              child: Icon(
-                                Icons.person_outline,
-                                color: AppColors.faint,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        p.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTheme.caption.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      if (p.role != null)
-                        Text(
-                          p.role!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTheme.caption.copyWith(
-                            color: AppColors.dim,
-                          ),
-                        ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LinksSection extends StatelessWidget {
-  const _LinksSection({
-    required this.imdb,
-    required this.tmdb,
-    required this.isSeries,
-  });
-  final String? imdb;
-  final String? tmdb;
-  final bool isSeries;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: AppSpacing.xl),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionHeader(title: 'Link'),
-          const SizedBox(height: AppSpacing.md),
-          Wrap(
-            spacing: AppSpacing.sm,
-            children: [
-              if (imdb != null)
-                _LinkPill(
-                  label: 'IMDb ↗',
-                  uri: Uri.parse('https://www.imdb.com/title/$imdb/'),
-                ),
-              if (tmdb != null)
-                _LinkPill(
-                  label: 'TMDb ↗',
-                  uri: Uri.parse(
-                    'https://www.themoviedb.org/${isSeries ? 'tv' : 'movie'}/$tmdb',
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LinkPill extends StatelessWidget {
-  const _LinkPill({required this.label, required this.uri});
-  final String label;
-  final Uri uri;
-
-  @override
-  Widget build(BuildContext context) {
-    return sc.Button.outline(
-      onPressed: () => launchUrl(uri),
-      child: Text(label, style: AppTheme.mono),
-    );
-  }
-}
-
-/// Fade transition into the solo player (per the redesign's motion system),
-/// replacing the hard-cut `MaterialPageRoute`.
-Route<void> _playerRoute(LibraryItem item) =>
-    _playerRouteFor(itemId: item.id, title: item.name);
-
-Route<void> _playerRouteFor({required String itemId, required String title}) {
+/// Fade transition into the solo player (per the redesign's motion system).
+/// [audioStreamIndex]/[subtitleStreamIndex] carry the detail-stage track
+/// selection through to playback (web `onWatch(item, tracks)`).
+Route<void> _playerRouteFor({
+  required String itemId,
+  required String title,
+  int? audioStreamIndex,
+  int? subtitleStreamIndex,
+}) {
   return PageRouteBuilder<void>(
     transitionDuration: AppMotion.page,
     reverseTransitionDuration: AppMotion.page,
-    pageBuilder: (context, animation, secondaryAnimation) =>
-        _SoloPlayer(itemId: itemId, title: title),
+    pageBuilder: (context, animation, secondaryAnimation) => _SoloPlayer(
+      itemId: itemId,
+      title: title,
+      audioStreamIndex: audioStreamIndex,
+      subtitleStreamIndex: subtitleStreamIndex,
+    ),
     transitionsBuilder: (context, animation, secondaryAnimation, child) =>
         FadeTransition(
           opacity: CurvedAnimation(
@@ -669,35 +173,21 @@ Route<void> _playerRouteFor({required String itemId, required String title}) {
   );
 }
 
-class _DetailSkeleton extends StatelessWidget {
-  const _DetailSkeleton();
-
-  @override
-  Widget build(BuildContext context) => const Padding(
-    padding: EdgeInsets.all(AppSpacing.xxl),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        LoadingSkeleton(width: double.infinity, height: 320),
-        SizedBox(height: AppSpacing.lg),
-        LoadingSkeleton(width: 240, height: 32),
-        SizedBox(height: AppSpacing.lg),
-        LoadingSkeleton(width: 400, height: 16),
-      ],
-    ),
-  );
-}
-
 /// Solo playback launcher for the detail screen. Opens the shared
 /// [playerControllerProvider] preferring a locally-downloaded copy over the
 /// network stream (E8.3 `openPreferringOffline`), then mounts the real E4.2
-/// [PlayerView] chrome. The controller is owned by the provider, so this hands
-/// it to `PlayerView(controller:)` (which never disposes a controller it
-/// didn't create).
+/// [PlayerView] chrome.
 class _SoloPlayer extends ConsumerStatefulWidget {
-  const _SoloPlayer({required this.itemId, required this.title});
+  const _SoloPlayer({
+    required this.itemId,
+    required this.title,
+    this.audioStreamIndex,
+    this.subtitleStreamIndex,
+  });
   final String itemId;
   final String title;
+  final int? audioStreamIndex;
+  final int? subtitleStreamIndex;
 
   @override
   ConsumerState<_SoloPlayer> createState() => _SoloPlayerState();
@@ -707,35 +197,56 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   Object? _error;
   bool _ready = false;
   bool _isFullscreen = false;
+  bool _exiting = false;
+  bool _allowPop = false;
+  bool _popping = false;
+  bool _handoffToParty = false;
+  Future<void>? _openFuture;
 
-  // Only the authenticated path is routed through `MediaCacheProxy` (see
-  // `_open`) — an offline guest plays straight from a fully-downloaded local
-  // file, which has no partial-cache concept to show an indicator for.
   bool _usesCacheProxy = false;
 
   // Capture the shared, provider-owned controller once so dispose() can pause
-  // it WITHOUT touching `ref` — reading a provider via `ref` during/after
-  // widget teardown throws "Cannot use ref after the widget was disposed",
-  // which previously aborted dispose before pause() ran and left the shared
-  // controller playing the old media (breaking the next open/resume).
+  // it WITHOUT touching `ref`.
   late final _controller = ref.read(playerControllerProvider);
 
   @override
   void initState() {
     super.initState();
     _controller; // force initialization here, where ref.read is valid
-    _open();
+    _openFuture = _open();
   }
 
   @override
   void dispose() {
-    // Leaving the solo player (back-navigation): stop playback. The controller
-    // is provider-owned and shared with the party screen, so we don't dispose
-    // it here — but nothing else pauses it when this route pops, which would
-    // otherwise leave audio playing in a screen the user already left.
-    unawaited(_controller.pause());
+    unawaited(_stopPlayback());
     if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
     super.dispose();
+  }
+
+  Future<void> _stopPlayback() async {
+    if (_handoffToParty) return;
+    _exiting = true;
+    try {
+      await _openFuture;
+    } catch (_) {}
+    await _controller.pause();
+    await _controller.seek(Duration.zero);
+    if (_isFullscreen) await windowManager.setFullScreen(false);
+  }
+
+  Future<void> _exit() async {
+    if (_popping) return;
+    _popping = true;
+    await _stopPlayback();
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    await Navigator.of(context).maybePop();
+  }
+
+  void _retry() {
+    _exiting = false;
+    _popping = false;
+    _openFuture = _open();
   }
 
   Future<void> _toggleFullscreen() async {
@@ -750,15 +261,26 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
       _ready = false;
     });
     try {
-      // A logged-out guest has no session, so there's no signed stream URL to
-      // fetch — this path is only ever reached with the title already fully
-      // downloaded (`_GuestOfflineDetailBody` only offers Play once the
-      // offline manifest has a record), so the local file is all we need.
       final isAuthenticated = ref.read(
         authProvider.select((s) => s.isAuthenticated),
       );
-      // Routed through the on-device caching proxy (Phase 2) instead of a
-      // direct signed URL — it mints/re-mints one itself on demand.
+      // Pre-select the audio/subtitle tracks the detail stage picked, so the
+      // stream the cache proxy mints delivers them (web `onWatch(tracks)` →
+      // playback-info selection). Best-effort: a failure here must not block
+      // playback, so swallow it and open with the server defaults.
+      if (isAuthenticated &&
+          (widget.audioStreamIndex != null ||
+              widget.subtitleStreamIndex != null)) {
+        try {
+          await ref.read(apiClientProvider).playbackInfo(
+                widget.itemId,
+                audioStreamIndex: widget.audioStreamIndex,
+                subtitleStreamIndex: widget.subtitleStreamIndex,
+              );
+        } catch (_) {}
+      }
+      // Routed through the on-device caching proxy instead of a direct signed
+      // URL — it mints/re-mints one itself on demand.
       final streamUrl = isAuthenticated
           ? ref.read(mediaCacheProxyProvider).urlFor(widget.itemId)
           : '';
@@ -768,9 +290,18 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
         _controller,
         itemId: widget.itemId,
         streamUrl: streamUrl,
-        autoplay: true,
+        autoplay: false,
       );
-      if (mounted) setState(() => _ready = true);
+      if (_exiting || !mounted) {
+        await _controller.pause();
+        return;
+      }
+      await _controller.play();
+      if (_exiting || !mounted) {
+        await _controller.pause();
+        return;
+      }
+      setState(() => _ready = true);
     } catch (e) {
       if (mounted) setState(() => _error = e);
     }
@@ -778,16 +309,21 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: _error != null
+    return PopScope<void>(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_exit());
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: _error != null
           ? Center(
               child: ErrorState(
                 title: 'Playback failed',
                 message: _error is ApiException
                     ? (_error as ApiException).message
                     : 'Could not open this title. Check your connection and try again.',
-                onRetry: _open,
+                onRetry: _retry,
               ),
             )
           : !_ready
@@ -808,36 +344,40 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                   itemId: widget.itemId,
                   apiClient: ref.watch(apiClientProvider),
                   title: widget.title,
-                  onBack: () => Navigator.of(context).maybePop(),
+                  onBack: _exit,
                   onToggleFullscreen: _toggleFullscreen,
                   isFullscreen: _isFullscreen,
                   cachedSpans: _usesCacheProxy
-                      ? ref.watch(mediaCacheProxyProvider).cachedSpansFor(widget.itemId)
+                      ? ref
+                            .watch(mediaCacheProxyProvider)
+                            .cachedSpansFor(widget.itemId)
                       : null,
                 ),
                 Positioned(
                   top: 8,
-                  right: 8,
+                  right: 8 + desktopTrailingControlInset,
                   child: SafeArea(
-                    child: _StartPartyButton(itemId: widget.itemId),
+                    child: _StartPartyButton(
+                      itemId: widget.itemId,
+                      onHandoff: () => _handoffToParty = true,
+                    ),
                   ),
                 ),
               ],
             ),
+      ),
     );
   }
 }
 
-/// "Start a party" affordance floated over solo playback (E3 title detail),
-/// so a party can be spun up MID-MOVIE instead of only from the party
-/// screen's lobby. Carries the currently-playing item + its live position
-/// into [PartyNotifier.createFromCurrentPlayback] (`party:create` pre-selects
-/// the media, then a `sync:seek` restores the position), then hands off to
-/// the immersive party screen — the party stays alive from here on regardless
-/// of further navigation.
+/// "Start a party" affordance floated over solo playback, so a party can be
+/// spun up MID-MOVIE. Carries the currently-playing item + its live position
+/// into [PartyNotifier.createFromCurrentPlayback], then hands off to the
+/// immersive party screen.
 class _StartPartyButton extends ConsumerStatefulWidget {
-  const _StartPartyButton({required this.itemId});
+  const _StartPartyButton({required this.itemId, required this.onHandoff});
   final String itemId;
+  final VoidCallback onHandoff;
 
   @override
   ConsumerState<_StartPartyButton> createState() => _StartPartyButtonState();
@@ -857,6 +397,7 @@ class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
             position: position,
           );
       if (!mounted) return;
+      widget.onHandoff();
       context.go('/party/$partyId');
     } catch (e) {
       if (!mounted) return;
@@ -870,9 +411,6 @@ class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
 
   @override
   Widget build(BuildContext context) {
-    // A party needs a session (and someone to invite); nothing to offer a
-    // logged-out guest. Already-in-a-party (e.g. re-entering solo playback
-    // from elsewhere) is likewise nothing to start.
     final isAuthenticated = ref.watch(
       authProvider.select((s) => s.isAuthenticated),
     );
