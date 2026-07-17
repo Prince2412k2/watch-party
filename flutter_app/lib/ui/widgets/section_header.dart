@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../palette.dart';
 import '../tokens.dart';
 
 /// A rail/section title with an optional trailing action ("See all", a
@@ -19,6 +20,7 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Row(
@@ -30,12 +32,12 @@ class SectionHeader extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(title,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.text, letterSpacing: -0.2)),
+                    style: TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w500, color: wp.text, letterSpacing: -0.2)),
                 if (subtitle != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
-                    child: Text(subtitle!, style: const TextStyle(fontSize: 12.5, color: AppColors.faint)),
+                    child: Text(subtitle!, style: TextStyle(fontSize: 12.5, color: wp.faint)),
                   ),
               ],
             ),

@@ -6,20 +6,21 @@ import '../data/api_client.dart';
 import 'providers.dart';
 
 /// E9 — Servarr (radarr/sonarr/prowlarr/qbittorrent) state, built entirely on
-/// the phase-0 `ApiClient.servarrGet/Post/Delete` passthroughs. Mirrors the web
-/// reference (`app/client/src/pages/FindDownload.jsx` + `Downloads.jsx`):
-/// search a title → grab-or-remove "request" → watch it land in the download
-/// queue. No new ApiClient methods were needed — every route here is reached
-/// through the existing generic passthroughs.
+/// the `ApiClient.servarrGet/Post/Delete` passthroughs. Mirrors the redesigned
+/// web reference (`app/client/src/pages/FindDownload.tsx` + `Downloads.tsx` +
+/// `hooks/useTorrents.ts`): Discover browses two fixed discover rails (movies +
+/// shows) and folds in the acquire flow — one-tap grab-or-remove "request",
+/// release picker, season chooser, options + manual source — while the
+/// Downloads screen watches the enriched download queue and the failing-queue.
 
 enum ServarrKind { movie, series }
 
 extension ServarrKindX on ServarrKind {
   String get service => this == ServarrKind.movie ? 'radarr' : 'sonarr';
-  String get label => this == ServarrKind.movie ? 'Movies' : 'Series';
+  String get label => this == ServarrKind.movie ? 'Movies' : 'Shows';
 }
 
-/// A single search/lookup/popular result row. Radarr and Sonarr echo slightly
+/// A single discover/lookup result row. Radarr and Sonarr echo slightly
 /// different fields (tmdbId vs tvdbId, no `network` on movies, …), so this
 /// stays a tolerant wrapper over the raw JSON rather than two rigid models.
 class ServarrTitle {
@@ -37,6 +38,7 @@ class ServarrTitle {
   int? get runtime => raw['runtime'] as int?;
   String? get network => raw['network'] as String?;
   String? get status => raw['status'] as String?;
+  String? get certification => raw['certification'] as String?;
   int? get seasonCount => raw['seasonCount'] as int?;
 
   /// A lookup result only carries a numeric `id` once the title is already
@@ -46,18 +48,38 @@ class ServarrTitle {
   String key(ServarrKind kind) =>
       kind == ServarrKind.movie ? 'm:${tmdbId ?? title}' : 's:${tvdbId ?? title}';
 
+  List<Map<String, dynamic>> get _images {
+    final images = (raw['images'] as List?) ?? const [];
+    return images.isEmpty ? const [] : images.cast<Map<String, dynamic>>();
+  }
+
   /// Best poster URL out of `images`: a not-yet-added lookup only has a public
   /// `remoteUrl`; `url` (the instance-local path) only resolves once added.
   String? get posterUrl {
-    final images = (raw['images'] as List?) ?? const [];
-    if (images.isEmpty) return null;
-    final list = images.cast<Map<String, dynamic>>();
+    final list = _images;
+    if (list.isEmpty) return null;
     final poster = list.firstWhere(
       (i) => i['coverType'] == 'poster',
       orElse: () => list.first,
     );
     final url = poster['remoteUrl'] ?? poster['url'];
     return url is String && url.isNotEmpty ? url : null;
+  }
+
+  /// Wide fanart/backdrop for the detail hero; falls back to the poster.
+  String? get backdropUrl {
+    final list = _images;
+    if (list.isEmpty) return null;
+    final fan = list.firstWhere(
+      (i) => i['coverType'] == 'fanart',
+      orElse: () => list.firstWhere(
+        (i) => i['coverType'] == 'banner',
+        orElse: () => const <String, dynamic>{},
+      ),
+    );
+    final url = fan['remoteUrl'] ?? fan['url'];
+    if (url is String && url.isNotEmpty) return url;
+    return posterUrl;
   }
 
   /// A single 0–10 rating out of the varied ratings shapes the catalog
@@ -149,137 +171,105 @@ final servarrMetaProvider =
   );
 });
 
-/// Discover ("popular") rail for the empty-search state.
-final servarrPopularProvider =
-    FutureProvider.family.autoDispose<List<ServarrTitle>, ServarrKind>((ref, kind) async {
-  final api = ref.watch(apiClientProvider);
-  final data = await api.servarrGet('${kind.service}/popular');
-  final items = (data as Map)['items'] as List? ?? const [];
-  return items.cast<Map<String, dynamic>>().map(ServarrTitle.new).toList();
-});
-
-class ServarrSearchState {
-  const ServarrSearchState({
-    this.kind = ServarrKind.movie,
-    this.term = '',
-    this.results = const [],
-    this.loading = false,
-    this.error,
-    this.hasSearched = false,
-    this.requestStates = const {},
+/// Full profile / root-folder / language lists for the options dialog (the
+/// one-tap path only needs the first of each; this carries every option).
+class ServarrProfiles {
+  ServarrProfiles({
+    required this.profiles,
+    required this.rootFolders,
+    required this.langProfiles,
   });
-
-  final ServarrKind kind;
-  final String term;
-  final List<ServarrTitle> results;
-  final bool loading;
-  final String? error;
-  final bool hasSearched;
-  final Map<String, ServarrRequestState> requestStates;
-
-  ServarrSearchState copyWith({
-    ServarrKind? kind,
-    String? term,
-    List<ServarrTitle>? results,
-    bool? loading,
-    String? error,
-    bool? hasSearched,
-    Map<String, ServarrRequestState>? requestStates,
-  }) {
-    return ServarrSearchState(
-      kind: kind ?? this.kind,
-      term: term ?? this.term,
-      results: results ?? this.results,
-      loading: loading ?? this.loading,
-      error: error,
-      hasSearched: hasSearched ?? this.hasSearched,
-      requestStates: requestStates ?? this.requestStates,
-    );
-  }
+  final List<Map<String, dynamic>> profiles;
+  final List<Map<String, dynamic>> rootFolders;
+  final List<Map<String, dynamic>> langProfiles;
 }
 
-/// Search + one-tap "request" flow for the Find screen. A fresh keystroke or
-/// tab flip cancels the in-flight search via a sequence guard so a slow
-/// response can never clobber a newer one.
-class ServarrSearchNotifier extends StateNotifier<ServarrSearchState> {
-  ServarrSearchNotifier(this._ref) : super(const ServarrSearchState());
+final servarrProfilesProvider =
+    FutureProvider.family.autoDispose<ServarrProfiles, ServarrKind>((ref, kind) async {
+  final api = ref.watch(apiClientProvider);
+  final service = kind.service;
+  final profiles =
+      (await api.servarrGet('$service/quality-profiles') as List)
+          .cast<Map<String, dynamic>>();
+  final folders =
+      (await api.servarrGet('$service/root-folders') as List)
+          .cast<Map<String, dynamic>>();
+  var langs = <Map<String, dynamic>>[];
+  if (kind == ServarrKind.series) {
+    langs = (await api.servarrGet('sonarr/language-profiles') as List)
+        .cast<Map<String, dynamic>>();
+  }
+  return ServarrProfiles(
+    profiles: profiles,
+    rootFolders: folders,
+    langProfiles: langs,
+  );
+});
+
+/// A discover rail's payload: the server's `source` (drives the heading —
+/// `tmdb_trending` → "Trending this week", else "Discover") + the items.
+class ServarrDiscover {
+  ServarrDiscover({required this.source, required this.items});
+  final String source;
+  final List<ServarrTitle> items;
+}
+
+/// Discover rail: `GET /api/servarr/{service}/discover?page=1` → `{source,
+/// items}`. Per-kind family so the movie and series rails load and degrade
+/// independently (an empty/failed discover surfaces as a per-rail unavailable
+/// state rather than a full-page error).
+final servarrDiscoverProvider =
+    FutureProvider.family.autoDispose<ServarrDiscover, ServarrKind>((ref, kind) async {
+  final api = ref.watch(apiClientProvider);
+  final data = await api.servarrGet('${kind.service}/discover', query: {'page': 1});
+  final map = (data as Map);
+  final items = (map['items'] as List? ?? const [])
+      .cast<Map<String, dynamic>>()
+      .map(ServarrTitle.new)
+      .toList();
+  return ServarrDiscover(
+    source: (map['source'] as String?) ?? 'curated',
+    items: items,
+  );
+});
+
+/// Per-title request state for the acquire flow, keyed by `keyOf(kind, item)`.
+/// This is the correctness core of grab feedback (`outcomeToState`), shared by
+/// Discover cards and the detail view so status stays consistent when
+/// navigating in and out.
+class ServarrRequests extends StateNotifier<Map<String, ServarrRequestState>> {
+  ServarrRequests(this._ref) : super(const {});
 
   final Ref _ref;
-  Timer? _debounce;
-  int _seq = 0;
 
-  void setKind(ServarrKind kind) {
-    if (kind == state.kind) return;
-    _debounce?.cancel();
-    _seq++;
-    state = ServarrSearchState(kind: kind, term: state.term);
-    if (state.term.trim().isNotEmpty) _search();
-  }
-
-  void setTerm(String term) {
-    state = state.copyWith(term: term);
-    _debounce?.cancel();
-    if (term.trim().isEmpty) {
-      _seq++;
-      state = state.copyWith(
-          results: [], hasSearched: false, loading: false, error: null);
-      return;
-    }
-    _debounce = Timer(const Duration(milliseconds: 400), _search);
-  }
-
-  Future<void> submit() async {
-    _debounce?.cancel();
-    await _search();
-  }
-
-  Future<void> _search() async {
-    final term = state.term.trim();
-    if (term.isEmpty) return;
-    final mySeq = ++_seq;
-    state = state.copyWith(loading: true, error: null);
-    try {
-      final api = _ref.read(apiClientProvider);
-      final data = await api
-          .servarrGet('${state.kind.service}/search', query: {'term': term});
-      if (mySeq != _seq) return;
-      final results = (data as List)
-          .cast<Map<String, dynamic>>()
-          .map(ServarrTitle.new)
-          .toList();
-      state = state.copyWith(results: results, loading: false, hasSearched: true);
-    } catch (_) {
-      if (mySeq != _seq) return;
-      state = state.copyWith(
-        loading: false,
-        hasSearched: true,
-        error: 'Something went wrong. Try again.',
-        results: const [],
-      );
-    }
-  }
-
-  ServarrRequestState stateFor(ServarrTitle t) {
+  ServarrRequestState stateFor(ServarrTitle t, ServarrKind kind) {
     if (t.isAdded) return ServarrRequestState.added;
-    return state.requestStates[t.key(state.kind)] ?? ServarrRequestState.idle;
+    return state[t.key(kind)] ?? ServarrRequestState.idle;
   }
 
-  void _setRequestState(String key, ServarrRequestState value) {
-    state = state.copyWith(requestStates: {...state.requestStates, key: value});
-  }
+  void _set(String key, ServarrRequestState value) =>
+      state = {...state, key: value};
+
+  /// Reflect an outcome an options dialog / season request already resolved.
+  void applyOutcome(String key, String? outcome) =>
+      _set(key, _outcomeToState(outcome));
+
+  /// A release picker / manual grab hands the card straight to downloading —
+  /// the live torrent match takes over the progress UI from here.
+  void markGrabbed(String key) => _set(key, ServarrRequestState.grabbed);
 
   /// Server-authoritative one-tap request: add (no auto-search) → live
   /// interactive release search → grab the best release, or remove the
   /// fileless entry if nothing is usable. See `app/server/servarr/index.js`
   /// `POST /radarr/request` / `POST /sonarr/request` for the exact contract.
-  Future<void> request(ServarrTitle t) async {
-    final key = t.key(state.kind);
-    _setRequestState(key, ServarrRequestState.searching);
+  Future<void> request(ServarrTitle t, ServarrKind kind) async {
+    final key = t.key(kind);
+    _set(key, ServarrRequestState.searching);
     try {
       final api = _ref.read(apiClientProvider);
-      final meta = await _ref.read(servarrMetaProvider(state.kind).future);
+      final meta = await _ref.read(servarrMetaProvider(kind).future);
       if (meta == null) throw Exception('meta unavailable');
-      final body = state.kind == ServarrKind.movie
+      final body = kind == ServarrKind.movie
           ? {
               'movie': t.raw,
               'qualityProfileId': meta.qualityProfileId,
@@ -293,43 +283,87 @@ class ServarrSearchNotifier extends StateNotifier<ServarrSearchState> {
               'monitor': true,
               'searchNow': true,
             };
-      final res =
-          await api.servarrPost('${state.kind.service}/request', body: body);
-      final outcome = (res as Map)['outcome'] as String?;
-      _setRequestState(key, _outcomeToState(outcome));
+      final res = await api.servarrPost('${kind.service}/request', body: body);
+      _set(key, _outcomeToState((res as Map)['outcome'] as String?));
     } catch (_) {
-      _setRequestState(key, ServarrRequestState.error);
+      _set(key, ServarrRequestState.error);
     }
   }
 
   /// Removes a title already in the library (deletes files + excludes it).
-  Future<void> remove(ServarrTitle t) async {
+  Future<void> remove(ServarrTitle t, ServarrKind kind) async {
     final id = t.id;
     if (id == null) return;
-    final path = state.kind == ServarrKind.movie
-        ? 'radarr/movie/$id'
-        : 'sonarr/series/$id';
+    final path =
+        kind == ServarrKind.movie ? 'radarr/movie/$id' : 'sonarr/series/$id';
     await _ref
         .read(apiClientProvider)
         .servarrDelete(path, query: const {'deleteFiles': 'true'});
   }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    super.dispose();
-  }
 }
 
-final servarrSearchProvider =
-    StateNotifierProvider.autoDispose<ServarrSearchNotifier, ServarrSearchState>(
-  (ref) => ServarrSearchNotifier(ref),
+final servarrRequestsProvider =
+    StateNotifierProvider<ServarrRequests, Map<String, ServarrRequestState>>(
+  (ref) => ServarrRequests(ref),
 );
 
+// ── Torrent state mapping (shared with the web `format.ts` `stateInfo`) ─────
+
+/// Friendly label + paused-ness for a qBittorrent state string. qBittorrent 5.x
+/// renamed `paused*` → `stopped*`; both are kept so a version bump can't
+/// silently mislabel.
+class TorrentStateInfo {
+  const TorrentStateInfo(this.label, this.paused);
+  final String label;
+  final bool paused;
+}
+
+TorrentStateInfo torrentStateInfo(String? state) => switch (state) {
+      'downloading' ||
+      'forcedDL' ||
+      'metaDL' ||
+      'checkingDL' ||
+      'allocating' =>
+        const TorrentStateInfo('Downloading', false),
+      'uploading' ||
+      'forcedUP' ||
+      'checkingUP' =>
+        const TorrentStateInfo('Finishing up', false),
+      'stalledDL' => const TorrentStateInfo('Waiting', false),
+      'stalledUP' => const TorrentStateInfo('Finishing up', false),
+      'queuedDL' ||
+      'queuedUP' ||
+      'checkingResumeData' =>
+        const TorrentStateInfo('Queued', false),
+      'pausedDL' || 'stoppedDL' => const TorrentStateInfo('Paused', true),
+      'pausedUP' || 'stoppedUP' => const TorrentStateInfo('Completed', true),
+      'error' || 'missingFiles' => const TorrentStateInfo('Error', true),
+      _ => TorrentStateInfo(
+          state == null || state.isEmpty ? 'Unknown' : state, false),
+    };
+
+/// "Actively downloading" — excludes seeding/completed/paused/error so the
+/// aggregate "N active" count agrees with the web `DOWNLOADING_STATES` set.
+const _downloadingStates = {
+  'downloading', 'forcedDL', 'metaDL', 'forcedMetaDL',
+  'stalledDL', 'queuedDL', 'checkingDL', 'allocating', 'checkingResumeData',
+};
+
+String _normTitle(String s) =>
+    s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
+
+/// Best-effort link between a title and its active download — the normalized
+/// title as a substring of the normalized torrent scene name.
+ServarrDownload? matchTorrent(String title, List<ServarrDownload>? torrents) {
+  final n = _normTitle(title);
+  if (n.length < 2 || torrents == null) return null;
+  for (final t in torrents) {
+    if (_normTitle(t.sceneName).contains(n)) return t;
+  }
+  return null;
+}
+
 // ── Download queue (radarr/sonarr acquisition queue + qBittorrent) ─────────
-// Backs the QUEUE monitor screen — distinct from E8.2's native offline
-// downloads. This tracks *active in-flight acquisition* (torrents/usenet the
-// servarr stack is pulling down), not files already saved on-device.
 
 /// One row of `GET /api/servarr/downloads/enriched` — a qBittorrent torrent
 /// joined to its Radarr/Sonarr queue record (clean title/poster when matched).
@@ -338,33 +372,70 @@ class ServarrDownload {
   final Map<String, dynamic> raw;
 
   String get hash => (raw['hash'] ?? '').toString();
-  String get name =>
-      (raw['displayTitle'] ?? raw['name'] ?? '').toString();
+
+  /// The raw scene release name (matched against titles for the live-download
+  /// overlay); distinct from the clean [name].
+  String get sceneName => (raw['name'] ?? '').toString();
+  String get name => (raw['displayTitle'] ?? raw['name'] ?? '').toString();
   String? get subtitle => raw['subtitle'] as String?;
   String? get posterUrl => raw['posterUrl'] as String?;
+  String? get kind => raw['kind'] as String?;
   String get torrentState => (raw['state'] ?? '').toString();
   double get progress => ((raw['progress'] ?? 0) as num).toDouble();
   int get size => ((raw['size'] ?? 0) as num).toInt();
   int get downloaded => ((raw['downloaded'] ?? 0) as num).toInt();
   int get dlspeed => ((raw['dlspeed'] ?? 0) as num).toInt();
+  int get upspeed => ((raw['upspeed'] ?? 0) as num).toInt();
   int get eta => ((raw['eta'] ?? 0) as num).toInt();
   int get numSeeds => ((raw['numSeeds'] ?? 0) as num).toInt();
+  int get numLeechs => ((raw['numLeechs'] ?? 0) as num).toInt();
   bool get matched => raw['matched'] == true;
 
-  static const _pausedStates = {
-    'pausedDL', 'pausedUP', 'stoppedDL', 'stoppedUP', 'paused',
-  };
-  bool get isPaused => _pausedStates.contains(torrentState);
+  TorrentStateInfo get stateInfo => torrentStateInfo(torrentState);
+  bool get isPaused => stateInfo.paused;
+  bool get isActive => _downloadingStates.contains(torrentState);
   int get percent => (progress * 100).clamp(0, 100).round();
 }
 
-/// Polls the enriched download list every few seconds while listened to.
-/// `autoDispose` + `ref.onDispose` stop the timer the moment the queue screen
-/// is popped, so it never polls in the background.
+/// A poll snapshot: keeps the last-good [list] on a failed tick and flags a
+/// subtle [loadError] (reconnecting) instead of dropping the whole list, so a
+/// single dropped poll never clears the grid. [loaded] is false until the first
+/// tick resolves.
+class ServarrDownloadsSnapshot {
+  const ServarrDownloadsSnapshot({
+    this.list = const [],
+    this.loadError = false,
+    this.loaded = false,
+  });
+  final List<ServarrDownload> list;
+  final bool loadError;
+  final bool loaded;
+
+  int get activeCount => list.where((d) => d.isActive).length;
+  int get totalDlspeed => list.fold(0, (a, d) => a + d.dlspeed);
+  int get totalUpspeed => list.fold(0, (a, d) => a + d.upspeed);
+
+  ServarrDownloadsSnapshot copyWith({
+    List<ServarrDownload>? list,
+    bool? loadError,
+    bool? loaded,
+  }) =>
+      ServarrDownloadsSnapshot(
+        list: list ?? this.list,
+        loadError: loadError ?? this.loadError,
+        loaded: loaded ?? this.loaded,
+      );
+}
+
+/// Polls the enriched download list every 4s while listened to. Shared by the
+/// Downloads grid + detail and the Discover cards' live-download overlay.
+/// `autoDispose` + `ref.onDispose` stop the timer the moment the last listener
+/// is gone, so it never polls in the background.
 final servarrDownloadsPollProvider =
-    StreamProvider.autoDispose<List<ServarrDownload>>((ref) {
+    StreamProvider.autoDispose<ServarrDownloadsSnapshot>((ref) {
   final api = ref.watch(apiClientProvider);
-  final controller = StreamController<List<ServarrDownload>>();
+  final controller = StreamController<ServarrDownloadsSnapshot>();
+  var snapshot = const ServarrDownloadsSnapshot();
 
   Future<void> tick() async {
     try {
@@ -373,9 +444,12 @@ final servarrDownloadsPollProvider =
           .cast<Map<String, dynamic>>()
           .map(ServarrDownload.new)
           .toList();
-      if (!controller.isClosed) controller.add(list);
-    } catch (e) {
-      if (!controller.isClosed) controller.addError(e);
+      snapshot = ServarrDownloadsSnapshot(list: list, loaded: true);
+      if (!controller.isClosed) controller.add(snapshot);
+    } catch (_) {
+      // Keep the last good list; surface a subtle reconnect flag.
+      snapshot = snapshot.copyWith(loadError: true, loaded: true);
+      if (!controller.isClosed) controller.add(snapshot);
     }
   }
 
@@ -391,8 +465,42 @@ final servarrDownloadsPollProvider =
   return controller.stream;
 });
 
-/// A Radarr/Sonarr queue record whose `status`/`trackedDownloadStatus` isn't a
-/// plain "ok" — the "needs attention" list on the web Downloads page.
+/// Rich metadata for a single active download (`GET
+/// /api/servarr/downloads/:hash/detail`). Falls back silently to the live
+/// enriched fields if the lookup can't resolve.
+class ServarrDownloadDetail {
+  ServarrDownloadDetail(this.raw);
+  final Map<String, dynamic> raw;
+
+  String? get kind => raw['kind'] as String?;
+  String? get title => raw['title'] as String?;
+  String? get subtitle => raw['subtitle'] as String?;
+  String? get posterUrl => raw['posterUrl'] as String?;
+  String? get overview => raw['overview'] as String?;
+  List<String> get genres =>
+      ((raw['genres'] as List?) ?? const []).map((e) => e.toString()).toList();
+  double? get rating => (raw['rating'] as num?)?.toDouble();
+  int? get runtime => (raw['runtime'] as num?)?.toInt();
+  String? get year => raw['year']?.toString();
+  String? get certification => raw['certification'] as String?;
+  String? get network => raw['network'] as String?;
+  String? get status => raw['status'] as String?;
+}
+
+final servarrDownloadDetailProvider =
+    FutureProvider.family.autoDispose<ServarrDownloadDetail?, String>((ref, hash) async {
+  final api = ref.watch(apiClientProvider);
+  try {
+    final data =
+        await api.servarrGet('downloads/${Uri.encodeComponent(hash)}/detail');
+    return ServarrDownloadDetail((data as Map).cast<String, dynamic>());
+  } catch (_) {
+    return null;
+  }
+});
+
+/// A Radarr/Sonarr queue record whose status isn't a plain "ok" — the "needs
+/// attention" list on the Downloads page.
 class ServarrArrQueueItem {
   ServarrArrQueueItem(this.raw);
   final Map<String, dynamic> raw;
@@ -402,30 +510,73 @@ class ServarrArrQueueItem {
   String get title => (raw['title'] ?? '').toString();
   bool get failing => raw['failing'] == true;
   String? get errorMessage => raw['errorMessage'] as String?;
+  String? get indexer => raw['indexer'] as String?;
+  int get size => ((raw['size'] ?? 0) as num).toInt();
   List<String> get statusMessages =>
-      ((raw['statusMessages'] as List?) ?? const []).map((e) => e.toString()).toList();
+      ((raw['statusMessages'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList();
+
+  /// One line per status message, or the error message, or a placeholder.
+  List<String> get reasons {
+    if (statusMessages.isNotEmpty) return statusMessages;
+    if (errorMessage != null && errorMessage!.isNotEmpty) return [errorMessage!];
+    return const ['No reason given.'];
+  }
 }
 
-/// Polls both `radarr/queue` and `sonarr/queue`, merges, and keeps only the
-/// items flagged `failing` (stuck between grab and import).
+/// Failing-queue snapshot — like [ServarrDownloadsSnapshot], keeps the last-good
+/// list on a failed tick and flags [loadError].
+class ServarrFailingSnapshot {
+  const ServarrFailingSnapshot({
+    this.items = const [],
+    this.loadError = false,
+    this.loaded = false,
+  });
+  final List<ServarrArrQueueItem> items;
+  final bool loadError;
+  final bool loaded;
+
+  ServarrFailingSnapshot copyWith({
+    List<ServarrArrQueueItem>? items,
+    bool? loadError,
+    bool? loaded,
+  }) =>
+      ServarrFailingSnapshot(
+        items: items ?? this.items,
+        loadError: loadError ?? this.loadError,
+        loaded: loaded ?? this.loaded,
+      );
+}
+
+/// Polls both `radarr/queue` and `sonarr/queue` every 6s, merges, and keeps only
+/// the items flagged `failing` (stuck between grab and import).
 final servarrFailingQueueProvider =
-    StreamProvider.autoDispose<List<ServarrArrQueueItem>>((ref) {
+    StreamProvider.autoDispose<ServarrFailingSnapshot>((ref) {
   final api = ref.watch(apiClientProvider);
-  final controller = StreamController<List<ServarrArrQueueItem>>();
+  final controller = StreamController<ServarrFailingSnapshot>();
+  var snapshot = const ServarrFailingSnapshot();
 
   Future<void> tick() async {
     try {
       final results = await Future.wait<dynamic>([
-        api.servarrGet('radarr/queue').catchError((_) => const []),
-        api.servarrGet('sonarr/queue').catchError((_) => const []),
+        api.servarrGet('radarr/queue').then<dynamic>((v) => v).catchError((_) => null),
+        api.servarrGet('sonarr/queue').then<dynamic>((v) => v).catchError((_) => null),
       ]);
+      if (results[0] == null && results[1] == null) {
+        snapshot = snapshot.copyWith(loadError: true, loaded: true);
+        if (!controller.isClosed) controller.add(snapshot);
+        return;
+      }
       final merged = [
-        ...(results[0] as List).cast<Map<String, dynamic>>(),
-        ...(results[1] as List).cast<Map<String, dynamic>>(),
+        ...((results[0] as List?) ?? const []).cast<Map<String, dynamic>>(),
+        ...((results[1] as List?) ?? const []).cast<Map<String, dynamic>>(),
       ].map(ServarrArrQueueItem.new).where((q) => q.failing).toList();
-      if (!controller.isClosed) controller.add(merged);
-    } catch (e) {
-      if (!controller.isClosed) controller.addError(e);
+      snapshot = ServarrFailingSnapshot(items: merged, loaded: true);
+      if (!controller.isClosed) controller.add(snapshot);
+    } catch (_) {
+      snapshot = snapshot.copyWith(loadError: true, loaded: true);
+      if (!controller.isClosed) controller.add(snapshot);
     }
   }
 
@@ -441,8 +592,8 @@ final servarrFailingQueueProvider =
   return controller.stream;
 });
 
-/// Mutations for the queue screen: pause/resume/delete a torrent, and drop a
-/// stuck Radarr/Sonarr queue record.
+/// Mutations for the Downloads screen: pause/resume/delete a torrent, and drop a
+/// stuck Radarr/Sonarr queue record (optionally blocklisting the release).
 class ServarrQueueActions {
   ServarrQueueActions(this._ref);
   final Ref _ref;
@@ -454,17 +605,63 @@ class ServarrQueueActions {
   Future<void> resume(String hash) =>
       _api.servarrPost('qbittorrent/resume', body: {'hashes': hash});
 
+  /// Default `deleteFiles:false` — the delete dialog's "also delete files"
+  /// toggle drives it (matches the web, which defaults the toggle off).
   Future<void> deleteTorrent(String hash, {bool deleteFiles = false}) =>
       _api.servarrPost('qbittorrent/delete',
           body: {'hashes': hash, 'deleteFiles': deleteFiles});
 
-  /// `blocklist` isn't reachable through the generic `servarrDelete` (it only
-  /// forwards query params; the server reads it from the DELETE body) — left
-  /// false here. See report: flagged as a minor ApiClient gap, not fixed
-  /// silently since `servarrDelete`'s signature is a frozen contract.
-  Future<void> removeQueueItem(ServarrArrQueueItem item) =>
-      _api.servarrDelete('${item.service}/queue/${item.id}');
+  /// Drop a stuck queue item. `blocklist:true` also blocks the release from
+  /// being grabbed again (the server reads it from the DELETE body).
+  Future<void> removeQueueItem(ServarrArrQueueItem item,
+          {bool blocklist = false}) =>
+      _api.servarrDelete('${item.service}/queue/${item.id}',
+          body: {'blocklist': blocklist});
 }
 
 final servarrQueueActionsProvider =
     Provider.autoDispose<ServarrQueueActions>((ref) => ServarrQueueActions(ref));
+
+// ── Display formatters (shared with the web `format.ts`) ────────────────────
+
+/// Raw bytes → "12.4 MB". "—" for missing/zero.
+String fmtSize(num? bytes) {
+  if (bytes == null || !bytes.isFinite || bytes <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var n = bytes.toDouble();
+  var i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return '${n < 10 && i > 0 ? n.toStringAsFixed(1) : n.round()} ${units[i]}';
+}
+
+/// Bytes-per-second → "12.4 MB/s". "0 B/s" for missing/zero.
+String fmtSpeed(num? bps) {
+  if (bps == null || !bps.isFinite || bps <= 0) return '0 B/s';
+  return '${fmtSize(bps)}/s';
+}
+
+/// Seconds → "1h 2m". "∞" for the client's unknown sentinel, "—" for 0.
+String fmtEta(num? secs) {
+  if (secs == null || !secs.isFinite || secs < 0 || secs >= 8640000) return '∞';
+  if (secs == 0) return '—';
+  final s = secs.toInt();
+  final d = s ~/ 86400;
+  final h = (s % 86400) ~/ 3600;
+  final m = (s % 3600) ~/ 60;
+  final sec = s % 60;
+  if (d > 0) return '${d}d ${h}h';
+  if (h > 0) return '${h}h ${m}m';
+  if (m > 0) return '${m}m';
+  return '${sec}s';
+}
+
+/// Runtime minutes → "1h 42m".
+String? fmtRuntimeFromMinutes(num? mins) {
+  if (mins == null || !mins.isFinite || mins <= 0) return null;
+  final m = mins.toInt();
+  final h = m ~/ 60;
+  return h > 0 ? '${h}h ${m % 60}m' : '${m}m';
+}

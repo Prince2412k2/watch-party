@@ -165,8 +165,19 @@ class MockApiClient implements ApiClient {
   Future<dynamic> servarrDelete(
     String path, {
     Map<String, dynamic>? query,
+    Object? body,
   }) async => {'ok': true};
 
   @override
-  String servarrImageUrl(String remoteUrl) => remoteUrl;
+  String servarrImageUrl(String service, String path) => path;
+
+  @override
+  Future<dynamic> manualTorrentUpload(
+    List<int> bytes, {
+    required String service,
+    required String targetId,
+    required String title,
+    int? seasonNumber,
+    int? episodeNumber,
+  }) async => {'ok': true};
 }

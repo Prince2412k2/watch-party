@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../palette.dart';
 import '../tokens.dart';
 import 'app_button.dart';
 
@@ -22,6 +23,7 @@ class ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xxl),
@@ -32,12 +34,12 @@ class ErrorState extends StatelessWidget {
             const SizedBox(height: AppSpacing.lg),
             Text(title,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.text)),
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: wp.text)),
             if (message != null) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(message!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 13.5, color: AppColors.dim, height: 1.5)),
+                  style: TextStyle(fontSize: 13.5, color: wp.dim, height: 1.5)),
             ],
             if (onRetry != null) ...[
               const SizedBox(height: AppSpacing.xl),

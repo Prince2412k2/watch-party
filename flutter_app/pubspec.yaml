@@ -46,6 +46,8 @@ dependencies:
 
   # Design-system primitives (theme bridge in lib/ui/shadcn_theme.dart).
   shadcn_flutter: ^0.0.52
+  # Watch-party invite QR (popcorn widget invite panel).
+  qr_flutter: ^4.1.0
 
   # Immutable models + JSON.
   freezed_annotation: ^2.4.4
@@ -69,3 +71,25 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/popcorn.png
+    - assets/fonts/
+
+  fonts:
+    - family: CircularXX
+      fonts:
+        - asset: assets/fonts/CircularXX-Light.ttf
+          weight: 300
+        - asset: assets/fonts/CircularXX-Book.ttf
+          weight: 400
+        - asset: assets/fonts/CircularXX-Book.ttf
+          weight: 500
+        - asset: assets/fonts/CircularXX-Book.ttf
+          weight: 600
+        - asset: assets/fonts/CircularXX-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/CircularXX-Bold.ttf
+          weight: 800
+        - asset: assets/fonts/CircularXX-Bold.ttf
+          weight: 900

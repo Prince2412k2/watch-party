@@ -1,32 +1,42 @@
 import 'package:flutter/widgets.dart';
 
-/// FROZEN CONTRACT (PLAN §3.6). Cinematic-minimal design tokens, ported from the
-/// shipped web system (`app/client/src/lib/ui.jsx` `C`, SANS/MONO). Monochrome
-/// near-black → near-white ramp, ONE semantic red for danger/live only. No
-/// gradients, no glass. E1 fleshes out the component visuals; these token values
-/// are the source of truth every widget reads.
+import 'palette.dart';
+
+/// Legacy const token surface, retained so the whole app keeps compiling while
+/// the three-theme [WpPalette] system rolls out. The values now mirror the
+/// redesigned web DARK palette (`--wp-*`, styles.css `.web-app`), so the app's
+/// default appearance already matches the redesign's dark mode. Widgets that
+/// have been theme-scoped read the LIVE palette via `context.wp`
+/// ([WpPaletteContext]); these consts are the dark fallback for everything not
+/// yet migrated.
 abstract final class AppColors {
-  static const bg = Color(0xFF0A0A0B);
-  static const surface = Color(0xFF141416);
-  static const surface2 = Color(0xFF1E1E21);
-  static const surface3 = Color(0xFF2A2A2E);
+  static const bg = Color(0xFF101113);
+  static const surface = Color(0xFF17181B);
+  static const surface2 = Color(0xFF222327);
+  static const surface3 = Color(0xFF2C2E33);
 
-  static const text = Color(0xFFF4F4F5);
-  static const dim = Color(0x9EF4F4F5); // .62
-  static const faint = Color(0x5CF4F4F5); // .36
+  static const text = Color(0xFFF2F1ED);
+  static const dim = Color(0xA3F2F1ED); // .64
+  static const faint = Color(0x61F2F1ED); // .38
 
-  static const line = Color(0x14FFFFFF); // .08
-  static const line2 = Color(0x24FFFFFF); // .14
+  static const line = Color(0x1AFFFFFF); // .1
+  static const line2 = Color(0x2BFFFFFF); // .17
 
-  /// Near-white primary control (the Play pill) — NOT a color accent.
-  static const accent = Color(0xFFF4F4F5);
+  /// The near-solid primary control fill (the Play pill) = text in the dark
+  /// palette. NOT a colour accent.
+  static const accent = Color(0xFFF2F1ED);
   static const accentDim = Color(0xFFCBCBCE);
-  static const onAccent = Color(0xFF0A0A0B);
+  static const onAccent = Color(0xFF101113);
 
-  /// Semantic status ONLY — never decorative, never a brand hue.
-  static const green = Color(0xFF5AB98A); // success tick, sparingly
-  static const red = Color(0xFFE0655E); // danger
-  static const live = Color(0xFFE0655E); // active-download / recording dot
+  /// Brand red — identity accent (wordmark, nav underline, rating stars, notif
+  /// dot). Distinct from the semantic [red]; never marks danger.
+  static const brandRed = kBrandRed;
+
+  /// Semantic status ONLY.
+  static const green = kSuccessGreen; // success tick, sparingly
+  static const red = kSemanticRed; // danger
+  static const live = kSemanticRed; // active-download / recording dot
+  static const partyLive = kPartyLive; // party-live indicator dot
 }
 
 abstract final class AppSpacing {
@@ -37,24 +47,27 @@ abstract final class AppSpacing {
   static const double xl = 24;
   static const double xxl = 32;
 
+  /// Web radii: `--r` 12 base, `--r-lg` 16, cards/dialogs 22, nav pills ~9,
+  /// poster art 12, play pill fully rounded. [radiusSm] stays 8 for the small
+  /// chrome affordances that predate the redesign.
   static const double radiusSm = 8;
-  static const double radius = 10;
+  static const double radius = 12;
   static const double radiusLg = 16;
+  static const double radiusCard = 22;
   static const double radiusPill = 999;
 }
 
 abstract final class AppFonts {
-  /// Matches the web `SANS` stack (falls back to system UI when unbundled).
-  static const sans = 'Hanken Grotesk';
+  /// The primary UI family (bundled `assets/fonts/CircularXX-*.ttf`).
+  static const sans = 'CircularXX';
 
-  /// Matches the web `MONO` stack.
+  /// Compact technical metadata (runtime, resolution, room codes, episodes).
   static const mono = 'JetBrains Mono';
 }
 
 /// Motion system (PLAN PKG-0 §Motion). Durations/curves the redesign reads for
-/// route transitions, list stagger, hover, and micro-interactions. ADDITIVE —
-/// no existing token values change. Kept short and calm to match the cinematic,
-/// content-first identity (no bouncy overshoot except the floating-tile snap).
+/// route transitions, list stagger, hover, and micro-interactions. Kept short
+/// and calm to match the cinematic, content-first identity.
 abstract final class AppMotion {
   /// Fade-through page transition (route push).
   static const Duration page = Duration(milliseconds: 180);
@@ -65,8 +78,8 @@ abstract final class AppMotion {
   /// Per-index delay between staggered items.
   static const Duration stagger = Duration(milliseconds: 40);
 
-  /// Hover / active-state cross-fades (poster scale, nav highlight).
-  static const Duration hover = Duration(milliseconds: 140);
+  /// Hover / active-state cross-fades (poster shadow, nav highlight).
+  static const Duration hover = Duration(milliseconds: 180);
 
   /// Floating camera-tile drag-end snap + collapse.
   static const Duration snap = Duration(milliseconds: 260);
@@ -78,19 +91,21 @@ abstract final class AppMotion {
   static const Curve spring = Curves.easeOutBack;
 }
 
-/// Blur radii for acrylic overlay surfaces (menus/dialogs/toasts/scrim). The
-/// RGBA-transparent, Skia-rendered window makes blur viable; keep radii modest.
+/// Blur radii for the two surfaces the redesign still blurs: the balanced
+/// ambient wash and the dialog scrim. (glass.tsx removed all other blur.)
 abstract final class AppBlur {
   static const double overlay = 16;
   static const double scrim = 8;
 }
 
-/// Elevation shadow presets for floating surfaces (poster hover, PiP tiles).
+/// Elevation shadow presets. Prefer the theme-scoped [WpPalette] shadow helpers
+/// (`context.wp.elevation*`); these dark-keyed consts remain for the surfaces
+/// not yet migrated off the const token surface.
 abstract final class AppElevation {
   static const List<BoxShadow> low = [
-    BoxShadow(color: Color(0x40000000), blurRadius: 8, offset: Offset(0, 2)),
+    BoxShadow(color: Color(0x5C000000), blurRadius: 12, offset: Offset(0, 2)),
   ];
   static const List<BoxShadow> high = [
-    BoxShadow(color: Color(0x66000000), blurRadius: 20, offset: Offset(0, 8)),
+    BoxShadow(color: Color(0x5C000000), blurRadius: 30, offset: Offset(0, 8)),
   ];
 }

@@ -39,6 +39,11 @@ class PlayerView extends StatefulWidget {
     this.mediaSourceId,
     this.apiClient,
     this.cachedSpans,
+    this.visible,
+    this.onWake,
+    this.onToggleChat,
+    this.onPushToTalkStart,
+    this.onPushToTalkStop,
   })  : _controller = controller,
         _itemId = null,
         _apiClient = null,
@@ -72,7 +77,12 @@ class PlayerView extends StatefulWidget {
         itemId = itemId,
         mediaSourceId = null,
         apiClient = apiClient,
-        onSeek = null;
+        onSeek = null,
+        visible = null,
+        onWake = null,
+        onToggleChat = null,
+        onPushToTalkStart = null,
+        onPushToTalkStop = null;
 
   /// Ready-made controller supplied by the caller (party/detail inject one).
   /// Null when using [PlayerView.item].
@@ -110,6 +120,15 @@ class PlayerView extends StatefulWidget {
   /// to [PlayerChrome]'s seek-bar overlay. Null for the offline-local-file
   /// path (nothing to indicate) or when the caller has no cache proxy.
   final ValueListenable<List<CachedSpan>>? cachedSpans;
+
+  /// Party path only: parent-owned chrome visibility + wake, and the party
+  /// key bindings (`c` chat, hold-`T` push-to-talk) — forwarded to
+  /// [PlayerChrome]. Null for solo playback (chrome self-manages, keys no-op).
+  final bool? visible;
+  final VoidCallback? onWake;
+  final VoidCallback? onToggleChat;
+  final VoidCallback? onPushToTalkStart;
+  final VoidCallback? onPushToTalkStop;
 
   @override
   State<PlayerView> createState() => _PlayerViewState();
@@ -219,6 +238,11 @@ class _PlayerViewState extends State<PlayerView> {
             mediaSourceId: widget.mediaSourceId,
             apiClient: widget.apiClient ?? widget._apiClient,
             cachedSpans: widget.cachedSpans,
+            visible: widget.visible,
+            onWake: widget.onWake,
+            onToggleChat: widget.onToggleChat,
+            onPushToTalkStart: widget.onPushToTalkStart,
+            onPushToTalkStop: widget.onPushToTalkStop,
           ),
         ],
       ),
