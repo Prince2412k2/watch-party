@@ -146,6 +146,8 @@ export const radarr = {
   // release Radarr just cached from releaseSearch above.
   grabRelease: ({ guid, indexerId }, timeoutMs = GRAB_TIMEOUT_MS) =>
     arrFetch('radarr', '/api/v3/release', { method: 'POST', body: { guid, indexerId }, timeoutMs }),
+  pushRelease: (release, timeoutMs = GRAB_TIMEOUT_MS) =>
+    arrFetch('radarr', '/api/v3/release/push', { method: 'POST', body: release, timeoutMs }),
   // Remove a movie from Radarr. In the grab-or-remove flow this is only ever
   // called after a search SUCCEEDED but found nothing usable: deleteFiles=false
   // (nothing was downloaded) and addImportExclusion=false (so the user can
@@ -216,6 +218,9 @@ export const sonarr = {
   // the background, so this returns quickly with the started command record — a
   // normal API timeout is plenty (unlike Radarr's blocking interactive search).
   command: (body) => arrFetch('sonarr', '/api/v3/command', { method: 'POST', body }),
+  episodes: (seriesId) => arrFetch('sonarr', '/api/v3/episode', { query: { seriesId } }),
+  pushRelease: (release, timeoutMs = GRAB_TIMEOUT_MS) =>
+    arrFetch('sonarr', '/api/v3/release/push', { method: 'POST', body: release, timeoutMs }),
   // includeSeries/includeEpisode embed the matched `series` (title/images) and
   // `episode` (season/episode) so the download list can show a clean title +
   // "Season 1"/"S1E3" label + poster without a per-record lookup.

@@ -108,6 +108,7 @@ services:
       # container recreate. See app/server/index.js's sessionStoreDir.
       - ./data/sessions:/data/sessions
       - ./data/subtitles:/data/subtitles
+      - ./data:/app/data
       # Desktop build artifacts served by GET /api/downloads (see
       # app/server/desktop-builds.js). Mounted read-only at the same path the
       # route defaults to (DESKTOP_BUILDS_DIR), so no env override is needed;
