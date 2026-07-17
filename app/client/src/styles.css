@@ -1,4 +1,26 @@
-@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@font-face {
+  font-family: 'Circular XX';
+  src: url('/fonts/CircularXXWeb-Light.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Circular XX';
+  src: url('/fonts/CircularXXWeb-Book.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Circular XX';
+  src: url('/fonts/CircularXXWeb-Bold.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 700 900;
+  font-display: swap;
+}
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -32,6 +54,7 @@
   --scrim: rgba(0,0,0,.6);
   --r: 12px;
   --r-lg: 16px;
+  --font-sans: 'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
   /* Aliases — a couple of components reach for the more literal name
      (var(--danger)/var(--primary)/var(--surface)/var(--dim)) instead of the
@@ -51,14 +74,15 @@ html, body, #root {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Hanken Grotesk', -apple-system, system-ui, sans-serif;
+  font-family: var(--font-sans);
+  font-weight: 400;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
 }
 
-h1, h2, h3 { text-wrap: balance; letter-spacing: -0.02em; }
-p { text-wrap: pretty; }
+h1, h2, h3 { font-weight: 300; line-height: 1.1; letter-spacing: -.04em; text-wrap: balance; }
+p { line-height: 1.75; text-wrap: pretty; }
 
 input, button, textarea { font-family: inherit; }
 
@@ -168,6 +192,441 @@ media-player, media-player:focus, media-player:focus-visible,
 }
 .speak-bars span:nth-child(2) { animation-delay: .2s; }
 .speak-bars span:nth-child(3) { animation-delay: .4s; }
+
+/* ── Desktop library shell ─────────────────────────────────────────────── */
+.web-app {
+  --wp-bg: #101113;
+  --wp-surface: #17181b;
+  --wp-surface-2: #222327;
+  --wp-surface-3: #2c2e33;
+  --wp-text: #f2f1ed;
+  --wp-dim: rgba(242,241,237,.64);
+  --wp-faint: rgba(242,241,237,.38);
+  --wp-line: rgba(255,255,255,.1);
+  --wp-line-2: rgba(255,255,255,.17);
+  --wp-stage: rgba(15,16,18,.82);
+  --wp-nav: rgba(24,25,28,.9);
+  --wp-shadow: rgba(0,0,0,.36);
+  --bg: var(--wp-bg);
+  --text: var(--wp-text);
+  --text2: var(--wp-dim);
+  --text3: var(--wp-faint);
+  --glass: var(--wp-surface);
+  --glass2: var(--wp-surface-2);
+  --stroke: var(--wp-line);
+  --stroke2: var(--wp-line-2);
+  --accent: var(--wp-text);
+  --on-accent: var(--wp-bg);
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: var(--wp-text);
+  background: var(--wp-bg);
+  isolation: isolate;
+}
+.web-app[data-theme="light"] {
+  --wp-bg: #ffffff;
+  --wp-surface: #ebeae5;
+  --wp-surface-2: #dfded8;
+  --wp-surface-3: #d3d2cb;
+  --wp-text: #171719;
+  --wp-dim: rgba(23,23,25,.64);
+  --wp-faint: rgba(23,23,25,.4);
+  --wp-line: rgba(20,20,22,.1);
+  --wp-line-2: rgba(20,20,22,.18);
+  --wp-stage: rgba(255,255,255,.84);
+  --wp-nav: rgba(255,255,255,.9);
+  --wp-shadow: rgba(27,25,20,.18);
+  background: #ffffff;
+}
+.web-app[data-theme="balanced"] {
+  --wp-stage: rgba(15,16,18,.76);
+  background: #15161a;
+}
+.web-ambient {
+  position: absolute;
+  inset: -8%;
+  z-index: -2;
+  background-image:
+    linear-gradient(130deg, rgba(8,9,11,.12), rgba(8,9,11,.58)),
+    var(--balanced-poster, radial-gradient(circle at 30% 30%, #47505a, #17181b 64%));
+  background-position: center;
+  background-size: cover;
+  filter: blur(72px) saturate(.9);
+  transform: scale(1.12);
+  opacity: 0;
+  transition-property: opacity, background-image;
+  transition-duration: .35s;
+}
+.web-app[data-theme="balanced"] .web-ambient { opacity: 1; }
+.web-app[data-theme="dark"] .web-ambient { opacity: .42; }
+.web-app[data-theme="light"] .web-ambient { opacity: .3; filter: blur(88px) saturate(.72) brightness(1.24); }
+.web-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--wp-stage);
+}
+.web-brand {
+  position: absolute;
+  z-index: 31;
+  top: 21px;
+  left: 29px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  color: #d81f2a;
+  background: transparent;
+  cursor: pointer;
+  letter-spacing: -.035em;
+}
+.web-brand strong { font-size: 22px; font-weight: 850; }
+.web-theme-switch {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--wp-surface);
+  box-shadow: inset 0 0 0 1px var(--wp-line);
+}
+.web-theme-switch button,
+.web-avatar,
+.party-icon-button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  color: var(--wp-dim);
+  background: transparent;
+  cursor: pointer;
+  transition-property: color, background-color, transform;
+  transition-duration: .18s;
+}
+.web-theme-switch button:hover,
+.web-theme-switch button.is-active { color: var(--wp-text); background: var(--wp-surface-2); }
+.web-theme-switch button:active,
+.web-avatar:active,
+.party-icon-button:active { transform: scale(.96); }
+.web-profile { position: absolute; z-index: 40; top: 20px; right: 28px; }
+.web-avatar { position: relative; width: 36px; height: 36px; border-radius: 50%; background: var(--wp-text); color: var(--wp-bg); font-size: 10px; font-weight: 800; }
+.web-avatar::after { content: ''; position: absolute; top: 1px; right: -1px; width: 6px; height: 6px; border-radius: 50%; background: #d81f2a; border: 2px solid var(--wp-stage); }
+.web-profile-menu {
+  position: absolute;
+  top: 46px;
+  right: 0;
+  width: 210px;
+  padding: 8px;
+  border-radius: 15px;
+  background: var(--wp-surface);
+  box-shadow: 0 18px 50px var(--wp-shadow), inset 0 0 0 1px var(--wp-line);
+}
+.web-profile-menu > div:first-child { display: grid; gap: 3px; padding: 9px 10px 12px; }
+.web-profile-menu span { color: var(--wp-faint); font-size: 11px; }
+.web-profile-menu strong { overflow: hidden; color: var(--wp-text); font-size: 13px; text-overflow: ellipsis; }
+.web-profile-menu > button { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border: 0; border-radius: 9px; color: var(--red); background: transparent; cursor: pointer; }
+.web-profile-menu > button:hover { background: rgba(224,101,94,.1); }
+.web-profile-menu .web-theme-switch { margin: 0 6px 6px; }
+.web-main { position: absolute; inset: 0; overflow: hidden; }
+.web-bottom-nav {
+  position: absolute;
+  z-index: 28;
+  left: 20%;
+  right: 20%;
+  bottom: 10px;
+  height: 62px;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: clamp(18px, 3.6vw, 58px);
+  background: transparent;
+}
+.web-bottom-nav button {
+  position: relative;
+  min-width: 88px;
+  height: 62px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  color: var(--wp-dim);
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition-property: color, transform;
+  transition-duration: .18s;
+}
+.web-bottom-nav button::after { content: ''; position: absolute; left: 18px; right: 18px; bottom: 0; height: 3px; border-radius: 2px 2px 0 0; background: #d81f2a; transform: scaleX(0); transition: transform .18s; }
+.web-bottom-nav button:hover { color: var(--wp-text); }
+.web-bottom-nav button.is-active { color: var(--wp-text); font-weight: 700; }
+.web-bottom-nav button.is-active::after { transform: scaleX(1); }
+.web-bottom-nav button:active { transform: scale(.96); }
+.web-party-float { position: absolute; z-index: 45; right: 22px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.web-party-button {
+  position: relative;
+  min-width: 46px;
+  width: 46px;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #f5f4f0;
+  background: #202126;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(0,0,0,.22);
+  transition-property: transform, background-color;
+  transition-duration: .2s;
+}
+.web-party-button:hover { transform: translateY(-2px); background: #2a2c31; }
+.web-party-button:active { transform: scale(.96); }
+.web-party-button.is-live::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #78c99f; }
+.web-party-button > span, .web-party-button::before { display: none; }
+.web-party-icon { width: 34px; height: 34px; display: block; object-fit: contain; }
+.web-party-button b { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; display: grid; place-items: center; padding: 0 4px; border-radius: 9px; background: var(--red); color: #fff; font-size: 9px; }
+.party-card {
+  width: min(380px, calc(100vw - 76px));
+  max-height: min(650px, calc(100dvh - 130px));
+  overflow: auto;
+  padding: 20px;
+  border-radius: 22px;
+  color: var(--wp-text);
+  background: var(--wp-surface);
+  box-shadow: 0 24px 70px var(--wp-shadow), inset 0 0 0 1px var(--wp-line);
+  animation: partyCardIn .24s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes partyCardIn { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+.party-card-empty { padding: 22px; }
+.party-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.party-card-header small { display: block; margin-bottom: 5px; color: var(--wp-faint); font-size: 9px; font-weight: 800; letter-spacing: .14em; }
+.party-card-header h2 { margin: 0; color: var(--wp-text); font-size: 20px; line-height: 1.1; }
+.party-card-empty > p { margin: 16px 0 20px; color: var(--wp-dim); font-size: 13.5px; line-height: 1.5; }
+.party-primary-action,
+.party-secondary-action,
+.party-open-player,
+.party-end {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 13px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 750;
+  transition-property: transform, opacity, background-color;
+  transition-duration: .18s;
+}
+.party-primary-action { color: var(--wp-bg); background: var(--wp-text); }
+.party-secondary-action { margin-top: 8px; color: var(--wp-text); background: var(--wp-surface-2); }
+.party-primary-action:active,
+.party-secondary-action:active,
+.party-open-player:active,
+.party-end:active { transform: scale(.96); }
+.party-primary-action:disabled { cursor: wait; opacity: .6; }
+.party-invite { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 17px; margin: 20px 0; }
+.party-invite img { border-radius: 12px; outline: 1px solid var(--wp-line); }
+.party-qr-placeholder { width: 112px; height: 112px; border-radius: 12px; background: var(--wp-surface-2); }
+.party-invite > div > span { display: block; color: var(--wp-faint); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.party-invite > div > strong { display: block; margin-top: 5px; font-family: 'JetBrains Mono', monospace; font-size: 15px; letter-spacing: .08em; }
+.party-invite > div > button { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; padding: 0 11px; border: 1px solid var(--wp-line); border-radius: 10px; color: var(--wp-text); background: transparent; cursor: pointer; }
+.party-people,
+.party-waiting { padding: 10px 0; border-top: 1px solid var(--wp-line); }
+.party-waiting > strong { display: block; margin: 4px 0 7px; color: var(--wp-faint); font-size: 11px; }
+.party-person { min-height: 44px; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.party-person-avatar { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; color: var(--wp-text); background: var(--wp-surface-3); font-size: 10px; font-weight: 800; }
+.party-person > span:nth-child(2) { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party-person small { color: var(--wp-faint); font-size: 10px; }
+.party-person-action,
+.party-person-actions button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; color: var(--wp-dim); background: transparent; cursor: pointer; }
+.party-person-actions { display: flex; gap: 3px; }
+.party-person-actions button:last-child { color: var(--wp-bg); background: var(--wp-text); }
+.party-open-player { margin-top: 10px; color: var(--wp-bg); background: var(--wp-text); }
+.party-end { margin-top: 8px; color: var(--red); background: rgba(224,101,94,.1); }
+.web-dialog-scrim { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgba(5,5,6,.66); backdrop-filter: blur(8px); }
+.web-dialog { width: min(390px, 100%); padding: 22px; border-radius: 22px; color: var(--wp-text); background: var(--wp-surface); box-shadow: 0 24px 70px rgba(0,0,0,.4), inset 0 0 0 1px var(--wp-line); }
+.web-dialog label { display: block; margin: 20px 0 7px; color: var(--wp-dim); font-size: 12px; font-weight: 650; }
+.web-dialog input { width: 100%; height: 52px; padding: 0 14px; border: 1px solid var(--wp-line-2); border-radius: 12px; color: var(--wp-text); background: var(--wp-surface-2); font-family: 'JetBrains Mono', monospace; font-size: 18px; letter-spacing: .14em; text-align: center; text-transform: uppercase; }
+.web-dialog .party-primary-action { margin-top: 15px; }
+.web-dialog-error { margin-top: 9px; color: var(--red); font-size: 12px; }
+.web-toast { position: fixed; z-index: 110; top: 28px; left: 50%; transform: translateX(-50%); padding: 10px 14px; border-radius: 11px; color: #fff; background: #4b2224; box-shadow: 0 12px 30px rgba(0,0,0,.3); font-size: 12px; }
+
+.library-catalog {
+  height: 100%;
+  display: block;
+  padding: 64px 0 24px clamp(40px, 5vw, 72px);
+  overflow: hidden;
+}
+.library-genres {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 64px 0;
+  scrollbar-width: none;
+}
+.library-genres::-webkit-scrollbar { display: none; }
+.library-genres h2 { margin: 0 0 20px; font-size: 16px; font-weight: 800; }
+.library-genres button {
+  width: 100%;
+  min-height: 30px;
+  display: block;
+  padding: 0;
+  border: 0;
+  color: var(--wp-text);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 450;
+  text-align: left;
+  transition-property: opacity, transform;
+  transition-duration: .16s;
+}
+.library-genres button:hover { opacity: .58; }
+.library-genres button.is-active { color: var(--wp-text); font-weight: 700; }
+.library-genres button:active { transform: translateX(2px); }
+.library-results { min-width: 0; min-height: 0; overflow: hidden auto; padding: 0 0 80px; }
+.library-crumbs { display: none; }
+.library-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin: 0 0 18px; }
+.library-title-row h1,
+.library-title-row h2 { margin: 0; color: var(--wp-text); font-size: clamp(38px, 3.2vw, 44px); font-weight: 300; line-height: 1.1; letter-spacing: -.04em; }
+.library-media-row { margin-bottom: 50px; }
+.library-title-row p,
+.library-title-row > span { display: none; }
+.library-poster-rail { position: relative; }
+.library-row-controls { position: absolute; z-index: 3; top: -47px; right: 24px; display: flex; gap: 7px; }
+.library-row-controls button { width: 31px; height: 31px; display: grid; place-items: center; padding: 0 0 2px; border: 0; border-radius: 50%; color: var(--wp-dim); background: transparent; cursor: pointer; font-size: 25px; line-height: 1; transition: color .16s, background-color .16s, transform .16s; }
+.library-row-controls button:hover { color: var(--wp-text); background: var(--wp-surface); }
+.library-row-controls button:active { transform: scale(.92); }
+.library-poster-wall { display: flex !important; grid-template-columns: none !important; gap: 16px !important; overflow-x: auto; padding: 20px 40px 38px 18px; margin: -20px 0 -26px -18px; scroll-snap-type: x proximity; scrollbar-width: none; }
+.library-poster-wall::-webkit-scrollbar { display: none; }
+.library-poster-wall > * { width: clamp(150px, 14vw, 205px) !important; min-width: clamp(150px, 14vw, 205px); flex: 0 0 clamp(150px, 14vw, 205px); scroll-snap-align: start; }
+.library-poster-wall > :first-child { position: relative; z-index: 2; transform: scale(1.035); transform-origin: left bottom; }
+.library-poster-card { width: 100%; padding: 0; border: 0; color: var(--wp-text); background: transparent; cursor: pointer; text-align: left; }
+.library-poster-art { position: relative; aspect-ratio: 3 / 5; overflow: hidden; border-radius: 12px; background: var(--wp-surface); box-shadow: 0 8px 20px var(--wp-shadow); transition: transform .2s, box-shadow .2s; }
+.library-poster-card:hover .library-poster-art { box-shadow: 0 16px 28px var(--wp-shadow); }
+.library-poster-meta { min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 4px; padding: 9px 6px 0; color: var(--wp-dim); font-size: 10px; text-align: center; }
+.library-poster-title { width: 100%; overflow: hidden; color: var(--wp-text); font-size: 14px; font-weight: 400; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.library-poster-stars { display: inline-flex; gap: 1px; color: #d81f2a; font-size: 11px; letter-spacing: -.04em; }
+.library-poster-stars .is-empty { color: color-mix(in srgb, var(--wp-text) 18%, transparent); }
+.library-poster-skeleton { width: clamp(150px, 14vw, 205px); min-width: clamp(150px, 14vw, 205px); aspect-ratio: 3 / 5; border-radius: 12px; background: var(--wp-surface); animation: shim 1.3s linear infinite; background-image: linear-gradient(100deg, var(--wp-surface) 30%, var(--wp-surface-2) 50%, var(--wp-surface) 70%); background-size: 200% 100%; }
+.library-empty { min-height: 260px; display: grid; place-content: center; gap: 6px; color: var(--wp-dim); text-align: center; }
+.library-empty strong { color: var(--wp-text); font-size: 18px; }
+.library-empty span { font-size: 13px; }
+
+/* Cinematic title views */
+.library-detail { position: relative; width: 100%; height: 100%; overflow: hidden; color: var(--wp-text); background: var(--wp-bg); }
+.library-detail-stage { position: relative; width: 100%; height: 100%; min-height: 620px; overflow: hidden; }
+.library-detail-backdrop { position: absolute; inset: 0; }
+.library-detail-backdrop img { display: block; filter: saturate(.82) contrast(.94); transform: scale(1.015); }
+.library-detail-wash { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(10,10,11,.92) 0%, rgba(10,10,11,.72) 38%, rgba(10,10,11,.12) 70%, rgba(10,10,11,.42) 100%), linear-gradient(0deg, rgba(10,10,11,.9) 0%, transparent 46%); }
+.web-app[data-theme="balanced"] .library-detail-wash { background: linear-gradient(90deg, rgba(17,17,18,.88) 0%, rgba(17,17,18,.62) 40%, rgba(17,17,18,.08) 72%, rgba(17,17,18,.3) 100%), linear-gradient(0deg, rgba(17,17,18,.86) 0%, transparent 50%); }
+.web-app[data-theme="light"] .library-detail-backdrop img { filter: saturate(.62) contrast(.82) brightness(1.08); }
+.web-app[data-theme="light"] .library-detail-wash { background: linear-gradient(90deg, rgba(250,249,246,.95) 0%, rgba(250,249,246,.81) 43%, rgba(250,249,246,.2) 72%, rgba(250,249,246,.58) 100%), linear-gradient(0deg, rgba(250,249,246,.9) 0%, transparent 48%); }
+.library-detail-back { position: absolute; z-index: 5; top: 25px; left: clamp(24px, 3.2vw, 50px); width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 1px solid var(--wp-line-2); border-radius: 50%; color: var(--wp-text); background: color-mix(in srgb, var(--wp-surface) 72%, transparent); cursor: pointer; backdrop-filter: blur(12px); }
+.library-detail-content { position: relative; z-index: 2; width: 100%; height: 100%; display: grid; grid-template-columns: minmax(340px, .92fr) minmax(280px, 1.08fr); align-items: center; gap: clamp(48px, 8vw, 140px); padding: 80px clamp(38px, 5vw, 78px) 165px; }
+.library-detail-copy { max-width: 650px; min-width: 0; }
+.library-detail-genres { margin-bottom: 14px; color: var(--wp-dim); font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 650; letter-spacing: .13em; text-transform: uppercase; }
+.library-detail-copy h1 { max-width: 680px; margin: 0; color: var(--wp-text); font-size: clamp(40px, 4.4vw, 56px); font-weight: 300; line-height: 1.1; letter-spacing: -.04em; text-wrap: balance; }
+.library-detail-copy > p { max-width: 590px; margin: 20px 0 0; color: var(--wp-dim); font-size: clamp(16px, 1.2vw, 18px); font-weight: 400; line-height: 1.75; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.library-detail-episode-label { margin-top: 13px; color: var(--wp-dim); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+.library-detail-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 14px; margin-top: 18px; color: var(--wp-dim); font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; }
+.library-detail-meta span + span { position: relative; }
+.library-detail-meta span + span::before { content: ''; position: absolute; top: 50%; left: -8px; width: 2px; height: 2px; border-radius: 50%; background: currentColor; }
+.library-detail-actions { position: relative; display: flex; align-items: center; gap: 10px; margin-top: 23px; }
+.library-detail-play { min-width: 142px; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 20px; border: 0; border-radius: 23px; color: var(--wp-bg); background: var(--wp-text); cursor: pointer; font-size: 12px; font-weight: 700; }
+.library-detail-track { width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 1px solid var(--wp-line-2); border-radius: 50%; color: var(--wp-text); background: color-mix(in srgb, var(--wp-surface) 60%, transparent); cursor: pointer; backdrop-filter: blur(12px); }
+.library-detail-track.is-open { color: var(--wp-bg); background: var(--wp-text); }
+.library-detail-poster { justify-self: end; width: clamp(180px, 19vw, 280px); aspect-ratio: 2 / 3; overflow: hidden; margin-right: clamp(20px, 5vw, 86px); background: var(--wp-surface); box-shadow: 0 24px 70px rgba(0,0,0,.34); outline: 1px solid var(--wp-line-2); }
+.library-seasons { justify-self: end; width: min(230px, 100%); display: grid; gap: 4px; margin-right: clamp(10px, 4vw, 66px); }
+.library-seasons button { min-height: 40px; display: flex; align-items: center; justify-content: flex-end; gap: 13px; padding: 0; border: 0; color: var(--wp-faint); background: transparent; cursor: pointer; font-size: 15px; font-weight: 650; text-align: right; }
+.library-seasons button i { width: 22px; height: 1px; background: currentColor; transition: width .18s; }
+.library-seasons button.is-active { color: var(--wp-text); font-size: 18px; }
+.library-seasons button.is-active i { width: 34px; }
+.library-detail-cast { position: absolute; left: clamp(38px, 5vw, 78px); right: 40px; bottom: 82px; display: flex; gap: clamp(24px, 3.5vw, 54px); overflow: hidden; }
+.library-detail-cast > div { flex: 0 0 120px !important; display: grid; grid-template-columns: 44px 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; }
+.library-detail-cast > div > div:first-child { grid-row: 1 / 3; width: 44px; height: 44px !important; border-radius: 50%; outline-color: var(--wp-line-2) !important; }
+.library-detail-cast > div > div:nth-child(2),
+.library-detail-cast > div > div:nth-child(3) { margin-top: 0 !important; color: var(--wp-text) !important; font-size: 10px !important; }
+.library-detail-cast > div > div:nth-child(3) { color: var(--wp-faint) !important; }
+.library-episodes-dock { position: absolute; z-index: 3; left: clamp(38px, 5vw, 78px); right: clamp(38px, 5vw, 78px); bottom: 66px; height: 205px; overflow: hidden; }
+.library-episodes-dock section { margin-top: 0 !important; }
+.library-episodes-dock section > div:first-child { margin-bottom: 10px !important; color: var(--wp-text); }
+.library-episodes-dock section h2 { font-size: 14px !important; font-weight: 650 !important; }
+.library-episodes-dock section > div:nth-child(2) { gap: 12px !important; }
+.library-episodes-dock button { width: 210px !important; flex-basis: 210px !important; color: var(--wp-text) !important; }
+.library-episodes-dock button > div:first-child { border-radius: 3px !important; border-color: var(--wp-text) !important; box-shadow: 0 12px 28px rgba(0,0,0,.28) !important; }
+.library-episodes-dock button > p { display: none !important; }
+.library-episodes-dock button strong { font-size: 11px !important; font-weight: 600 !important; }
+.library-episodes-loading { height: 150px; margin-top: 28px; background: var(--wp-surface); }
+.library-detail.is-series .library-detail-content { align-items: start; padding-top: clamp(105px, 15vh, 160px); padding-bottom: 285px; }
+
+.discover-rows { height: 100%; overflow: hidden auto; padding: 64px 0 100px clamp(40px, 5vw, 72px); }
+.discover-rows > section { margin-bottom: 44px !important; }
+.discover-rows h2 { font-size: clamp(38px, 3.2vw, 44px) !important; font-weight: 300 !important; letter-spacing: -.04em !important; }
+.discover-row-empty { padding: 4px 0 32px; }
+.discover-row-empty h2 { margin: 0 0 8px; color: var(--wp-text); }
+.discover-row-empty p { margin: 0; color: var(--wp-faint); font-size: 14px; }
+.library-mobile-genres { display: none; gap: 7px; margin: 0 0 18px; overflow-x: auto; scrollbar-width: none; }
+.library-mobile-genres button { min-height: 36px; flex: 0 0 auto; padding: 0 14px; border: 1px solid var(--wp-line); border-radius: 18px; color: var(--wp-dim); background: var(--wp-surface); }
+.library-mobile-genres button.is-active { color: var(--wp-bg); background: var(--wp-text); }
+
+@media (max-width: 900px) {
+  .web-brand { top: 15px; left: 16px; }
+  .web-brand strong { font-size: 17px; }
+  .web-profile { top: 13px; right: 16px; bottom: auto; left: auto; }
+  .web-profile-menu { top: 44px; right: 0; bottom: auto; left: auto; }
+  .web-main { bottom: 0; }
+  .web-bottom-nav { left: 0; right: 62px; bottom: 0; gap: 0; }
+  .web-bottom-nav button { min-width: 0; flex: 1; padding: 0 8px; }
+  .web-bottom-nav button span { display: none; }
+  .web-party-float { right: 10px; bottom: 10px; }
+  .web-party-button { min-width: 44px; width: 44px; height: 42px; padding: 0; }
+  .web-party-button > span, .web-party-button::before { display: none; }
+  .library-catalog { display: block; padding: 72px 16px 24px; overflow: auto; }
+  .discover-rows { padding: 76px 16px 90px; }
+  .library-genres { display: none; }
+  .library-results { overflow: visible; padding-bottom: 76px; }
+  .library-mobile-genres { display: flex; }
+  .library-title-row { align-items: flex-start; margin: 0 0 18px; }
+  .library-title-row h1,
+  .library-title-row h2 { font-size: 34px; }
+  .library-poster-wall { gap: 16px !important; }
+  .library-poster-wall > * { width: 158px !important; min-width: 158px; flex-basis: 158px; }
+  .library-detail { overflow: hidden auto; }
+  .library-detail-stage { min-height: 100dvh; height: auto; }
+  .library-detail-content,
+  .library-detail.is-series .library-detail-content { min-height: 100dvh; height: auto; display: block; padding: 112px 20px 160px; }
+  .library-detail-copy { max-width: 100%; }
+  .library-detail-copy h1 { max-width: 92%; font-size: clamp(40px, 12vw, 52px); }
+  .library-detail-copy > p { max-width: 92%; font-size: 16px; -webkit-line-clamp: 3; }
+  .library-detail-poster { position: absolute; z-index: -1; inset: 0; width: 100%; height: 100%; margin: 0; opacity: .14; outline: 0; }
+  .library-seasons { width: 100%; display: flex; justify-content: flex-start; gap: 18px; margin: 30px 0 0; overflow-x: auto; }
+  .library-seasons button { justify-content: flex-start; min-width: max-content; }
+  .library-seasons button i { display: none; }
+  .library-detail-cast { left: 20px; right: 20px; bottom: 82px; gap: 20px; }
+  .library-detail-cast > div { flex-basis: 112px !important; }
+  .library-episodes-dock { position: relative; left: auto; right: auto; bottom: auto; height: auto; margin: -245px 20px 84px; }
+  .library-detail.is-series .library-detail-stage { padding-bottom: 250px; }
+  .library-episodes-dock button { width: 230px !important; flex-basis: 230px !important; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .web-bottom-nav { backdrop-filter: none; }
+  .web-app[data-theme="balanced"] { --wp-stage: #15161a; }
+  .web-ambient { display: none; }
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    MOBILE PRESENTATION LAYER  (additive — desktop is byte-identical)

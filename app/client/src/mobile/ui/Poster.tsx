@@ -69,7 +69,7 @@ export function Poster({ id, type = 'Primary', fallback, title = '', w, ratio = 
       ) : (
         <div style={{
           width: '100%', height: '100%', display: 'grid', placeItems: 'center',
-          color: T.faint, fontFamily: "'Hanken Grotesk', sans-serif", fontWeight: 800, fontSize: 26,
+          color: T.faint, fontFamily: "'Circular XX', sans-serif", fontWeight: 700, fontSize: 26,
           background: T.surface,
         }}>
           {(title || '?').trim().charAt(0).toUpperCase()}

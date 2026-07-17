@@ -40,6 +40,12 @@ export interface BrowseEntry {
 
 export interface PartyBrowse {
   stack?: BrowseEntry[]
+  tab?: 'movies' | 'series' | 'discover' | 'downloads'
+  screen?: 'grid' | 'detail'
+  mediaId?: string | null
+  seasonId?: string | null
+  episodeId?: string | null
+  revision?: number
 }
 
 export interface PartySession {
@@ -52,8 +58,8 @@ export interface PartySession {
   collaborativeControl?: boolean
   syncMode?: 'hopping' | 'dragging'
   browse?: PartyBrowse
-  playback?: PartyPlayback
-  mediaItemId?: string
+  playback?: PartyPlayback | null
+  mediaItemId?: string | null
   mediaSourceId?: string | null
 }
 
@@ -84,6 +90,7 @@ export interface PartyContextValue {
   createRoom: () => Promise<string>
   joinParty: (partyId: string) => Promise<string>
   navigateBrowse: (stack: BrowseEntry[]) => void
+  shareView: (patch: Partial<PartyBrowse>) => void
   sendPointer: (point: MirrorPoint) => void
   selectMedia: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   backToLobby: () => void

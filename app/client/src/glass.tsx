@@ -11,10 +11,10 @@
 import type { CSSProperties } from 'react'
 
 const SURFACE = {
-  clear:  { bg: 'rgba(255,255,255,.04)', shadow: 'none' },
-  light:  { bg: '#141416', shadow: '0 2px 12px rgba(0,0,0,.4)' },
-  medium: { bg: '#17171a', shadow: '0 8px 30px rgba(0,0,0,.5)' },
-  heavy:  { bg: '#1b1b1e', shadow: '0 24px 60px rgba(0,0,0,.6)' },
+  clear:  { bg: 'color-mix(in srgb, var(--wp-surface, #141416) 42%, transparent)', shadow: 'none' },
+  light:  { bg: 'var(--wp-surface, #141416)', shadow: '0 2px 12px var(--wp-shadow, rgba(0,0,0,.4))' },
+  medium: { bg: 'var(--wp-surface-2, #17171a)', shadow: '0 8px 30px var(--wp-shadow, rgba(0,0,0,.5))' },
+  heavy:  { bg: 'var(--wp-surface, #1b1b1e)', shadow: '0 18px 46px var(--wp-shadow, rgba(0,0,0,.38))' },
 }
 
 /**

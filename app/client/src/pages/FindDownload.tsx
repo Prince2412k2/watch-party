@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent, ReactNode, SelectHTMLAttributes } from 'react'
-import { useAuth } from '../context/AuthContext'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useTorrents } from '../hooks/useTorrents'
-import { useFailingCount } from '../hooks/useFailingDownloads'
-import { useLibraryViews } from '../hooks/useLibraryViews'
-import { C, SANS, MONO, glassStyle, Ic, Icon, Sidebar, TopBar, Notice, Spinner } from '../lib/ui'
+import { C, SANS, MONO, glassStyle, Ic, Icon, Notice, Spinner } from '../lib/ui'
 import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, stateInfo, isPausedState } from '../lib/format'
 import { jget, jpost, jdelete } from '../lib/api'
 import { apiJson, arrayOf, isRecord } from '../types/guards'
@@ -44,7 +41,7 @@ type Metadata = { profiles: Profile[]; rootFolders: RootFolder[]; langProfiles: 
 type HealthService = { configured?: boolean; reachable?: boolean }
 type Health = { services?: { radarr?: HealthService; sonarr?: HealthService; qbittorrent?: HealthService } }
 type RequestOutcome = { outcome?: string }
-type PopularData = { source: string; items: CatalogItem[] }
+type DiscoverData = { source: string; items: CatalogItem[] }
 type Release = {
   guid: string; title?: string; indexer?: string; size?: number; age?: number; ageHours?: number
   seeders?: number; leechers?: number; protocol?: string; quality?: string; indexerId?: number
@@ -175,30 +172,28 @@ function readBrowseParams() {
   }
 }
 
-/* Session-scoped cache of the discover ("popular") rail per service, so flipping
+/* Session-scoped cache of the dynamic discover rail per service, so flipping
  * between search and the empty state — or toggling Movies/Series and back — is
  * instant and doesn't refetch. A single in-flight promise is shared. Empty
  * results (a transient lookup outage) aren't cached, so a later visit retries. */
-const popularCache: Partial<Record<Service, Promise<PopularData>>> = {}
-function loadPopular(service: Service): Promise<PopularData> {
-  if (popularCache[service]) return popularCache[service]
-  const p = jget(`/api/servarr/${service}/popular`)
+const discoverCache: Partial<Record<Service, Promise<DiscoverData>>> = {}
+function loadDiscover(service: Service): Promise<DiscoverData> {
+  if (discoverCache[service]) return discoverCache[service]
+  const p = jget(`/api/servarr/${service}/discover?page=1`)
     .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
     .then((d: unknown) => {
       const data = d as { source?: string; items?: CatalogItem[] } | null
       const val = { source: data?.source || 'curated', items: Array.isArray(data?.items) ? data.items : [] }
-      if (!val.items.length) delete popularCache[service]   // don't pin a transient empty
+      if (!val.items.length) delete discoverCache[service]   // don't pin a transient empty
       return val
     })
-    .catch((e) => { delete popularCache[service]; throw e })
-  popularCache[service] = p
+    .catch((e) => { delete discoverCache[service]; throw e })
+  discoverCache[service] = p
   return p
 }
 
 export default function Browse() {
-  const { user, logout } = useAuth()
   const mobile = useIsMobile()
-  const sidebarW = mobile ? 62 : 236
 
   const [kind, setKind] = useState(() => readBrowseParams().kind)  // 'movie' | 'series'
   const [term, setTerm] = useState(() => readBrowseParams().term)
@@ -216,6 +211,7 @@ export default function Browse() {
   const [selected, setSelected] = useState<CatalogItem | null>(null)     // detail view item (or null)
   const [optionsItem, setOptionsItem] = useState<CatalogItem | null>(null) // "Options" dialog target
   const [pickerItem, setPickerItem] = useState<CatalogItem | null>(null)  // "Choose a release" picker target (movies)
+  const [manualItem, setManualItem] = useState<CatalogItem | null>(null)
 
   // Per-item request state so cards/detail flip without a re-search. Keyed by
   // tmdbId/tvdbId → 'searching' | 'grabbed' | 'no_release' | 'search_failed'
@@ -228,11 +224,6 @@ export default function Browse() {
 
   // Live downloads — one poller for the whole page (cards + queue reuse it).
   const dl = useTorrents(!!health?.services?.qbittorrent?.configured && !!health?.services?.qbittorrent?.reachable)
-  const failingCount = useFailingCount(
-    (!!health?.services?.radarr?.configured && !!health?.services?.radarr?.reachable)
-    || (!!health?.services?.sonarr?.configured && !!health?.services?.sonarr?.reachable)
-  )
-  const views = useLibraryViews()
 
   useEffect(() => {
     setHealthLoading(true)
@@ -298,9 +289,8 @@ export default function Browse() {
     return () => clearTimeout(t)
   }, [term, kind, svcReady, runSearch])
 
-  const initials = user?.name?.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'
-
-  const stateFor = (r: CatalogItem): AddState | null => (isAdded(r) ? 'added' : addState[keyOf(kind, r)]) || null
+  const stateForKind = (itemKind: Kind, item: CatalogItem): AddState | null => (isAdded(item) ? 'added' : addState[keyOf(itemKind, item)]) || null
+  const stateFor = (item: CatalogItem): AddState | null => stateForKind(kind, item)
 
   // One-tap request: pull cached meta, pick sensible defaults, POST to the
   // server-authoritative request endpoint. That single call does the add + live
@@ -308,9 +298,9 @@ export default function Browse() {
   // just flip the card to whatever the server decided — no client-side polling.
   // (The request can take up to ~45s while the server searches indexers live; the
   // 'searching' state shows a "finding a release…" spinner until it resolves.)
-  const oneTapAdd = useCallback((r: CatalogItem) => {
-    const key = keyOf(kind, r)
-    const svc = kind === 'movie' ? 'radarr' : 'sonarr'
+  const oneTapAdd = useCallback((r: CatalogItem, itemKind: Kind = kind) => {
+    const key = keyOf(itemKind, r)
+    const svc = itemKind === 'movie' ? 'radarr' : 'sonarr'
     setAddState((s) => ({ ...s, [key]: 'searching' }))
     loadMeta(svc)
       .then((meta) => {
@@ -318,7 +308,7 @@ export default function Browse() {
         const rootFolderPath = meta.rootFolders[0]?.path
         const languageProfileId = meta.langProfiles[0]?.id
         if (qualityProfileId == null || !rootFolderPath) throw new Error('meta')
-        const body = kind === 'movie'
+        const body = itemKind === 'movie'
           ? { movie: r, qualityProfileId, rootFolderPath }
           : { series: r, qualityProfileId, languageProfileId, rootFolderPath, monitor: true, searchNow: true }
         return jpost(`/api/servarr/${svc}/request`, body).then((res) => (res.ok ? apiJson(res) : Promise.reject(res)))
@@ -343,58 +333,43 @@ export default function Browse() {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: C.bg, color: C.text, fontFamily: SANS, overflow: 'hidden' }}>
-      <Sidebar mobile={mobile} width={sidebarW} views={views} downloadCount={dl.activeCount} failingCount={failingCount} current="browse" />
-
-      <div style={{
-        position: 'absolute', top: mobile ? 8 : 12, right: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-        left: sidebarW + (mobile ? 8 : 12), borderRadius: mobile ? 14 : 20, overflow: 'hidden auto',
-      }}>
-        <TopBar mobile={mobile} initials={initials} logout={logout} title="Browse"
-          detail={!!selected} onBack={() => setSelected(null)} />
-
+    <div style={{ width: '100%', height: '100%', minHeight: 0, background: C.bg, color: C.text, fontFamily: SANS, overflow: 'hidden auto' }}>
         {selected ? (
-          <DetailView
-            mobile={mobile} kind={kind} item={selected}
-            state={stateFor(selected)} torrents={dl.torrents}
-            onDownload={() => oneTapAdd(selected)} onOptions={() => setOptionsItem(selected)}
-            onPickRelease={() => setPickerItem(selected)}
-            onRemove={async () => {
-              const path = kind === 'movie' ? `radarr/movie/${selected.id}` : `sonarr/series/${selected.id}`
-              await jdelete(`/api/servarr/${path}?deleteFiles=true`)
-              setSelected(null)
-            }}
-          />
-        ) : (
-          <div style={{ padding: mobile ? '4px 16px 100px' : '8px 34px 100px', maxWidth: 1400, margin: '0 auto' }}>
-            <SearchBar
-              mobile={mobile} kind={kind} setKind={setKind}
-              term={term} setTerm={setTerm} loading={loading}
-              disabled={!svcReady} onSubmit={() => runSearch(term, kind)}
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setSelected(null)} aria-label="Back to discover"
+              style={{ position: 'absolute', zIndex: 4, top: 18, left: mobile ? 16 : 34, minWidth: 42, height: 42,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '0 14px',
+                borderRadius: 999, cursor: 'pointer', color: C.text, ...glassStyle, background: 'rgba(12,15,19,.72)' }}>
+              <Icon path={Ic.chevL} size={18} sw={2} />{mobile ? null : 'Back'}
+            </button>
+            <DetailView
+              mobile={mobile} kind={kind} item={selected}
+              state={stateFor(selected)} torrents={dl.torrents}
+              onDownload={() => oneTapAdd(selected)} onOptions={() => setOptionsItem(selected)}
+              onPickRelease={() => setPickerItem(selected)} onAddSource={() => setManualItem(selected)}
+              onRemove={async () => {
+                const path = kind === 'movie' ? `radarr/movie/${selected.id}` : `sonarr/series/${selected.id}`
+                await jdelete(`/api/servarr/${path}?deleteFiles=true`)
+                setSelected(null)
+              }}
             />
-
-            {/* Body: gated on health, then loading/empty/error/results */}
-            {healthLoading ? (
-              <ResultsSkeleton mobile={mobile} />
-            ) : !svcReady ? (
-              <NotAvailable kind={kind} state={svcState} />
-            ) : searchError ? (
-              <Notice icon={Ic.alert} tone="error" title={searchError} />
-            ) : loading ? (
-              <ResultsSkeleton mobile={mobile} />
-            ) : !hasSearched ? (
-              <PopularRail mobile={mobile} kind={kind} torrents={dl.torrents}
-                stateFor={stateFor} onOpen={setSelected} onDownload={oneTapAdd} onPick={setTerm} />
-            ) : results.length === 0 ? (
-              <Notice icon={Ic.search} title="No matches" body={`Nothing found for “${term.trim()}”. Try a different title.`} />
-            ) : (
-              <ResultGrid mobile={mobile} results={results} kind={kind} torrents={dl.torrents}
-                stateFor={stateFor} onOpen={setSelected} onDownload={oneTapAdd} />
+          </div>
+        ) : (
+          <div className="discover-rows">
+            {healthLoading ? <ResultsSkeleton mobile={mobile} /> : (
+              <>
+                <PopularRail mobile={mobile} kind="movie" torrents={dl.torrents}
+                  stateFor={item => stateForKind('movie', item)}
+                  onOpen={item => { setKind('movie'); setSelected(item) }}
+                  onDownload={item => oneTapAdd(item, 'movie')} />
+                <PopularRail mobile={mobile} kind="series" torrents={dl.torrents}
+                  stateFor={item => stateForKind('series', item)}
+                  onOpen={item => { setKind('series'); setSelected(item) }}
+                  onDownload={item => oneTapAdd(item, 'series')} />
+              </>
             )}
           </div>
         )}
-      </div>
-
       {optionsItem && (
         <OptionsDialog
           kind={kind} item={optionsItem}
@@ -408,7 +383,13 @@ export default function Browse() {
           item={pickerItem}
           onClose={() => setPickerItem(null)}
           onGrabbed={onReleaseGrabbed}
+          onManual={() => { setManualItem(pickerItem); setPickerItem(null) }}
         />
+      )}
+
+      {manualItem && (
+        <ManualSourceDialog kind={kind} item={manualItem} onClose={() => setManualItem(null)}
+          onSubmitted={() => setAddState((states) => ({ ...states, [keyOf(kind, manualItem)]: 'grabbed' }))} />
       )}
     </div>
   )
@@ -422,9 +403,9 @@ export default function Browse() {
  * honest heading: a real live list reads "Popular right now", the curated
  * fallback reads "Popular picks". Failure / empty degrades to a suggested-search
  * prompt rather than a dead end. */
-function PopularRail({ mobile, kind, torrents, stateFor, onOpen, onDownload, onPick }: {
+function PopularRail({ mobile, kind, torrents, stateFor, onOpen, onDownload }: {
   mobile: boolean; kind: Kind; torrents?: Torrent[] | null; stateFor: (item: CatalogItem) => AddState | null
-  onOpen: (item: CatalogItem) => void; onDownload: (item: CatalogItem) => void; onPick: (term: string) => void
+  onOpen: (item: CatalogItem) => void; onDownload: (item: CatalogItem) => void
 }) {
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
   const [state, setState] = useState<{ loading: boolean; error: boolean; items: CatalogItem[]; source: string }>({ loading: true, error: false, items: [], source: 'curated' })
@@ -432,23 +413,25 @@ function PopularRail({ mobile, kind, torrents, stateFor, onOpen, onDownload, onP
   useEffect(() => {
     let cancel = false
     setState((s) => ({ ...s, loading: true, error: false }))
-    loadPopular(service)
+    loadDiscover(service)
       .then((d) => { if (!cancel) setState({ loading: false, error: false, items: d.items, source: d.source }) })
       .catch(() => { if (!cancel) setState({ loading: false, error: true, items: [], source: 'curated' }) })
     return () => { cancel = true }
   }, [service])
 
   if (state.loading) return <ResultsSkeleton mobile={mobile} />
-  if (state.error || state.items.length === 0) return <SuggestedSearches kind={kind} onPick={onPick} />
+  if (state.error || state.items.length === 0) return (
+    <section className="discover-row-empty"><h2>{kind === 'movie' ? 'Movies' : 'Shows'}</h2><p>This row is unavailable right now.</p></section>
+  )
 
-  const label = state.source === 'importlist' ? 'Popular right now' : 'Popular picks'
+  const label = state.source === 'tmdb_trending' ? 'Trending this week' : 'Discover'
   return (
     <div style={{ animation: 'up .4s ease both' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 16 }}>
         <h2 style={{ fontSize: mobile ? 20 : 22, fontWeight: 800, letterSpacing: '-.02em', margin: 0 }}>{label}</h2>
-        <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.faint }}>{kind === 'movie' ? 'Movies' : 'Series'}</span>
+        <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.faint }}>{kind === 'movie' ? 'Movies' : 'Shows'}</span>
       </div>
-      <ResultGrid mobile={mobile} results={state.items} kind={kind} torrents={torrents}
+      <ResultGrid rail mobile={mobile} results={state.items} kind={kind} torrents={torrents}
         stateFor={stateFor} onOpen={onOpen} onDownload={onDownload} />
     </div>
   )
@@ -507,7 +490,7 @@ function SearchBar({ mobile, kind, setKind, term, setTerm, loading, disabled, on
     <div style={{ display: 'flex', gap: 12, flexDirection: mobile ? 'column' : 'row', alignItems: mobile ? 'stretch' : 'center', marginBottom: 26 }}>
       <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 999, ...glassStyle, alignSelf: mobile ? 'flex-start' : 'center' }}>
         {seg('movie', 'Movies', Ic.film)}
-        {seg('series', 'Series', Ic.tv)}
+        {seg('series', 'Shows', Ic.tv)}
       </div>
       <form onSubmit={(e) => { e.preventDefault(); onSubmit() }} style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center' }}>
         <span style={{ position: 'absolute', left: 16, display: 'grid', placeItems: 'center', color: C.faint, pointerEvents: 'none' }}>
@@ -530,16 +513,19 @@ function SearchBar({ mobile, kind, setKind, term, setTerm, loading, disabled, on
 }
 
 /* ── Result grid + card ───────────────────────────────────────────────────── */
-function ResultGrid({ mobile, results, kind, torrents, stateFor, onOpen, onDownload }: {
-  mobile: boolean; results: CatalogItem[]; kind: Kind; torrents?: Torrent[] | null
+function ResultGrid({ mobile, results, torrents, stateFor, onOpen, onDownload, rail = false }: {
+  mobile: boolean; results: CatalogItem[]; kind: Kind; torrents?: Torrent[] | null; rail?: boolean
   stateFor: (item: CatalogItem) => AddState | null; onOpen: (item: CatalogItem) => void; onDownload: (item: CatalogItem) => void
 }) {
   return (
-    <div style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 150 : 200}px, 1fr))`, animation: 'up .4s ease both' }}>
+    <div style={rail
+      ? { display: 'flex', gap: mobile ? 16 : 28, overflowX: 'auto', padding: '2px 32px 18px 0', scrollbarWidth: 'none', scrollSnapType: 'x proximity', animation: 'up .4s ease both' }
+      : { display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 150 : 200}px, 1fr))`, animation: 'up .4s ease both' }}>
       {results.map((r, i) => (
-        <ResultCard key={(r.tmdbId || r.tvdbId || r.titleSlug || i) + ''} r={r}
-          state={stateFor(r)} torrent={matchTorrent(r.title, torrents)}
-          onOpen={() => onOpen(r)} onDownload={() => onDownload(r)} />
+        <div key={(r.tmdbId || r.tvdbId || r.titleSlug || i) + ''} style={rail ? { width: mobile ? 158 : 'clamp(150px, 14vw, 205px)', minWidth: mobile ? 158 : 'clamp(150px, 14vw, 205px)', flex: '0 0 auto', scrollSnapAlign: 'start' } : undefined}>
+          <ResultCard r={r} state={stateFor(r)} torrent={matchTorrent(r.title, torrents)}
+            onOpen={() => onOpen(r)} onDownload={() => onDownload(r)} />
+        </div>
       ))}
     </div>
   )
@@ -673,9 +659,9 @@ function ResultCard({ r, state, torrent, onOpen, onDownload }: {
 }
 
 /* ── Detail view — native title page (mirrors Library's Details layout) ─────── */
-function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions, onPickRelease, onRemove }: {
+function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions, onPickRelease, onAddSource, onRemove }: {
   mobile: boolean; kind: Kind; item: CatalogItem; state: AddState | null; torrents?: Torrent[] | null
-  onDownload: () => void; onOptions: () => void; onPickRelease: () => void; onRemove?: () => Promise<void>
+  onDownload: () => void; onOptions: () => void; onPickRelease: () => void; onAddSource: () => void; onRemove?: () => Promise<void>
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [removing, setRemoving] = useState(false)
@@ -885,6 +871,17 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
             </>
             )}
 
+            {!downloading && !searching && (
+              <button onClick={onAddSource} title="Submit a magnet link or torrent file"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 12, marginLeft: kind === 'movie' ? 10 : 0,
+                  padding: '10px 16px', borderRadius: 999, cursor: 'pointer', fontFamily: SANS, fontSize: 13.5,
+                  fontWeight: 700, color: noRelease || searchFailed ? C.onAccent : C.text,
+                  background: noRelease || searchFailed ? C.accent : 'rgba(20,24,30,.5)',
+                  ...(noRelease || searchFailed ? {} : glassStyle) }}>
+                <Icon path={Ic.plus} size={16} sw={2} />Add source
+              </button>
+            )}
+
             {/* Overview */}
             {item.overview && (
               <p style={{ fontSize: 15, lineHeight: 1.6, color: 'rgba(241,243,246,.85)', maxWidth: 720, marginTop: 22,
@@ -1092,6 +1089,182 @@ function SeasonRow({ season, state, disabled, specials, onRequest }: {
   )
 }
 
+type ManualMode = 'magnet' | 'torrent'
+type ManualStatus = { tone: 'error' | 'ok'; message: string } | null
+
+function ManualSourceDialog({ kind, item, onClose, onSubmitted }: {
+  kind: Kind; item: CatalogItem; onClose: () => void; onSubmitted: () => void
+}) {
+  const mobile = useIsMobile()
+  const service: Service = kind === 'movie' ? 'radarr' : 'sonarr'
+  const [mode, setMode] = useState<ManualMode>('magnet')
+  const [title, setTitle] = useState(() => kind === 'movie'
+    ? [item.title, item.year].filter(Boolean).join('.')
+    : item.title)
+  const [magnet, setMagnet] = useState('')
+  const [torrent, setTorrent] = useState<File | null>(null)
+  const [seasonNumber, setSeasonNumber] = useState('')
+  const [episodeNumber, setEpisodeNumber] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [status, setStatus] = useState<ManualStatus>(null)
+
+  const resolveTargetId = async () => {
+    if (item.id != null && item.id > 0) return item.id
+    const meta = await loadMeta(service)
+    const qualityProfileId = meta.profiles[0]?.id
+    const rootFolderPath = meta.rootFolders[0]?.path
+    if (qualityProfileId == null || !rootFolderPath) throw new Error('Download options are unavailable.')
+
+    const body = kind === 'movie'
+      ? { movie: item, qualityProfileId, rootFolderPath, monitor: true, searchNow: false }
+      : {
+          series: item, qualityProfileId, rootFolderPath, languageProfileId: meta.langProfiles[0]?.id,
+          monitor: true, searchNow: false,
+        }
+    const response = await jpost(`/api/servarr/${service}/add`, body)
+    if (response.ok) {
+      const added = await apiJson(response)
+      if (isRecord(added) && typeof added.id === 'number') return added.id
+    }
+
+    const libraryResponse = await jget(`/api/servarr/${service}/${kind === 'movie' ? 'movies' : 'series'}`)
+    if (!libraryResponse.ok) throw new Error('Could not prepare this title in the library.')
+    const library = await apiJson(libraryResponse)
+    const existing = arrayOf(library, isCatalogItem).find((candidate) => kind === 'movie'
+      ? candidate.tmdbId === item.tmdbId
+      : candidate.tvdbId === item.tvdbId)
+    if (existing?.id == null) throw new Error('Could not prepare this title in the library.')
+    return existing.id
+  }
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (submitting || !title.trim() || (mode === 'magnet' ? !magnet.trim() : !torrent)) return
+    setSubmitting(true)
+    setStatus(null)
+    try {
+      const targetId = await resolveTargetId()
+      const coordinates = kind === 'series' ? {
+        ...(seasonNumber === '' ? {} : { seasonNumber: Number(seasonNumber) }),
+        ...(episodeNumber === '' ? {} : { episodeNumber: Number(episodeNumber) }),
+      } : {}
+      let response: Response
+      if (mode === 'magnet') {
+        response = await jpost('/api/servarr/manual/magnet', {
+          service, targetId, title: title.trim(), magnet: magnet.trim(), ...coordinates,
+        })
+      } else {
+        const query = new URLSearchParams({ service, targetId: String(targetId), title: title.trim() })
+        for (const [key, value] of Object.entries(coordinates)) query.set(key, String(value))
+        response = await fetch(`/api/servarr/manual/torrent?${query}`, {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-bittorrent' }, body: torrent,
+        })
+      }
+      if (!response.ok) {
+        const failure = await apiJson(response).catch(() => null)
+        throw new Error(isRecord(failure) && typeof failure.error === 'string' ? failure.error : 'Could not submit this source.')
+      }
+      setStatus({ tone: 'ok', message: 'Source submitted to Radarr/Sonarr for validation.' })
+      onSubmitted()
+    } catch (error) {
+      setStatus({ tone: 'error', message: error instanceof Error ? error.message : 'Could not submit this source.' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const canSubmit = !!title.trim() && (mode === 'magnet' ? !!magnet.trim() : !!torrent) && !submitting && status?.tone !== 'ok'
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 110, display: 'grid', placeItems: 'center', padding: 16,
+      background: 'rgba(6,8,11,.7)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' }}>
+      <form onSubmit={submit} onClick={(event) => event.stopPropagation()} style={{ width: 'min(560px, 100%)', maxHeight: '88vh', overflow: 'auto',
+        borderRadius: 20, padding: mobile ? 18 : 26, ...glassStyle, background: 'rgba(22,25,30,.96)', boxShadow: '0 30px 80px rgba(0,0,0,.65)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 20 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.faint, letterSpacing: '.06em' }}>MANUAL SOURCE</div>
+            <h2 style={{ margin: '5px 0 0', fontSize: 21, lineHeight: 1.2 }}>Add a source for {item.title}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ width: 40, height: 40, borderRadius: 999, border: 'none',
+            cursor: 'pointer', background: 'rgba(255,255,255,.06)', color: C.dim, display: 'grid', placeItems: 'center' }}>
+            <Icon path={Ic.x} size={18} />
+          </button>
+        </div>
+
+        <div style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 18, borderRadius: 999, ...glassStyle }}>
+          {(['magnet', 'torrent'] as const).map((value) => (
+            <button key={value} type="button" onClick={() => { setMode(value); setStatus(null) }} style={{ height: 38, padding: '0 16px',
+              border: 'none', borderRadius: 999, cursor: 'pointer', fontFamily: SANS, fontSize: 13.5, fontWeight: 700,
+              color: mode === value ? C.onAccent : C.dim, background: mode === value ? C.accent : 'transparent' }}>
+              {value === 'magnet' ? 'Magnet link' : '.torrent file'}
+            </button>
+          ))}
+        </div>
+
+        <Field label="Release title">
+          <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={500} required
+            placeholder={kind === 'movie' ? 'Movie.Title.2026.1080p.WEB-DL' : 'Series.Title.S01E01.1080p.WEB-DL'}
+            style={{ width: '100%', height: 44, padding: '0 13px', boxSizing: 'border-box', borderRadius: 12, outline: 'none',
+              color: C.text, background: C.surface2, border: `1px solid ${C.line2}`, fontFamily: MONO, fontSize: 13 }} />
+        </Field>
+
+        {kind === 'series' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Season (optional)">
+              <input type="number" min={0} step={1} value={seasonNumber} onChange={(event) => {
+                setSeasonNumber(event.target.value)
+                if (event.target.value === '') setEpisodeNumber('')
+              }} style={{ width: '100%', height: 44, padding: '0 13px', boxSizing: 'border-box', borderRadius: 12, outline: 'none',
+                color: C.text, background: C.surface2, border: `1px solid ${C.line2}`, fontFamily: MONO }} />
+            </Field>
+            <Field label="Episode (optional)">
+              <input type="number" min={1} step={1} disabled={seasonNumber === ''} value={episodeNumber}
+                onChange={(event) => setEpisodeNumber(event.target.value)} style={{ width: '100%', height: 44, padding: '0 13px',
+                  boxSizing: 'border-box', borderRadius: 12, outline: 'none', color: C.text, background: C.surface2,
+                  border: `1px solid ${C.line2}`, fontFamily: MONO, opacity: seasonNumber === '' ? 0.5 : 1 }} />
+            </Field>
+          </div>
+        )}
+
+        {mode === 'magnet' ? (
+          <Field label="Magnet URI">
+            <textarea value={magnet} onChange={(event) => setMagnet(event.target.value)} required rows={4}
+              placeholder="magnet:?xt=urn:btih:…" style={{ width: '100%', padding: 13, boxSizing: 'border-box', resize: 'vertical',
+                borderRadius: 12, outline: 'none', color: C.text, background: C.surface2, border: `1px solid ${C.line2}`,
+                fontFamily: MONO, fontSize: 12.5, lineHeight: 1.5 }} />
+          </Field>
+        ) : (
+          <Field label="Torrent file (maximum 2 MiB)">
+            <input type="file" accept=".torrent,application/x-bittorrent" required onChange={(event) => {
+              const file = event.target.files?.[0] ?? null
+              if (file && file.size > 2 * 1024 * 1024) {
+                setTorrent(null)
+                setStatus({ tone: 'error', message: 'Torrent files must be 2 MiB or smaller.' })
+                event.target.value = ''
+                return
+              }
+              setTorrent(file)
+              setStatus(null)
+            }}
+              style={{ width: '100%', color: C.dim, fontFamily: SANS, fontSize: 13.5 }} />
+          </Field>
+        )}
+
+        {status && <Notice icon={status.tone === 'ok' ? Ic.check : Ic.alert} tone={status.tone} title={status.message} compact />}
+
+        <button type="submit" disabled={!canSubmit} style={{ width: '100%', height: 48, marginTop: 18, border: 'none', borderRadius: 14,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, cursor: canSubmit ? 'pointer' : 'default',
+          fontFamily: SANS, fontSize: 15, fontWeight: 700, background: status?.tone === 'ok' ? C.surface3 : C.accent,
+          color: status?.tone === 'ok' ? C.text : C.onAccent, opacity: canSubmit || status?.tone === 'ok' ? 1 : 0.55 }}>
+          {submitting ? <><Spinner size={17} dark />Submitting…</>
+            : status?.tone === 'ok' ? <><Icon path={Ic.check} size={17} sw={2.4} />Submitted</>
+            : <><Icon path={Ic.plus} size={17} sw={2.2} />Submit source</>}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 /* ── Options dialog: change quality profile / root folder before adding ─────── */
 function OptionsDialog({ kind, item, onClose, onAdded }: {
   kind: Kind; item: CatalogItem; onClose: () => void; onAdded: (item: CatalogItem, outcome?: string) => void
@@ -1253,7 +1426,9 @@ function OptionsDialog({ kind, item, onClose, onAdded }: {
  * The cancel fires on every close path (X / backdrop / Cancel) and on unmount
  * (e.g. navigating Back mid-browse), guarded so it runs at most once and never
  * after a successful grab. */
-function ReleasePicker({ item, onClose, onGrabbed }: { item: CatalogItem; onClose: () => void; onGrabbed: (item: CatalogItem) => void }) {
+function ReleasePicker({ item, onClose, onGrabbed, onManual }: {
+  item: CatalogItem; onClose: () => void; onGrabbed: (item: CatalogItem) => void; onManual: () => void
+}) {
   const mobile = useIsMobile()
   const [meta, setMeta] = useState({ loading: true, error: '' })
   const [data, setData] = useState<ReleaseData | null>(null)        // { movieId, createdByPicker, searchFailed, releases }
@@ -1366,15 +1541,24 @@ function ReleasePicker({ item, onClose, onGrabbed }: { item: CatalogItem; onClos
         ) : meta.error ? (
           <div>
             <Notice icon={Ic.alert} tone="error" title={meta.error} compact />
-            <RetryBtn onClick={() => setNonce((n) => n + 1)} />
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <RetryBtn onClick={() => setNonce((n) => n + 1)} />
+              <AddSourceBtn onClick={onManual} />
+            </div>
           </div>
         ) : data?.searchFailed ? (
           <div>
             <Notice icon={Ic.alert} tone="warn" compact title="Couldn’t reach the sources just now. Please try again." />
-            <RetryBtn onClick={() => setNonce((n) => n + 1)} />
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <RetryBtn onClick={() => setNonce((n) => n + 1)} />
+              <AddSourceBtn onClick={onManual} />
+            </div>
           </div>
         ) : releases.length === 0 ? (
-          <Notice icon={Ic.search} tone="warn" compact title="No sources found for this title right now." />
+          <div>
+            <Notice icon={Ic.search} tone="warn" compact title="No sources found for this title right now." />
+            <AddSourceBtn onClick={onManual} />
+          </div>
         ) : (
           <>
             {grabError && <Notice icon={Ic.alert} tone="error" title={grabError} compact />}
@@ -1460,6 +1644,16 @@ function RetryBtn({ onClick }: { onClick: () => void }) {
   )
 }
 
+function AddSourceBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 14, padding: '10px 18px',
+      borderRadius: 999, border: `1px solid ${C.line2}`, cursor: 'pointer', fontFamily: SANS, fontSize: 14,
+      fontWeight: 700, background: C.surface2, color: C.text }}>
+      <Icon path={Ic.plus} size={15} sw={2.2} />Add source
+    </button>
+  )
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label style={{ display: 'block', marginBottom: 14 }}>
@@ -1512,7 +1706,7 @@ function NotAvailable({ kind, state }: { kind: Kind; state?: HealthService }) {
       </h2>
       <p style={{ color: C.dim, fontSize: 14.5, lineHeight: 1.6, maxWidth: 440, marginTop: 10 }}>
         {unreachable
-          ? `Browsing is having trouble reaching the catalog right now. ${kind === 'movie' ? 'Movie' : 'Series'} search and downloads will come back on their own.`
+          ? `Browsing is having trouble reaching the catalog right now. ${kind === 'movie' ? 'Movie' : 'Show'} search and downloads will come back on their own.`
           : `Once browsing is configured, you can search ${kind === 'movie' ? 'movies' : 'series'} and add them to your library with a single tap.`}
       </p>
     </div>

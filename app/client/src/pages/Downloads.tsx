@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { useAuth } from '../context/AuthContext'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useTorrents } from '../hooks/useTorrents'
-import { useLibraryViews } from '../hooks/useLibraryViews'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
-import { C, SANS, MONO, Ic, Icon, Sidebar, TopBar, Notice, Spinner } from '../lib/ui'
+import { C, SANS, MONO, Ic, Icon, Spinner } from '../lib/ui'
 import { fmtSize, fmtSpeed, stateInfo } from '../lib/format'
 import { jget } from '../lib/api'
 import { apiJson, arrayOf, booleanValue, isQueueJson, isRecord } from '../types/guards'
@@ -97,9 +95,7 @@ function useFailingQueue(enabled: boolean) {
 }
 
 export default function Downloads() {
-  const { user, logout } = useAuth()
   const mobile = useIsMobile()
-  const sidebarW = mobile ? 62 : 236
 
   const [health, setHealth] = useState<Health | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
@@ -119,28 +115,12 @@ export default function Downloads() {
 
   const dl = useTorrents(qbitReady)
   const failing = useFailingQueue(arrReady)
-  const views = useLibraryViews()
-
-  const initials = user?.name?.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'
-
   return (
-    <div style={{ position: 'fixed', inset: 0, background: C.bg, color: C.text, fontFamily: SANS, overflow: 'hidden' }}>
-      <Sidebar mobile={mobile} width={sidebarW} views={views} downloadCount={dl.activeCount} failingCount={(failing.items || []).length} current="downloads" />
-
+    <div style={{ position: 'absolute', inset: 0, background: C.bg, color: C.text, fontFamily: SANS, overflow: 'hidden' }}>
       <div style={{
-        position: 'absolute', top: mobile ? 8 : 12, right: mobile ? 8 : 12, bottom: mobile ? 8 : 12,
-        left: sidebarW + (mobile ? 8 : 12), borderRadius: mobile ? 14 : 20, overflow: 'hidden auto',
+        position: 'absolute', inset: 0, overflow: 'hidden auto',
       }}>
-        <TopBar mobile={mobile} initials={initials} logout={logout} title="Downloads" />
-
-        <div style={{ padding: mobile ? '4px 16px 100px' : '8px 34px 100px', maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ marginBottom: 22, animation: 'up .4s ease both' }}>
-            <h1 style={{ fontSize: mobile ? 26 : 32, fontWeight: 800, letterSpacing: '-.02em', margin: 0 }}>Downloads</h1>
-            <p style={{ color: C.dim, fontSize: 15, marginTop: 6, maxWidth: 620 }}>
-              Everything currently downloading, plus anything that got stuck along the way and needs your attention.
-            </p>
-          </div>
-
+        <div style={{ padding: mobile ? '72px 16px 100px' : '64px 42px 100px clamp(40px, 5vw, 72px)', maxWidth: 1600, margin: '0 auto' }}>
           <NeedsAttention healthLoading={healthLoading} arrReady={arrReady} failing={failing} />
           <ActiveDownloads mobile={mobile} healthLoading={healthLoading} qbitReady={qbitReady} qbit={health?.services?.qbittorrent} dl={dl} />
         </div>
@@ -156,13 +136,7 @@ export default function Downloads() {
 function NeedsAttention({ healthLoading, arrReady, failing }: {
   healthLoading: boolean; arrReady: boolean; failing: ReturnType<typeof useFailingQueue>
 }) {
-  if (healthLoading || (arrReady && failing.items === null)) {
-    return (
-      <section style={{ marginBottom: 36 }}>
-        <div style={{ padding: '30px 0', display: 'grid', placeItems: 'center' }}><Spinner size={22} /></div>
-      </section>
-    )
-  }
+  if (healthLoading || (arrReady && failing.items === null)) return null
   if (!arrReady) return null
   const items = failing.items || []
   if (items.length === 0 && !failing.loadError) return null
@@ -183,7 +157,7 @@ function NeedsAttention({ healthLoading, arrReady, failing }: {
         )}
       </div>
       {items.length === 0 ? (
-        <Notice icon={Ic.check} tone="ok" title="Nothing stuck right now" body="Failed grabs and rejected downloads will show up here with the reason why." />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.faint, fontSize: 13 }}><Icon path={Ic.check} size={15} />Queue unavailable</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {items.map((q) => (
@@ -266,7 +240,7 @@ function ActiveDownloads({ mobile, healthLoading, qbitReady, qbit, dl }: {
 
   return (
     <section style={{ animation: 'up .4s ease both' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+      {(list.length > 0 || dl.loadError) && <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', margin: 0 }}>Active</h2>
         {qbitReady && list.length > 0 && (
           <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.dim }}>
@@ -279,14 +253,16 @@ function ActiveDownloads({ mobile, healthLoading, qbitReady, qbit, dl }: {
             <Spinner size={12} />reconnecting…
           </span>
         )}
-      </div>
+      </div>}
 
       {(healthLoading || (qbitReady && dl.torrents === null)) ? (
         <div style={{ padding: '40px 0', display: 'grid', placeItems: 'center' }}><Spinner size={24} /></div>
       ) : !qbitReady ? (
         <DownloadsUnavailable configured={!!qbit?.configured} />
       ) : list.length === 0 ? (
-        <Notice icon={Ic.download} title="No active downloads" body="Titles you download show up here with live progress and controls." />
+        <div style={{ minHeight: '55vh', display: 'grid', placeItems: 'center', color: C.faint }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, fontSize: 13 }}><Icon path={Ic.download} size={18} />No downloads</span>
+        </div>
       ) : (
         <div style={{ display: 'grid', gap: mobile ? 12 : 18,
           gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 138 : 160}px, 1fr))` }}>
@@ -433,20 +409,10 @@ function DeleteDialog({ t, onClose, onConfirm }: { t: Torrent; onClose: () => vo
 
 function DownloadsUnavailable({ configured }: { configured: boolean }) {
   return (
-    <div style={{ marginTop: 8, padding: '40px 26px', borderRadius: 16, ...FLAT,
-      display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animation: 'up .4s ease both' }}>
-      <div style={{ width: 60, height: 60, borderRadius: 16, display: 'grid', placeItems: 'center', marginBottom: 16,
-        background: 'rgba(255,255,255,.06)', border: `1px solid ${C.line2}` }}>
-        <Icon path={Ic.download} size={28} stroke={C.text} sw={1.7} />
-      </div>
-      <h2 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>
-        {configured ? 'Downloads are temporarily unavailable' : 'Downloads aren’t set up yet'}
-      </h2>
-      <p style={{ color: C.dim, fontSize: 14.5, lineHeight: 1.6, maxWidth: 440, marginTop: 10 }}>
-        {configured
-          ? 'We can’t reach downloads right now. Live progress and controls will return on their own.'
-          : 'Once downloads are configured, anything you add shows live progress, speeds, and controls here.'}
-      </p>
+    <div style={{ minHeight: '55vh', display: 'grid', placeItems: 'center', color: C.faint }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+        <Icon path={Ic.download} size={18} />{configured ? 'Downloads unavailable' : 'Downloads not configured'}
+      </span>
     </div>
   )
 }
