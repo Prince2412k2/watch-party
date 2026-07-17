@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../palette.dart';
+import '../theme.dart';
 import '../tokens.dart';
 import 'authed_image.dart';
 
-/// FROZEN CONTRACT (PLAN §3.6). A library poster tile on an `sc.Card` frame with
-/// a hover scale (1.03) and an optional [heroTag] for poster→detail Hero flight.
-/// [imageUrl] is optional so mock/offline paths render a placeholder.
+/// A library poster tile — the shelf primitive.
 ///
-/// Signature is frozen except the ADDITIVE optional [heroTag] (PLAN allows this
-/// one addition) — omit it and the card behaves exactly as before.
+/// Design guide §Library shelves: the title is centered below the artwork with
+/// the rating beneath it; hover strengthens the shadow but never translates the
+/// poster upward; the artwork corners are rounded and never clipped (the shelf
+/// pads for the shadow). [emphasized] renders the first/selected poster subtly
+/// larger. There is no `trailer` label.
+///
+/// The public signature is backward-compatible — the original
+/// title/imageUrl/subtitle/onTap/progress/width/aspectRatio/heroTag params are
+/// unchanged; [rating] and [emphasized] are additive optionals.
 class PosterCard extends StatefulWidget {
   const PosterCard({
     super.key,
@@ -21,6 +27,8 @@ class PosterCard extends StatefulWidget {
     this.width = 160,
     this.aspectRatio = 2 / 3,
     this.heroTag,
+    this.rating,
+    this.emphasized = false,
   });
 
   final String title;
@@ -33,9 +41,14 @@ class PosterCard extends StatefulWidget {
   final double width;
   final double aspectRatio;
 
-  /// When non-null, the poster image is wrapped in a [Hero] with this tag so it
-  /// flies into the detail screen's hero. Null keeps the original behaviour.
+  /// When non-null, the poster image is wrapped in a [Hero] with this tag.
   final String? heroTag;
+
+  /// Community rating on Jellyfin's 0–10 scale, shown as five brand-red stars.
+  final double? rating;
+
+  /// First/currently-selected poster — rendered subtly larger.
+  final bool emphasized;
 
   @override
   State<PosterCard> createState() => _PosterCardState();
@@ -46,7 +59,9 @@ class _PosterCardState extends State<PosterCard> {
 
   @override
   Widget build(BuildContext context) {
-    Widget poster = ClipRRect(
+    final wp = context.wp;
+
+    Widget art = ClipRRect(
       borderRadius: BorderRadius.circular(AppSpacing.radius),
       child: AspectRatio(
         aspectRatio: widget.aspectRatio,
@@ -67,8 +82,8 @@ class _PosterCardState extends State<PosterCard> {
                 child: LinearProgressIndicator(
                   value: widget.progress!.clamp(0, 1),
                   minHeight: 3,
-                  backgroundColor: AppColors.line2,
-                  color: AppColors.accent,
+                  backgroundColor: wp.line2,
+                  color: wp.accent,
                 ),
               ),
           ],
@@ -77,13 +92,34 @@ class _PosterCardState extends State<PosterCard> {
     );
 
     if (widget.heroTag != null) {
-      poster = Hero(tag: widget.heroTag!, child: poster);
+      art = Hero(tag: widget.heroTag!, child: art);
+    }
+
+    // Shadow lives on an AnimatedContainer BEHIND the clipped artwork so it
+    // strengthens on hover without ever translating the poster.
+    Widget poster = AnimatedContainer(
+      duration: AppMotion.hover,
+      curve: AppMotion.standard,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppSpacing.radius),
+        color: wp.surface,
+        boxShadow: _hover ? wp.posterShadowHover : wp.posterShadow,
+      ),
+      child: art,
+    );
+
+    if (widget.emphasized) {
+      poster = Transform.scale(
+        scale: 1.035,
+        alignment: Alignment.bottomLeft,
+        child: poster,
+      );
     }
 
     return SizedBox(
       width: widget.width,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
           MouseRegion(
@@ -92,42 +128,56 @@ class _PosterCardState extends State<PosterCard> {
             cursor: widget.onTap == null
                 ? SystemMouseCursors.basic
                 : SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: widget.onTap,
-              child: AnimatedScale(
-                scale: _hover ? 1.03 : 1.0,
-                duration: AppMotion.hover,
-                curve: AppMotion.standard,
-                child: sc.Card(
-                  padding: EdgeInsets.zero,
-                  filled: true,
-                  fillColor: AppColors.surface2,
-                  borderColor: _hover ? AppColors.line2 : Colors.transparent,
-                  child: poster,
-                ),
-              ),
-            ),
+            child: GestureDetector(onTap: widget.onTap, child: poster),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: 9),
           Text(
             widget.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AppColors.text,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w600,
-            ),
+            textAlign: TextAlign.center,
+            style: AppTheme.posterTitle.copyWith(color: wp.text),
           ),
-          if (widget.subtitle != null)
+          if (widget.rating != null) ...[
+            const SizedBox(height: 4),
+            _Stars(rating: widget.rating!),
+          ],
+          if (widget.subtitle != null) ...[
+            const SizedBox(height: 2),
             Text(
               widget.subtitle!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.faint, fontSize: 12),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: wp.faint, fontSize: 12),
             ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _Stars extends StatelessWidget {
+  const _Stars({required this.rating});
+
+  /// Jellyfin community rating, 0–10.
+  final double rating;
+
+  @override
+  Widget build(BuildContext context) {
+    final filled = (rating / 2).round().clamp(0, 5);
+    final empty = context.wp.text.withValues(alpha: 0.18);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < 5; i++)
+          Icon(
+            Icons.star_rounded,
+            size: 12,
+            color: i < filled ? AppColors.brandRed : empty,
+          ),
+      ],
     );
   }
 }
@@ -135,8 +185,11 @@ class _PosterCardState extends State<PosterCard> {
 class _PosterFallback extends StatelessWidget {
   const _PosterFallback();
   @override
-  Widget build(BuildContext context) => const ColoredBox(
-    color: AppColors.surface2,
-    child: Center(child: Icon(Icons.movie_outlined, color: AppColors.faint)),
-  );
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return ColoredBox(
+      color: wp.surface2,
+      child: Center(child: Icon(Icons.movie_outlined, color: wp.faint)),
+    );
+  }
 }

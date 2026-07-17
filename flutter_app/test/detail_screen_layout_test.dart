@@ -8,6 +8,14 @@ import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
 
+class _ZeroRuntimeApi extends MockApiClient {
+  @override
+  Future<LibraryItem> item(String id) async {
+    final item = await super.item(id);
+    return item.copyWith(runTimeTicks: 0);
+  }
+}
+
 void main() {
   testWidgets('detail screen lays out without unbounded-constraint errors', (
     tester,
@@ -24,7 +32,7 @@ void main() {
         // guest offline-only branch instead of the server-backed hero this
         // test exercises — sign in so the real layout is what's under test.
         overrides: [
-          apiClientProvider.overrideWithValue(MockApiClient()),
+          apiClientProvider.overrideWithValue(_ZeroRuntimeApi()),
           authProvider.overrideWith((ref) {
             final notifier = AuthNotifier(ref);
             notifier.state = const AuthState(

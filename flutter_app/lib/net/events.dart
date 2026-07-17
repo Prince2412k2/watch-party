@@ -8,6 +8,8 @@
 /// involved.
 ///
 /// ── CLIENT → SERVER (emit; many take an ack callback) ────────────────────
+///   party:resume        (none)                      ack: { session } | { session: null }
+///                                                    (reconnect re-attach; server then pushes chat:history + party:state)
 ///   party:create        { mediaItemId? }            ack: { partyId, session } | { error }
 ///   party:join          { partyId }                 ack: { status: 'joined'|'waiting', session? } | { error }
 ///   party:approve       { userId }                  ack: { ok } | { error }        (host only)
@@ -19,6 +21,7 @@
 ///   party:setSyncMode   { mode: 'hopping'|'dragging' } ack: { ok } | { error }     (host only)
 ///   party:selectMedia   { mediaItemId }             ack: { ok } | { error }        (driver)
 ///   party:backToLobby   (none)                      ack: { ok } | { error }        (driver)
+///   party:setPlaybackTracks { audioStreamIndex?, subtitleStreamIndex? } ack: { ok, playback } | { error } (host; rebroadcasts party:state)
 ///   clock:ping          t1                          ack: serverNowMs               (NTP-lite)
 ///   sync:hello          (none)                      → server replies sync:schedule
 ///   sync:play           { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error }
@@ -27,6 +30,8 @@
 ///   sync:report         { position, drift, rate }   (telemetry, no ack)
 ///   sync:stall          { ...stallReport }          (drives dragging mode)
 ///   browse:navigate     { stack: [{id,name,type}, …≤8] }  (driver; relayed)
+///   browse:view         { tab?, screen?, mediaId?, seasonId?, episodeId? }  (driver; shared-screen tab/detail patch)
+///                                                    (server whitelists tab∈movies|series|discover|downloads, screen∈grid|detail)
 ///   browse:pointer      { scroll, x, y }            (driver; ephemeral relay)
 ///   chat:message        { text }                    ack: { ok } | { error: 'rate limited' }
 ///   camera:remove       { userId }                  ack: { ok } | { error }        (host only)
@@ -47,6 +52,7 @@
 ///   browse:state        { stack: [...] }             mirrored shared-screen drill
 ///   browse:pointer      { scroll, x, y }             mirrored cursor
 ///   chat:message        { userId, name, text, timestamp }
+///   chat:history        [ { userId, name, text, timestamp }, … ]  full backlog on resume/join/approve
 ///   camera:removed      { userId }
 ///
 /// The `publicSession` shape (from `app/server/session.js`) contains: id,
@@ -58,6 +64,7 @@ library;
 
 /// Client → server event names.
 abstract final class ClientEvent {
+  static const partyResume = 'party:resume';
   static const partyCreate = 'party:create';
   static const partyJoin = 'party:join';
   static const partyApprove = 'party:approve';
@@ -69,6 +76,7 @@ abstract final class ClientEvent {
   static const partySetSyncMode = 'party:setSyncMode';
   static const partySelectMedia = 'party:selectMedia';
   static const partyBackToLobby = 'party:backToLobby';
+  static const partySetPlaybackTracks = 'party:setPlaybackTracks';
   static const clockPing = 'clock:ping';
   static const syncHello = 'sync:hello';
   static const syncPlay = 'sync:play';
@@ -77,6 +85,7 @@ abstract final class ClientEvent {
   static const syncReport = 'sync:report';
   static const syncStall = 'sync:stall';
   static const browseNavigate = 'browse:navigate';
+  static const browseView = 'browse:view';
   static const browsePointer = 'browse:pointer';
   static const chatMessage = 'chat:message';
   static const cameraRemove = 'camera:remove';
@@ -99,6 +108,7 @@ abstract final class ServerEvent {
   static const browseState = 'browse:state';
   static const browsePointer = 'browse:pointer';
   static const chatMessage = 'chat:message';
+  static const chatHistory = 'chat:history';
   static const cameraRemoved = 'camera:removed';
 }
 
