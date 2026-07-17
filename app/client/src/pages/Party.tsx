@@ -801,7 +801,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
       key={hlsUrl.itemId}
       hlsUrl={hlsUrl.url}
       mediaItemId={session.mediaItemId}
-      playback={session.playback}
+      playback={session.playback ?? undefined}
       isHost={isHost}
       collaborativeControl={collaborativeControl}
       syncMode={session.syncMode}
