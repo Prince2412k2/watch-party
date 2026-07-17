@@ -232,6 +232,57 @@ void main() {
     expect(engine.canControl, isTrue);
   });
 
+  test('selectMedia carries detail track choices into the active party', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+      }
+      return {'ok': true};
+    });
+
+    final notifier = container.read(partyProvider.notifier);
+    await notifier.create();
+    await notifier.selectMedia(
+      'movie-1',
+      audioStreamIndex: 3,
+      subtitleStreamIndex: 7,
+    );
+
+    final event = socket.emitted.last;
+    expect(event.$1, ClientEvent.partySelectMedia);
+    expect(event.$2, {
+      'mediaItemId': 'movie-1',
+      'audioStreamIndex': 3,
+      'subtitleStreamIndex': 7,
+    });
+  });
+
+  test('session snapshots deduplicate participant identities', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {
+          'partyId': 'party-1',
+          'session': _session(
+            hostId: 'host1',
+            guests: const [
+              {'userId': 'guest1', 'name': 'Guest'},
+              {'userId': 'guest1', 'name': 'Guest'},
+              {'userId': 'host1', 'name': 'Host duplicate'},
+            ],
+          ),
+        };
+      }
+      return {'ok': true};
+    });
+
+    await container.read(partyProvider.notifier).create();
+
+    expect(
+      container.read(partyProvider)!.participants.map((p) => p.userId),
+      ['host1', 'guest1'],
+    );
+  });
+
   test('end() (host) detaches the engine and clears local party state', () async {
     container = build('host1', (event, data) {
       if (event == ClientEvent.partyCreate) {

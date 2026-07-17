@@ -155,7 +155,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     final hostId = json['hostId']?.toString() ?? '';
     final hostName = json['hostName']?.toString();
     final guestsJson = (json['guests'] as List?) ?? const [];
-    final participants = <Participant>[
+    final participantCandidates = <Participant>[
       if (hostId.isNotEmpty) Participant(userId: hostId, name: hostName ?? 'Host', isHost: true),
       ...guestsJson.whereType<Map>().map((g) {
         final m = Map<String, dynamic>.from(g);
@@ -163,6 +163,11 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         return Participant(userId: userId, name: m['name']?.toString() ?? 'Guest');
       }).where((p) => p.userId.isNotEmpty && p.userId != hostId),
     ];
+    final participantsById = <String, Participant>{
+      for (final participant in participantCandidates)
+        participant.userId: participant,
+    };
+    final participants = participantsById.values.toList(growable: false);
 
     final scheduleJson = json['schedule'];
     final schedule = scheduleJson is Map
@@ -353,8 +358,20 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     if (engine is SyncEngineImpl) engine.syncMode = mode;
   }
 
-  Future<void> selectMedia(String mediaItemId) =>
-      _ack(ClientEvent.partySelectMedia, {'mediaItemId': mediaItemId});
+  Future<void> selectMedia(
+    String mediaItemId, {
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) {
+    final payload = <String, dynamic>{'mediaItemId': mediaItemId};
+    if (audioStreamIndex != null) {
+      payload['audioStreamIndex'] = audioStreamIndex;
+    }
+    if (subtitleStreamIndex != null) {
+      payload['subtitleStreamIndex'] = subtitleStreamIndex;
+    }
+    return _ack(ClientEvent.partySelectMedia, payload);
+  }
 
   /// "Stop Movie": back to the lobby, session (party/socket/A/V) stays alive.
   Future<void> backToLobby() => _ack(ClientEvent.partyBackToLobby);
@@ -472,7 +489,11 @@ class PartyWaitingNotifier extends StateNotifier<List<Participant>> {
 
   void remove(String userId) => state = state.where((e) => e.userId != userId).toList();
 
-  void setAll(List<Participant> list) => state = list;
+  void setAll(List<Participant> list) {
+    state = <String, Participant>{
+      for (final participant in list) participant.userId: participant,
+    }.values.toList(growable: false);
+  }
 
   void clear() => state = const [];
 }

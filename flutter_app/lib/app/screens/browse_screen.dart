@@ -1,35 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
-
 import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 
-/// Library browse (Shows tab). Horizontal [PosterShelf]s — never a grid: a main
-/// shelf over the current filter, then extra shelves for genres that form a
+/// Route-scoped Movies or Shows library. Horizontal [PosterShelf]s — never a
+/// grid: a main shelf over the current type, then extra shelves for genres that form a
 /// meaningful subset (more than one title, fewer than the whole set). No search
-/// field (design guide §Library and discovery shelves); the type filter keeps
-/// the Movies/Shows separation.
+/// field (design guide §Library and discovery shelves).
 ///
 /// The first poster of each shelf is emphasized and carries the `poster-<id>`
 /// Hero tag into `/detail/:id`; hovering a poster drives the ambient wash.
 class BrowseScreen extends ConsumerWidget {
-  const BrowseScreen({super.key});
+  const BrowseScreen({super.key, required this.type});
+
+  final BrowseTypeFilter type;
 
   static const double _posterWidth = 190;
 
-  String _filterLabel(BrowseTypeFilter f) => switch (f) {
-    BrowseTypeFilter.all => 'Library',
-    BrowseTypeFilter.movie => 'Movies',
-    BrowseTypeFilter.series => 'Shows',
-  };
+  String get _title => type == BrowseTypeFilter.movie ? 'Movies' : 'Shows';
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final items = ref.watch(browseItemsProvider);
-    final typeFilter = ref.watch(browseTypeFilterProvider);
+    final items = ref.watch(browseByTypeProvider(type));
     final api = ref.watch(apiClientProvider);
 
     void setAmbient(String id) =>
@@ -41,7 +35,7 @@ class BrowseScreen extends ConsumerWidget {
         child: PosterCard(
           title: item.name,
           rating: item.communityRating,
-          imageUrl: api.imageUrl(item.id),
+          imageUrl: api.imageUrl(item.id, tag: item.imageTags?['Primary']),
           width: _posterWidth,
           aspectRatio: 3 / 5,
           emphasized: first,
@@ -56,7 +50,7 @@ class BrowseScreen extends ConsumerWidget {
       error: (e, _) => ErrorState(
         title: 'Failed to load library',
         message: '$e',
-        onRetry: () => ref.invalidate(browseItemsProvider),
+        onRetry: () => ref.invalidate(browseByTypeProvider(type)),
       ),
       data: (list) {
         if (list.isEmpty) {
@@ -70,8 +64,7 @@ class BrowseScreen extends ConsumerWidget {
         // Unique Hero tag per screen: first occurrence of an id claims
         // `poster-<id>`; repeats get null (Flutter throws on duplicate tags).
         final claimed = <String>{};
-        String? heroTag(String id) =>
-            claimed.add(id) ? 'poster-$id' : null;
+        String? heroTag(String id) => claimed.add(id) ? 'poster-$id' : null;
 
         // Genre-subset shelves: a genre that more than one — but not all —
         // titles share (web GridView.genreRows).
@@ -86,7 +79,7 @@ class BrowseScreen extends ConsumerWidget {
 
         final shelves = <Widget>[
           PosterShelf(
-            title: _filterLabel(typeFilter),
+            title: _title,
             leftInset: 0,
             children: [
               for (var i = 0; i < list.length; i++)
@@ -107,21 +100,6 @@ class BrowseScreen extends ConsumerWidget {
         return ListView(
           padding: const EdgeInsets.fromLTRB(44, 24, 0, 120),
           children: [
-            Padding(
-              padding: const EdgeInsets.only(right: 24, bottom: 8),
-              child: sc.ButtonGroup(
-                children: [
-                  for (final f in BrowseTypeFilter.values)
-                    sc.Toggle(
-                      value: typeFilter == f,
-                      onChanged: (_) => ref
-                          .read(browseTypeFilterProvider.notifier)
-                          .state = f,
-                      child: Text(_filterLabel(f)),
-                    ),
-                ],
-              ),
-            ),
             for (var i = 0; i < shelves.length; i++)
               Reveal(delay: AppMotion.stagger * i, child: shelves[i]),
           ],

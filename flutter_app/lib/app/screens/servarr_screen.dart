@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
@@ -22,6 +25,22 @@ class ServarrScreen extends ConsumerStatefulWidget {
 class _ServarrScreenState extends ConsumerState<ServarrScreen> {
   ServarrTitle? _selected;
   ServarrKind _selectedKind = ServarrKind.movie;
+  ServarrKind _activeKind = ServarrKind.movie;
+  String _query = '';
+  Timer? _searchTimer;
+
+  @override
+  void dispose() {
+    _searchTimer?.cancel();
+    super.dispose();
+  }
+
+  void _setQuery(String value) {
+    _searchTimer?.cancel();
+    _searchTimer = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) setState(() => _query = value.trim());
+    });
+  }
 
   void _open(ServarrTitle item, ServarrKind kind) {
     setState(() {
@@ -60,20 +79,44 @@ class _ServarrScreenState extends ConsumerState<ServarrScreen> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(44, 24, 0, 120),
           children: [
-            Reveal(
-              child: _DiscoverRail(
-                kind: ServarrKind.movie,
-                torrents: torrents,
-                onOpen: (t) => _open(t, ServarrKind.movie),
+            Padding(
+              padding: const EdgeInsets.only(right: 24, bottom: 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Discover', style: AppTheme.displaySmall),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: 440,
+                    child: AppTextField(
+                      hint: _activeKind == ServarrKind.movie
+                          ? 'Search movies'
+                          : 'Search shows',
+                      onChanged: _setQuery,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  sc.ButtonGroup(
+                    children: [
+                      for (final kind in ServarrKind.values)
+                        sc.Toggle(
+                          value: _activeKind == kind,
+                          onChanged: (_) => setState(() {
+                            _activeKind = kind;
+                          }),
+                          child: Text(kind.label),
+                        ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
             Reveal(
-              delay: AppMotion.stagger,
               child: _DiscoverRail(
-                kind: ServarrKind.series,
+                kind: _activeKind,
+                query: _query,
                 torrents: torrents,
-                onOpen: (t) => _open(t, ServarrKind.series),
+                onOpen: (t) => _open(t, _activeKind),
               ),
             ),
           ],
@@ -86,11 +129,13 @@ class _ServarrScreenState extends ConsumerState<ServarrScreen> {
 class _DiscoverRail extends ConsumerWidget {
   const _DiscoverRail({
     required this.kind,
+    required this.query,
     required this.torrents,
     required this.onOpen,
   });
 
   final ServarrKind kind;
+  final String query;
   final List<ServarrDownload>? torrents;
   final ValueChanged<ServarrTitle> onOpen;
 
@@ -98,32 +143,68 @@ class _DiscoverRail extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final normalized = query.trim();
+    if (normalized.isNotEmpty) {
+      final request = (kind: kind, query: normalized);
+      final search = ref.watch(servarrSearchProvider(request));
+      return search.when(
+        loading: () => const _RailSkeleton(title: 'Results'),
+        error: (_, _) => _RailUnavailable(
+          title: 'Results',
+          message: 'Search is unavailable right now.',
+          onRetry: () => ref.invalidate(servarrSearchProvider(request)),
+        ),
+        data: (items) => items.isEmpty
+            ? _RailUnavailable(
+                title: 'Results',
+                message: 'No matches for “$normalized”.',
+                onRetry: () => ref.invalidate(servarrSearchProvider(request)),
+              )
+            : _shelf('Results', items),
+      );
+    }
+
     final discover = ref.watch(servarrDiscoverProvider(kind));
     return discover.when(
       loading: () => _RailSkeleton(title: kind.label),
-      error: (_, _) => _RailUnavailable(title: kind.label),
+      error: (_, _) => _RailUnavailable(
+        title: kind.label,
+        message:
+            'Connect ${kind == ServarrKind.movie ? 'Radarr' : 'Sonarr'} to browse requests, or try again.',
+        onRetry: () => ref.invalidate(servarrDiscoverProvider(kind)),
+      ),
       data: (d) {
-        if (d.items.isEmpty) return _RailUnavailable(title: kind.label);
-        return PosterShelf(
-          title: kind.label,
-          leftInset: 0,
-          children: [
-            for (var i = 0; i < d.items.length; i++)
-              _card(d.items[i], first: i == 0),
-          ],
-        );
+        if (d.items.isEmpty) {
+          return _RailUnavailable(
+            title: kind.label,
+            message:
+                'Connect ${kind == ServarrKind.movie ? 'Radarr' : 'Sonarr'} to browse requests, or try again.',
+            onRetry: () => ref.invalidate(servarrDiscoverProvider(kind)),
+          );
+        }
+        return _shelf(kind.label, d.items);
       },
     );
   }
+
+  Widget _shelf(String title, List<ServarrTitle> items) => PosterShelf(
+    title: title,
+    leftInset: 0,
+    children: [
+      for (var i = 0; i < items.length; i++)
+        _card(items[i], first: i == 0),
+    ],
+  );
 
   Widget _card(ServarrTitle t, {required bool first}) {
     final torrent = matchTorrent(t.title, torrents);
     final active = torrent != null && !torrent.isPaused;
     final pct = torrent?.percent ?? 0;
     final downloading = active && pct < 100;
-    final subtitle = [t.year?.toString(), t.network]
-        .where((e) => e != null && e.isNotEmpty)
-        .join(' · ');
+    final subtitle = [
+      t.year?.toString(),
+      t.network,
+    ].where((e) => e != null && e.isNotEmpty).join(' · ');
 
     return PosterCard(
       title: t.title,
@@ -142,8 +223,14 @@ class _DiscoverRail extends ConsumerWidget {
 /// A per-rail degraded state (empty/failed discover) — the shelf heading over a
 /// quiet "unavailable" line, so one dead rail never fails the whole page.
 class _RailUnavailable extends StatelessWidget {
-  const _RailUnavailable({required this.title});
+  const _RailUnavailable({
+    required this.title,
+    required this.message,
+    required this.onRetry,
+  });
   final String title;
+  final String message;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -156,9 +243,20 @@ class _RailUnavailable extends StatelessWidget {
         children: [
           Text(title, style: AppTheme.headlineLarge.copyWith(color: wp.text)),
           const SizedBox(height: 8),
-          Text(
-            'This row is unavailable right now.',
-            style: TextStyle(fontSize: 14, color: wp.dim),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(fontSize: 14, color: wp.dim),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Retry'),
+              ),
+            ],
           ),
         ],
       ),

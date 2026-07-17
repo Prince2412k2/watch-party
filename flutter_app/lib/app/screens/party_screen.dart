@@ -483,7 +483,18 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   // socket / LiveKit / sync engine stay alive and the popcorn shows "N in
   // party". End (host) lives in the Watch Party menu; leave lives in the
   // popcorn — Stop Movie (backToLobby) and Stop Stream (end) stay distinct.
-  void _minimize() => context.go('/home');
+  Future<void> _minimize() async {
+    final notifier = ref.read(partyProvider.notifier);
+    if (notifier.isHost) {
+      await notifier.backToLobby();
+    } else {
+      await notifier.leave();
+    }
+    final player = ref.read(playerControllerProvider);
+    await player.pause();
+    await player.seek(Duration.zero);
+    if (mounted) context.go('/home');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -651,7 +662,12 @@ class _WatchChrome extends ConsumerWidget {
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: EdgeInsets.only(
+          left: 14 + desktopLeadingControlInset,
+          right: 14 + desktopTrailingControlInset,
+          top: 10,
+          bottom: 10,
+        ),
         child: Row(
           children: [
             _AvIconButton(
