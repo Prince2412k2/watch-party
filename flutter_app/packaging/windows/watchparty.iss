@@ -46,7 +46,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupFlags: unchecked
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
 
 [Files]
 Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
