@@ -5,6 +5,7 @@
 // slow service maps to a 502/504 (bounded by the fetch timeout) — never a hang
 // or crash. Wired into app/server/index.js via registerServarrRoutes(app).
 
+import express from 'express'
 import { requireAuth } from '../auth.js'
 import { serviceConfig, configuredMap, SERVICES } from './config.js'
 import {
@@ -15,6 +16,11 @@ import {
   parseReleaseName, seasonEpisodeLabel, posterUrlFromImage, arrRating,
 } from './arr.js'
 import * as qbit from './qbittorrent.js'
+import { tmdbDiscover } from './tmdb.js'
+import {
+  MAX_TORRENT_BYTES, parseMagnet, parseManualSubmission,
+  storeTorrent, takeTorrent, torrentCallbackUrl,
+} from './manual.js'
 
 // Map any thrown upstream/config error onto a clean JSON response. Logs
 // server-side (message only — never the key) and strips upstream internals.
@@ -407,6 +413,88 @@ function servePopular(service, builder) {
   }
 }
 
+const DISCOVER_PAGE_SIZE = 20
+
+async function buildDynamicDiscover(kind, page) {
+  const feed = await tmdbDiscover(kind, page)
+  const entries = Array.isArray(feed?.results) ? feed.results.slice(0, DISCOVER_PAGE_SIZE) : []
+  const client = kind === 'movie' ? radarr : sonarr
+  const idKey = kind === 'movie' ? 'tmdbId' : 'tvdbId'
+  const shape = kind === 'movie' ? shapeMovieLookup : shapeSeriesLookup
+  const resolved = await Promise.all(entries.map(async (entry) => {
+    const title = kind === 'movie' ? entry.title : entry.name
+    if (!title) return null
+    try {
+      const matches = await client.lookup(title)
+      if (!Array.isArray(matches)) return null
+      if (kind === 'movie') return matches.find((movie) => movie.tmdbId === entry.id) || null
+      return matches.find((series) => series.title?.toLowerCase() === title.toLowerCase()) || matches[0] || null
+    } catch {
+      return null
+    }
+  }))
+  const seen = new Set()
+  const items = []
+  for (const entry of resolved) {
+    const id = entry?.[idKey]
+    if (id == null || seen.has(id)) continue
+    seen.add(id)
+    items.push(shape(entry))
+  }
+  return {
+    source: 'tmdb_trending',
+    page,
+    totalPages: Math.min(Number(feed?.total_pages) || page, 500),
+    items,
+  }
+}
+
+async function validateManualTarget(submission) {
+  if (submission.service === 'radarr') {
+    const movie = await radarr.get(submission.targetId)
+    return { title: movie.title, type: 'movie' }
+  }
+
+  const series = await sonarr.get(submission.targetId)
+  if (submission.seasonNumber === null) return { title: series.title, type: 'series' }
+  const episodes = await sonarr.episodes(submission.targetId)
+  const matching = (Array.isArray(episodes) ? episodes : []).filter((episode) =>
+    episode.seasonNumber === submission.seasonNumber &&
+    (submission.episodeNumber === null || episode.episodeNumber === submission.episodeNumber))
+  if (!matching.length) return null
+  return {
+    title: series.title,
+    type: submission.episodeNumber === null ? 'season' : 'episode',
+  }
+}
+
+function releasePushPayload(title, downloadUrl) {
+  return {
+    title,
+    downloadUrl,
+    protocol: 'torrent',
+    publishDate: new Date().toISOString(),
+    indexer: 'Manual submission',
+  }
+}
+
+async function submitManualSource(res, submission, downloadUrl) {
+  try {
+    const target = await validateManualTarget(submission)
+    if (!target) return res.status(404).json({ error: 'target episode or season not found' })
+    const client = submission.service === 'radarr' ? radarr : sonarr
+    const decisions = await client.pushRelease(releasePushPayload(submission.title, downloadUrl))
+    return res.json({
+      outcome: 'submitted',
+      service: submission.service,
+      target: { id: submission.targetId, ...target },
+      decisions: Array.isArray(decisions) ? decisions.map(shapeRelease) : [],
+    })
+  } catch (err) {
+    return fail(res, `${submission.service}/manual`, err)
+  }
+}
+
 // Mark the chosen seasons monitored on a Sonarr series and PUT it back. This is
 // additive — it only flips `monitored` to true on the wanted seasons (and the
 // series), never unmonitoring one the user already had. Sonarr replaces the whole
@@ -440,6 +528,17 @@ async function sonarrMonitorSeasons(seriesId, wantedSet, { settle = false } = {}
 }
 
 export function registerServarrRoutes(app) {
+  // This capability URL is intentionally not session-authenticated: Radarr/Sonarr
+  // fetch it server-to-server. The random token is single-use and expires in 2m.
+  app.get('/api/servarr/manual/torrents/:token', (req, res) => {
+    if (!/^[a-f0-9]{64}$/.test(req.params.token)) return res.status(404).end()
+    const torrent = takeTorrent(req.params.token)
+    if (!torrent) return res.status(404).end()
+    res.set('Content-Type', 'application/x-bittorrent')
+    res.set('Cache-Control', 'no-store')
+    res.send(torrent)
+  })
+
   // ── Health: which services are configured + reachable. Never throws. ────────
   app.get('/api/servarr/health', requireAuth, async (_req, res) => {
     const configured = configuredMap()
@@ -465,6 +564,13 @@ export function registerServarrRoutes(app) {
 
   // Discover rail for the Browse tab's no-query state (movies).
   app.get('/api/servarr/radarr/popular', requireAuth, servePopular('radarr', buildRadarrPopular))
+
+  app.get('/api/servarr/radarr/discover', requireAuth, async (req, res) => {
+    if (!ensureConfigured('radarr', res)) return
+    const page = Number(req.query.page ?? 1)
+    if (!Number.isInteger(page) || page < 1 || page > 500) return res.status(400).json({ error: 'page must be an integer from 1 to 500' })
+    try { res.json(await buildDynamicDiscover('movie', page)) } catch (err) { fail(res, 'radarr/discover', err) }
+  })
 
   app.get('/api/servarr/radarr/movies', requireAuth, async (_req, res) => {
     if (!ensureConfigured('radarr', res)) return
@@ -751,6 +857,13 @@ export function registerServarrRoutes(app) {
   // Discover rail for the Browse tab's no-query state (series).
   app.get('/api/servarr/sonarr/popular', requireAuth, servePopular('sonarr', buildSonarrPopular))
 
+  app.get('/api/servarr/sonarr/discover', requireAuth, async (req, res) => {
+    if (!ensureConfigured('sonarr', res)) return
+    const page = Number(req.query.page ?? 1)
+    if (!Number.isInteger(page) || page < 1 || page > 500) return res.status(400).json({ error: 'page must be an integer from 1 to 500' })
+    try { res.json(await buildDynamicDiscover('series', page)) } catch (err) { fail(res, 'sonarr/discover', err) }
+  })
+
   app.get('/api/servarr/sonarr/series', requireAuth, async (_req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     try {
@@ -985,6 +1098,40 @@ export function registerServarrRoutes(app) {
       res.json(await bazarr.wantedSeries())
     } catch (err) { fail(res, 'bazarr/wanted/series', err) }
   })
+
+  app.post('/api/servarr/manual/magnet', requireAuth, async (req, res) => {
+    const parsed = parseManualSubmission(req.body || {})
+    if (parsed.error) return res.status(400).json({ error: parsed.error })
+    if (!ensureConfigured(parsed.value.service, res)) return
+    const magnet = parseMagnet(req.body?.magnet)
+    if (!magnet) return res.status(400).json({ error: 'a valid BitTorrent magnet URI is required' })
+    return submitManualSource(res, parsed.value, magnet)
+  })
+
+  app.post(
+    '/api/servarr/manual/torrent',
+    requireAuth,
+    (req, res, next) => express.raw({ type: 'application/x-bittorrent', limit: MAX_TORRENT_BYTES })(req, res, (err) => {
+      if (err?.type === 'entity.too.large') return res.status(413).json({ error: `torrent exceeds ${MAX_TORRENT_BYTES} bytes` })
+      if (err) return res.status(400).json({ error: 'invalid torrent body' })
+      next()
+    }),
+    async (req, res) => {
+      const parsed = parseManualSubmission(req.query)
+      if (parsed.error) return res.status(400).json({ error: parsed.error })
+      if (!ensureConfigured(parsed.value.service, res)) return
+      if (!Buffer.isBuffer(req.body) || req.body.length < 10 || req.body[0] !== 0x64 || !req.body.includes(Buffer.from('4:info'))) {
+        return res.status(400).json({ error: 'body must be a valid-looking .torrent file' })
+      }
+      const token = storeTorrent(req.body)
+      const downloadUrl = torrentCallbackUrl(token)
+      if (!downloadUrl) {
+        takeTorrent(token)
+        return res.status(503).json({ error: 'SERVARR_TORRENT_CALLBACK_URL is not configured with an HTTP(S) server URL' })
+      }
+      return submitManualSource(res, parsed.value, downloadUrl)
+    },
+  )
 
   // ── qBittorrent ───────────────────────────────────────────────────────────────
   app.get('/api/servarr/qbittorrent/torrents', requireAuth, async (_req, res) => {

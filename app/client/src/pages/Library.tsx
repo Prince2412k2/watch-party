@@ -1,9 +1,11 @@
 import { forwardRef, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useParty } from '../context/PartyContext'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useFailingCount } from '../hooks/useFailingDownloads'
 import { isActiveState } from '../hooks/useTorrents'
 import { navigate } from '../router'
+import { mirror } from '../mirror'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
 import { C, SANS, MONO, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui'
 import { fmtRuntimeFromTicks, fmtSpeed } from '../lib/format'
@@ -32,7 +34,7 @@ interface StackEntry { id?: string; name?: string; type?: ItemType; [key: string
 interface Torrent { hash: string; state?: string; progress?: number; displayTitle?: string; name?: string; subtitle?: string; posterUrl?: string; kind?: string; dlspeed?: number }
 interface MirrorPoint { scroll: number; x: number; y: number }
 type StackUpdater = StackEntry[] | ((stack: StackEntry[]) => StackEntry[])
-interface LibraryProps { embedded?: boolean; stack?: StackEntry[]; onNavigate?: (stack: StackEntry[]) => void; onPickMedia?: (item: LibraryItem, tracks?: DetailTrackSelection) => void; canDrive?: boolean; headerRight?: ReactNode; banner?: ReactNode; onPointer?: (point: MirrorPoint) => void; mirrorSubscribe?: (listener: (point: MirrorPoint) => void) => () => void; driverName?: string }
+interface LibraryProps { embedded?: boolean; libraryType?: 'movies' | 'series'; stack?: StackEntry[]; onNavigate?: (stack: StackEntry[]) => void; onPickMedia?: (item: LibraryItem, tracks?: DetailTrackSelection) => void; canDrive?: boolean; headerRight?: ReactNode; banner?: ReactNode; onPointer?: (point: MirrorPoint) => void; mirrorSubscribe?: (listener: (point: MirrorPoint) => void) => () => void; driverName?: string }
 interface DetailPlayback {
   mediaSourceId?: string | null
   audioStreams: PlaybackTrack[]
@@ -67,6 +69,10 @@ function parseDetailPlayback(value: unknown): DetailPlayback | null {
 
 const img = (id: string, type = 'Primary') => `/api/library/image/${id}?type=${type}`
 
+function setBalancedPoster(id: string) {
+  document.documentElement.style.setProperty('--balanced-poster', `url("${img(id, 'Backdrop')}"), url("${img(id)}")`)
+}
+
 /**
  * Poll active-download count from qBittorrent while the page is visible.
  * Returns { active, torrents } — active is the count of actively-downloading
@@ -95,8 +101,7 @@ function useDownloads(enabled: boolean) {
       fetch('/api/servarr/downloads/enriched', { credentials: 'include', signal: c.signal })
         .then(r => r.ok ? apiJson(r) : Promise.reject(r))
         .then(data => { if (!c.signal.aborted) setTorrents(arrayOf(data, isTorrentJson)) })
-        // 503 (unconfigured) / 502 (unreachable) / abort → stay empty, no throw surfaced
-        .catch(() => {})
+        .catch(() => { if (!c.signal.aborted) setTorrents([]) })
     }
     const start = () => { if (timer == null) { poll(); timer = setInterval(poll, 5000) } }
     const stop = () => { if (timer != null) { clearInterval(timer); timer = null } ctrl?.abort() }
@@ -134,11 +139,12 @@ function Img({ id, type = 'Primary', fallback, style, alt = '' }: { id: string; 
  * drills, `onPickMedia` fires on Watch, `canDrive` gates interaction.
  */
 export default function Library({
-  embedded = false, stack: extStack, onNavigate, onPickMedia,
+  embedded = false, libraryType, stack: extStack, onNavigate, onPickMedia,
   canDrive = true, headerRight, banner,
   onPointer, mirrorSubscribe, driverName,
 }: LibraryProps = {}) {
   const { user, logout } = useAuth()
+  const party = useParty()
   const mobile = useIsMobile()
   const [home, setHome] = useState<LibraryHome | null>(null)
   const [loadingHome, setLoadingHome] = useState(true)
@@ -146,6 +152,7 @@ export default function Library({
   const [internalStack, setInternalStack] = useState<StackEntry[]>([])
   const [gridItems, setGridItems] = useState<LibraryItem[]>([])
   const [loadingGrid, setLoadingGrid] = useState(false)
+  const previousLibraryType = useRef(libraryType)
   // Active-download detail overlay (standalone only). Holds the enriched torrent
   // that was clicked; kept fresh from the live poll while open (see render).
   const [dlDetail, setDlDetail] = useState<Torrent | null>(null)
@@ -155,10 +162,14 @@ export default function Library({
   const { active: dlActive, torrents: dlTorrents } = useDownloads(!embedded)
   const failingCount = useFailingCount(!embedded)
 
-  const stack = embedded ? (extStack ?? []) : internalStack
+  const partyBrowsing = !embedded && party.session != null
+  if (partyBrowsing) canDrive = party.role === 'host'
+  const stack = embedded ? (extStack ?? []) : partyBrowsing ? (party.session?.browse?.stack ?? []) : internalStack
   const setStack = (updater: StackUpdater) => {
     const next = typeof updater === 'function' ? updater(stack) : updater
-    if (embedded) onNavigate?.(next); else setInternalStack(next)
+    if (embedded) onNavigate?.(next)
+    else if (partyBrowsing) party.navigateBrowse(next)
+    else setInternalStack(next)
   }
   const current = stack[stack.length - 1] || null
 
@@ -184,6 +195,21 @@ export default function Library({
   }, [home, embedded])
 
   useEffect(() => {
+    if (embedded || previousLibraryType.current === libraryType) return
+    previousLibraryType.current = libraryType
+    setInternalStack([])
+  }, [embedded, libraryType])
+
+  useEffect(() => {
+    if (embedded || !libraryType || !home || stack.length) return
+    const target = home.views.find(view => {
+      const type = (view.CollectionType || view.Name || '').toLowerCase()
+      return libraryType === 'movies' ? type.includes('movie') : type.includes('tv') || type.includes('show') || type.includes('series')
+    })
+    if (target) setStack([{ id: target.Id, name: target.Name, type: target.Type }])
+  }, [embedded, libraryType, home, stack.length])
+
+  useEffect(() => {
     if (!current || isDetail(current.type)) return
     setLoadingGrid(true)
     fetch(`/api/library/items/${current.id}/children`, { credentials: 'include' })
@@ -192,13 +218,20 @@ export default function Library({
       .finally(() => setLoadingGrid(false))
   }, [current?.id])
 
+  useEffect(() => {
+    const first = gridItems.find(item => item.Type === 'Movie' || item.Type === 'Series') ?? gridItems[0]
+    if (first) setBalancedPoster(first.Id)
+  }, [gridItems])
+
   // ── Screen mirroring ────────────────────────────────────────────────────
   // scrollRef is attached to the scrollable *content pane* (right of the
   // sidebar). Its scroll fraction is what we broadcast / follow.
   const scrollRef = useRef<HTMLDivElement>(null)
   const ghostRef = useRef<HTMLDivElement>(null)
-  const driving = embedded && canDrive && !!onPointer
-  const following = embedded && !canDrive && !!mirrorSubscribe
+  const broadcastPointer = onPointer ?? (partyBrowsing ? party.sendPointer : undefined)
+  const subscribeToMirror = mirrorSubscribe ?? (partyBrowsing ? mirror.subscribe : undefined)
+  const driving = (embedded || partyBrowsing) && canDrive && !!broadcastPointer
+  const following = (embedded || partyBrowsing) && !canDrive && !!subscribeToMirror
 
   // Driver: publish scroll fraction + cursor, coalesced to one send per frame.
   //
@@ -220,7 +253,7 @@ export default function Library({
     if (!el) return
     const last = { scroll: 0, x: 0.5, y: 0.5 }
     let raf = 0
-    const flush = () => { raf = 0; onPointer({ ...last }) }
+    const flush = () => { raf = 0; broadcastPointer?.({ ...last }) }
     const queue = () => { if (!raf) raf = requestAnimationFrame(flush) }
     const onScroll = () => {
       const sh = el.scrollHeight - el.clientHeight
@@ -250,7 +283,7 @@ export default function Library({
       window.removeEventListener('mousemove', onMove)
       cancelAnimationFrame(raf)
     }
-  }, [driving, onPointer, current?.id])
+  }, [driving, broadcastPointer, current?.id])
 
   // Follower: apply the host's scroll + cursor imperatively (no re-render).
   // The ghost is positioned using the FOLLOWER's OWN pane rect: paneLeft +
@@ -278,15 +311,19 @@ export default function Library({
       }
     }
     const onFrame = (p: MirrorPoint) => { pending = p; if (!raf) raf = requestAnimationFrame(apply) }
-    const unsub = mirrorSubscribe!(onFrame)
+    const unsub = subscribeToMirror!(onFrame)
     onFrame(pending) // apply current position on mount / view change
     return () => { unsub(); cancelAnimationFrame(raf) }
-  }, [following, mirrorSubscribe, current?.id])
+  }, [following, subscribeToMirror, current?.id])
 
   function open(item: LibraryItem) { if (canDrive) setStack(s => [...s, { id: item.Id, name: item.Name, type: item.Type }]) }
   function pick(item: LibraryItem, tracks?: DetailTrackSelection) {
     if (!canDrive) return
     if (onPickMedia) onPickMedia(item, tracks)
+    else if (party.session) {
+      party.selectMedia(item.Id, tracks)
+      navigate(`/party/${party.session.id}`)
+    }
     else {
       const qs = new URLSearchParams({ itemId: item.Id })
       if (Number.isInteger(tracks?.audioStreamIndex)) qs.set('audioStreamIndex', String(tracks!.audioStreamIndex))
@@ -308,23 +345,25 @@ export default function Library({
     // Outer shell: fixed full-bleed. Holds the flush sidebar and the scrollable
     // content pane. It does NOT scroll itself.
     <div style={{
-      position: 'fixed', inset: 0, background: C.bg, color: C.text, fontFamily: SANS,
+      position: 'absolute', inset: 0, background: 'transparent', color: C.text, fontFamily: SANS,
       overflow: 'hidden',
     }}>
       {following && <GhostCursor ref={ghostRef} name={driverName} />}
 
-      <Sidebar mobile={mobile} width={sidebarW} views={views} activeId={current ? (stack[0]?.id ?? null) : null}
+      {(embedded || !libraryType) && <Sidebar mobile={mobile} width={sidebarW} views={views} activeId={current ? (stack[0]?.id ?? null) : null}
         onHome={goHome} onView={openView} showDiscover={!embedded} downloadCount={dlActive} failingCount={failingCount} />
+      }
 
       {/* Scrollable content pane — flush to the viewport edge (no inset panel).
           This is the element the mirror engine drives. */}
       <div ref={scrollRef} style={{
-        position: 'absolute', top: 0, right: 0, bottom: 0, left: sidebarW,
+        position: 'absolute', top: 0, right: 0, bottom: 0, left: (embedded || !libraryType) ? sidebarW : 0,
         overflow: 'hidden auto',
         overflowY: following ? 'hidden' : 'auto',
       }}>
-        <TopBar embedded={embedded} mobile={mobile} initials={initials} logout={logout}
+        {(embedded || !libraryType) && <TopBar embedded={embedded} mobile={mobile} initials={initials} logout={logout}
           headerRight={headerRight} current={current} onBack={goBack} onHome={goHome} />
+        }
 
         {banner}
         {error && (
@@ -521,7 +560,7 @@ function HomeView({ home, loading, onOpen, onOpenView, embedded, downloads, onOp
   // "Downloading now" — actively-downloading qBittorrent torrents only (shared
   // isActiveState), so finished-but-seeding titles don't linger here at 100%.
   // Servarr-agnostic: [] when unconfigured/unreachable.
-  const arriving = (downloads || []).filter(t => isActiveState(t.state))
+  const arriving = (downloads || []).filter(t => isActiveState(t.state) && (t.dlspeed ?? 0) > 0)
 
   if (loading) return (
     <div style={{ padding: '4px 0 100px' }}>
@@ -567,7 +606,7 @@ function HomeView({ home, loading, onOpen, onOpenView, embedded, downloads, onOp
 function PosterCard({ item, onClick }: { item: LibraryItem; onClick: () => void }) {
   const [h, setH] = useState(false)
   return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} aria-label={item.Name}
+    <button onClick={onClick} onFocus={() => setBalancedPoster(item.Id)} onMouseEnter={() => { setH(true); setBalancedPoster(item.Id) }} onMouseLeave={() => setH(false)} aria-label={item.Name}
       style={{ flex: '0 0 auto', width: 170, border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', scrollSnapAlign: 'start' }}>
       <div style={{ position: 'relative', aspectRatio: '2/3', borderRadius: 14, overflow: 'hidden', background: C.surface,
         boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
@@ -599,7 +638,7 @@ function DownloadingCard({ torrent, onOpen }: { torrent: Torrent; onOpen: () => 
       <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden',
         boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
         transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
-        <DownloadPoster posterUrl={torrent.posterUrl} kind={torrent.kind} pct={pct} paused={false} width="100%" radius={14} ringSize={78} />
+        <DownloadPoster posterUrl={torrent.posterUrl} kind={torrent.kind} pct={pct} paused={(torrent.dlspeed ?? 0) <= 0} width="100%" radius={14} ringSize={78} />
       </div>
       <div style={{ marginTop: 9, fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
       {subtitle && <div style={{ fontFamily: MONO, fontSize: 12, color: C.faint, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>}
@@ -710,7 +749,17 @@ function ViewCard({ view, onClick }: { view: LibraryItem; onClick: () => void })
 /* ── Poster wall grid (inside a library / season) ───────────────────────── */
 function PosterWall({ children }: { children: ReactNode }) {
   const mobile = useIsMobile()
-  return <div style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 118 : 160}px, 1fr))` }}>{children}</div>
+  const railRef = useRef<HTMLDivElement>(null)
+  const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * railRef.current.clientWidth * .72, behavior: 'smooth' })
+  return (
+    <div className="library-poster-rail">
+      <div className="library-row-controls">
+        <button onClick={() => scroll(-1)} aria-label="Previous titles">‹</button>
+        <button onClick={() => scroll(1)} aria-label="Next titles">›</button>
+      </div>
+      <div ref={railRef} className="library-poster-wall" style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 118 : 150}px, 1fr))` }}>{children}</div>
+    </div>
+  )
 }
 function WallPoster({ item, onClick }: { item: LibraryItem; onClick: () => void }) {
   const badge = item.Type === 'Season' ? `S${item.IndexNumber}` : null
@@ -718,21 +767,18 @@ function WallPoster({ item, onClick }: { item: LibraryItem; onClick: () => void 
 }
 // Poster that fills its grid cell width (rail cards are fixed 170px).
 function PosterCardFluid({ item, onClick, badge }: { item: LibraryItem; onClick: () => void; badge?: string | null }) {
-  const [h, setH] = useState(false)
   const rating = item.CommunityRating
+  const filledStars = rating == null ? 0 : Math.round(rating / 2)
   const isSeries = item.Type === 'Series'
   const epCount = isSeries ? (item.ChildCount ?? item.RecursiveItemCount) : null
   const fullyWatched = item.UserData?.Played
   return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} aria-label={item.Name}
-      style={{ width: '100%', border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
-      <div style={{ position: 'relative', aspectRatio: '2/3', borderRadius: 14, overflow: 'hidden', background: C.surface,
-        boxShadow: h ? '0 18px 40px rgba(0,0,0,.55)' : '0 8px 22px rgba(0,0,0,.4)',
-        transform: h ? 'translateY(-3px)' : 'none', transition: 'transform .25s, box-shadow .25s' }}>
+    <button className="library-poster-card" onClick={onClick} onFocus={() => setBalancedPoster(item.Id)} onMouseEnter={() => setBalancedPoster(item.Id)} aria-label={item.Name}>
+      <div className="library-poster-art">
         <Img id={item.Id} type="Primary" alt={item.Name}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: h ? 'scale(1.06)' : 'scale(1)', transition: 'transform .4s' }} />
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
         {(epCount ?? 0) > 0 && (
-          <div style={{ position: 'absolute', top: 8, right: 8, minWidth: 22, height: 22, padding: '0 6px', borderRadius: 999, display: 'grid', placeItems: 'center', fontFamily: MONO, fontSize: 11.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: C.text }}>{epCount}</div>
+          <div style={{ position: 'absolute', top: 8, right: 8, minWidth: 22, height: 22, padding: '0 6px', borderRadius: 999, display: 'grid', placeItems: 'center', fontFamily: MONO, fontSize: 11.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff' }}>{epCount}</div>
         )}
         {fullyWatched && !epCount && (
           <div style={{ position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: '50%', display: 'grid', placeItems: 'center', background: C.green }}>
@@ -740,36 +786,26 @@ function PosterCardFluid({ item, onClick, badge }: { item: LibraryItem; onClick:
           </div>
         )}
         {badge && (
-          <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 7px', borderRadius: 8, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff' }}>{badge}</div>
-        )}
-        {rating != null && (
-          <div style={{ position: 'absolute', bottom: 8, right: 8, padding: '2px 8px', borderRadius: 8, fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,.7)' }}>{rating.toFixed(1)}</div>
+          <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 7px', borderRadius: 6, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff' }}>{badge}</div>
         )}
       </div>
-      <div style={{ marginTop: 9, fontSize: 14, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.Name}</div>
-      {item.ProductionYear && <div style={{ fontFamily: MONO, fontSize: 12, color: C.faint, marginTop: 2 }}>{item.ProductionYear}</div>}
+      <div className="library-poster-meta" aria-hidden>
+        <span className="library-poster-title">{item.Name}</span>
+        <span className="library-poster-stars">{Array.from({ length: 5 }, (_, index) => <span key={index} className={index >= filledStars ? 'is-empty' : ''}>★</span>)}</span>
+      </div>
     </button>
   )
 }
 
-/* ── Detail page (Sen Player detail layout) ─────────────────────────────── */
-function DetailAction({ icon, title, onClick, active }: { icon: string; title: string; onClick?: () => void; active?: boolean }) {
-  const [h, setH] = useState(false)
-  return (
-    <button title={title} aria-label={title} onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{
-      flex: 1, minWidth: 88, height: 48, borderRadius: 999, display: 'grid', placeItems: 'center', cursor: onClick ? 'pointer' : 'default',
-      border: `1px solid ${active ? 'rgba(255,255,255,.7)' : C.line}`, background: active || h ? 'rgba(255,255,255,.92)' : 'rgba(12,12,12,.62)',
-      color: active || h ? '#111' : C.text, transition: 'background .18s, color .18s, transform .18s', backdropFilter: 'blur(12px)',
-    }}>
-      <Icon path={icon} size={22} sw={1.9} />
-    </button>
-  )
-}
-
-function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string; onWatch: (item: LibraryItem, tracks?: DetailTrackSelection) => void; onOpen: (item: LibraryItem) => void; onBack: () => void }) {
+/* ── Cinematic movie / series / episode detail ──────────────────────────── */
+function Details({ itemId, onWatch, onOpen: _onOpen, onBack }: { itemId: string; onWatch: (item: LibraryItem, tracks?: DetailTrackSelection) => void; onOpen: (item: LibraryItem) => void; onBack: () => void }) {
   const mobile = useIsMobile()
+  const party = useParty()
+  const [activeId, setActiveId] = useState(itemId)
   const [d, setD] = useState<LibraryItem | null>(null)
-  const [seasons, setSeasons] = useState<LibraryItem[]>([])
+  const [series, setSeries] = useState<LibraryItem | null>(null)
+  const [seasonRows, setSeasonRows] = useState<Array<{ season: LibraryItem; episodes: LibraryItem[] }>>([])
+  const [loadingSeasons, setLoadingSeasons] = useState(false)
   const [playback, setPlayback] = useState<DetailPlayback | null>(null)
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null)
   const [selectedSubtitle, setSelectedSubtitle] = useState<number | null>(null)
@@ -777,23 +813,48 @@ function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string;
   const tracksInitialized = useRef(false)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    setLoading(true); setSeasons([]); setD(null)
-    let cancel = false
-    fetch(`/api/library/item/${itemId}`, { credentials: 'include' })
-      .then(r => r.ok ? apiJson(r) : null).then(x => { if (!cancel) setD(isLibraryItem(x) ? x : null) }).catch(() => {}).finally(() => { if (!cancel) setLoading(false) })
-    return () => { cancel = true }
-  }, [itemId])
+  useEffect(() => { setActiveId(itemId); setSeries(null); setSeasonRows([]) }, [itemId])
 
   useEffect(() => {
-    if (d?.Type !== 'Series') return
+    if (!party.session) return
+    if (party.role === 'host') {
+      party.shareView({ screen: 'detail', mediaId: itemId, episodeId: activeId === itemId ? null : activeId })
+      return
+    }
+    const sharedEpisode = party.session.browse?.episodeId
+    if (party.role === 'guest' && sharedEpisode && sharedEpisode !== activeId) setActiveId(sharedEpisode)
+  }, [party.session?.id, party.session?.browse?.episodeId, party.role, itemId, activeId])
+
+  useEffect(() => {
+    setLoading(true); setD(null); setTrackMenuOpen(false); tracksInitialized.current = false
     let cancel = false
+    fetch(`/api/library/item/${activeId}`, { credentials: 'include' })
+      .then(r => r.ok ? apiJson(r) : null).then(x => {
+        if (cancel) return
+        const detail = isLibraryItem(x) ? x : null
+        setD(detail)
+        if (activeId === itemId && detail?.Type === 'Series') setSeries(detail)
+      }).catch(() => {}).finally(() => { if (!cancel) setLoading(false) })
+    return () => { cancel = true }
+  }, [activeId, itemId])
+
+  useEffect(() => {
+    if (!series) return
+    let cancel = false
+    setLoadingSeasons(true)
     fetch(`/api/library/items/${itemId}/children`, { credentials: 'include' })
-      .then(r => r.ok ? apiJson(r) : []).then(x => { if (!cancel) setSeasons(libraryItems(x)) }).catch(() => {})
+      .then(r => r.ok ? apiJson(r) : [])
+      .then(value => Promise.all(libraryItems(value).map(async season => {
+        const response = await fetch(`/api/library/items/${season.Id}/children`, { credentials: 'include' })
+        return { season, episodes: response.ok ? libraryItems(await apiJson(response)) : [] }
+      })))
+      .then(rows => { if (!cancel) setSeasonRows(rows) })
+      .catch(() => { if (!cancel) setSeasonRows([]) })
+      .finally(() => { if (!cancel) setLoadingSeasons(false) })
     return () => { cancel = true }
-  }, [d?.Type, itemId])
+  }, [series?.Id, itemId])
 
-  const refreshPlayback = () => fetch(`/api/library/playback-info/${itemId}`, {
+  const refreshPlayback = () => fetch(`/api/library/playback-info/${activeId}`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{}',
   }).then(r => r.ok ? apiJson(r) : null).then(value => {
     const next = parseDetailPlayback(value)
@@ -814,11 +875,17 @@ function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string;
 
   if (loading || !d) return <div style={{ minHeight: '70vh', background: C.surface, animation: 'shim 1.3s linear infinite', backgroundImage: `linear-gradient(100deg, ${C.surface} 30%, ${C.surface2} 50%, ${C.surface} 70%)`, backgroundSize: '200% 100%' }} />
 
-  const backdropId = d.SeriesId || d.Id
-  const people = d.People || []
-  const cast = people.filter(p => p.Type === 'Actor').slice(0, 16)
-  const genres = d.Genres || []
-  const isSeries = d.Type === 'Series'
+  const detailSeries = series ?? (d.Type === 'Series' ? d : null)
+  const hero = detailSeries ?? d
+  const backdropId = hero.Id
+  const people = hero.People || []
+  const cast = people.filter(p => p.Type === 'Actor').slice(0, 10)
+  const genres = hero.Genres || []
+  const isSeries = detailSeries != null
+  const isEpisode = d.Type === 'Episode'
+  const activeSeason = seasonRows.find(row => row.episodes.some(episode => episode.Id === activeId)) ?? seasonRows[0]
+  const firstEpisode = seasonRows[0]?.episodes[0]
+  const playItem = d.Type === 'Series' ? firstEpisode : d
 
   const ms = d.MediaSources?.[0]
   const streams = ms?.MediaStreams || []
@@ -834,95 +901,110 @@ function Details({ itemId, onWatch, onOpen, onBack: _onBack }: { itemId: string;
   const selection = { audioStreamIndex: selectedAudio, subtitleStreamIndex: selectedSubtitle ?? -1 }
 
   return (
-    <div style={{ paddingBottom: 100 }}>
-      {/* Full-bleed backdrop hero — real Jellyfin artwork with only a black-alpha
-          legibility scrim, no blur/frost. */}
-      <div style={{ position: 'relative', minHeight: mobile ? '620px' : 'min(82vh, 760px)', display: 'flex', alignItems: 'flex-end' }}>
-        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-          <Img id={backdropId} type="Backdrop" fallback={{ id: backdropId, type: 'Primary' }}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 24%', filter: 'brightness(.66) saturate(.82)' }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(0deg, ${C.bg} 0%, rgba(8,8,8,.82) 12%, rgba(8,8,8,.18) 58%, rgba(8,8,8,.34) 100%)` }} />
-          <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(90deg, rgba(8,8,8,.56) 0%, rgba(8,8,8,.12) 56%, rgba(8,8,8,.42) 100%)` }} />
+    <div className={`library-detail${isSeries ? ' is-series' : ' is-movie'}`}>
+      <article className="library-detail-stage">
+        <div className="library-detail-backdrop">
+          <Img id={backdropId} type="Backdrop" fallback={{ id: backdropId, type: 'Primary' }} alt=""
+            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 28%' }} />
         </div>
+        <div className="library-detail-wash" />
 
-        <div style={{ position: 'relative', width: '100%', maxWidth: 1440, margin: '0 auto', padding: mobile ? '0 18px 30px' : '0 44px 44px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'minmax(300px, 430px) minmax(0, 1fr)', gap: mobile ? 24 : 48, alignItems: 'end' }}>
-            <div>
-              <DetailLogo id={backdropId} title={d.Name} mobile={mobile} />
-              <div style={{ display: 'flex', gap: 10, margin: '22px 0 12px', position: 'relative' }}>
-                <DetailAction icon={Ic.check} title={d.UserData?.Played ? 'Watched' : 'Mark watched'} active={d.UserData?.Played} />
-                <DetailAction icon={Ic.heart} title="Favorite" />
-                {!isSeries && <DetailAction icon={Ic.music} title="Audio and subtitles" active={trackMenuOpen} onClick={() => setTrackMenuOpen(open => !open)} />}
-                {trackMenuOpen && playback && (
-                  <DetailTrackMenu itemId={itemId} playback={playback} selectedAudio={selectedAudio} selectedSubtitle={selectedSubtitle}
-                    onSelectAudio={setSelectedAudio} onSelectSubtitle={setSelectedSubtitle} onRefresh={refreshPlayback} onClose={() => setTrackMenuOpen(false)} />
-                )}
-              </div>
-              <button onClick={() => isSeries ? seasons[0] && onOpen(seasons[0]) : onWatch({ Id: itemId, Name: d.Name, Type: d.Type }, selection)} disabled={isSeries && seasons.length === 0} style={{
-                width: '100%', minHeight: 54, display: 'inline-flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '14px 28px', border: 'none', borderRadius: 999,
-                background: '#f4f4f2', color: '#151515', fontFamily: SANS, fontSize: 17, fontWeight: 750, cursor: isSeries && seasons.length === 0 ? 'default' : 'pointer',
-                opacity: isSeries && seasons.length === 0 ? .45 : 1, boxShadow: '0 12px 34px rgba(0,0,0,.32)', transition: 'transform .18s, background .18s' }}
-                onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.transform = 'translateY(-2px)' }} onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
-                <Icon path={Ic.play} size={20} fill="currentColor" stroke="none" />
-                {isSeries ? 'Browse episodes' : resumeLabel ? `Resume · ${resumeLabel}` : 'Play'}
+        <button onClick={onBack} className="library-detail-back" aria-label="Back">
+          <Icon path={Ic.chevL} size={20} sw={2} />
+        </button>
+
+        <div className="library-detail-content">
+          <div className="library-detail-copy">
+            {genres.length > 0 ? <div className="library-detail-genres">{genres.slice(0, 3).join('  /  ')}</div> : null}
+            <h1>{hero.Name}</h1>
+            {isEpisode ? <div className="library-detail-episode-label">{d.SeriesName || detailSeries?.Name} · S{d.ParentIndexNumber ?? 0} E{d.IndexNumber ?? 0} · {d.Name}</div> : null}
+            {hero.Overview ? <p>{hero.Overview}</p> : null}
+            <div className="library-detail-meta">
+              {hero.CommunityRating != null ? <span>★ {hero.CommunityRating.toFixed(1)}</span> : null}
+              {hero.OfficialRating ? <span>{hero.OfficialRating}</span> : null}
+              {infoLine.slice(0, 3).map((value, index) => <span key={index}>{value}</span>)}
+            </div>
+            {playItem ? <div className="library-detail-actions">
+              <button className="library-detail-play" onClick={() => onWatch(playItem, playItem.Id === d.Id ? selection : undefined)}>
+                <Icon path={Ic.play} size={17} fill="currentColor" stroke="none" />
+                <span>{resumeLabel && playItem.Id === d.Id ? `Resume ${resumeLabel}` : isSeries && !isEpisode ? 'Play first episode' : 'Watch now'}</span>
               </button>
-            </div>
-
-            <div style={{ paddingBottom: mobile ? 0 : 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginBottom: 10, fontSize: mobile ? 14 : 16, fontWeight: 650 }}>
-                {d.CommunityRating != null && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon path={Ic.star} size={17} fill="#ef5b55" stroke="none" />{d.CommunityRating.toFixed(1)}</span>}
-                {d.CriticRating != null && <span style={{ color: C.text }}><span style={{ marginRight: 5 }}>&#127813;</span>{d.CriticRating}%</span>}
-                {d.OfficialRating && <span style={{ padding: '2px 8px', borderRadius: 5, border: `1px solid rgba(255,255,255,.48)`, fontSize: 12, fontFamily: MONO }}>{d.OfficialRating}</span>}
-                {genres.slice(0, 2).length > 0 && <span style={{ color: C.text }}>{genres.slice(0, 2).join(' · ')}</span>}
-              </div>
-              {infoLine.length > 0 && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12, fontFamily: MONO, fontSize: 13, color: 'rgba(255,255,255,.82)' }}>{infoLine.map((v, i) => <span key={i}>{v}</span>)}</div>}
-              {d.Overview && <p style={{ fontSize: mobile ? 14 : 15.5, lineHeight: 1.55, color: 'rgba(255,255,255,.86)', maxWidth: 820, margin: 0, textWrap: 'pretty', display: '-webkit-box', WebkitLineClamp: mobile ? 4 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{d.Overview}</p>}
-            </div>
+              {d.Type !== 'Series' ? <button className={`library-detail-track${trackMenuOpen ? ' is-open' : ''}`} onClick={() => setTrackMenuOpen(open => !open)} aria-label="Audio and subtitles" title="Audio and subtitles"><Icon path={Ic.music} size={18} sw={1.8} /></button> : null}
+              {trackMenuOpen && playback ? <DetailTrackMenu itemId={activeId} playback={playback} selectedAudio={selectedAudio} selectedSubtitle={selectedSubtitle} onSelectAudio={setSelectedAudio} onSelectSubtitle={setSelectedSubtitle} onRefresh={refreshPlayback} onClose={() => setTrackMenuOpen(false)} /> : null}
+            </div> : null}
           </div>
+
+          {!isSeries ? <div className="library-detail-poster">
+            <Img id={d.Id} type="Primary" fallback={{ id: d.Id, type: 'Backdrop' }} alt={d.Name}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          </div> : (
+            <nav className="library-seasons" aria-label="Seasons">
+              {seasonRows.map((row, index) => {
+                const selected = row.season.Id === activeSeason?.season.Id
+                return <button key={row.season.Id} className={selected ? 'is-active' : ''} onClick={() => row.episodes[0] && setActiveId(row.episodes[0].Id)}>
+                  <span>{row.season.Name || `Season ${index + 1}`}</span><i />
+                </button>
+              })}
+            </nav>
+          )}
+
+          {!isSeries && cast.length > 0 ? <div className="library-detail-cast">
+            {cast.slice(0, mobile ? 4 : 6).map(person => <StagePerson key={person.Id + (person.Role || '')} person={person} />)}
+          </div> : null}
         </div>
-      </div>
 
-      {/* Body */}
-      <div style={{ padding: mobile ? '0 16px' : '0 44px' }}>
-        {isSeries && seasons.length > 0 && (
-          <SectionHead title="Seasons" count={seasons.length}>
-            <PosterWall>{seasons.map(s => <WallPoster key={s.Id} item={s} onClick={() => onOpen(s)} />)}</PosterWall>
-          </SectionHead>
-        )}
-
-        {cast.length > 0 && (
-          <SectionHead title="Cast">
-            <div style={{ display: 'flex', gap: 16, overflowX: 'auto', scrollbarWidth: 'none', paddingBottom: 6 }}>
-              {cast.map(p => <CastPerson key={p.Id + (p.Role || '')} person={p} />)}
-            </div>
-          </SectionHead>
-        )}
-
-        {/* Link section header (matches Sen Player bottom) */}
-        {(d.ProviderIds?.Imdb || d.ProviderIds?.Tmdb) && (
-          <SectionHead title="Link">
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              {d.ProviderIds?.Imdb && <a href={`https://www.imdb.com/title/${d.ProviderIds.Imdb}/`} target="_blank" rel="noreferrer" style={linkPill}>IMDb ↗</a>}
-              {d.ProviderIds?.Tmdb && <a href={`https://www.themoviedb.org/${isSeries ? 'tv' : 'movie'}/${d.ProviderIds.Tmdb}`} target="_blank" rel="noreferrer" style={linkPill}>TMDb ↗</a>}
-            </div>
-          </SectionHead>
-        )}
-      </div>
+        {isSeries ? <div className="library-episodes-dock">
+          {loadingSeasons ? <div className="library-episodes-loading" /> : activeSeason ? <EpisodeRow season={activeSeason.season} episodes={activeSeason.episodes} activeId={activeId} onSelect={episode => setActiveId(episode.Id)} /> : null}
+        </div> : null}
+      </article>
     </div>
   )
 }
 
-function DetailLogo({ id, title, mobile }: { id: string; title: string; mobile: boolean }) {
-  const [logoAvailable, setLogoAvailable] = useState(!failedArt.has(`${id}:Logo`))
+function StagePerson({ person }: { person: Person }) {
+  const [imageAvailable, setImageAvailable] = useState(true)
   return (
-    <div style={{ minHeight: mobile ? 62 : 82, display: 'flex', alignItems: 'flex-end' }}>
-      {logoAvailable ? (
-        <img src={img(id, 'Logo')} alt={`${title} logo`} onError={() => { failedArt.add(`${id}:Logo`); setLogoAvailable(false) }}
-          style={{ display: 'block', maxWidth: mobile ? '76%' : 360, maxHeight: mobile ? 78 : 112, objectFit: 'contain', objectPosition: 'left bottom', filter: 'drop-shadow(0 5px 18px rgba(0,0,0,.5))' }} />
-      ) : (
-        <h1 style={{ margin: 0, maxWidth: 520, color: '#fff', fontSize: mobile ? 42 : 62, lineHeight: .94, fontWeight: 850, letterSpacing: '-.055em', textWrap: 'balance', textShadow: '0 5px 24px rgba(0,0,0,.55)' }}>{title}</h1>
-      )}
+    <div style={{ flex: '0 0 92px', minWidth: 0 }}>
+      <div style={{ height: 116, overflow: 'hidden', background: 'rgba(255,255,255,.08)', outline: '1px solid rgba(255,255,255,.1)' }}>
+        {imageAvailable ? <img src={img(person.Id, 'Primary')} alt={person.Name} onError={() => setImageAvailable(false)} style={{ width: '100%', height: '100%', objectFit: 'cover', filter: 'saturate(.82)' }} /> : <span style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', color: C.dim, fontSize: 11, fontWeight: 700 }}>{person.Name.split(' ').map(part => part[0]).join('').slice(0, 2)}</span>}
+      </div>
+      <div style={{ marginTop: 7, color: '#fff', fontSize: 11.5, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person.Name}</div>
+      {person.Role ? <div style={{ marginTop: 2, color: 'rgba(255,255,255,.52)', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person.Role}</div> : null}
     </div>
+  )
+}
+
+function EpisodeRow({ season, episodes, activeId, onSelect }: { season: LibraryItem; episodes: LibraryItem[]; activeId: string; onSelect: (episode: LibraryItem) => void }) {
+  const mobile = useIsMobile()
+  return (
+    <section style={{ marginTop: 36 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 15 }}>
+        <h2 style={{ margin: 0, fontSize: mobile ? 19 : 22, fontWeight: 800, letterSpacing: '-.025em' }}>{season.Name}</h2>
+        <span style={{ color: C.faint, fontFamily: MONO, fontSize: 12 }}>{episodes.length} episodes</span>
+      </div>
+      {episodes.length > 0 ? <div style={{ display: 'flex', gap: mobile ? 12 : 16, overflowX: 'auto', padding: '0 0 10px', scrollbarWidth: 'none', scrollSnapType: 'x proximity' }}>
+        {episodes.map(episode => <EpisodeCard key={episode.Id} episode={episode} selected={episode.Id === activeId} onClick={() => onSelect(episode)} />)}
+      </div> : <p style={{ color: C.faint, fontSize: 13 }}>No episodes available.</p>}
+    </section>
+  )
+}
+
+function EpisodeCard({ episode, selected, onClick }: { episode: LibraryItem; selected: boolean; onClick: () => void }) {
+  const mobile = useIsMobile()
+  return (
+    <button onClick={onClick} aria-current={selected ? 'true' : undefined} style={{ flex: `0 0 ${mobile ? 250 : 310}px`, width: mobile ? 250 : 310, padding: 0, border: 0, background: 'transparent', color: C.text, cursor: 'pointer', textAlign: 'left', scrollSnapAlign: 'start' }}>
+      <div style={{ position: 'relative', aspectRatio: '16/9', overflow: 'hidden', borderRadius: 12, background: C.surface, border: `2px solid ${selected ? '#fff' : 'transparent'}`, boxShadow: selected ? '0 0 0 1px rgba(255,255,255,.2), 0 16px 38px rgba(0,0,0,.45)' : '0 10px 26px rgba(0,0,0,.32)' }}>
+        <Img id={episode.Id} type="Thumb" fallback={{ id: episode.Id, type: 'Primary' }} alt={episode.Name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(0deg, rgba(0,0,0,.58), transparent 52%)' }} />
+        <span style={{ position: 'absolute', left: 11, bottom: 9, padding: '3px 7px', borderRadius: 5, background: 'rgba(0,0,0,.68)', color: '#fff', fontFamily: MONO, fontSize: 11 }}>E{episode.IndexNumber ?? '?'}</span>
+        {(episode.UserData?.PlayedPercentage ?? 0) > 0 && <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'rgba(255,255,255,.2)' }}><div style={{ width: `${episode.UserData?.PlayedPercentage}%`, height: '100%', background: '#fff' }} /></div>}
+      </div>
+      <div style={{ marginTop: 9, display: 'flex', gap: 8, alignItems: 'baseline' }}>
+        <span style={{ color: C.faint, fontFamily: MONO, fontSize: 11.5 }}>{episode.IndexNumber ?? '–'}</span>
+        <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, fontWeight: 700 }}>{episode.Name}</strong>
+      </div>
+      {episode.Overview && <p style={{ margin: '5px 0 0 22px', color: C.faint, fontSize: 12.5, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{episode.Overview}</p>}
+    </button>
   )
 }
 
@@ -999,65 +1081,33 @@ function DetailTrackMenu({ itemId, playback, selectedAudio, selectedSubtitle, on
     </div>
   )
 }
-const linkPill: CSSProperties = { padding: '9px 16px', borderRadius: 999, background: C.surface, border: `1px solid ${C.line}`, color: C.text, fontFamily: MONO, fontSize: 12.5, textDecoration: 'none', display: 'inline-block' }
-
-function SectionHead({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
-  return (
-    <section style={{ marginTop: 34, animation: 'up .4s ease both' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 16 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.02em', color: C.text }}>{title}</h2>
-        {count != null && <span style={{ fontFamily: MONO, fontSize: 13, color: C.faint }}>{count}</span>}
-      </div>
-      {children}
-    </section>
-  )
-}
-
-/* ── Cast card (rounded-square avatar, name / role / "Actor") ───────────── */
-function CastPerson({ person }: { person: Person }) {
-  const [ok, setOk] = useState(true)
-  return (
-    <div style={{ flex: '0 0 120px', width: 120 }}>
-      <div style={{ width: 120, height: 120, borderRadius: 18, overflow: 'hidden', marginBottom: 10, background: C.surface2, display: 'grid', placeItems: 'center', border: `1px solid ${C.line}` }}>
-        {ok
-          ? <img src={img(person.Id, 'Primary')} alt={person.Name} onError={() => setOk(false)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          : <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke={C.faint} strokeWidth="1.6"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>}
-      </div>
-      <div style={{ fontSize: 13.5, fontWeight: 700, color: C.text, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person.Name}</div>
-      {person.Role && <div style={{ fontSize: 12, color: C.dim, marginTop: 3, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person.Role}</div>}
-      <div style={{ fontSize: 11.5, color: C.faint, marginTop: 2 }}>{person.Type}</div>
-    </div>
-  )
-}
-
 /* ── Grid (inside a library / season) ───────────────────────────────────── */
-function GridView({ stack, items, loading, onOpen, onCrumb, onHome }: { stack: StackEntry[]; items: LibraryItem[]; loading: boolean; onOpen: (item: LibraryItem) => void; onCrumb: (index: number) => void; onHome: () => void }) {
-  const mobile = useIsMobile()
+function GridView({ stack, items, loading, onOpen }: { stack: StackEntry[]; items: LibraryItem[]; loading: boolean; onOpen: (item: LibraryItem) => void; onCrumb: (index: number) => void; onHome: () => void }) {
   const current = stack[stack.length - 1]
+  const genreRows = Array.from(new Set(items.flatMap(item => item.Genres ?? [])))
+    .map(name => ({ name, items: items.filter(item => item.Genres?.includes(name)) }))
+    .filter(row => row.items.length > 1 && row.items.length < items.length)
+
   return (
-    <div style={{ padding: mobile ? '4px 16px 100px' : '8px 44px 100px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: MONO, fontSize: 12.5, color: C.dim, marginBottom: 18 }}>
-        <span onClick={onHome} style={{ cursor: 'pointer' }}>Home</span>
-        {stack.map((s, i) => (
-          <span key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: C.faint }}>/</span>
-            <span onClick={() => onCrumb(i)} style={{ cursor: 'pointer', color: i === stack.length - 1 ? C.text : C.dim }}>{s.name}</span>
-          </span>
+    <div className="library-catalog">
+      <section className="library-results">
+        <section className="library-media-row">
+          <div className="library-title-row"><h1>{current?.name}</h1></div>
+          {loading ? (
+            <PosterWall>{Array.from({ length: 8 }).map((_, index) => <div key={index} className="library-poster-skeleton" />)}</PosterWall>
+          ) : items.length === 0 ? (
+            <div className="library-empty"><strong>No titles here yet</strong><span>Add something from Discover.</span></div>
+          ) : (
+            <PosterWall>{items.map(item => <WallPoster key={item.Id} item={item} onClick={() => onOpen(item)} />)}</PosterWall>
+          )}
+        </section>
+        {!loading && genreRows.map(row => (
+          <section className="library-media-row" key={row.name}>
+            <div className="library-title-row"><h2>{row.name}</h2></div>
+            <PosterWall>{row.items.map(item => <WallPoster key={item.Id} item={item} onClick={() => onOpen(item)} />)}</PosterWall>
+          </section>
         ))}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 22 }}>
-        <h1 style={{ fontSize: 30, fontWeight: 800, letterSpacing: '-.02em' }}>{current?.name}</h1>
-        {!loading && <span style={{ fontFamily: MONO, fontSize: 13, color: C.faint }}>{items.length} titles</span>}
-      </div>
-      {loading ? (
-        <PosterWall>{Array.from({ length: 18 }).map((_, i) => (
-          <div key={i} style={{ aspectRatio: '2/3', borderRadius: 14, background: C.surface, animation: 'shim 1.3s linear infinite', backgroundImage: `linear-gradient(100deg, ${C.surface} 30%, ${C.surface2} 50%, ${C.surface} 70%)`, backgroundSize: '200% 100%' }} />
-        ))}</PosterWall>
-      ) : items.length === 0 ? (
-        <p style={{ color: C.dim, fontSize: 15 }}>Nothing here yet.</p>
-      ) : (
-        <PosterWall>{items.map(it => <WallPoster key={it.Id} item={it} onClick={() => onOpen(it)} />)}</PosterWall>
-      )}
+      </section>
     </div>
   )
 }

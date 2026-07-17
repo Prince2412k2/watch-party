@@ -35,6 +35,18 @@ export default function RoomControls({
   const [open, setOpen] = useState(false)
   const [copyLabel, setCopyLabel] = useState('Copy link')
   const [confirmEnd, setConfirmEnd] = useState(false)
+
+  useEffect(() => {
+    if (phone || !session) return
+    const openPartyMenu = (event: globalThis.MouseEvent) => {
+      if (event.shiftKey) return
+      event.preventDefault()
+      setOpen(true)
+    }
+    window.addEventListener('contextmenu', openPartyMenu)
+    return () => window.removeEventListener('contextmenu', openPartyMenu)
+  }, [phone, session?.id])
+
   if (!session) return null
   const currentSession = session
 
@@ -105,24 +117,21 @@ export default function RoomControls({
         <button onClick={leaveRoom} title="Back" aria-label="Back" style={iconBtn(true)} onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)' }} onMouseLeave={e => { e.currentTarget.style.color = 'var(--red)' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /><path d="M9 12h12" /></svg>
         </button>
-        {isHost && (
-          <button onClick={() => setOpen(true)} title="Host controls" aria-label="Host controls" style={{ ...iconBtn(), position: 'relative' }} onMouseEnter={e => { e.currentTarget.style.color = 'var(--text)' }} onMouseLeave={e => { e.currentTarget.style.color = 'var(--text2)' }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
-            {waiting.length > 0 && (
-              <span style={{ position: 'absolute', top: phone ? 3 : -2, right: phone ? 3 : -2, minWidth: 16, height: 16, padding: '0 5px', borderRadius: 999, background: 'var(--red)', color: 'var(--text)', fontSize: 10, fontWeight: 700, display: 'grid', placeItems: 'center' }}>{waiting.length}</span>
-            )}
-          </button>
-        )}
       </div>
 
-      {/* Top-right icon cluster (fades with auto-hide) */}
-      <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 8px)' : top, right: phone ? 'calc(var(--sa-r) + 8px)' : 18, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 10, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
-        {phone && watching && onOpenChat && (
-          <button onClick={(e) => { e.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: 44, height: 44, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
+      {/* Desktop opens this menu with a right click anywhere on the player.
+          Phones keep the visible control because they have no context click. */}
+      {phone ? <div style={{ position: 'absolute', top: 'calc(var(--sa-t) + 8px)', right: 'calc(var(--sa-r) + 8px)', zIndex: 40, display: 'flex', alignItems: 'center', gap: 8, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transform: visible ? 'translateY(0)' : 'translateY(-6px)', transition: 'opacity .25s, transform .25s' }}>
+        {watching && onOpenChat ? (
+          <button onClick={(event) => { event.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: 44, height: 44, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
           </button>
-        )}
-      </div>
+        ) : null}
+        <button onClick={(event) => { event.stopPropagation(); setOpen(value => !value) }} title="Watch party" aria-label="Watch party" aria-expanded={open} style={{ position: 'relative', minWidth: 52, height: 52, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, borderRadius: 18, border: '1px solid rgba(255,255,255,.14)', color: '#f5f4f0', background: '#202126', boxShadow: '0 15px 38px rgba(0,0,0,.38)', cursor: 'pointer' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+          {waiting.length > 0 ? <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 20, height: 20, padding: '0 5px', borderRadius: 10, display: 'grid', placeItems: 'center', color: '#fff', background: 'var(--red)', fontSize: 10, fontWeight: 800 }}>{waiting.length}</span> : null}
+        </button>
+      </div> : null}
 
       {/* Join-request sidebar (host only) — stays visible; it's a notification */}
       {isHost && waiting.length > 0 && (
@@ -149,9 +158,9 @@ export default function RoomControls({
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.72)' }} />
-          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 51, width: 420, maxWidth: 'calc(100vw - 28px)', maxHeight: 'min(680px, calc(100vh - 40px))', display: 'flex', flexDirection: 'column', borderRadius: 14, overflow: 'hidden', color: 'var(--text)' }}>
+          <div style={{ ...elevatedPanel, position: 'absolute', top: phone ? '50%' : top + 64, left: phone ? '50%' : 'auto', right: phone ? 'auto' : 18, transform: phone ? 'translate(-50%,-50%)' : 'none', zIndex: 51, width: 420, maxWidth: 'calc(100vw - 28px)', maxHeight: 'min(680px, calc(100vh - 100px))', display: 'flex', flexDirection: 'column', borderRadius: 22, overflow: 'hidden', color: 'var(--text)', boxShadow: '0 24px 70px rgba(0,0,0,.55)' }}>
             <div style={{ padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--stroke)' }}>
-              <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Host controls</span>
+              <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Watch party</span>
               <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12" /></svg>
               </button>
@@ -185,7 +194,7 @@ export default function RoomControls({
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 0 4px', borderTop: '1px solid var(--stroke)' }}>
+              {isHost ? <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 0 4px', borderTop: '1px solid var(--stroke)' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14.5, fontWeight: 600 }}>Collaborative control</div>
                   <div style={{ fontSize: 12.5, color: 'var(--text3)', marginTop: 2 }}>Let guests browse, play, pause &amp; seek</div>
@@ -193,9 +202,9 @@ export default function RoomControls({
                 <button onClick={() => setCollaborative(!session.collaborativeControl)} style={{ width: 44, height: 26, borderRadius: 13, border: '1px solid var(--stroke2)', cursor: 'pointer', padding: 3, flexShrink: 0, background: session.collaborativeControl ? 'var(--stroke2)' : 'transparent', transition: 'background .2s', display: 'flex', alignItems: 'center', justifyContent: session.collaborativeControl ? 'flex-end' : 'flex-start' }}>
                   <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--text)', display: 'block' }} />
                 </button>
-              </div>
+              </div> : null}
 
-              {watching && (
+              {watching && isHost && (
                 <div style={{ padding: '16px 0 4px', borderTop: '1px solid var(--stroke)' }}>
                   <div style={{ fontSize: 14.5, fontWeight: 600 }}>Sync mode</div>
                   <div style={{ fontSize: 12.5, color: 'var(--text3)', margin: '2px 0 12px' }}>

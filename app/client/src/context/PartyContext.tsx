@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { useSocket } from '../hooks/useSocket'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
-import type { BrowseEntry, MirrorPoint, PartyContextValue, PartySession, PartyUser, ToastRecord } from '../types'
+import type { BrowseEntry, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, ToastRecord } from '../types'
 import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards'
 
 const PartyContext = createContext<PartyContextValue | null>(null)
@@ -81,6 +81,7 @@ function reducer(state: PartyState, action: PartyAction): PartyState {
     case 'REMOVE_TOAST':
       return { ...state, toasts: state.toasts.filter(t => t.id !== action.id) }
     case 'USER_JOINED': {
+      if (state.session?.guests?.some(guest => guest.userId === action.user.userId)) return state
       const guests = state.session
         ? [...(state.session.guests ?? []), { userId: action.user.userId, name: action.user.name }]
         : []
@@ -112,6 +113,20 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   stateRef.current = state
 
   useEffect(() => {
+    const resume = () => {
+      if (stateRef.current.session) return
+      socket.emit('party:resume', {}, (value: unknown) => {
+        if (!isObject(value) || !isPartySession(value.session)) return
+        const sess = value.session
+        dispatch({ type: 'SET_SESSION', session: sess, role: sess.hostId === userId ? 'host' : 'guest' })
+      })
+    }
+    if (socket.connected) resume()
+    socket.on('connect', resume)
+    return () => { socket.off('connect', resume) }
+  }, [socket, userId])
+
+  useEffect(() => {
     function toast(msg: string, level = 'info') {
       const id = Date.now()
       dispatch({ type: 'ADD_TOAST', toast: { id, msg, level } })
@@ -136,6 +151,10 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       if (!isObject(value) || !isPartySession(value.session)) return
       const sess = value.session
       dispatch({ type: 'SET_SESSION', session: sess, role: 'guest' })
+      if (sess.browse?.tab) {
+        const target = sess.browse.tab === 'movies' ? '/movies' : sess.browse.tab === 'series' ? '/series' : sess.browse.tab === 'discover' ? '/discover' : '/downloads'
+        navigate(target)
+      }
     })
 
     socket.on('party:rejected', () => {
@@ -186,6 +205,10 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     socket.on('browse:state', (browse: unknown) => {
       if (!isPartyBrowse(browse)) return
       dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
+      const current = stateRef.current
+      if (current.role !== 'guest' || !browse.tab) return
+      const target = browse.tab === 'movies' ? '/movies' : browse.tab === 'series' ? '/series' : browse.tab === 'discover' ? '/discover' : '/downloads'
+      if (window.location.pathname !== target) navigate(target)
     })
 
     // Host's live scroll/cursor → mirror store (kept out of React state; applied
@@ -284,8 +307,15 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
 
   // Drive the shared library browsing (host, or any guest when collaborative).
   function navigateBrowse(stack: BrowseEntry[]) {
-    dispatch({ type: 'UPDATE_SESSION', patch: { browse: { stack } } })
+    const browse = { ...(stateRef.current.session?.browse ?? {}), stack }
+    dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
     socket.emit('browse:navigate', { stack })
+  }
+
+  function shareView(patch: Partial<PartyBrowse>) {
+    const browse = { ...(stateRef.current.session?.browse ?? {}), ...patch }
+    dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
+    socket.emit('browse:view', patch)
   }
 
   // Broadcast the driver's live scroll fraction + cursor to the room (throttled
@@ -395,7 +425,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     <PartyContext.Provider value={{
       ...state,
       createParty, createRoom, joinParty,
-      navigateBrowse, sendPointer, selectMedia, backToLobby,
+       navigateBrowse, shareView, sendPointer, selectMedia, backToLobby,
       approveUser, rejectUser, kickUser, transferHost, endParty,
       setCollaborative, setSyncMode, sendMessage, removeCamera,
       setPlaybackTracks,

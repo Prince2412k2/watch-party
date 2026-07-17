@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { navigate } from './router'
-import { GlassDefs } from './glass'
 import { usePhone } from './hooks/useIsMobile'
 import Login from './pages/Login'
 import Library from './pages/Library'
@@ -10,6 +10,8 @@ import Downloads from './pages/Downloads'
 import DesktopApp from './pages/DesktopApp'
 import MobileApp from './mobile/MobileApp'
 import { WatchRoute } from './mobile/screens/Watch'
+import { PartyProvider } from './context/PartyContext'
+import { WebShell } from './components/WebShell'
 
 function useRoute() {
   const [path, setPath] = useState(window.location.pathname)
@@ -23,55 +25,71 @@ function useRoute() {
 
 function Router() {
   const { user, loading } = useAuth()
+
+  if (loading) return null
+  if (!user) return <UnauthenticatedRouter />
+
+  return (
+    <PartyProvider userId={user.userId}>
+      <AuthenticatedRouter user={user} />
+    </PartyProvider>
+  )
+}
+
+function UnauthenticatedRouter() {
   const path = useRoute()
-  const phone = usePhone()
 
-  // Send the root path to the library
   useEffect(() => {
-    if (!loading && user && path === '/') navigate('/library')
-  }, [user, loading, path])
-
-  // Redirect to login when not authenticated
-  useEffect(() => {
-    if (!loading && !user && path !== '/login') {
+    if (path !== '/login') {
       sessionStorage.setItem('returnTo', path + window.location.search)
       navigate('/login')
     }
-  }, [user, loading, path])
+  }, [path])
 
-  // After login, user state is set — navigate to the saved destination
+  if (path !== '/login') return null
+  return <Login onSuccess={() => {}} />
+}
+
+function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof useAuth>['user']> }) {
+  const path = useRoute()
+  const phone = usePhone()
+  const { logout } = useAuth()
+
   useEffect(() => {
-    if (!loading && user && path === '/login') {
+    if (path === '/login') {
       const saved = sessionStorage.getItem('returnTo')
       sessionStorage.removeItem('returnTo')
-      // Never bounce back to a non-page (root or the login screen itself)
       const returnTo = saved && saved !== '/' && !saved.startsWith('/login') ? saved : '/library'
       navigate(returnTo)
     }
-  }, [user, loading, path])
+  }, [path])
 
-  if (loading) return null
-  if (!user && path !== '/login') return null
-  if (path === '/') return null
+  useEffect(() => {
+    if (path === '/') navigate('/library')
+  }, [path])
+
+  if (path === '/' || path === '/login') return null
 
   // (1) Party routes — ONE shared, mount-stable element for desktop AND phone.
   // Rendered above the device branch so a usePhone() flip on rotation never
   // remounts a live watch session (which would tear down LiveKit + useSyncPlay).
   // Handles /party/new?itemId=xxx and /party/:id. See mobile/screens/Watch.jsx.
-  if (path.startsWith('/party/') && user) return <WatchRoute user={user} path={path} />
+  if (path.startsWith('/party/')) return <WatchRoute path={path} />
 
   // (2) Phone shell — the new mobile presentation tree (Login/Home/Browse/
   // Downloads). Coarse-pointer gated, so a narrow desktop window keeps desktop.
   if (phone) return <MobileApp path={path} />
 
   // (3) Desktop — existing switch, unchanged.
-  if (path === '/login') return <Login onSuccess={() => {
-    // onSuccess is a fallback — the useEffect above handles navigation
-    // once user state is committed. Both paths are safe to coexist.
-  }} />
-  if (path === '/library') return <Library />
-  if (path === '/discover') return <FindDownload />
-  if (path === '/downloads') return <Downloads />
+  const initials = user.name?.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) || '?'
+  const shell = (active: 'movies' | 'series' | 'discover' | 'downloads', content: ReactNode) => (
+    <WebShell active={active} initials={initials} profileName={user.name} logout={logout}>{content}</WebShell>
+  )
+
+  if (path === '/library' || path === '/movies') return shell('movies', <Library libraryType="movies" />)
+  if (path === '/series') return shell('series', <Library libraryType="series" />)
+  if (path === '/discover') return shell('discover', <FindDownload />)
+  if (path === '/downloads') return shell('downloads', <Downloads />)
   if (path === '/desktop-app') return <DesktopApp />
 
   return <div>404</div>
@@ -80,7 +98,6 @@ function Router() {
 export default function App() {
   return (
     <AuthProvider>
-      <GlassDefs />
       <Router />
     </AuthProvider>
   )

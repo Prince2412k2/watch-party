@@ -26,7 +26,13 @@ export function isBrowseEntry(value: unknown): value is BrowseEntry {
 
 export function isPartyBrowse(value: unknown): value is PartyBrowse {
   return isObject(value) && (value.stack === undefined ||
-    (Array.isArray(value.stack) && value.stack.every(isBrowseEntry)))
+    (Array.isArray(value.stack) && value.stack.every(isBrowseEntry))) &&
+    (value.tab === undefined || ['movies', 'series', 'discover', 'downloads'].includes(String(value.tab))) &&
+    (value.screen === undefined || value.screen === 'grid' || value.screen === 'detail') &&
+    (value.mediaId === undefined || value.mediaId === null || typeof value.mediaId === 'string') &&
+    (value.seasonId === undefined || value.seasonId === null || typeof value.seasonId === 'string') &&
+    (value.episodeId === undefined || value.episodeId === null || typeof value.episodeId === 'string') &&
+    (value.revision === undefined || typeof value.revision === 'number')
 }
 
 function isPlayback(value: unknown): boolean {
@@ -41,10 +47,10 @@ export function isPartySession(value: unknown): value is PartySession {
   return (value.guests === undefined || (Array.isArray(value.guests) && value.guests.every(isPartyUser))) &&
     (value.waiting === undefined || (Array.isArray(value.waiting) && value.waiting.every(isPartyUser))) &&
     (value.browse === undefined || isPartyBrowse(value.browse)) &&
-    (value.playback === undefined || isPlayback(value.playback)) &&
+    (value.playback === undefined || value.playback === null || isPlayback(value.playback)) &&
     (value.hostName === undefined || typeof value.hostName === 'string') &&
     (value.stage === undefined || typeof value.stage === 'string') &&
-    (value.mediaItemId === undefined || typeof value.mediaItemId === 'string')
+    (value.mediaItemId === undefined || value.mediaItemId === null || typeof value.mediaItemId === 'string')
 }
 
 export function isChatMessage(value: unknown): value is ChatMessage {

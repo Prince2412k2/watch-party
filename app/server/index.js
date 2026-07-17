@@ -34,7 +34,7 @@ import {
   createSession, getSession, deleteSession,
   findSessionBySocket, findSessionForMember, findSessionByHost,
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
-  transferHost, pushMessage, isHost, isMember, publicSession, allSessions,
+  transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
 } from './session.js'
 import { getItems } from './jellyfin.js'
@@ -98,7 +98,7 @@ const sessionMiddleware = session({
     sameSite: 'lax',
     domain: process.env.SESSION_COOKIE_DOMAIN || undefined,
     maxAge: 7 * 24 * 60 * 60 * 1000,          // 7 days
-    secure: process.env.NODE_ENV === 'production',
+    secure: 'auto',
   },
 })
 
@@ -252,6 +252,30 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const { userId, name, token, deviceId } = socket.user
 
+  socket.on('party:resume', (_payload, ack) => {
+    const sess = findSessionForMember(userId)
+    if (!sess) return ack?.({ session: null })
+    if (sess.originalHostId === userId && sess.hostId !== userId) {
+      reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
+      io.to(sess.id).emit('host:changed', { hostId: userId })
+    } else if (sess.hostId === userId) {
+      clearTimeout(sess.hostDisconnectTimer)
+      sess.hostDisconnectTimer = null
+      sess.hostSocketId = socket.id
+      sess.hostToken = token
+      sess.hostDeviceId = deviceId
+      persistSession(sess)
+    } else {
+      const guest = sess.guests.find(candidate => candidate.userId === userId)
+      if (guest) Object.assign(guest, { socketId: socket.id, token, deviceId, name })
+      persistSession(sess)
+    }
+    socket.join(sess.id)
+    io.to(socket.id).emit('chat:history', sess.messages)
+    ack?.({ session: publicSession(sess) })
+    socket.to(sess.id).emit('party:state', publicSession(sess))
+  })
+
   // party:create ────────────────────────────────────────────────────────────
   socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     let sess = null
@@ -274,6 +298,7 @@ io.on('connection', (socket) => {
           audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
           subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
         })
+        persistSession(sess)
       }
 
       socket.join(sess.id)
@@ -301,6 +326,16 @@ io.on('connection', (socket) => {
       io.to(socket.id).emit('sync:schedule', sess.schedule)
     }
 
+    if (sess.originalHostId === userId && sess.hostId !== userId) {
+      clearTimeout(sess.hostDisconnectTimer)
+      sess.hostDisconnectTimer = null
+      reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
+      restoreSocket()
+      io.to(sess.id).emit('host:changed', { hostId: userId })
+      io.to(sess.id).emit('party:state', publicSession(sess))
+      return ack?.({ status: 'joined', session: publicSession(sess) })
+    }
+
     if (sess.hostId === userId) {
       // Host reconnecting after disconnect
       if (sess.hostDisconnectTimer) {
@@ -308,6 +343,7 @@ io.on('connection', (socket) => {
         sess.hostDisconnectTimer = null
       }
       sess.hostSocketId = socket.id
+      persistSession(sess)
       restoreSocket()
       return ack?.({ status: 'joined', session: publicSession(sess) })
     }
@@ -322,6 +358,7 @@ io.on('connection', (socket) => {
     // Previously approved → re-enter freely (no re-approval needed unless kicked)
     if (sess.approved.has(userId)) {
       admitGuest(sess, { userId, name, socketId: socket.id, token, deviceId })
+      persistSession(sess)
       restoreSocket()
       // The ack's session snapshot already contains this guest. Exclude the
       // rejoining socket so its reducer cannot append itself a second time.
@@ -348,6 +385,7 @@ io.on('connection', (socket) => {
     // Hand the joiner the current timeline so it locks straight onto the schedule
     io.to(guest.socketId).emit('sync:schedule', sess.schedule)
     io.to(sess.id).emit('user:joined', { userId: guest.userId, name: guest.name })
+    persistSession(sess)
     // Position sync is handled by the per-second drift heartbeat + buffer-ahead
     // rendezvous on the client (no immediate Unpause that would stall the guest).
     ack?.({ ok: true })
@@ -360,6 +398,7 @@ io.on('connection', (socket) => {
     const w = rejectGuest(sess, targetId)
     if (!w) return ack?.({ error: 'not waiting' })
     io.to(w.socketId).emit('party:rejected', {})
+    persistSession(sess)
     ack?.({ ok: true })
   })
 
@@ -372,6 +411,7 @@ io.on('connection', (socket) => {
     sess.approved.delete(targetId)   // revoke — kicked users must re-request
     io.to(g.socketId).emit('party:kicked', { userId: targetId })
     io.to(sess.id).emit('user:left', { userId: targetId, name: g.name })
+    persistSession(sess)
     ack?.({ ok: true })
   })
 
@@ -407,6 +447,7 @@ io.on('connection', (socket) => {
     const sess = findSessionByHost(userId)
     if (!sess) return ack?.({ error: 'not host' })
     sess.collaborativeControl = !!enabled
+    persistSession(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
   })
@@ -421,7 +462,24 @@ io.on('connection', (socket) => {
   socket.on('browse:navigate', ({ stack = [] } = {}) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return
-    sess.browse = { stack: Array.isArray(stack) ? stack.slice(0, 8) : [] }
+    sess.browse = { ...sess.browse, stack: Array.isArray(stack) ? stack.slice(0, 8) : [], revision: (sess.browse?.revision ?? 0) + 1 }
+    persistSession(sess)
+    socket.to(sess.id).emit('browse:state', sess.browse)
+  })
+
+  socket.on('browse:view', (patch = {}) => {
+    const sess = findSessionForMember(userId)
+    if (!sess || !canDrive(sess) || !patch || typeof patch !== 'object') return
+    const tabs = new Set(['movies', 'series', 'discover', 'downloads'])
+    const screens = new Set(['grid', 'detail'])
+    const next = {}
+    if (tabs.has(patch.tab)) next.tab = patch.tab
+    if (screens.has(patch.screen)) next.screen = patch.screen
+    for (const key of ['mediaId', 'seasonId', 'episodeId']) {
+      if (patch[key] === null || (typeof patch[key] === 'string' && patch[key].length <= 128)) next[key] = patch[key]
+    }
+    sess.browse = { ...sess.browse, ...next, revision: (sess.browse?.revision ?? 0) + 1 }
+    persistSession(sess)
     socket.to(sess.id).emit('browse:state', sess.browse)
   })
 
@@ -457,6 +515,7 @@ io.on('connection', (socket) => {
       clearTimeout(sess._stallTimer)
       sess.intent.playing = true
       startSegment(sess, Date.now())
+      persistSession(sess)
       io.to(sess.id).emit('party:state', publicSession(sess))
       ack?.({ ok: true })
     } catch (err) {
@@ -475,6 +534,7 @@ io.on('connection', (socket) => {
     sess.stage = 'lobby'
     beginMediaGeneration(sess)
     resetTimeline(sess)
+    persistSession(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
   })
@@ -491,6 +551,7 @@ io.on('connection', (socket) => {
         audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : null,
         subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : null,
       })
+      persistSession(sess)
       io.to(sess.id).emit('party:state', publicSession(sess))
       ack?.({ ok: true, playback })
     } catch (err) {
@@ -591,6 +652,7 @@ io.on('connection', (socket) => {
       sess.stalled.clear()
       sess.stallFallback.clear()
     }
+    persistSession(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
     reconcile(sess)
     ack?.({ ok: true })
@@ -634,6 +696,7 @@ io.on('connection', (socket) => {
     } else {
       const g = removeGuest(sess, userId)
       if (g) io.to(sess.id).emit('user:left', { userId, name })
+      if (g) persistSession(sess)
       // A departing member must not keep the group frozen in dragging mode
       const stallChanged = sess.stalled.delete(userId) || sess.stallFallback.delete(userId)
       if (stallChanged) reconcile(sess)
@@ -653,6 +716,7 @@ function setSchedule(sess, next) {
     version: (sess.schedule?.version ?? 0) + 1,
     mediaGeneration: sess.mediaGeneration,
   }
+  persistSession(sess)
   io.to(sess.id).emit('sync:schedule', sess.schedule)
 }
 
@@ -776,13 +840,14 @@ function handleHostDisconnect(sess) {
 
   sess.hostDisconnectTimer = setTimeout(() => {
     sess.hostDisconnectTimer = null
-    const next = [...sess.guests].sort((a, b) => a.joinedAt - b.joinedAt)[0]
+    const next = randomConnectedGuest(sess, socketId => io.sockets.sockets.has(socketId))
     if (!next) {
       deleteSession(sess.id)
       return
     }
     const nextSocket = io.sockets.sockets.get(next.socketId)
     const nextToken = nextSocket?.user?.token ?? sess.hostToken
+    sess.hostSocketId = null
     transferHost(sess, next.userId, next.socketId, nextToken)
     io.to(sess.id).emit('host:changed', { hostId: next.userId })
   }, HOST_GRACE_MS)
