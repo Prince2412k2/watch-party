@@ -30,6 +30,15 @@ export interface PartyPlayback {
   mediaSourceId?: string | null
 }
 
+export interface SubtitlePreferences {
+  delayMs: number
+  fontScalePercent: number
+  verticalPosition: 'top' | 'middle' | 'bottom'
+  fontFamily: 'sans' | 'serif' | 'mono'
+  textColor: string
+  backgroundOpacityPercent: number
+}
+
 export interface BrowseEntry {
   id?: string
   name?: string
@@ -61,6 +70,7 @@ export interface PartySession {
   playback?: PartyPlayback | null
   mediaItemId?: string | null
   mediaSourceId?: string | null
+  subtitlePreferences?: SubtitlePreferences
 }
 
 export interface ToastRecord {
@@ -108,6 +118,7 @@ export interface PartyContextValue {
     audioStreamIndex?: number | null
     subtitleStreamIndex?: number | null
   }) => void
+  setSubtitlePreferences: (preferences: SubtitlePreferences) => void
   setLayout: (mode: 'float' | 'dock') => void
   toggleChat: () => void
   openChat: (focus?: boolean) => void

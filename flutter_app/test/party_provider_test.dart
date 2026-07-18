@@ -4,6 +4,7 @@ import 'package:watchparty/cache/media_cache_proxy.dart';
 import 'package:watchparty/data/api_client.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
+import 'package:watchparty/models/subtitle_preferences.dart';
 import 'package:watchparty/net/events.dart';
 import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/player/player_controller.dart';
@@ -110,6 +111,8 @@ Map<String, dynamic> _session({
   String? mediaSourceId,
   bool collaborativeControl = false,
   List<Map<String, dynamic>> guests = const [],
+  Map<String, dynamic>? playback,
+  Map<String, dynamic>? subtitlePreferences,
 }) => {
   'id': 'party-1',
   'hostId': hostId,
@@ -123,6 +126,8 @@ Map<String, dynamic> _session({
   'schedule': {},
   'browse': {'stack': []},
   'waiting': [],
+  'playback': playback,
+  'subtitlePreferences': subtitlePreferences,
 };
 
 void main() {
@@ -154,6 +159,101 @@ void main() {
     });
     return c;
   }
+
+  test(
+    'session preserves playback indices and exact subtitle preferences contract',
+    () async {
+      final preferences = {
+        'delayMs': -750,
+        'fontScalePercent': 130,
+        'verticalPosition': 'middle',
+        'fontFamily': 'mono',
+        'textColor': '#7fdbff',
+        'backgroundOpacityPercent': 40,
+      };
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin) {
+          return {
+            'status': 'joined',
+            'session': _session(
+              hostId: 'host1',
+              playback: const {
+                'mediaSourceId': 'source-1',
+                'audioStreams': [],
+                'subtitleStreams': [],
+                'selectedAudioIndex': 3,
+                'selectedSubtitleIndex': -1,
+              },
+              subtitlePreferences: preferences,
+            ),
+          };
+        }
+        return {'ok': true};
+      });
+
+      final notifier = container.read(partyProvider.notifier);
+      await notifier.join('party-1');
+
+      expect(notifier.playback!.selectedAudioIndex, 3);
+      expect(notifier.playback!.selectedSubtitleIndex, -1);
+      expect(notifier.subtitlePreferences.toJson(), {
+        ...preferences,
+        'textColor': '#7FDBFF',
+      });
+    },
+  );
+
+  test(
+    'only the host emits canonical track and subtitle preference changes',
+    () async {
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin) {
+          return {'status': 'joined', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
+      final guest = container.read(partyProvider.notifier);
+      await guest.join('party-1');
+      final before = socket.emitted.length;
+      await guest.setPlaybackTracks(
+        audioStreamIndex: 2,
+        subtitleStreamIndex: -1,
+      );
+      await guest.setSubtitlePreferences(SubtitlePreferences.defaults);
+      expect(socket.emitted.length, before);
+
+      await container.read(syncEngineProvider).detach();
+      container = build('host1', (event, data) {
+        if (event == ClientEvent.partyCreate) {
+          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
+      final host = container.read(partyProvider.notifier);
+      await host.create();
+      await host.setPlaybackTracks(
+        audioStreamIndex: 2,
+        subtitleStreamIndex: -1,
+      );
+      await host.setSubtitlePreferences(
+        SubtitlePreferences.defaults.copyWith(fontFamily: 'serif'),
+      );
+
+      final tracksEvent = socket.emitted[socket.emitted.length - 2];
+      expect(tracksEvent.$1, ClientEvent.partySetPlaybackTracks);
+      expect(tracksEvent.$2, {
+        'audioStreamIndex': 2,
+        'subtitleStreamIndex': -1,
+      });
+      expect(socket.emitted.last.$1, ClientEvent.partySetSubtitlePreferences);
+      expect(socket.emitted.last.$2, {
+        'preferences': {
+          ...SubtitlePreferences.defaults.toJson(),
+          'fontFamily': 'serif',
+        },
+      });
+    },
+  );
 
   test(
     'create() makes the creator host: isHost/canControl true, wired onto the engine',

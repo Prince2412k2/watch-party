@@ -21,6 +21,7 @@ media-data/
 # persistent session stores and runtime databases (private, generated data)
 /data/
 /app/data/
+/app/server/data/
 
 # VPN / WireGuard / OpenVPN configs — contain private keys, never commit
 *.conf

@@ -58,6 +58,17 @@ class MockApiClient implements ApiClient {
   Future<void> logout() async {}
 
   @override
+  Future<Map<String, dynamic>> currentDesktopRelease() async =>
+      throw StateError('No desktop release is configured');
+
+  @override
+  Future<void> downloadDesktopArtifact(
+    String url,
+    String savePath, {
+    required void Function(int received, int total) onProgress,
+  }) async => throw StateError('No desktop artifact is configured');
+
+  @override
   Future<HomeData> home() async => HomeData(
     views: _catalog.take(3).toList(),
     resume: _catalog.skip(3).take(4).toList(),

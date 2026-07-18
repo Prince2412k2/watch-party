@@ -41,7 +41,11 @@ fetch_tool() {
 
 build_flutter() {
   log "flutter build linux --release"
-  (cd "$ROOT_DIR" && flutter pub get && flutter build linux --release)
+  local build_args=(linux --release)
+  if [[ -n "${BUILD_NUMBER:-}" ]]; then
+    build_args+=(--build-number="$BUILD_NUMBER")
+  fi
+  (cd "$ROOT_DIR" && flutter pub get && flutter build "${build_args[@]}")
   test -x "$BUNDLE_DIR/$APP_NAME" || {
     echo "error: build did not produce $BUNDLE_DIR/$APP_NAME" >&2
     exit 1

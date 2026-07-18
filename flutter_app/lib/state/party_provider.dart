@@ -39,6 +39,12 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   bool get canControl => isHost || (state?.collaborativeControl ?? false);
 
+  PlaybackInfo? _playback;
+  SubtitlePreferences _subtitlePreferences = SubtitlePreferences.defaults;
+
+  PlaybackInfo? get playback => _playback;
+  SubtitlePreferences get subtitlePreferences => _subtitlePreferences;
+
   // ── Direct state mutations (kept for tests / callers that already have a
   // ready-made snapshot) ────────────────────────────────────────────────────
   void setState(PartyState? party) {
@@ -68,6 +74,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   void clear() {
     state = null;
+    _playback = null;
+    _subtitlePreferences = SubtitlePreferences.defaults;
     _ref.read(partyWaitingProvider.notifier).clear();
   }
 
@@ -208,6 +216,21 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     final browse = browseJson is Map
         ? BrowseState.fromJson(Map<String, dynamic>.from(browseJson))
         : const BrowseState();
+
+    final playbackJson = json['playback'];
+    _playback = playbackJson is Map
+        ? PlaybackInfo.fromJson(Map<String, dynamic>.from(playbackJson))
+        : null;
+    final preferencesJson = json['subtitlePreferences'];
+    try {
+      _subtitlePreferences = preferencesJson is Map
+          ? SubtitlePreferences.fromJson(
+              Map<String, dynamic>.from(preferencesJson),
+            )
+          : SubtitlePreferences.defaults;
+    } on FormatException {
+      _subtitlePreferences = SubtitlePreferences.defaults;
+    }
 
     state = PartyState(
       id: json['id']?.toString() ?? state?.id ?? '',
@@ -442,6 +465,34 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       payload['subtitleStreamIndex'] = subtitleStreamIndex;
     }
     return _ack(ClientEvent.partySelectMedia, payload);
+  }
+
+  Future<void> setPlaybackTracks({
+    required int? audioStreamIndex,
+    required int subtitleStreamIndex,
+  }) async {
+    if (!isHost) return;
+    await _ack(ClientEvent.partySetPlaybackTracks, {
+      'audioStreamIndex': audioStreamIndex,
+      'subtitleStreamIndex': subtitleStreamIndex,
+    });
+    final current = _playback;
+    if (current != null) {
+      _playback = current.copyWith(
+        selectedAudioIndex: audioStreamIndex,
+        selectedSubtitleIndex: subtitleStreamIndex,
+      );
+      state = state?.copyWith();
+    }
+  }
+
+  Future<void> setSubtitlePreferences(SubtitlePreferences preferences) async {
+    if (!isHost) return;
+    await _ack(ClientEvent.partySetSubtitlePreferences, {
+      'preferences': preferences.toJson(),
+    });
+    _subtitlePreferences = preferences;
+    state = state?.copyWith();
   }
 
   /// "Stop Movie": back to the lobby, session (party/socket/A/V) stays alive.

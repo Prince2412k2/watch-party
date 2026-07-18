@@ -94,6 +94,14 @@ class MediaKitPlayerController implements PlayerController {
         ),
       );
 
+  /// Creates the native video output before media is opened. In particular,
+  /// Windows can miss the initial cached frame when libmpv opens before a video
+  /// output has been attached. Video-owning callers can invoke this immediately
+  /// before [open]; repeated calls are harmless.
+  void prepareVideoOutput() {
+    if (!_disposed) videoController;
+  }
+
   final _tracksCtrl = StreamController<PlayerTracks>.broadcast();
   final _errorCtrl = StreamController<String>.broadcast();
 
@@ -184,6 +192,8 @@ class MediaKitPlayerController implements PlayerController {
   int _subPos = 100;
   double _subDelay = 0.0;
   String _subFont = 'sans-serif';
+  String _subColor = '#FFFFFF';
+  int _subBackgroundOpacity = 65;
 
   /// Current subtitle scale (1.0 = default). Additive.
   double get subtitleScale => _subScale;
@@ -195,6 +205,8 @@ class MediaKitPlayerController implements PlayerController {
   double get subtitleDelay => _subDelay;
 
   String get subtitleFont => _subFont;
+  String get subtitleColor => _subColor;
+  int get subtitleBackgroundOpacity => _subBackgroundOpacity;
 
   /// Set subtitle scale via libmpv `sub-scale`. Additive.
   Future<void> setSubtitleScale(double scale) async {
@@ -221,6 +233,20 @@ class MediaKitPlayerController implements PlayerController {
     if (_disposed) return;
     _subFont = font;
     await _setMpvProperty('sub-font', font);
+  }
+
+  Future<void> setSubtitleColor(String color) async {
+    if (_disposed) return;
+    _subColor = color.toUpperCase();
+    await _setMpvProperty('sub-color', _subColor);
+  }
+
+  Future<void> setSubtitleBackgroundOpacity(int percent) async {
+    if (_disposed) return;
+    _subBackgroundOpacity = percent;
+    final alpha = (percent.clamp(0, 100) * 255 / 100).round();
+    final alphaHex = alpha.toRadixString(16).padLeft(2, '0').toUpperCase();
+    await _setMpvProperty('sub-back-color', '#${alphaHex}000000');
   }
 
   /// Load an external subtitle from raw text (SRT / WebVTT / ASS) and select
@@ -307,6 +333,7 @@ class MediaKitPlayerController implements PlayerController {
     bool autoplay = false,
   }) async {
     if (_disposed) return;
+    _lastError = null;
     // Open paused so a non-zero startAt lands before the first frame is shown;
     // libmpv queues the seek against the freshly-loaded file.
     await _player.open(mk.Media(url), play: false);
