@@ -114,6 +114,7 @@ class MockApiClient implements ApiClient {
   Future<StreamUrl> nativeStreamUrl(
     String itemId, {
     String purpose = 'stream',
+    String? mediaSourceId,
   }) async => StreamUrl(
     url: '$baseUrl/native/file?token=mock-$itemId-$purpose',
     expiresAt: DateTime.now()
