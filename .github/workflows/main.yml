@@ -1,0 +1,265 @@
+name: Main
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.44.5"
+  SERVER_BUILDS_PATH: ${{ vars.DESKTOP_BUILDS_PATH || '/opt/watch-party/builds/desktop' }}
+
+jobs:
+  deploy:
+    name: Deploy server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          script: |
+            set -e
+            cd /opt/watch-party
+            git pull --ff-only origin main
+
+            if [ ! -f secrets/.env ] || [ ! -f secrets/.env.local ]; then
+              echo "secrets/.env or secrets/.env.local is missing on the VPS"
+              exit 1
+            fi
+
+            docker compose --env-file secrets/.env -f docker-compose.prod.yml pull
+            docker compose --env-file secrets/.env -f docker-compose.prod.yml up -d --build
+
+  macos:
+    name: Build macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve version
+        id: version
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          base="$(awk '/^version:/{print $2; exit}' pubspec.yaml | cut -d+ -f1)"
+          echo "value=${base}-main.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          flutter config --enable-macos-desktop
+          flutter pub get
+          flutter build macos --release --build-number="$GITHUB_RUN_NUMBER"
+
+      - name: Package DMG
+        working-directory: flutter_app
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          app_path="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$app_path" || { echo "No macOS app was produced"; exit 1; }
+          codesign --force --sign - --entitlements macos/Runner/Release.entitlements "$app_path"
+          mkdir -p dmg-stage dist
+          cp -R "$app_path" dmg-stage/
+          ln -s /Applications dmg-stage/Applications
+          hdiutil create -volname Watchparty -srcfolder dmg-stage -ov -format UDZO \
+            "dist/Watchparty-${VERSION}-macos.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: watchparty-macos
+          path: flutter_app/dist/*.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake curl libayatana-appindicator3-dev libgtk-3-dev \
+            liblzma-dev libmpv-dev ninja-build patchelf pkg-config
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve version
+        id: version
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          base="$(awk '/^version:/{print $2; exit}' pubspec.yaml | cut -d+ -f1)"
+          echo "value=${base}-main.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build AppImage
+        working-directory: flutter_app
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          VERSION: ${{ steps.version.outputs.value }}
+        run: packaging/build-linux.sh appimage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: watchparty-linux
+          path: flutter_app/build/dist/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve version
+        id: version
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          base="$(awk '/^version:/{print $2; exit}' pubspec.yaml | cut -d+ -f1)"
+          echo "value=${base}-main.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Flutter
+        working-directory: flutter_app
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+
+          $roots = @($env:PUB_CACHE, "$env:LOCALAPPDATA\Pub\Cache", "$env:APPDATA\Pub\Cache") |
+            Where-Object { $_ -and (Test-Path (Join-Path $_ 'hosted\pub.dev')) }
+          $flutterWebrtc = $null
+          foreach ($root in $roots) {
+            $candidate = Get-ChildItem (Join-Path $root 'hosted\pub.dev') -Directory -Filter 'flutter_webrtc-*' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($candidate) { $flutterWebrtc = $candidate; break }
+          }
+          if (-not $flutterWebrtc) { throw 'flutter_webrtc not found in pub cache' }
+
+          $version = $flutterWebrtc.Name -replace '^flutter_webrtc-',''
+          $thirdParty = Join-Path $flutterWebrtc.FullName 'third_party'
+          if (-not (Test-Path (Join-Path $thirdParty 'libwebrtc'))) {
+            $downloads = Join-Path $thirdParty 'downloads'
+            New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+            $archive = Join-Path $downloads 'libwebrtc.zip'
+            Invoke-WebRequest -Uri "https://github.com/flutter-webrtc/flutter-webrtc/releases/download/v$version/libwebrtc.zip" -OutFile $archive
+            Expand-Archive -Path $archive -DestinationPath $thirdParty -Force
+          }
+
+      - name: Build
+        working-directory: flutter_app
+        shell: pwsh
+        run: flutter build windows --release --build-number="$env:GITHUB_RUN_NUMBER"
+
+      - name: Package installer
+        working-directory: flutter_app
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          $release = (Resolve-Path 'build/windows/x64/runner/Release').Path
+          $system32 = Join-Path $env:SystemRoot 'System32'
+          foreach ($dll in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll','msvcp140_1.dll') {
+            Copy-Item (Join-Path $system32 $dll) $release -Force
+          }
+
+          choco install innosetup --no-progress -y
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { $iscc = Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe' }
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe not found' }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $output = (Resolve-Path dist).Path
+          & $iscc "/DMyAppVersion=$env:VERSION" "/DMySourceDir=$release" "/DMyOutputDir=$output" "/DMyOutputBase=Watchparty-$env:VERSION-windows-setup" 'packaging/windows/watchparty.iss'
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: watchparty-windows
+          path: flutter_app/dist/*.exe
+          if-no-files-found: error
+
+  publish-desktop:
+    name: Publish desktop downloads
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: desktop-builds
+          merge-multiple: true
+
+      - name: Write checksums and build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd desktop-builds
+          sha256sum * > SHA256SUMS
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_number=${GITHUB_RUN_NUMBER}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > BUILD.txt
+
+      - name: Upload builds to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          source: desktop-builds/*
+          target: ${{ env.SERVER_BUILDS_PATH }}/incoming-${{ github.run_id }}
+          strip_components: 1
+
+      - name: Replace latest server builds
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PORT }}
+          script: |
+            set -e
+            root="${{ env.SERVER_BUILDS_PATH }}"
+            incoming="$root/incoming-${{ github.run_id }}"
+            test -d "$incoming"
+            rm -rf "$root/previous"
+            if [ -d "$root/latest" ]; then cp -a "$root/latest" "$root/previous"; fi
+            mkdir -p "$root/latest"
+            find "$root/latest" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+            cp -a "$incoming"/. "$root/latest"/
+            rm -rf "$incoming"
+            find "$root" -maxdepth 1 -type d -name 'incoming-*' -mtime +1 -exec rm -rf {} +

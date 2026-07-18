@@ -1,5 +1,5 @@
 // ── Desktop app build downloads ──────────────────────────────────────────────
-// Serves the latest packaged desktop builds (macOS + Windows) to logged-in
+// Serves the latest packaged desktop builds to logged-in
 // users only. Two endpoints: `/api/downloads` lists what's on disk, and
 // `/api/downloads/:filename` streams one file. Both sit behind requireAuth —
 // these are real installers, not something to leave open on the internet.
@@ -13,10 +13,11 @@ const BUILDS_DIR = resolve(process.env.DESKTOP_BUILDS_DIR || '/opt/watch-party/b
 const MAC_EXT = new Set(['.dmg', '.pkg'])
 const WIN_EXT = new Set(['.exe', '.msi'])
 
-function detectPlatform(filename) {
+export function detectPlatform(filename) {
   const ext = extname(filename).toLowerCase()
   if (MAC_EXT.has(ext)) return 'macos'
   if (WIN_EXT.has(ext)) return 'windows'
+  if (ext === '.appimage') return 'linux'
   if (ext === '.zip') {
     const lower = filename.toLowerCase()
     if (lower.includes('mac') || lower.includes('darwin') || lower.includes('osx')) return 'macos'
@@ -30,7 +31,12 @@ const CONTENT_TYPES = {
   '.pkg': 'application/x-newton-compatible-pkg',
   '.exe': 'application/x-msdownload',
   '.msi': 'application/x-msi',
+  '.appimage': 'application/vnd.appimage',
   '.zip': 'application/zip',
+}
+
+export function contentTypeFor(filename) {
+  return CONTENT_TYPES[extname(filename).toLowerCase()] || 'application/octet-stream'
 }
 
 async function listBuilds() {
@@ -88,7 +94,7 @@ export function registerDesktopBuildRoutes(app) {
     if (!real) return res.status(404).json({ error: 'not found' })
 
     const filename = basename(real)
-    const contentType = CONTENT_TYPES[extname(filename).toLowerCase()] || 'application/octet-stream'
+    const contentType = contentTypeFor(filename)
     res.set('Content-Type', contentType)
     res.set('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`)
     res.set('Content-Length', String(statSync(real).size))

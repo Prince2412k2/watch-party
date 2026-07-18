@@ -6,14 +6,14 @@ import { fmtSize } from '../lib/format'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
-type Platform = 'macos' | 'windows'
+type Platform = 'macos' | 'linux' | 'windows'
 type Build = { platform: Platform; filename: string; size: number; url: string }
 
 const isBuild = (value: unknown): value is Build =>
-  isRecord(value) && (value.platform === 'macos' || value.platform === 'windows') &&
+  isRecord(value) && (value.platform === 'macos' || value.platform === 'linux' || value.platform === 'windows') &&
   typeof value.filename === 'string' && typeof value.url === 'string'
 
-const PLATFORM_LABEL: Record<Platform, string> = { macos: 'macOS', windows: 'Windows' }
+const PLATFORM_LABEL: Record<Platform, string> = { macos: 'macOS', linux: 'Linux', windows: 'Windows' }
 
 export default function DesktopApp() {
   const { user } = useAuth()
