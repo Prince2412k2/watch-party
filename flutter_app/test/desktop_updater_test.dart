@@ -43,4 +43,24 @@ void main() {
     file.writeAsBytesSync([1, 2, 4]);
     expect(await verifyArtifact(file, artifact), isFalse);
   });
+
+  test('stores updates in an app-owned support directory', () async {
+    final support = await Directory.systemTemp.createTemp(
+      'watchparty-update-support',
+    );
+    addTearDown(() => support.delete(recursive: true));
+    final artifact = DesktopRelease.fromJson(json).artifacts['linux']!;
+
+    final file = await updateArtifactDestination(
+      artifact,
+      applicationSupportDirectory: support,
+    );
+
+    expect(
+      file.path,
+      '${support.path}${Platform.pathSeparator}updates'
+      '${Platform.pathSeparator}Watchparty.AppImage',
+    );
+    expect(await file.parent.exists(), isTrue);
+  });
 }
