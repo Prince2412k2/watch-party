@@ -43,6 +43,8 @@ class _ScriptedSocket extends MockSocketClient {
 /// stream and synchronous position getters to attach without throwing.
 class _NoopPlayer implements PlayerController {
   int openCalls = 0;
+  int pauseCalls = 0;
+  String? lastOpenedUrl;
 
   @override
   Future<void> open(
@@ -51,12 +53,13 @@ class _NoopPlayer implements PlayerController {
     bool autoplay = false,
   }) async {
     openCalls++;
+    lastOpenedUrl = url;
   }
 
   @override
   Future<void> play() async {}
   @override
-  Future<void> pause() async {}
+  Future<void> pause() async => pauseCalls++;
   @override
   Future<void> seek(Duration position) async {}
   @override
@@ -243,6 +246,34 @@ void main() {
     },
   );
 
+  test('web-host media source reaches the Flutter guest cache proxy', () async {
+    final proxy = MediaCacheProxy(apiClient: _StubApiClient());
+    await proxy.start();
+    addTearDown(proxy.dispose);
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {
+          'status': 'joined',
+          'session': _session(
+            hostId: 'web-host',
+            stage: 'watching',
+            mediaItemId: 'movie-1',
+            mediaSourceId: 'source-4k',
+          ),
+        };
+      }
+      return {'ok': true};
+    }, proxy: proxy);
+
+    await container.read(partyProvider.notifier).join('party-1');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(player.openCalls, 1);
+    expect(Uri.parse(player.lastOpenedUrl!).queryParameters, {
+      'mediaSourceId': 'source-4k',
+    });
+  });
+
   test(
     'join() waiting for approval only fully attaches after party:approved',
     () async {
@@ -400,6 +431,26 @@ void main() {
       expect(socket.isConnected, isFalse);
       final engine = container.read(syncEngineProvider) as SyncEngineImpl;
       expect(engine.isHost, isFalse);
+    },
+  );
+
+  test(
+    'party:ended stops a Flutter guest player and clears the room',
+    () async {
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin) {
+          return {'status': 'joined', 'session': _session(hostId: 'web-host')};
+        }
+        return {'ok': true};
+      });
+      await container.read(partyProvider.notifier).join('party-1');
+
+      socket.inject(ServerEvent.partyEnded, const {});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(player.pauseCalls, 1);
+      expect(container.read(partyProvider), isNull);
+      expect(socket.isConnected, isFalse);
     },
   );
 }

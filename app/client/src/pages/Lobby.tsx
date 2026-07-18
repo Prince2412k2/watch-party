@@ -1,3 +1,4 @@
+import { DotLottieReact } from '@lottiefiles/dotlottie-react'
 import { navigate } from '../router'
 
 export default function Lobby({ partyId }: { partyId?: string } = {}) {
@@ -11,22 +12,13 @@ export default function Lobby({ partyId }: { partyId?: string } = {}) {
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         animation: 'in .4s cubic-bezier(.2,0,.1,1)',
       }}>
-        {/* Sonar pulse — conveys live connection, not a generic spinner */}
-        <div style={{ position: 'relative', width: 64, height: 64, marginBottom: 40 }}>
-          {[0, 1, 2].map(i => (
-            <span key={i} style={{
-              position: 'absolute', inset: 0, borderRadius: '50%',
-              border: '1.5px solid var(--accent)',
-              animation: 'sonar 2.4s ease-out infinite',
-              animationDelay: `${i * 0.8}s`,
-            }} />
-          ))}
-          <span style={{
-            position: 'absolute', top: '50%', left: '50%',
-            width: 12, height: 12, borderRadius: '50%',
-            background: 'var(--accent)', transform: 'translate(-50%,-50%)',
-            boxShadow: '0 0 16px var(--accent-glow)',
-          }} />
+        <div style={{ width: 'clamp(170px, 25vh, 240px)', aspectRatio: '1', marginBottom: 18 }}>
+          <DotLottieReact
+            src="/watch_party.lottie"
+            autoplay
+            loop
+            style={{ width: '100%', height: '100%' }}
+          />
         </div>
 
         <div style={{

@@ -103,7 +103,11 @@ abstract class ApiClient {
   // ── Playback / offline ─────────────────────────────────────────────────
   /// Mint a short-lived signed URL for direct-play (`purpose: 'stream'`) or
   /// resumable download (`purpose: 'download'`).
-  Future<StreamUrl> nativeStreamUrl(String itemId, {String purpose = 'stream'});
+  Future<StreamUrl> nativeStreamUrl(
+    String itemId, {
+    String purpose = 'stream',
+    String? mediaSourceId,
+  });
 
   /// The audio/subtitle tracks available for [itemId] (`POST
   /// /api/library/playback-info/:id`), optionally re-selecting a track.
@@ -345,10 +349,11 @@ class DioApiClient implements ApiClient {
   Future<StreamUrl> nativeStreamUrl(
     String itemId, {
     String purpose = 'stream',
+    String? mediaSourceId,
   }) async {
     final res = await _dio.get(
       '/api/library/native/stream-url/$itemId',
-      queryParameters: {'purpose': purpose},
+      queryParameters: {'purpose': purpose, 'mediaSourceId': ?mediaSourceId},
     );
     if (res.statusCode != 200) _fail(res, 'nativeStreamUrl');
     return StreamUrl.fromJson(res.data as Map<String, dynamic>);
