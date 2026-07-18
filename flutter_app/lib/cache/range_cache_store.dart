@@ -153,6 +153,25 @@ class CacheEntry {
     });
   }
 
+  /// Streams a present range without allocating the entire range at once.
+  Stream<List<int>> readChunks(
+    int start,
+    int end, {
+    required int chunkSize,
+  }) async* {
+    if (chunkSize <= 0) throw ArgumentError.value(chunkSize, 'chunkSize');
+    var offset = start;
+    while (offset < end) {
+      final chunkEnd = offset + chunkSize < end ? offset + chunkSize : end;
+      final chunk = await read(offset, chunkEnd);
+      if (chunk.length != chunkEnd - offset) {
+        throw StateError('Unexpected end of cached media at byte $offset');
+      }
+      yield chunk;
+      offset = chunkEnd;
+    }
+  }
+
   /// Bumps [lastAccess] to now and immediately persists it, so an entry that
   /// is only ever read (never written — e.g. it was already fully cached)
   /// still gets its recency tracked for eviction; [write] paths persist via

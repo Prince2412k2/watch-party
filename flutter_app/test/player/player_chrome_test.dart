@@ -186,16 +186,17 @@ void main() {
       MaterialApp(
         theme: AppTheme.dark,
         home: Scaffold(
-          body: PlayerChrome(controller: c, itemId: 'movie', apiClient: api),
+          body: PlayerChrome(
+            controller: c,
+            itemId: 'movie',
+            apiClient: api,
+            preferredSubtitleStreamIndex: 4,
+          ),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.subtitles));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Uploaded English'));
-    await tester.pumpAndSettle();
     c.emitPosition(const Duration(seconds: 2));
     await tester.pump();
     await tester.pump();
