@@ -23,7 +23,8 @@ BUNDLE_DIR="$ROOT_DIR/build/linux/x64/release/bundle"
 APP_NAME="watchparty"
 APP_DISPLAY_NAME="Watchparty"
 APP_ID="com.watchparty.desktop"
-VERSION="$(grep -m1 '^version:' "$ROOT_DIR/pubspec.yaml" | awk '{print $2}' | cut -d'+' -f1)"
+VERSION="${VERSION:-$(grep -m1 '^version:' "$ROOT_DIR/pubspec.yaml" | awk '{print $2}' | cut -d'+' -f1)}"
+APP_ICON="$ROOT_DIR/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png"
 
 mkdir -p "$CACHE_DIR" "$DIST_DIR"
 
@@ -71,7 +72,7 @@ build_appimage() {
     --appdir "$appdir" \
     --executable "$appdir/usr/bin/$APP_NAME" \
     --desktop-file "$PKG_DIR/linux/watchparty.desktop" \
-    --icon-file "$ROOT_DIR/assets/icons/app_icon.png" \
+    --icon-file "$APP_ICON" \
     --icon-filename "$APP_ID" \
     --output appimage
 
@@ -97,7 +98,7 @@ build_deb() {
   sed "s|Exec=watchparty|Exec=/usr/lib/$APP_NAME/$APP_NAME|" \
     "$PKG_DIR/linux/watchparty.desktop" \
     > "$pkgdir/usr/share/applications/$APP_ID.desktop"
-  cp "$ROOT_DIR/assets/icons/app_icon.png" \
+  cp "$APP_ICON" \
     "$pkgdir/usr/share/icons/hicolor/512x512/apps/$APP_ID.png"
 
   local arch
