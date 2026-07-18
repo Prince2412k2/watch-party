@@ -12,6 +12,36 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ])
 
 const MAX_SUBTITLE_BYTES = 5 * 1024 * 1024
+const SUBTITLE_POLL_DELAYS_MS = [0, 100, 250, 500, 1000, 1500, 2500, 2500]
+
+function externalSubtitleStreams(playback, mediaSourceId = null) {
+  const source = (playback?.MediaSources ?? []).find(candidate =>
+    !mediaSourceId || candidate?.Id === mediaSourceId
+  )
+  return (source?.MediaStreams ?? []).filter(stream =>
+    stream?.Type === 'Subtitle' && stream.IsExternal === true && Number.isSafeInteger(stream.Index)
+  )
+}
+
+export function findNewExternalSubtitle(before, after, mediaSourceId = null) {
+  const previousIndices = new Set(externalSubtitleStreams(before, mediaSourceId).map(stream => stream.Index))
+  return externalSubtitleStreams(after, mediaSourceId).find(stream => !previousIndices.has(stream.Index)) ?? null
+}
+
+export async function pollForNewExternalSubtitle(loadPlayback, before, {
+  mediaSourceId = null,
+  delays = SUBTITLE_POLL_DELAYS_MS,
+  wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
+} = {}) {
+  let latest = null
+  for (const delay of delays) {
+    if (delay > 0) await wait(delay)
+    latest = await loadPlayback()
+    const stream = findNewExternalSubtitle(before, latest, mediaSourceId)
+    if (stream) return { stream, playback: latest }
+  }
+  return { stream: null, playback: latest }
+}
 
 export function findExternalSubtitleStream(playback, index, mediaSourceId = null) {
   for (const source of playback?.MediaSources ?? []) {
@@ -77,10 +107,14 @@ export function srtToVtt(input) {
   const normalized = input.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim()
   const body = normalized
     .replace(/(^|\n)(\d+)[ \t]*\n(?=\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->)/g, '$1')
-    .replace(/(\d{1,2}:\d{2}:\d{2}),([0-9]{3})(?=\s*-->)/g, '$1.$2')
-    .replace(/(-- >|-->\s*\d{1,2}:\d{2}:\d{2}),([0-9]{3})/g, '$1.$2')
-    .replace(/(-->\s*\d{1,2}:\d{2}:\d{2}),([0-9]{3})/g, '$1.$2')
+    .replace(/(\d{1,2}:\d{2}:\d{2}),([0-9]{3})/g, '$1.$2')
   return `WEBVTT\n\n${body}\n`
+}
+
+export function subtitleTextToVtt(input) {
+  const normalized = input.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim()
+  if (/^WEBVTT(?:\s|$)/i.test(normalized)) return `${normalized}\n`
+  return srtToVtt(normalized)
 }
 
 function rawSubtitle(req, res, next) {
@@ -173,9 +207,10 @@ export function registerSubtitleRoutes(app, io) {
         if (upstream.status === 403 || upstream.status === 404) return res.status(upstream.status).json({ error: 'Subtitle content is unavailable' })
         return res.status(502).json({ error: 'Could not fetch subtitle content' })
       }
-      res.set('Content-Type', upstream.headers.get('content-type') || 'text/vtt; charset=utf-8')
+      const text = await upstream.text()
+      res.set('Content-Type', 'text/vtt; charset=utf-8')
       res.set('Cache-Control', 'private, max-age=300')
-      res.send(await upstream.text())
+      res.send(subtitleTextToVtt(text))
     } catch (err) {
       console.error('subtitle content failed', { jellyfinStatus: err?.status ?? null, message: err?.message })
       res.status(502).json({ error: 'Could not fetch subtitle content' })
@@ -189,13 +224,21 @@ export function registerSubtitleRoutes(app, io) {
     if (!ITEM_ID.test(mediaItemId)) return res.status(400).json({ error: 'Invalid media item' })
     const upload = parseSubtitleUpload(req, res)
     if (!upload) return
-    const { token, deviceId } = getJellyfin(req)
+    const { token, userId, deviceId } = getJellyfin(req)
     try {
+      const before = await getPlaybackInfo(token, userId, mediaItemId)
+      const mediaSourceId = before?.MediaSources?.[0]?.Id ?? null
       await jellyfinSubtitleMutation({
         token, deviceId, itemId: mediaItemId, method: 'POST',
         body: JSON.stringify({ Language: subtitleLanguageFrom(req), Format: upload.ext, IsForced: false, IsHearingImpaired: false, Data: upload.data }),
       })
-      res.status(201).json({ ok: true, label: cleanLabel(upload.filename) })
+      const result = await pollForNewExternalSubtitle(
+        () => getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId }),
+        before,
+        { mediaSourceId },
+      )
+      if (!result.stream) return res.status(504).json({ error: 'Subtitle was uploaded but Jellyfin did not publish the new track in time' })
+      res.status(201).json({ ok: true, label: cleanLabel(upload.filename), subtitleStreamIndex: result.stream.Index })
     } catch (err) {
       sendSubtitleMutationError(res, err, 'library upload')
     }
@@ -229,6 +272,7 @@ export function registerSubtitleRoutes(app, io) {
     if (!upload) return
 
     try {
+      const before = await getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId: session.mediaSourceId })
       await jellyfinSubtitleMutation({
         token,
         deviceId,
@@ -242,14 +286,21 @@ export function registerSubtitleRoutes(app, io) {
           Data: upload.data,
         }),
       })
+      const result = await pollForNewExternalSubtitle(
+        () => getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId: session.mediaSourceId }),
+        before,
+        { mediaSourceId: session.mediaSourceId },
+      )
+      if (!result.stream) return res.status(504).json({ error: 'Subtitle was uploaded but Jellyfin did not publish the new track in time' })
       await refreshSessionPlayback(io, session, {
         token,
         userId,
-        subtitleStreamIndex: session.playback?.selectedSubtitleIndex ?? null,
+        subtitleStreamIndex: result.stream.Index,
       })
       res.status(201).json({
         ok: true,
         label: cleanLabel(upload.filename),
+        subtitleStreamIndex: result.stream.Index,
         session: publicSession(session),
         playback: session.playback,
       })

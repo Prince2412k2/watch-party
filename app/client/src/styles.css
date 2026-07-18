@@ -505,14 +505,20 @@ media-player, media-player:focus, media-player:focus-visible,
 .library-title-row p,
 .library-title-row > span { display: none; }
 .library-poster-rail { position: relative; }
+.library-poster-rail::before,
+.library-poster-rail::after { content: ''; position: absolute; z-index: 2; top: 0; bottom: 12px; width: 54px; pointer-events: none; opacity: 0; transition: opacity .2s; }
+.library-poster-rail::before { left: -18px; background: linear-gradient(90deg, var(--wp-bg), transparent); }
+.library-poster-rail::after { right: 0; background: linear-gradient(270deg, var(--wp-bg), transparent); }
+.library-poster-rail.has-left-overflow::before,
+.library-poster-rail.has-right-overflow::after { opacity: 1; }
 .library-row-controls { position: absolute; z-index: 3; top: -47px; right: 24px; display: flex; gap: 7px; }
 .library-row-controls button { width: 31px; height: 31px; display: grid; place-items: center; padding: 0 0 2px; border: 0; border-radius: 50%; color: var(--wp-dim); background: transparent; cursor: pointer; font-size: 25px; line-height: 1; transition: color .16s, background-color .16s, transform .16s; }
 .library-row-controls button:hover { color: var(--wp-text); background: var(--wp-surface); }
 .library-row-controls button:active { transform: scale(.92); }
+.library-row-controls button:disabled { opacity: .24; cursor: default; background: transparent; }
 .library-poster-wall { display: flex !important; grid-template-columns: none !important; gap: 16px !important; overflow-x: auto; padding: 20px 40px 38px 18px; margin: -20px 0 -26px -18px; scroll-snap-type: x proximity; scrollbar-width: none; }
 .library-poster-wall::-webkit-scrollbar { display: none; }
 .library-poster-wall > * { width: clamp(150px, 14vw, 205px) !important; min-width: clamp(150px, 14vw, 205px); flex: 0 0 clamp(150px, 14vw, 205px); scroll-snap-align: start; }
-.library-poster-wall > :first-child { position: relative; z-index: 2; transform: scale(1.035); transform-origin: left bottom; }
 .library-poster-card { width: 100%; padding: 0; border: 0; color: var(--wp-text); background: transparent; cursor: pointer; text-align: left; }
 .library-poster-art { position: relative; aspect-ratio: 3 / 5; overflow: hidden; border-radius: 12px; background: var(--wp-surface); box-shadow: 0 8px 20px var(--wp-shadow); transition: transform .2s, box-shadow .2s; }
 .library-poster-card:hover .library-poster-art { box-shadow: 0 16px 28px var(--wp-shadow); }
@@ -524,6 +530,14 @@ media-player, media-player:focus, media-player:focus-visible,
 .library-empty { min-height: 260px; display: grid; place-content: center; gap: 6px; color: var(--wp-dim); text-align: center; }
 .library-empty strong { color: var(--wp-text); font-size: 18px; }
 .library-empty span { font-size: 13px; }
+
+@media (min-width: 641px) {
+  .library-poster-wall > * { position: relative; transition: transform .24s cubic-bezier(.2,.8,.2,1), opacity .2s; transform-origin: center bottom; }
+  .library-poster-wall > .is-selected { z-index: 3; transform: scale(1.085); }
+  .library-poster-wall > .is-selected .library-poster-art { box-shadow: 0 20px 38px var(--wp-shadow), 0 0 0 1px var(--wp-line-2); }
+  .library-poster-card:focus-visible { outline: none; }
+  .library-poster-card:focus-visible .library-poster-art { box-shadow: 0 20px 38px var(--wp-shadow), 0 0 0 2px var(--wp-text); }
+}
 
 /* Cinematic title views */
 .library-detail { position: relative; width: 100%; height: 100%; overflow: hidden; color: var(--wp-text); background: var(--wp-bg); }
@@ -620,6 +634,12 @@ media-player, media-player:focus, media-player:focus-visible,
   .library-episodes-dock { position: relative; left: auto; right: auto; bottom: auto; height: auto; margin: -245px 20px 84px; }
   .library-detail.is-series .library-detail-stage { padding-bottom: 250px; }
   .library-episodes-dock button { width: 230px !important; flex-basis: 230px !important; }
+}
+
+@media (max-width: 640px) {
+  .library-poster-rail::before,
+  .library-poster-rail::after { display: none; }
+  .library-poster-wall > :first-child { position: relative; z-index: 2; transform: scale(1.035); transform-origin: left bottom; }
 }
 
 @media (prefers-reduced-transparency: reduce) {

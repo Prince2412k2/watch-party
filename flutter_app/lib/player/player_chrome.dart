@@ -50,6 +50,7 @@ class PlayerChrome extends StatefulWidget {
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
+    this.preferredSubtitleStreamIndex,
     this.cachedSpans,
     this.visible,
     this.onWake,
@@ -91,6 +92,7 @@ class PlayerChrome extends StatefulWidget {
   final String? itemId;
   final String? mediaSourceId;
   final ApiClient? apiClient;
+  final int? preferredSubtitleStreamIndex;
 
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
@@ -116,6 +118,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
   PlayerTracks _tracks = const PlayerTracks();
   List<PlayerTrack> _externalSubtitles = const [];
   final Map<String, PlaybackTrack> _externalSubtitleById = {};
+  final Map<String, Future<String>> _externalSubtitleContent = {};
   int _subtitleSelectionVersion = 0;
   List<SubtitleCue> _subtitleCues = const [];
 
@@ -250,12 +253,30 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
   static String _externalSubtitleId(int index) => 'jellyfin-external:$index';
 
+  Future<String> _contentForExternal(PlaybackTrack track) {
+    final itemId = widget.itemId;
+    final api = widget.apiClient;
+    if (itemId == null || api == null) {
+      return Future<String>.error(StateError('Subtitle source unavailable'));
+    }
+    final key = '$itemId:${widget.mediaSourceId ?? ''}:${track.index}';
+    return _externalSubtitleContent.putIfAbsent(
+      key,
+      () => api.subtitleContent(
+        itemId,
+        track.index,
+        mediaSourceId: widget.mediaSourceId,
+      ),
+    );
+  }
+
   Future<void> _loadExternalSubtitles() async {
     final itemId = widget.itemId;
     final mediaSourceId = widget.mediaSourceId;
     final api = widget.apiClient;
     _subtitleSelectionVersion++;
     _externalSubtitleById.clear();
+    _externalSubtitleContent.clear();
     if (mounted) {
       setState(() {
         _externalSubtitles = const [];
@@ -280,6 +301,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
       _externalSubtitleById.clear();
       for (final track in external) {
         _externalSubtitleById[_externalSubtitleId(track.index)] = track;
+        unawaited(_contentForExternal(track).catchError((_) => ''));
       }
       setState(() {
         _externalSubtitles = [
@@ -294,11 +316,21 @@ class _PlayerChromeState extends State<PlayerChrome> {
             ),
         ];
       });
-      if (_selectedSubtitle == null &&
-          widget.controller is MediaKitPlayerController) {
+      if (_selectedSubtitle == null) {
+        final preferred = widget.preferredSubtitleStreamIndex;
+        PlaybackTrack? requested;
+        if (preferred != null) {
+          for (final track in external) {
+            if (track.index == preferred) {
+              requested = track;
+              break;
+            }
+          }
+        }
         final defaults = external.where((track) => track.isDefault);
-        if (defaults.isNotEmpty) {
-          await _setSubtitle(_externalSubtitleId(defaults.first.index));
+        final initial = requested ?? (defaults.isEmpty ? null : defaults.first);
+        if (initial != null) {
+          await _setSubtitle(_externalSubtitleId(initial.index));
         }
       }
     } catch (e) {
@@ -473,12 +505,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
       final mediaSourceId = widget.mediaSourceId;
       final api = widget.apiClient;
       if (itemId == null || api == null) return;
+      if (mounted) setState(() => _selectedSubtitle = id);
       try {
-        final content = await api.subtitleContent(
-          itemId,
-          external.index,
-          mediaSourceId: mediaSourceId,
-        );
+        final content = await _contentForExternal(external);
         if (!mounted ||
             version != _subtitleSelectionVersion ||
             widget.itemId != itemId ||
@@ -532,14 +561,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
   Future<void> _addSubtitleFile() async {
     final c = widget.controller;
     if (c is! MediaKitPlayerController) return;
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa'],
-      withData: true,
-    );
-    final file = picked?.files.single;
-    if (file == null) return;
     try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa'],
+        withData: true,
+      );
+      final file = picked?.files.single;
+      if (file == null) return;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
       await c.addExternalSubtitle(_subtitleToUtf8(bytes), title: file.name);
     } catch (e) {
@@ -737,7 +766,7 @@ class _SubtitleOverlay extends StatelessWidget {
     final (family, fallbacks) = switch (font) {
       'serif' => ('Times New Roman', const ['DejaVu Serif', 'serif']),
       'monospace' => ('Courier New', const ['DejaVu Sans Mono', 'monospace']),
-      _ => ('Arial', const ['DejaVu Sans', 'sans-serif']),
+      _ => (AppFonts.sans, const ['Arial', 'DejaVu Sans', 'sans-serif']),
     };
     return IgnorePointer(
       child: Align(
@@ -1355,6 +1384,10 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
                 isExpanded: true,
                 dropdownColor: AppColors.surface,
                 items: const [
+                  DropdownMenuItem(
+                    value: 'CircularXX',
+                    child: Text('Circular XX'),
+                  ),
                   DropdownMenuItem(
                     value: 'sans-serif',
                     child: Text('Sans serif'),
