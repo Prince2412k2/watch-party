@@ -212,6 +212,54 @@ void main() {
     expect(c.subtitles, [null]);
   });
 
+  testWidgets(
+    'subtitle menu deduplicates Jellyfin and native representations',
+    (tester) async {
+      final c = _SpyController();
+      final api = MockApiClient(
+        playback: const PlaybackInfo(
+          subtitleStreams: [
+            PlaybackTrack(
+              index: 4,
+              title: 'English - SUBRIP - External',
+              language: 'eng',
+              codec: 'subrip',
+              isExternal: true,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark,
+          home: Scaffold(
+            body: PlayerChrome(controller: c, itemId: 'movie', apiClient: api),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      c.emitTracks(
+        const PlayerTracks(
+          subtitle: [
+            PlayerTrack(
+              id: 'native-sidecar',
+              type: 'subtitle',
+              title: 'English - SUBRIP - External',
+              language: 'eng',
+              codec: 'subrip',
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.subtitles));
+      await tester.pump();
+      expect(find.text('English - SUBRIP - External'), findsOneWidget);
+    },
+  );
+
   testWidgets('audio menu calls setAudioTrack', (tester) async {
     final c = _SpyController();
     await pumpChrome(tester, c);
@@ -221,6 +269,10 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.audiotrack));
     await tester.pumpAndSettle();
+    expect(
+      tester.getBottomLeft(find.text('Commentary')).dy,
+      lessThan(tester.getTopLeft(find.byIcon(Icons.audiotrack)).dy),
+    );
     await tester.tap(find.text('Commentary'));
     await tester.pumpAndSettle();
     expect(c.audioTracks, ['a1']);

@@ -11,6 +11,7 @@ import 'app_button.dart';
 import 'app_dialog.dart';
 import 'join_code_dialog.dart';
 import 'party_qr.dart';
+import 'watch_party_animation.dart';
 
 /// The expandable watch-party surface rendered inside the bottom-right
 /// [PopcornControl] (`WebPartyWidget`, `WebShell.tsx`). It consumes the app-wide
@@ -108,6 +109,27 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
   }
 
   Widget _empty(WpPalette wp) {
+    if (_starting) {
+      return const SizedBox(
+        height: 300,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            WatchPartyAnimation(size: 190),
+            SizedBox(height: AppSpacing.sm),
+            Text(
+              'Starting watch party',
+              style: TextStyle(
+                fontFamily: AppFonts.sans,
+                color: AppColors.text,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -151,7 +173,8 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
   Widget _live(WpPalette wp, PartyState session) {
     final isHost = _party.isHost;
     final waiting = ref.watch(partyWaitingProvider);
-    final joinUrl = '${ref.watch(apiClientProvider).baseUrl}/party/${session.id}';
+    final joinUrl =
+        '${ref.watch(apiClientProvider).baseUrl}/party/${session.id}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -317,7 +340,10 @@ class _Person extends StatelessWidget {
             width: 28,
             height: 28,
             alignment: Alignment.center,
-            decoration: BoxDecoration(color: wp.surface2, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: wp.surface2,
+              shape: BoxShape.circle,
+            ),
             child: Text(
               _initials(name),
               style: TextStyle(
@@ -354,7 +380,7 @@ class _Person extends StatelessWidget {
                 ),
               ),
             ),
-          if (trailing != null) trailing!,
+          ?trailing,
         ],
       ),
     );

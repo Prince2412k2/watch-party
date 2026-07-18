@@ -45,12 +45,12 @@ class PlayerView extends StatefulWidget {
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
-  })  : _controller = controller,
-        _itemId = null,
-        _apiClient = null,
-        _purpose = 'stream',
-        _startAt = Duration.zero,
-        _autoplay = true;
+  }) : _controller = controller,
+       _itemId = null,
+       _apiClient = null,
+       _purpose = 'stream',
+       _startAt = Duration.zero,
+       _autoplay = true;
 
   /// Resolves `itemId` via [apiClient.nativeStreamUrl] and opens a fresh
   /// [MediaKitPlayerController] internally; disposed when this widget is
@@ -69,22 +69,22 @@ class PlayerView extends StatefulWidget {
     Duration startAt = Duration.zero,
     bool autoplay = true,
     String purpose = 'stream',
-  })  : _controller = null,
-        _itemId = itemId,
-        _apiClient = apiClient,
-        _purpose = purpose,
-        _startAt = startAt,
-        _autoplay = autoplay,
-        itemId = itemId,
-        mediaSourceId = null,
-         apiClient = apiClient,
-         preferredSubtitleStreamIndex = null,
-        onSeek = null,
-        visible = null,
-        onWake = null,
-        onToggleChat = null,
-        onPushToTalkStart = null,
-        onPushToTalkStop = null;
+  }) : _controller = null,
+       _itemId = itemId,
+       _apiClient = apiClient,
+       _purpose = purpose,
+       _startAt = startAt,
+       _autoplay = autoplay,
+       itemId = itemId,
+       mediaSourceId = null,
+       apiClient = apiClient,
+       preferredSubtitleStreamIndex = null,
+       onSeek = null,
+       visible = null,
+       onWake = null,
+       onToggleChat = null,
+       onPushToTalkStart = null,
+       onPushToTalkStop = null;
 
   /// Ready-made controller supplied by the caller (party/detail inject one).
   /// Null when using [PlayerView.item].
@@ -145,7 +145,8 @@ class _PlayerViewState extends State<PlayerView> {
 
   bool get _ownsController => widget._controller == null;
 
-  PlayerController? get _activeController => widget._controller ?? _ownedController;
+  PlayerController? get _activeController =>
+      widget._controller ?? _ownedController;
 
   @override
   void initState() {
@@ -166,9 +167,17 @@ class _PlayerViewState extends State<PlayerView> {
       _resolveError = null;
     });
     try {
-      final streamUrl = await apiClient.nativeStreamUrl(itemId, purpose: widget._purpose);
+      final streamUrl = await apiClient.nativeStreamUrl(
+        itemId,
+        purpose: widget._purpose,
+        mediaSourceId: widget.mediaSourceId,
+      );
       final controller = MediaKitPlayerController();
-      await controller.open(streamUrl.url, startAt: widget._startAt, autoplay: widget._autoplay);
+      await controller.open(
+        streamUrl.url,
+        startAt: widget._startAt,
+        autoplay: widget._autoplay,
+      );
       if (!mounted) {
         await controller.dispose();
         return;
@@ -218,7 +227,10 @@ class _PlayerViewState extends State<PlayerView> {
           child: SizedBox(
             width: 32,
             height: 32,
-            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.text),
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppColors.text,
+            ),
           ),
         ),
       );

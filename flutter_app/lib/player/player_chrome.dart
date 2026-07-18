@@ -119,6 +119,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
   List<PlayerTrack> _externalSubtitles = const [];
   final Map<String, PlaybackTrack> _externalSubtitleById = {};
   final Map<String, Future<String>> _externalSubtitleContent = {};
+  final Map<String, String> _loadedExternalSubtitleTrackIds = {};
   int _subtitleSelectionVersion = 0;
   List<SubtitleCue> _subtitleCues = const [];
 
@@ -253,6 +254,28 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
   static String _externalSubtitleId(int index) => 'jellyfin-external:$index';
 
+  List<PlayerTrack> get _visibleSubtitleTracks {
+    final externalSignatures = _externalSubtitles
+        .map(_subtitleTrackSignature)
+        .toSet();
+    final seen = <String>{};
+    return [
+      for (final track in _tracks.subtitle)
+        if (!_loadedExternalSubtitleTrackIds.containsValue(track.id) &&
+            !externalSignatures.contains(_subtitleTrackSignature(track)) &&
+            seen.add(_subtitleTrackSignature(track)))
+          track,
+      for (final track in _externalSubtitles)
+        if (seen.add(_subtitleTrackSignature(track))) track,
+    ];
+  }
+
+  static String _subtitleTrackSignature(PlayerTrack track) => [
+    track.title,
+    track.language,
+    track.codec,
+  ].map((value) => value?.trim().toLowerCase() ?? '').join('|');
+
   Future<String> _contentForExternal(PlaybackTrack track) {
     final itemId = widget.itemId;
     final api = widget.apiClient;
@@ -277,6 +300,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _subtitleSelectionVersion++;
     _externalSubtitleById.clear();
     _externalSubtitleContent.clear();
+    _loadedExternalSubtitleTrackIds.clear();
     if (mounted) {
       setState(() {
         _externalSubtitles = const [];
@@ -524,11 +548,20 @@ class _PlayerChromeState extends State<PlayerChrome> {
         });
         if (c is MediaKitPlayerController) {
           try {
-            await c.addExternalSubtitle(
-              content,
-              title: external.displayTitle ?? external.title,
-              language: external.language,
-            );
+            final loadedTrackId = _loadedExternalSubtitleTrackIds[id];
+            if (loadedTrackId != null) {
+              await c.setSubtitle(loadedTrackId);
+            } else {
+              await c.addExternalSubtitle(
+                content,
+                title: external.displayTitle ?? external.title,
+                language: external.language,
+              );
+              final nativeId = c.currentSubtitleTrackId;
+              if (nativeId != null) {
+                _loadedExternalSubtitleTrackIds[id!] = nativeId;
+              }
+            }
           } catch (_) {
             // The Flutter overlay remains the rendering fallback.
           }
@@ -690,7 +723,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   tracks: PlayerTracks(
                     video: _tracks.video,
                     audio: _tracks.audio,
-                    subtitle: [..._tracks.subtitle, ..._externalSubtitles],
+                    subtitle: _visibleSubtitleTracks,
                   ),
                   selectedAudio: _selectedAudio,
                   selectedSubtitle: _selectedSubtitle,
@@ -1277,9 +1310,8 @@ class _VolumeControl extends StatelessWidget {
   }
 }
 
-/// Hardware/software video-decode toggle. Mirrors the audio/subtitle menu
-/// idiom: a `PopupMenuButton` fronted by a `_ChromeIconButton`, with a
-/// checkmark on the active choice.
+/// Hardware/software video-decode toggle using the same anchored panel as the
+/// audio and subtitle selectors.
 class _DecodeMenu extends StatelessWidget {
   const _DecodeMenu({
     required this.hardware,
@@ -1292,36 +1324,33 @@ class _DecodeMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<bool>(
+    return _AnchoredPlayerMenu(
+      icon: Icons.memory,
       tooltip: 'Decode',
       enabled: enabled,
-      initialValue: hardware,
-      onSelected: onChanged,
-      itemBuilder: (context) => [
-        _item(true, 'Hardware'),
-        _item(false, 'Software'),
+      menuBuilder: (close) => [
+        const _PlayerMenuHeader('VIDEO DECODER'),
+        _PlayerMenuItem(
+          label: 'Hardware',
+          detail: 'GPU accelerated',
+          selected: hardware,
+          onTap: () {
+            close();
+            onChanged(true);
+          },
+        ),
+        _PlayerMenuItem(
+          label: 'Software',
+          detail: 'CPU fallback',
+          selected: !hardware,
+          onTap: () {
+            close();
+            onChanged(false);
+          },
+        ),
       ],
-      child: _ChromeIconButton(
-        icon: Icons.memory,
-        tooltip: 'Decode',
-        onPressed: null,
-        forceEnabled: enabled,
-      ),
     );
   }
-
-  PopupMenuItem<bool> _item(bool value, String label) => PopupMenuItem<bool>(
-    value: value,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (value == hardware)
-          const Icon(Icons.check, size: 16, color: AppColors.accent),
-        if (value == hardware) const SizedBox(width: AppSpacing.xs),
-        Text(label, style: AppTheme.body),
-      ],
-    ),
-  );
 }
 
 /// Compact subtitle-appearance panel: size, vertical position, and timing
@@ -1536,58 +1565,34 @@ class _TrackMenu extends StatelessWidget {
   final bool allowNone;
   final ValueChanged<String?> onChanged;
 
-  /// Sentinel for the "Off"/auto entry. Real track ids are used verbatim;
-  /// `PopupMenuButton` treats a `null` menu value as a *cancel* (it never fires
-  /// `onSelected`), so the disable option cannot use `value: null` directly.
-  static const _none = '\u{0}none';
-
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
+    return _AnchoredPlayerMenu(
+      icon: icon,
       tooltip: tooltip,
       enabled: enabled,
-      onSelected: (v) => onChanged(v == _none ? null : v),
-      itemBuilder: (context) => [
+      menuBuilder: (close) => [
+        _PlayerMenuHeader(tooltip.toUpperCase()),
         if (allowNone)
-          PopupMenuItem<String>(
-            value: _none,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (selected == null)
-                  const Icon(Icons.check, size: 16, color: AppColors.accent),
-                if (selected == null) const SizedBox(width: AppSpacing.xs),
-                const Text('Off', style: AppTheme.body),
-              ],
-            ),
+          _PlayerMenuItem(
+            label: 'Off',
+            selected: selected == null,
+            onTap: () {
+              close();
+              onChanged(null);
+            },
           ),
         for (final t in tracks)
-          PopupMenuItem<String>(
-            value: t.id,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (t.id == selected)
-                  const Icon(Icons.check, size: 16, color: AppColors.accent),
-                if (t.id == selected) const SizedBox(width: AppSpacing.xs),
-                Flexible(
-                  child: Text(
-                    t.title ?? t.language ?? t.id,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body,
-                  ),
-                ),
-              ],
-            ),
+          _PlayerMenuItem(
+            label: _trackName(t),
+            detail: _trackDetail(t),
+            selected: t.id == selected,
+            onTap: () {
+              close();
+              onChanged(t.id);
+            },
           ),
       ],
-      child: _ChromeIconButton(
-        icon: icon,
-        tooltip: tooltip,
-        onPressed: null,
-        forceEnabled: enabled,
-      ),
     );
   }
 }
@@ -1613,75 +1618,305 @@ class _SubtitleControl extends StatelessWidget {
   /// Picks a local subtitle file to side-load, or null if unsupported.
   final VoidCallback? onAddFile;
 
-  static const _none = ' none';
-  static const _addFile = ' addfile';
+  @override
+  Widget build(BuildContext context) {
+    return _AnchoredPlayerMenu(
+      icon: Icons.subtitles,
+      tooltip: 'Subtitles',
+      enabled: enabled,
+      menuBuilder: (close) => [
+        const _PlayerMenuHeader('SUBTITLES'),
+        if (onAddFile != null)
+          _PlayerMenuItem(
+            icon: Icons.upload_file_outlined,
+            label: 'Load subtitle file',
+            detail: 'SRT, VTT, ASS or SSA',
+            onTap: () {
+              close();
+              onAddFile?.call();
+            },
+          ),
+        if (onAddFile != null) const _PlayerMenuDivider(),
+        _PlayerMenuItem(
+          label: 'Off',
+          selected: selected == null,
+          onTap: () {
+            close();
+            onChanged(null);
+          },
+        ),
+        for (final t in tracks)
+          _PlayerMenuItem(
+            label: _trackName(t),
+            detail: _trackDetail(t),
+            selected: t.id == selected,
+            onTap: () {
+              close();
+              onChanged(t.id);
+            },
+          ),
+      ],
+    );
+  }
+}
+
+String _trackName(PlayerTrack track) {
+  final title = track.title?.trim();
+  if (title != null && title.isNotEmpty) return title;
+  final language = track.language?.trim().toLowerCase();
+  return const {
+        'eng': 'English',
+        'spa': 'Spanish',
+        'fra': 'French',
+        'fre': 'French',
+        'deu': 'German',
+        'ger': 'German',
+        'ita': 'Italian',
+        'por': 'Portuguese',
+        'jpn': 'Japanese',
+        'kor': 'Korean',
+        'zho': 'Chinese',
+        'chi': 'Chinese',
+        'tha': 'Thai',
+      }[language] ??
+      track.language ??
+      track.id;
+}
+
+String? _trackDetail(PlayerTrack track) {
+  final details = <String>[
+    if (track.title != null &&
+        track.language != null &&
+        !track.title!.toLowerCase().contains(track.language!.toLowerCase()))
+      track.language!.toUpperCase(),
+    if (track.codec?.trim().isNotEmpty ?? false) track.codec!.toUpperCase(),
+    if (track.isDefault) 'DEFAULT',
+  ];
+  return details.isEmpty ? null : details.join(' · ');
+}
+
+/// Places a compact player menu above its transport button. Using an overlay
+/// follower avoids Flutter's default popup behavior, which centers the selected
+/// row over the button and obscures neighboring controls.
+class _AnchoredPlayerMenu extends StatefulWidget {
+  const _AnchoredPlayerMenu({
+    required this.icon,
+    required this.tooltip,
+    required this.enabled,
+    required this.menuBuilder,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool enabled;
+  final List<Widget> Function(VoidCallback close) menuBuilder;
+
+  @override
+  State<_AnchoredPlayerMenu> createState() => _AnchoredPlayerMenuState();
+}
+
+class _AnchoredPlayerMenuState extends State<_AnchoredPlayerMenu> {
+  final _link = LayerLink();
+  OverlayEntry? _entry;
+
+  void _close() {
+    _entry?.remove();
+    _entry = null;
+    if (mounted) setState(() {});
+  }
+
+  void _toggle() {
+    if (!widget.enabled) return;
+    if (_entry != null) {
+      _close();
+      return;
+    }
+    final availableHeight = math.max(
+      160.0,
+      MediaQuery.sizeOf(context).height - 150,
+    );
+    _entry = OverlayEntry(
+      builder: (_) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _close,
+              child: const ColoredBox(color: Colors.transparent),
+            ),
+          ),
+          CompositedTransformFollower(
+            link: _link,
+            showWhenUnlinked: false,
+            targetAnchor: Alignment.topRight,
+            followerAnchor: Alignment.bottomRight,
+            offset: const Offset(0, -10),
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                width: 310,
+                constraints: BoxConstraints(
+                  maxHeight: math.min(420, availableHeight),
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFA151619),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.line2),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x7A000000),
+                      blurRadius: 28,
+                      offset: Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(13),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: widget.menuBuilder(_close),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    Overlay.of(context, rootOverlay: true).insert(_entry!);
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _entry?.remove();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      tooltip: 'Subtitles',
-      enabled: enabled,
-      onSelected: (v) {
-        if (v == _addFile) {
-          onAddFile?.call();
-        } else if (v == _none) {
-          onChanged(null);
-        } else {
-          onChanged(v);
-        }
-      },
-      itemBuilder: (context) => [
-        if (onAddFile != null)
-          const PopupMenuItem<String>(
-            value: _addFile,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.upload_file, size: 16, color: AppColors.dim),
-                SizedBox(width: AppSpacing.xs),
-                Text('Load subtitle file…', style: AppTheme.body),
-              ],
-            ),
-          ),
-        if (onAddFile != null) const PopupMenuDivider(),
-        PopupMenuItem<String>(
-          value: _none,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected == null)
-                const Icon(Icons.check, size: 16, color: AppColors.accent),
-              if (selected == null) const SizedBox(width: AppSpacing.xs),
-              const Text('Off', style: AppTheme.body),
-            ],
-          ),
+    return CompositedTransformTarget(
+      link: _link,
+      child: _ChromeIconButton(
+        icon: widget.icon,
+        tooltip: widget.tooltip,
+        onPressed: widget.enabled ? _toggle : null,
+        forceEnabled: widget.enabled,
+      ),
+    );
+  }
+}
+
+class _PlayerMenuHeader extends StatelessWidget {
+  const _PlayerMenuHeader(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 7),
+      child: Text(
+        label,
+        style: AppTheme.mono.copyWith(
+          color: AppColors.faint,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.4,
         ),
-        for (final t in tracks)
-          PopupMenuItem<String>(
-            value: t.id,
+      ),
+    );
+  }
+}
+
+class _PlayerMenuDivider extends StatelessWidget {
+  const _PlayerMenuDivider();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 6),
+    child: Divider(height: 1, color: AppColors.line),
+  );
+}
+
+class _PlayerMenuItem extends StatelessWidget {
+  const _PlayerMenuItem({
+    required this.label,
+    required this.onTap,
+    this.detail,
+    this.icon,
+    this.selected = false,
+  });
+
+  final String label;
+  final String? detail;
+  final IconData? icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+      child: Material(
+        color: selected ? const Color(0x14FFFFFF) : Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(9),
+          hoverColor: const Color(0x12FFFFFF),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                if (t.id == selected)
-                  const Icon(Icons.check, size: 16, color: AppColors.accent),
-                if (t.id == selected) const SizedBox(width: AppSpacing.xs),
-                Flexible(
-                  child: Text(
-                    t.title ?? t.language ?? t.id,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.body,
+                SizedBox(
+                  width: 20,
+                  child: Icon(
+                    selected ? Icons.check : icon,
+                    size: 16,
+                    color: selected ? AppColors.accent : AppColors.dim,
+                  ),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.text,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                      ),
+                      if (detail != null) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          detail!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.mono.copyWith(
+                            color: AppColors.faint,
+                            fontSize: 9.5,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-      ],
-      child: _ChromeIconButton(
-        icon: Icons.subtitles,
-        tooltip: 'Subtitles',
-        onPressed: null,
-        forceEnabled: enabled,
+        ),
       ),
     );
   }

@@ -4,6 +4,35 @@ import 'package:watchparty/data/api_client.dart';
 import 'package:watchparty/models/playback_info.dart';
 
 void main() {
+  test(
+    'DioApiClient forwards the selected media source for native playback',
+    () async {
+      final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            expect(options.path, '/api/library/native/stream-url/movie');
+            expect(options.queryParameters, {
+              'purpose': 'stream',
+              'mediaSourceId': 'source-4k',
+            });
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                statusCode: 200,
+                data: {'url': 'https://stream.test/file', 'expiresAt': 1},
+              ),
+            );
+          },
+        ),
+      );
+
+      await DioApiClient(
+        dio: dio,
+      ).nativeStreamUrl('movie', mediaSourceId: 'source-4k');
+    },
+  );
+
   test('DioApiClient requests subtitle content as plain text', () async {
     final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
     dio.interceptors.add(
@@ -36,9 +65,7 @@ void main() {
           expect(options.headers[Headers.contentLengthHeader], 3);
           expect(options.headers['Content-Type'], 'application/octet-stream');
           expect(options.headers['X-Subtitle-Filename'], 'English%20SDH.srt');
-          handler.resolve(
-            Response(requestOptions: options, statusCode: 201),
-          );
+          handler.resolve(Response(requestOptions: options, statusCode: 201));
         },
       ),
     );

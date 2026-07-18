@@ -93,7 +93,6 @@ class _PartyScreenState extends ConsumerState<PartyScreen> {
                 waiting: _waiting,
                 busy: _busy,
                 error: _error,
-                partyId: widget.partyId,
                 onLeave: _leaveWaiting,
                 onBackHome: () => context.go('/home'),
               ),
@@ -114,7 +113,6 @@ class _PartyEntry extends StatelessWidget {
     required this.waiting,
     required this.busy,
     required this.error,
-    required this.partyId,
     required this.onLeave,
     required this.onBackHome,
   });
@@ -122,14 +120,15 @@ class _PartyEntry extends StatelessWidget {
   final bool waiting;
   final bool busy;
   final String? error;
-  final String? partyId;
   final VoidCallback onLeave;
   final VoidCallback onBackHome;
 
   @override
   Widget build(BuildContext context) {
-    if (error != null) return _PartyNotFound(message: error!, onBack: onBackHome);
-    if (waiting) return _WaitingRoom(partyId: partyId, onLeave: onLeave);
+    if (error != null) {
+      return _PartyNotFound(message: error!, onBack: onBackHome);
+    }
+    if (waiting) return _WaitingRoom(onLeave: onLeave);
     return const _Connecting();
   }
 }
@@ -146,10 +145,16 @@ class _Connecting extends StatelessWidget {
           SizedBox(
             width: 32,
             height: 32,
-            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.text),
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppColors.text,
+            ),
           ),
           SizedBox(height: AppSpacing.lg),
-          Text('Connecting…', style: TextStyle(color: AppColors.dim, fontSize: 14)),
+          Text(
+            'Connecting…',
+            style: TextStyle(color: AppColors.dim, fontSize: 14),
+          ),
         ],
       ),
     );
@@ -207,168 +212,40 @@ class _PartyNotFound extends StatelessWidget {
   }
 }
 
-/// The redesigned waiting room (`pages/Lobby.tsx`): a sonar pulse conveying a
-/// live connection, the "WAITING ROOM" eyebrow + heading, the party code as the
-/// focal element, and a quiet "Leave party" exit.
+/// Approval-pending guest stage: no room metadata or explanatory chrome, only
+/// the branded motion and an explicit way to cancel the pending join.
 class _WaitingRoom extends StatelessWidget {
-  const _WaitingRoom({required this.partyId, required this.onLeave});
-  final String? partyId;
+  const _WaitingRoom({required this.onLeave});
   final VoidCallback onLeave;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Reveal(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const _SonarPulse(),
-            const SizedBox(height: 40),
-            const Text(
-              'WAITING ROOM',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 3,
-                color: AppColors.faint,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            const Text(
-              "The host hasn't\nstarted yet",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.w300,
-                height: 1.1,
-                letterSpacing: -1,
-                color: AppColors.text,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            const SizedBox(
-              width: 320,
-              child: Text(
-                "You'll be pulled in the moment they let you through.",
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.dim, fontSize: 15, height: 1.55),
-              ),
-            ),
-            if (partyId != null && partyId!.isNotEmpty) ...[
-              const SizedBox(height: 40),
-              const Text(
-                'PARTY CODE',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 3,
-                  color: AppColors.faint,
-                ),
-              ),
-              const SizedBox(height: 7),
-              Text(
-                partyId!,
-                style: const TextStyle(
-                  fontFamily: AppFonts.mono,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 3,
-                  color: AppColors.text,
-                ),
-              ),
-            ],
-            const SizedBox(height: 44),
-            TextButton(
-              onPressed: onLeave,
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.dim,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.sm,
-                ),
-              ),
-              child: const Text(
-                'Leave party',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Three expanding rings + a solid centre dot — a live-connection sonar, not a
-/// generic spinner (`Lobby.tsx` `@keyframes sonar`).
-class _SonarPulse extends StatefulWidget {
-  const _SonarPulse();
-
-  @override
-  State<_SonarPulse> createState() => _SonarPulseState();
-}
-
-class _SonarPulseState extends State<_SonarPulse>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))
-        ..repeat();
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 64,
-      height: 64,
-      child: AnimatedBuilder(
-        animation: _c,
-        builder: (context, _) {
-          return Stack(
-            alignment: Alignment.center,
-            children: [
-              for (var i = 0; i < 3; i++) _ring((_c.value + i / 3) % 1.0),
-              Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: AppColors.text,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.text.withValues(alpha: 0.5),
-                      blurRadius: 16,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _ring(double t) {
-    final scale = 0.2 + t * 0.8;
-    final opacity = ((1 - t) * 0.9).clamp(0.0, 1.0);
-    return Opacity(
-      opacity: opacity,
-      child: Transform.scale(
-        scale: scale,
-        child: Container(
-          width: 64,
-          height: 64,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: AppColors.text, width: 1.5),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const Center(
+          child: WatchPartyAnimation(
+            key: Key('guestWaitingAnimation'),
+            size: 300,
           ),
         ),
-      ),
+        Positioned(
+          top: 12,
+          left: 12 + desktopLeadingControlInset,
+          child: IconButton(
+            key: const Key('leaveWaitingPartyButton'),
+            tooltip: 'Leave watch party',
+            onPressed: onLeave,
+            style: IconButton.styleFrom(
+              fixedSize: const Size(44, 44),
+              foregroundColor: AppColors.text,
+              backgroundColor: const Color(0x9917181B),
+              side: const BorderSide(color: AppColors.line2),
+            ),
+            icon: const Icon(Icons.arrow_back, size: 20),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -382,7 +259,7 @@ class _SonarPulseState extends State<_SonarPulse>
 ///   2  auto-hiding chrome — top-left Back + top-right A/V cluster
 ///   3  host-only join requests (a notification: always visible)
 ///   4  LiveKit error banner (always visible)
-///   5  chat slide-over + its scrim
+///   5  chat side rail
 /// The Watch Party menu opens above everything via right-click / long-press.
 class _ImmersiveParty extends ConsumerStatefulWidget {
   const _ImmersiveParty();
@@ -449,7 +326,9 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   // key-repeat. Wired through livekit only — never authors playback commands.
   void _pttStart() {
     if (_pttHolding) return;
-    if (ref.read(livekitProvider).micEnabled) return; // manually unmuted → no-op
+    if (ref.read(livekitProvider).micEnabled) {
+      return; // manually unmuted → no-op
+    }
     _pttHolding = true;
     ref.read(livekitProvider.notifier).setMic(true);
   }
@@ -561,7 +440,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                 curve: Curves.easeOutCubic,
                 left: (watching && _dock) ? 210.0 : 0.0,
                 top: 0,
-                right: 0,
+                right: _chatOpen ? 360.0 : 0.0,
                 bottom: 0,
                 child: stage,
               ),
@@ -594,7 +473,8 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                       dock: _dock,
                       chatOpen: _chatOpen,
                       onBack: _minimize,
-                      onToggleChat: () => setState(() => _chatOpen = !_chatOpen),
+                      onToggleChat: () =>
+                          setState(() => _chatOpen = !_chatOpen),
                       onToggleLayout: () => setState(() => _dock = !_dock),
                     ),
                   ),
@@ -612,15 +492,8 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                 child: _LiveKitErrorBanner(),
               ),
 
-              // 5 — chat slide-over + acrylic scrim.
-              if (_chatOpen)
-                Positioned.fill(
-                  child: Scrim(
-                    opacity: 0.5,
-                    blur: true,
-                    onTap: () => setState(() => _chatOpen = false),
-                  ),
-                ),
+              // 5 — opaque chat rail. The stage narrows while this is open, so
+              // chat never covers or blurs the movie.
               _ChatSlideOver(
                 open: _chatOpen,
                 onClose: () => setState(() => _chatOpen = false),
@@ -687,14 +560,18 @@ class _WatchChrome extends ConsumerWidget {
               iconOn: Icons.mic,
               iconOff: Icons.mic_off,
               on: lkState.micEnabled,
-              tooltip: lkState.micEnabled ? 'Mute microphone' : 'Unmute microphone',
+              tooltip: lkState.micEnabled
+                  ? 'Mute microphone'
+                  : 'Unmute microphone',
               onToggle: () => lk.setMic(!lkState.micEnabled),
             ),
             _AvPendingToggle(
               iconOn: Icons.videocam,
               iconOff: Icons.videocam_off,
               on: lkState.cameraEnabled,
-              tooltip: lkState.cameraEnabled ? 'Turn camera off' : 'Turn camera on',
+              tooltip: lkState.cameraEnabled
+                  ? 'Turn camera off'
+                  : 'Turn camera on',
               onToggle: () => lk.setCamera(!lkState.cameraEnabled),
             ),
             _AvIconButton(
@@ -897,7 +774,11 @@ class _LiveKitErrorBanner extends ConsumerWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.error_outline, size: 16, color: AppColors.red),
+                    const Icon(
+                      Icons.error_outline,
+                      size: 16,
+                      color: AppColors.red,
+                    ),
                     const SizedBox(width: AppSpacing.sm),
                     Flexible(
                       child: Text(
@@ -993,7 +874,10 @@ class _LobbyStage extends ConsumerWidget {
 /// shared by the lobby's "Choose a movie" and the Watch Party menu's "Switch
 /// movie" (watching-stage). `selectMedia` is a plain `party:selectMedia` ack
 /// (no lobby-only guard), so it's safe from `watching` too.
-Future<void> pickAndSwitchPartyMedia(BuildContext context, WidgetRef ref) async {
+Future<void> pickAndSwitchPartyMedia(
+  BuildContext context,
+  WidgetRef ref,
+) async {
   final itemId = await showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
@@ -1276,9 +1160,8 @@ class _JoinRequests extends ConsumerWidget {
   }
 }
 
-/// Right-side chat slide-over — animates in/out, never permanently docked
-/// (mirrors the web's dismissible chat panel). Wraps the existing [ChatPanel]
-/// so all send/receive/rate-limit behavior is preserved.
+/// Right-side chat rail. It is deliberately opaque and blur-free; the movie
+/// stage narrows by the same width while open instead of sitting behind it.
 class _ChatSlideOver extends StatelessWidget {
   const _ChatSlideOver({required this.open, required this.onClose});
   final bool open;
@@ -1291,56 +1174,70 @@ class _ChatSlideOver extends StatelessWidget {
       curve: Curves.easeOutCubic,
       top: 0,
       bottom: 0,
-      right: open ? 0 : -360,
-      width: 340,
+      right: open ? 0 : -372,
+      width: 360,
       child: SafeArea(
         left: false,
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.sm),
-          child: sc.SurfaceCard(
-            surfaceBlur: AppBlur.overlay,
-            surfaceOpacity: 0.9,
-            borderColor: AppColors.line2,
-            borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-            clipBehavior: Clip.antiAlias,
-            padding: EdgeInsets.zero,
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            color: Color(0xFF111214),
+            border: Border(left: BorderSide(color: AppColors.line2)),
+            boxShadow: [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 24,
+                offset: Offset(-10, 0),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 14, 14),
             child: Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    AppSpacing.sm,
-                    AppSpacing.sm,
-                    AppSpacing.sm,
-                  ),
-                  child: Row(
-                    children: [
-                      const Text(
-                        'Chat',
-                        style: TextStyle(
-                          color: AppColors.text,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const Spacer(),
-                      sc.Tooltip(
-                        tooltip: (context) => const sc.TooltipContainer(
-                          child: Text('Close chat'),
-                        ),
-                        child: sc.IconButton.ghost(
-                          icon: const Icon(
-                            Icons.close,
-                            color: AppColors.dim,
-                            size: 18,
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ROOM CHAT',
+                            style: TextStyle(
+                              fontFamily: AppFonts.mono,
+                              color: AppColors.faint,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.5,
+                            ),
                           ),
-                          onPressed: onClose,
-                        ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Conversation',
+                            style: TextStyle(
+                              color: AppColors.text,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    sc.Tooltip(
+                      tooltip: (context) =>
+                          const sc.TooltipContainer(child: Text('Close chat')),
+                      child: sc.IconButton.ghost(
+                        icon: const Icon(
+                          Icons.close,
+                          color: AppColors.dim,
+                          size: 18,
+                        ),
+                        onPressed: onClose,
+                      ),
+                    ),
+                  ],
                 ),
-                const Divider(height: 1, color: AppColors.line),
+                const SizedBox(height: 18),
                 const Expanded(child: ChatPanel()),
               ],
             ),
@@ -1547,7 +1444,10 @@ class _HostControlsDialog extends ConsumerWidget {
                                   ClipboardData(text: joinUrl),
                                 );
                                 if (context.mounted) {
-                                  _showPartyToast(context, 'Invite link copied');
+                                  _showPartyToast(
+                                    context,
+                                    'Invite link copied',
+                                  );
                                 }
                               },
                             ),

@@ -17,8 +17,6 @@ class BrowseScreen extends ConsumerWidget {
 
   final BrowseTypeFilter type;
 
-  static const double _posterWidth = 190;
-
   String get _title => type == BrowseTypeFilter.movie ? 'Movies' : 'Shows';
 
   @override
@@ -29,14 +27,18 @@ class BrowseScreen extends ConsumerWidget {
     void setAmbient(String id) =>
         ref.read(ambientArtworkIdProvider.notifier).state = id;
 
-    Widget posterFor(LibraryItem item, {String? heroTag}) {
+    Widget posterFor(
+      LibraryItem item, {
+      required double width,
+      String? heroTag,
+    }) {
       return MouseRegion(
         onEnter: (_) => setAmbient(item.id),
         child: PosterCard(
           title: item.name,
           rating: item.communityRating,
           imageUrl: api.imageUrl(item.id, tag: item.imageTags?['Primary']),
-          width: _posterWidth,
+          width: width,
           aspectRatio: 3 / 5,
           heroTag: heroTag,
           onTap: () => context.go('/detail/${item.id}'),
@@ -71,27 +73,69 @@ class BrowseScreen extends ConsumerWidget {
           }
         }
 
+        if (genreShelves.isEmpty) {
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              // Reserve the page insets, heading, metadata, and scale breathing
+              // room first. Large windows reach the 250px cap; compact windows
+              // shrink instead of clipping titles and ratings.
+              final railHeight = constraints.maxHeight - 24 - 108 - 54;
+              final posterWidth = ((railHeight - 126) * 3 / 5)
+                  .clamp(160.0, 250.0)
+                  .toDouble();
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(44, 24, 0, 108),
+                child: PosterShelf(
+                  title: _title,
+                  leftInset: 0,
+                  itemWidth: posterWidth,
+                  spacing: 22,
+                  fillAvailableHeight: true,
+                  itemCount: list.length,
+                  autofocus: true,
+                  onSelectionChanged: (index) => setAmbient(list[index].id),
+                  onActivate: (index) =>
+                      context.go('/detail/${list[index].id}'),
+                  itemBuilder: (_, index) => posterFor(
+                    list[index],
+                    width: posterWidth,
+                    heroTag: 'poster-${list[index].id}',
+                  ),
+                ),
+              );
+            },
+          );
+        }
+
+        const posterWidth = 220.0;
         final shelves = <Widget>[
           PosterShelf(
             title: _title,
             leftInset: 0,
+            itemWidth: posterWidth,
+            spacing: 20,
             itemCount: list.length,
             autofocus: true,
             onSelectionChanged: (index) => setAmbient(list[index].id),
             onActivate: (index) => context.go('/detail/${list[index].id}'),
-            itemBuilder: (_, index) =>
-                posterFor(list[index], heroTag: 'poster-${list[index].id}'),
+            itemBuilder: (_, index) => posterFor(
+              list[index],
+              width: posterWidth,
+              heroTag: 'poster-${list[index].id}',
+            ),
           ),
           for (final entry in genreShelves)
             PosterShelf(
               title: entry.key,
               leftInset: 0,
+              itemWidth: posterWidth,
+              spacing: 20,
               itemCount: entry.value.length,
-              onSelectionChanged: (index) =>
-                  setAmbient(entry.value[index].id),
+              onSelectionChanged: (index) => setAmbient(entry.value[index].id),
               onActivate: (index) =>
                   context.go('/detail/${entry.value[index].id}'),
-              itemBuilder: (_, index) => posterFor(entry.value[index]),
+              itemBuilder: (_, index) =>
+                  posterFor(entry.value[index], width: posterWidth),
             ),
         ];
 
