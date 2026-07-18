@@ -17,7 +17,8 @@ class _TestMediaCacheProxy extends MediaCacheProxy {
   _TestMediaCacheProxy() : super(apiClient: MockApiClient());
 
   @override
-  String urlFor(String itemId) => 'http://127.0.0.1/test/$itemId';
+  String urlFor(String itemId, {String? mediaSourceId}) =>
+      'http://127.0.0.1/test/$itemId';
 }
 
 void main() {
@@ -76,7 +77,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Watch now'));
+      await tester.tap(find.text('Watch now'));
       await tester.pumpAndSettle();
 
       expect(find.text('Party party-1'), findsOneWidget);
@@ -89,7 +90,9 @@ void main() {
     },
   );
 
-  testWidgets('solo player Back returns immediately to details', (tester) async {
+  testWidgets('solo player Back returns immediately to details', (
+    tester,
+  ) async {
     final player = MockPlayerController();
     final proxy = _TestMediaCacheProxy();
     addTearDown(player.dispose);
