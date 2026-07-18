@@ -33,11 +33,13 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
+    final media = MediaQuery.of(context);
+    final compact = media.size.width < 700;
     final snap = ref.watch(servarrDownloadsPollProvider).valueOrNull;
     final torrent = snap?.list.cast<ServarrDownload?>().firstWhere(
-          (t) => t?.hash == widget.hash,
-          orElse: () => null,
-        );
+      (t) => t?.hash == widget.hash,
+      orElse: () => null,
+    );
 
     if (torrent == null) {
       // The download finished + left the queue (or was removed) → close.
@@ -59,13 +61,17 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
     }
     _sawTorrent = true;
 
-    final detail = ref.watch(servarrDownloadDetailProvider(widget.hash)).valueOrNull;
+    final detail = ref
+        .watch(servarrDownloadDetailProvider(widget.hash))
+        .valueOrNull;
     final pct = torrent.percent;
     final paused = torrent.isPaused;
     final done = pct >= 100;
 
     final kind = detail?.kind ?? torrent.kind;
-    final title = (detail?.title?.isNotEmpty == true ? detail!.title! : torrent.name);
+    final title = (detail?.title?.isNotEmpty == true
+        ? detail!.title!
+        : torrent.name);
     final subtitle = detail?.subtitle ?? torrent.subtitle;
     final posterUrl = detail?.posterUrl ?? torrent.posterUrl;
     final overview = detail?.overview;
@@ -77,7 +83,8 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
       if (runtime != null) runtime,
       if (detail?.certification != null && detail!.certification!.isNotEmpty)
         detail.certification!,
-      if (detail?.network != null && detail!.network!.isNotEmpty) detail.network!,
+      if (detail?.network != null && detail!.network!.isNotEmpty)
+        detail.network!,
       if (detail?.status != null && detail!.status!.isNotEmpty) detail.status!,
     ];
 
@@ -93,27 +100,35 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                   children: [
                     Positioned.fill(child: _Hero(posterUrl: posterUrl)),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(40, 90, 40, 40),
+                      padding: EdgeInsets.fromLTRB(
+                        compact ? 20 : 40,
+                        media.padding.top + (compact ? 76 : 90),
+                        compact ? 20 : 40,
+                        40,
+                      ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Container(
-                            width: 200,
-                            decoration: BoxDecoration(
-                              borderRadius:
-                                  BorderRadius.circular(AppSpacing.radiusLg),
-                              boxShadow: wp.cardShadow,
-                            ),
-                            child: DownloadPoster(
-                              posterUrl: posterUrl,
-                              kind: kind,
-                              pct: pct.toDouble(),
-                              paused: paused,
+                          if (!compact) ...[
+                            Container(
                               width: 200,
-                              radius: AppSpacing.radiusLg,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(
+                                  AppSpacing.radiusLg,
+                                ),
+                                boxShadow: wp.cardShadow,
+                              ),
+                              child: DownloadPoster(
+                                posterUrl: posterUrl,
+                                kind: kind,
+                                pct: pct.toDouble(),
+                                paused: paused,
+                                width: 200,
+                                radius: AppSpacing.radiusLg,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 28),
+                            const SizedBox(width: 28),
+                          ],
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,8 +138,8 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                                   label: done
                                       ? 'FINISHING UP'
                                       : paused
-                                          ? 'PAUSED'
-                                          : 'DOWNLOADING',
+                                      ? 'PAUSED'
+                                      : 'DOWNLOADING',
                                   paused: paused,
                                 ),
                                 const SizedBox(height: 10),
@@ -132,14 +147,20 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                                   title,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
-                                  style: AppTheme.headlineLarge
-                                      .copyWith(color: wp.text),
+                                  style: AppTheme.headlineLarge.copyWith(
+                                    color: wp.text,
+                                  ),
                                 ),
-                                if (subtitle != null && subtitle.isNotEmpty) ...[
+                                if (subtitle != null &&
+                                    subtitle.isNotEmpty) ...[
                                   const SizedBox(height: 8),
-                                  Text(subtitle,
-                                      style: AppTheme.mono.copyWith(
-                                          fontSize: 13.5, color: wp.dim)),
+                                  Text(
+                                    subtitle,
+                                    style: AppTheme.mono.copyWith(
+                                      fontSize: 13.5,
+                                      color: wp.dim,
+                                    ),
+                                  ),
                                 ],
                                 if (rating != null || genres.isNotEmpty) ...[
                                   const SizedBox(height: 14),
@@ -152,20 +173,30 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                                     runSpacing: 4,
                                     children: [
                                       for (final v in infoLine)
-                                        Text(v,
-                                            style: AppTheme.mono.copyWith(
-                                                fontSize: 13, color: wp.dim)),
+                                        Text(
+                                          v,
+                                          style: AppTheme.mono.copyWith(
+                                            fontSize: 13,
+                                            color: wp.dim,
+                                          ),
+                                        ),
                                     ],
                                   ),
                                 ],
                                 const SizedBox(height: 22),
-                                _StatsRow(torrent: torrent, done: done, paused: paused),
+                                _StatsRow(
+                                  torrent: torrent,
+                                  done: done,
+                                  paused: paused,
+                                ),
                                 const SizedBox(height: 22),
                                 Row(
                                   children: [
                                     AppButton(
                                       label: paused ? 'Resume' : 'Pause',
-                                      icon: paused ? Icons.play_arrow : Icons.pause,
+                                      icon: paused
+                                          ? Icons.play_arrow
+                                          : Icons.pause,
                                       variant: AppButtonVariant.primary,
                                       onPressed: (_busy || done)
                                           ? null
@@ -176,7 +207,9 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                                       label: 'Delete',
                                       icon: Icons.delete_outline,
                                       variant: AppButtonVariant.danger,
-                                      onPressed: _busy ? null : () => _delete(title),
+                                      onPressed: _busy
+                                          ? null
+                                          : () => _delete(title),
                                     ),
                                   ],
                                 ),
@@ -190,12 +223,21 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                 ),
                 if (overview != null && overview.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(40, 0, 40, 80),
+                    padding: EdgeInsets.fromLTRB(
+                      compact ? 20 : 40,
+                      0,
+                      compact ? 20 : 40,
+                      80,
+                    ),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 760),
                       child: Text(
                         overview,
-                        style: TextStyle(fontSize: 15, height: 1.65, color: wp.dim),
+                        style: TextStyle(
+                          fontSize: 15,
+                          height: 1.65,
+                          color: wp.dim,
+                        ),
                       ),
                     ),
                   )
@@ -205,8 +247,8 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
             ),
           ),
           Positioned(
-            top: 18,
-            left: 18,
+            top: media.padding.top + 10,
+            left: compact ? 20 : 18,
             child: _BackChevron(onTap: () => Navigator.of(context).maybePop()),
           ),
         ],
@@ -216,7 +258,11 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
 
   Future<void> _pauseResume() async {
     final actions = ref.read(servarrQueueActionsProvider);
-    final t = ref.read(servarrDownloadsPollProvider).valueOrNull?.list.firstWhere(
+    final t = ref
+        .read(servarrDownloadsPollProvider)
+        .valueOrNull
+        ?.list
+        .firstWhere(
           (t) => t.hash == widget.hash,
           orElse: () => ServarrDownload({'hash': widget.hash}),
         );
@@ -242,7 +288,11 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
 }
 
 class _StatsRow extends StatelessWidget {
-  const _StatsRow({required this.torrent, required this.done, required this.paused});
+  const _StatsRow({
+    required this.torrent,
+    required this.done,
+    required this.paused,
+  });
   final ServarrDownload torrent;
   final bool done;
   final bool paused;
@@ -251,12 +301,12 @@ class _StatsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final wp = context.wp;
     Widget stat(String text, {bool faint = false}) => Text(
-          text,
-          style: AppTheme.mono.copyWith(
-            fontSize: 13,
-            color: faint ? wp.faint : wp.dim,
-          ),
-        );
+      text,
+      style: AppTheme.mono.copyWith(
+        fontSize: 13,
+        color: faint ? wp.faint : wp.dim,
+      ),
+    );
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -267,22 +317,18 @@ class _StatsRow extends StatelessWidget {
           color: paused ? wp.dim : wp.text,
         ),
         const SizedBox(width: 24),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Wrap(
-              spacing: 20,
-              runSpacing: 6,
-              children: [
-                stat('↓ ${fmtSpeed(torrent.dlspeed)}'),
-                stat('ETA ${done ? '—' : fmtEta(torrent.eta)}'),
-                stat('Seeds ${torrent.numSeeds}'),
-                stat('Peers ${torrent.numLeechs}'),
-                stat(fmtSize(torrent.size), faint: true),
-              ],
-            ),
-          ],
+        Expanded(
+          child: Wrap(
+            spacing: 20,
+            runSpacing: 6,
+            children: [
+              stat('↓ ${fmtSpeed(torrent.dlspeed)}'),
+              stat('ETA ${done ? '—' : fmtEta(torrent.eta)}'),
+              stat('Seeds ${torrent.numSeeds}'),
+              stat('Peers ${torrent.numLeechs}'),
+              stat(fmtSize(torrent.size), faint: true),
+            ],
+          ),
         ),
       ],
     );
@@ -304,8 +350,10 @@ class _StatusPill extends StatelessWidget {
             ? Container(
                 width: 7,
                 height: 7,
-                decoration:
-                    BoxDecoration(color: wp.faint, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: wp.faint,
+                  shape: BoxShape.circle,
+                ),
               )
             : const PulseDot(color: AppColors.live, size: 7),
         const SizedBox(width: 8),
@@ -342,15 +390,25 @@ class _RatingGenres extends StatelessWidget {
             children: [
               Icon(Icons.star, size: 16, color: wp.text),
               const SizedBox(width: 5),
-              Text(rating!.toStringAsFixed(1),
-                  style: TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w600, color: wp.text)),
+              Text(
+                rating!.toStringAsFixed(1),
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: wp.text,
+                ),
+              ),
             ],
           ),
         for (final g in genres.take(3))
-          Text(g,
-              style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600, color: wp.dim)),
+          Text(
+            g,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: wp.dim,
+            ),
+          ),
       ],
     );
   }
@@ -489,32 +547,45 @@ class _DeleteDialogState extends State<_DeleteDialog> {
                           color: AppColors.red.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                              color: AppColors.red.withValues(alpha: 0.35)),
+                            color: AppColors.red.withValues(alpha: 0.35),
+                          ),
                         ),
-                        child: const Icon(Icons.delete_outline,
-                            size: 20, color: AppColors.red),
+                        child: const Icon(
+                          Icons.delete_outline,
+                          size: 20,
+                          color: AppColors.red,
+                        ),
                       ),
                       const SizedBox(width: AppSpacing.md),
-                      Text('Remove download?',
-                          style: TextStyle(
-                            fontSize: 19,
-                            fontWeight: FontWeight.w700,
-                            color: wp.text,
-                          )),
+                      Text(
+                        'Remove download?',
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w700,
+                          color: wp.text,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 14),
                   Text.rich(
                     TextSpan(
-                      style: TextStyle(fontSize: 14, height: 1.55, color: wp.dim),
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.55,
+                        color: wp.dim,
+                      ),
                       children: [
                         TextSpan(
                           text: widget.name,
                           style: TextStyle(
-                              color: wp.text, fontWeight: FontWeight.w600),
+                            color: wp.text,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                         const TextSpan(
-                            text: ' will stop downloading and be removed.'),
+                          text: ' will stop downloading and be removed.',
+                        ),
                       ],
                     ),
                   ),
@@ -524,7 +595,9 @@ class _DeleteDialogState extends State<_DeleteDialog> {
                     onTap: () => setState(() => _deleteFiles = !_deleteFiles),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md, vertical: AppSpacing.md),
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.md,
+                      ),
                       decoration: BoxDecoration(
                         color: wp.text.withValues(alpha: 0.03),
                         borderRadius: BorderRadius.circular(AppSpacing.radius),
@@ -537,16 +610,22 @@ class _DeleteDialogState extends State<_DeleteDialog> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text('Also delete downloaded files',
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                        color: wp.text)),
+                                Text(
+                                  'Also delete downloaded files',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: wp.text,
+                                  ),
+                                ),
                                 const SizedBox(height: 2),
                                 Text(
-                                    'Erase the data on disk, not just the download',
-                                    style: TextStyle(
-                                        fontSize: 12, color: wp.faint)),
+                                  'Erase the data on disk, not just the download',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: wp.faint,
+                                  ),
+                                ),
                               ],
                             ),
                           ),

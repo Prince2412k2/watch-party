@@ -1102,7 +1102,9 @@ class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
     final wp = context.wp;
     final pb = widget.playback;
     return Container(
-      width: 430,
+      width: (MediaQuery.sizeOf(context).width - 24)
+          .clamp(280.0, 430.0)
+          .toDouble(),
       constraints: const BoxConstraints(maxHeight: 460),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1284,25 +1286,42 @@ class _StageSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    return DecoratedBox(
-      decoration: BoxDecoration(color: wp.surface),
-      child: const Padding(
-        padding: EdgeInsets.fromLTRB(64, 120, 64, 64),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Spacer(),
-            LoadingSkeleton(width: 160, height: 14),
-            SizedBox(height: 16),
-            LoadingSkeleton(width: 420, height: 52),
-            SizedBox(height: 20),
-            LoadingSkeleton(width: 520, height: 60),
-            SizedBox(height: 24),
-            LoadingSkeleton(width: 180, height: 44),
-            Spacer(),
-          ],
-        ),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 600;
+        final contentWidth = constraints.maxWidth - (compact ? 40 : 128);
+        return DecoratedBox(
+          decoration: BoxDecoration(color: wp.surface),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              compact ? 20 : 64,
+              compact ? 90 : 120,
+              compact ? 20 : 64,
+              compact ? 120 : 64,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Spacer(),
+                LoadingSkeleton(width: 160, height: 14),
+                const SizedBox(height: 16),
+                LoadingSkeleton(
+                  width: contentWidth.clamp(0, 420).toDouble(),
+                  height: 52,
+                ),
+                const SizedBox(height: 20),
+                LoadingSkeleton(
+                  width: contentWidth.clamp(0, 520).toDouble(),
+                  height: 60,
+                ),
+                const SizedBox(height: 24),
+                LoadingSkeleton(width: 180, height: 44),
+                const Spacer(),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

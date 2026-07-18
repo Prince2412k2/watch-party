@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../state/theme_provider.dart';
+import '../state/state.dart';
 import '../ui/ui.dart';
+import 'platform_fullscreen.dart';
 import 'router.dart';
 
 /// Root widget. Wires the mode-based theme + router. State DI lives at the
@@ -25,6 +29,20 @@ class WatchpartyApp extends ConsumerStatefulWidget {
 
 class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
   late final _router = buildRouter(ref);
+  late final WidgetsBindingObserver _lifecycleObserver =
+      _MobileLifecycleObserver(ref);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(_lifecycleObserver);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(_lifecycleObserver);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -57,11 +75,28 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
         return sc.ShadcnLayer(
           theme: scTheme,
           themeMode: isLight ? sc.ThemeMode.light : sc.ThemeMode.dark,
-          child: widget.enableWindowFrame
+          child: widget.enableWindowFrame && isDesktopPlatform
               ? DesktopWindowChrome(child: content)
               : content,
         );
       },
     );
+  }
+}
+
+class _MobileLifecycleObserver with WidgetsBindingObserver {
+  _MobileLifecycleObserver(this.ref);
+
+  final WidgetRef ref;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!isMobilePlatform || state == AppLifecycleState.resumed) return;
+    unawaited(ref.read(playerControllerProvider).pause());
+
+    final room = ref.read(livekitProvider);
+    final notifier = ref.read(livekitProvider.notifier);
+    if (room.micEnabled) unawaited(notifier.setMic(false));
+    if (room.cameraEnabled) unawaited(notifier.setCamera(false));
   }
 }

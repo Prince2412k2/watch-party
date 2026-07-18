@@ -40,7 +40,7 @@ dependencies:
   background_downloader: ^9.2.0
 
   # Design-system primitives (theme bridge in lib/ui/shadcn_theme.dart).
-  shadcn_flutter: ^0.0.52
+  shadcn_flutter: 0.0.52
   # Watch-party invite QR (popcorn widget invite panel).
   qr_flutter: ^4.1.0
 
@@ -66,6 +66,9 @@ dev_dependencies:
   fake_async: ^1.3.3
 
 flutter:
+  config:
+    enable-swift-package-manager: false
+
   uses-material-design: true
 
   assets:

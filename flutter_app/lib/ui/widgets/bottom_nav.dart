@@ -25,41 +25,70 @@ class BottomNav extends StatelessWidget {
   final ValueChanged<String> onSelect;
 
   @override
-  Widget build(BuildContext context) {
-    // gap: clamp(18px, 3.6vw, 58px).
-    final gap = (MediaQuery.of(context).size.width * 0.036).clamp(18.0, 58.0);
-    final children = <Widget>[];
-    for (var i = 0; i < destinations.length; i++) {
-      if (i > 0) children.add(SizedBox(width: gap));
-      final d = destinations[i];
-      children.add(
-        _NavTab(
-          dest: d,
-          active: currentRoute == d.route,
-          onTap: () => onSelect(d.route),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final width = constraints.hasBoundedWidth
+          ? constraints.maxWidth
+          : MediaQuery.sizeOf(context).width;
+      final compact = width < 600;
+      if (compact) {
+        return SizedBox(
+          width: width,
+          height: 62,
+          child: Row(
+            children: [
+              for (final destination in destinations)
+                Expanded(
+                  child: _NavTab(
+                    dest: destination,
+                    active: currentRoute == destination.route,
+                    compact: true,
+                    onTap: () => onSelect(destination.route),
+                  ),
+                ),
+            ],
+          ),
+        );
+      }
+
+      // gap: clamp(18px, 3.6vw, 58px).
+      final gap = (width * 0.036).clamp(18.0, 58.0);
+      final children = <Widget>[];
+      for (var i = 0; i < destinations.length; i++) {
+        if (i > 0) children.add(SizedBox(width: gap));
+        final d = destinations[i];
+        children.add(
+          _NavTab(
+            dest: d,
+            active: currentRoute == d.route,
+            compact: false,
+            onTap: () => onSelect(d.route),
+          ),
+        );
+      }
+      return SizedBox(
+        height: 62,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: children,
         ),
       );
-    }
-    return SizedBox(
-      height: 62,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: children,
-      ),
-    );
-  }
+    },
+  );
 }
 
 class _NavTab extends StatefulWidget {
   const _NavTab({
     required this.dest,
     required this.active,
+    required this.compact,
     required this.onTap,
   });
 
   final NavDestination dest;
   final bool active;
+  final bool compact;
   final VoidCallback onTap;
 
   @override
@@ -82,35 +111,60 @@ class _NavTabState extends State<_NavTab> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 88),
+          constraints: BoxConstraints(minWidth: widget.compact ? 0 : 88),
           child: SizedBox(
             height: 62,
             child: Stack(
               children: [
                 Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(widget.dest.icon, size: 18, color: color),
-                      const SizedBox(width: 8),
-                      AnimatedDefaultTextStyle(
-                        duration: AppMotion.hover,
-                        style: TextStyle(
-                          fontFamily: AppFonts.sans,
-                          fontSize: 14,
-                          fontWeight: active
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: color,
+                  child: widget.compact
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(widget.dest.icon, size: 20, color: color),
+                            const SizedBox(height: 4),
+                            AnimatedDefaultTextStyle(
+                              duration: AppMotion.hover,
+                              style: TextStyle(
+                                fontFamily: AppFonts.sans,
+                                fontSize: 11,
+                                fontWeight: active
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: color,
+                              ),
+                              child: Text(
+                                widget.dest.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.fade,
+                                softWrap: false,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(widget.dest.icon, size: 18, color: color),
+                            const SizedBox(width: 8),
+                            AnimatedDefaultTextStyle(
+                              duration: AppMotion.hover,
+                              style: TextStyle(
+                                fontFamily: AppFonts.sans,
+                                fontSize: 14,
+                                fontWeight: active
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: color,
+                              ),
+                              child: Text(widget.dest.label),
+                            ),
+                          ],
                         ),
-                        child: Text(widget.dest.label),
-                      ),
-                    ],
-                  ),
                 ),
                 Positioned(
-                  left: 18,
-                  right: 18,
+                  left: widget.compact ? 12 : 18,
+                  right: widget.compact ? 12 : 18,
                   bottom: 0,
                   child: LayoutBuilder(
                     builder: (context, constraints) {

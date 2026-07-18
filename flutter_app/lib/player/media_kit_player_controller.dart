@@ -31,11 +31,11 @@ class MediaKitPlayerController implements PlayerController {
   // ahead. media_kit's default `bufferSize` (32MiB, ~a few seconds at 4K
   // bitrates) drains fast on a WAN link with real jitter; 128MiB gives a
   // brief bandwidth dip enough runway to not surface as a visible stall.
-  static const int _bufferSize = 128 * 1024 * 1024;
+  static int get _bufferSize => (Platform.isIOS ? 32 : 128) * 1024 * 1024;
 
   MediaKitPlayerController({bool? enableHardwareAcceleration})
     : _player = mk.Player(
-        configuration: const mk.PlayerConfiguration(
+        configuration: mk.PlayerConfiguration(
           bufferSize: _bufferSize,
           libass: true,
         ),
@@ -58,11 +58,15 @@ class MediaKitPlayerController implements PlayerController {
   // `demuxer-max-bytes`/`demuxer-max-back-bytes` raise the forward/backward
   // demuxer cache ceilings so the readahead has somewhere to land.
   Future<void> _applyReadAheadProperties() async {
+    final mobile = Platform.isIOS || Platform.isAndroid;
     await _setMpvProperty('cache', 'yes');
-    await _setMpvProperty('cache-secs', '300');
-    await _setMpvProperty('demuxer-readahead-secs', '300');
-    await _setMpvProperty('demuxer-max-bytes', '512MiB');
-    await _setMpvProperty('demuxer-max-back-bytes', '128MiB');
+    await _setMpvProperty('cache-secs', mobile ? '60' : '300');
+    await _setMpvProperty('demuxer-readahead-secs', mobile ? '60' : '300');
+    await _setMpvProperty('demuxer-max-bytes', mobile ? '64MiB' : '512MiB');
+    await _setMpvProperty(
+      'demuxer-max-back-bytes',
+      mobile ? '16MiB' : '128MiB',
+    );
   }
 
   final mk.Player _player;

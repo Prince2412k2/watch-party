@@ -73,6 +73,21 @@ void main() {
     expect(find.byIcon(Icons.login), findsOneWidget);
   });
 
+  testWidgets('signed-in navigation fits an iPhone viewport', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    await tester.pumpWidget(_shell(overrides: _signedIn()));
+    await tester.pumpAndSettle();
+
+    for (final label in ['Movies', 'Shows', 'Discover', 'Downloads']) {
+      final rect = tester.getRect(find.text(label));
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(390));
+      expect(rect.bottom, lessThanOrEqualTo(844));
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   group('shellSectionTitle', () {
     test('maps shelled locations (incl. nested paths) to their section', () {
       expect(shellSectionTitle('/movies'), 'Movies');

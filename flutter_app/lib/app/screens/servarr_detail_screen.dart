@@ -41,6 +41,8 @@ class ServarrDetailView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final wp = context.wp;
+    final media = MediaQuery.of(context);
+    final compact = media.size.width < 700;
     ref.watch(servarrRequestsProvider); // rebuild on request-state change
     final notifier = ref.read(servarrRequestsProvider.notifier);
     final state = notifier.stateFor(item, kind);
@@ -49,7 +51,8 @@ class ServarrDetailView extends ConsumerWidget {
     final active = torrent != null && !torrent.isPaused;
     final pct = torrent?.percent ?? 0;
     final torrentDownloading = active && pct < 100;
-    final downloading = state == ServarrRequestState.grabbed || torrentDownloading;
+    final downloading =
+        state == ServarrRequestState.grabbed || torrentDownloading;
     final searching =
         state == ServarrRequestState.searching && !torrentDownloading;
     final monitoring =
@@ -85,12 +88,19 @@ class ServarrDetailView extends ConsumerWidget {
                 children: [
                   Positioned.fill(child: _Backdrop(url: item.backdropUrl)),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(34, 90, 34, 34),
+                    padding: EdgeInsets.fromLTRB(
+                      compact ? 20 : 34,
+                      media.padding.top + (compact ? 76 : 90),
+                      compact ? 20 : 34,
+                      34,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        _Poster(url: item.posterUrl),
-                        const SizedBox(width: 26),
+                        if (!compact) ...[
+                          _Poster(url: item.posterUrl),
+                          const SizedBox(width: 26),
+                        ],
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -107,8 +117,9 @@ class ServarrDetailView extends ConsumerWidget {
                               const SizedBox(height: 8),
                               Text(
                                 item.title,
-                                style: AppTheme.headlineLarge
-                                    .copyWith(color: wp.text),
+                                style: AppTheme.headlineLarge.copyWith(
+                                  color: wp.text,
+                                ),
                               ),
                               const SizedBox(height: 14),
                               _RatingGenres(rating: rating, genres: genres),
@@ -148,7 +159,8 @@ class ServarrDetailView extends ConsumerWidget {
                                   noRelease: noRelease,
                                   searchFailed: searchFailed,
                                   state: state,
-                                  onDownload: () => notifier.request(item, kind),
+                                  onDownload: () =>
+                                      notifier.request(item, kind),
                                   onOptions: () => _openOptions(context, ref),
                                   onPickRelease: () =>
                                       _openReleasePicker(context, ref),
@@ -170,8 +182,9 @@ class ServarrDetailView extends ConsumerWidget {
                                   item.overview!.isNotEmpty) ...[
                                 const SizedBox(height: 22),
                                 ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxWidth: 720),
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 720,
+                                  ),
                                   child: Text(
                                     item.overview!,
                                     maxLines: 6,
@@ -197,8 +210,8 @@ class ServarrDetailView extends ConsumerWidget {
           ),
         ),
         Positioned(
-          top: 18,
-          left: 34,
+          top: media.padding.top + 10,
+          left: compact ? 20 : 34,
           child: _BackButton(onTap: onBack),
         ),
       ],
@@ -210,8 +223,9 @@ class ServarrDetailView extends ConsumerWidget {
       context,
       item: item,
       kind: kind,
-      onAdded: (outcome) =>
-          ref.read(servarrRequestsProvider.notifier).applyOutcome(_key, outcome),
+      onAdded: (outcome) => ref
+          .read(servarrRequestsProvider.notifier)
+          .applyOutcome(_key, outcome),
     );
   }
 
@@ -239,7 +253,8 @@ class ServarrDetailView extends ConsumerWidget {
     final confirmed = await showConfirm(
       context,
       title: 'Remove from library?',
-      body: 'This deletes the ${_isSeries ? 'series' : 'movie'} and its '
+      body:
+          'This deletes the ${_isSeries ? 'series' : 'movie'} and its '
           'downloaded files, and stops it from being auto-redownloaded. This '
           'can\'t be undone.',
       confirmLabel: 'Remove',
@@ -300,14 +315,19 @@ class _MovieActions extends StatelessWidget {
         else if (searching)
           _StatusText(
             title: 'Added — finding a release…',
-            body: 'It\'s in your library. We\'re looking for a release to '
+            body:
+                'It\'s in your library. We\'re looking for a release to '
                 'download right now.',
             pulse: true,
           )
         else if (monitoring)
           _StatusText(
-            chip: const AppChip(label: 'Added — monitoring', icon: Icons.auto_awesome),
-            body: 'It\'s in your library and being monitored — episodes '
+            chip: const AppChip(
+              label: 'Added — monitoring',
+              icon: Icons.auto_awesome,
+            ),
+            body:
+                'It\'s in your library and being monitored — episodes '
                 'download on their own as they become available.',
           )
         else if (noRelease)
@@ -429,12 +449,18 @@ class _DownloadingBlock extends StatelessWidget {
               spacing: 14,
               runSpacing: 4,
               children: [
-                Text('↓ ${fmtSpeed(torrent!.dlspeed)}',
-                    style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim)),
-                Text('ETA ${pct >= 100 ? '—' : fmtEta(torrent!.eta)}',
-                    style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim)),
-                Text('Seeds: ${torrent!.numSeeds} · Peers: ${torrent!.numLeechs}',
-                    style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim)),
+                Text(
+                  '↓ ${fmtSpeed(torrent!.dlspeed)}',
+                  style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim),
+                ),
+                Text(
+                  'ETA ${pct >= 100 ? '—' : fmtEta(torrent!.eta)}',
+                  style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim),
+                ),
+                Text(
+                  'Seeds: ${torrent!.numSeeds} · Peers: ${torrent!.numLeechs}',
+                  style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim),
+                ),
               ],
             ),
           ],
@@ -445,7 +471,12 @@ class _DownloadingBlock extends StatelessWidget {
 }
 
 class _StatusText extends StatelessWidget {
-  const _StatusText({this.title, this.chip, required this.body, this.pulse = false});
+  const _StatusText({
+    this.title,
+    this.chip,
+    required this.body,
+    this.pulse = false,
+  });
   final String? title;
   final Widget? chip;
   final String body;
@@ -575,7 +606,11 @@ class _RatingGenres extends StatelessWidget {
         for (final g in genres)
           Text(
             g,
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: wp.dim),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: wp.dim,
+            ),
           ),
       ],
     );
@@ -662,9 +697,9 @@ class _Poster extends StatelessWidget {
   }
 
   Widget _fallback(WpPalette wp) => ColoredBox(
-        color: wp.surface,
-        child: Center(child: Icon(Icons.movie_outlined, color: wp.faint)),
-      );
+    color: wp.surface,
+    child: Center(child: Icon(Icons.movie_outlined, color: wp.faint)),
+  );
 }
 
 class _BackButton extends StatelessWidget {
@@ -736,9 +771,10 @@ class _ManualSourceDialog extends ConsumerStatefulWidget {
 class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
   late final TextEditingController _title = TextEditingController(
     text: widget.kind == ServarrKind.movie
-        ? [widget.item.title, widget.item.year]
-            .where((e) => e != null && e.toString().isNotEmpty)
-            .join('.')
+        ? [
+            widget.item.title,
+            widget.item.year,
+          ].where((e) => e != null && e.toString().isNotEmpty).join('.')
         : widget.item.title,
   );
   final _magnet = TextEditingController();
@@ -839,23 +875,26 @@ class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
     try {
       final api = ref.read(apiClientProvider);
       final targetId = await _resolveTargetId();
-      final seasonNumber =
-          _isSeries && _season.text.isNotEmpty ? int.tryParse(_season.text) : null;
-      final episodeNumber = _isSeries &&
-              _season.text.isNotEmpty &&
-              _episode.text.isNotEmpty
+      final seasonNumber = _isSeries && _season.text.isNotEmpty
+          ? int.tryParse(_season.text)
+          : null;
+      final episodeNumber =
+          _isSeries && _season.text.isNotEmpty && _episode.text.isNotEmpty
           ? int.tryParse(_episode.text)
           : null;
 
       if (_magnetMode) {
-        await api.servarrPost('manual/magnet', body: {
-          'service': _service,
-          'targetId': targetId,
-          'title': _title.text.trim(),
-          'magnet': _magnet.text.trim(),
-          if (seasonNumber != null) 'seasonNumber': seasonNumber,
-          if (episodeNumber != null) 'episodeNumber': episodeNumber,
-        });
+        await api.servarrPost(
+          'manual/magnet',
+          body: {
+            'service': _service,
+            'targetId': targetId,
+            'title': _title.text.trim(),
+            'magnet': _magnet.text.trim(),
+            if (seasonNumber != null) 'seasonNumber': seasonNumber,
+            if (episodeNumber != null) 'episodeNumber': episodeNumber,
+          },
+        );
       } else {
         final file = _torrent!;
         final bytes = file.bytes ?? await File(file.path!).readAsBytes();
@@ -997,7 +1036,10 @@ class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
                       _torrent!.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim),
+                      style: AppTheme.mono.copyWith(
+                        fontSize: 12.5,
+                        color: wp.dim,
+                      ),
                     ),
                   ),
               ],
@@ -1020,12 +1062,14 @@ class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
             label: _submitting
                 ? 'Submitting…'
                 : _ok
-                    ? 'Submitted'
-                    : 'Submit source',
+                ? 'Submitted'
+                : 'Submit source',
             icon: _ok ? Icons.check : Icons.add,
             busy: _submitting,
             expand: true,
-            variant: _ok ? AppButtonVariant.secondary : AppButtonVariant.primary,
+            variant: _ok
+                ? AppButtonVariant.secondary
+                : AppButtonVariant.primary,
             onPressed: _canSubmit ? _submit : null,
           ),
         ],
@@ -1034,16 +1078,16 @@ class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
   }
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: context.wp.dim,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(
+      text,
+      style: TextStyle(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+        color: context.wp.dim,
+      ),
+    ),
+  );
 }
 
 class _ModeTab extends StatelessWidget {
@@ -1119,7 +1163,10 @@ class _TextField extends StatelessWidget {
         filled: true,
         fillColor: wp.surface2,
         isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 13,
+          vertical: 12,
+        ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppSpacing.radius),
           borderSide: BorderSide(color: wp.line2),

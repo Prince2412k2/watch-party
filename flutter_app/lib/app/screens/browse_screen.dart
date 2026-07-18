@@ -79,12 +79,13 @@ class BrowseScreen extends ConsumerWidget {
               // Reserve the page insets, heading, metadata, and scale breathing
               // room first. Large windows reach the 250px cap; compact windows
               // shrink instead of clipping titles and ratings.
+              final compact = constraints.maxWidth < 600;
               final railHeight = constraints.maxHeight - 24 - 108 - 54;
               final posterWidth = ((railHeight - 126) * 3 / 5)
-                  .clamp(160.0, 250.0)
+                  .clamp(compact ? 112.0 : 160.0, 250.0)
                   .toDouble();
               return Padding(
-                padding: const EdgeInsets.fromLTRB(44, 24, 0, 108),
+                padding: EdgeInsets.fromLTRB(compact ? 20 : 44, 24, 0, 108),
                 child: PosterShelf(
                   title: _title,
                   leftInset: 0,
@@ -107,7 +108,8 @@ class BrowseScreen extends ConsumerWidget {
           );
         }
 
-        const posterWidth = 220.0;
+        final compact = MediaQuery.sizeOf(context).width < 600;
+        final posterWidth = compact ? 164.0 : 220.0;
         final shelves = <Widget>[
           PosterShelf(
             title: _title,
@@ -140,7 +142,7 @@ class BrowseScreen extends ConsumerWidget {
         ];
 
         return ListView(
-          padding: const EdgeInsets.fromLTRB(44, 24, 0, 120),
+          padding: EdgeInsets.fromLTRB(compact ? 20 : 44, 24, 0, 120),
           children: [
             for (var i = 0; i < shelves.length; i++)
               Reveal(delay: AppMotion.stagger * i, child: shelves[i]),

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
-import 'package:window_manager/window_manager.dart';
 
 import '../../data/api_client.dart';
 import '../../models/models.dart';
@@ -13,6 +12,7 @@ import '../../player/player_view.dart';
 import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
+import '../platform_fullscreen.dart';
 import 'detail_stage.dart';
 
 /// Title-detail screen. For an authenticated user this is the fullscreen
@@ -216,7 +216,7 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   @override
   void dispose() {
     unawaited(_stopPlayback());
-    if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
+    if (_isFullscreen) unawaited(setAppFullscreen(false));
     super.dispose();
   }
 
@@ -228,7 +228,7 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
     } catch (_) {}
     await _controller.pause();
     await _controller.seek(Duration.zero);
-    if (_isFullscreen) await windowManager.setFullScreen(false);
+    if (_isFullscreen) await setAppFullscreen(false);
   }
 
   void _exit() {
@@ -246,7 +246,7 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
 
   Future<void> _toggleFullscreen() async {
     final next = !_isFullscreen;
-    await windowManager.setFullScreen(next);
+    await setAppFullscreen(next);
     if (mounted) setState(() => _isFullscreen = next);
   }
 
@@ -339,9 +339,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                   PlayerView(
                     controller: ref.watch(playerControllerProvider),
                     itemId: widget.itemId,
-                  apiClient: ref.watch(apiClientProvider),
-                  preferredSubtitleStreamIndex: widget.subtitleStreamIndex,
-                  onToggleFullscreen: _toggleFullscreen,
+                    apiClient: ref.watch(apiClientProvider),
+                    preferredSubtitleStreamIndex: widget.subtitleStreamIndex,
+                    onToggleFullscreen: _toggleFullscreen,
                     isFullscreen: _isFullscreen,
                     cachedSpans: _usesCacheProxy
                         ? ref

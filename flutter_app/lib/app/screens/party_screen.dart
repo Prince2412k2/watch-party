@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
-import 'package:window_manager/window_manager.dart';
 
 import '../../models/models.dart';
 import '../../player/player_view.dart';
@@ -14,6 +13,7 @@ import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/floating_camera_tile.dart';
 import '../../ui/widgets/party_qr.dart';
+import '../platform_fullscreen.dart';
 
 /// The watch-party screen — an IMMERSIVE, full-bleed layout mirroring the web
 /// app (`pages/Party.tsx`). The movie fills the window; camera tiles float over
@@ -291,7 +291,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     // Don't leave the OS window stuck in fullscreen after navigating away. This
     // is purely a window-chrome toggle — it never touches party/LiveKit state.
     if (_isFullscreen) {
-      unawaited(windowManager.setFullScreen(false));
+      unawaited(setAppFullscreen(false));
     }
     // Never leave the mic stuck open if PTT was mid-hold when the screen tore
     // down (mirrors usePushToTalk's unmount cleanup).
@@ -306,7 +306,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   /// `window_manager` to resize the window and flips local UI state.
   Future<void> _toggleFullscreen() async {
     final next = !_isFullscreen;
-    await windowManager.setFullScreen(next);
+    await setAppFullscreen(next);
     if (mounted) setState(() => _isFullscreen = next);
   }
 
@@ -429,76 +429,89 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
           behavior: HitTestBehavior.deferToChild,
           // Trackpad / touch fallback for the right-click Watch Party menu.
           onLongPress: _openWatchPartyMenu,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 0 — the stage. Shrinks (animated left margin) when cameras dock,
-              // WITHOUT re-keying/remounting PlayerView or its media_kit
-              // VideoView — only the surrounding box narrows.
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOutCubic,
-                left: (watching && _dock) ? 210.0 : 0.0,
-                top: 0,
-                right: _chatOpen ? 360.0 : 0.0,
-                bottom: 0,
-                child: stage,
-              ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 700;
+              final docked = watching && _dock && !compact;
+              final chatWidth = compact ? constraints.maxWidth : 360.0;
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 0 — the stage. Shrinks (animated left margin) when cameras dock,
+                  // WITHOUT re-keying/remounting PlayerView or its media_kit
+                  // VideoView — only the surrounding box narrows.
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeOutCubic,
+                    left: docked ? 210.0 : 0.0,
+                    top: 0,
+                    right: _chatOpen && !compact ? chatWidth : 0.0,
+                    bottom: 0,
+                    child: stage,
+                  ),
 
-              // 1 — cameras: floating PiP layer, or the docked left column.
-              // Exactly one child so the stage above keeps a stable Stack slot.
-              if (watching && _dock)
-                const Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 210,
-                  child: _CameraDock(),
-                )
-              else
-                const Positioned.fill(child: FloatingCameraLayer()),
+                  // 1 — cameras: floating PiP layer, or the docked left column.
+                  // Exactly one child so the stage above keeps a stable Stack slot.
+                  if (docked)
+                    const Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 210,
+                      child: _CameraDock(),
+                    )
+                  else
+                    const Positioned.fill(child: FloatingCameraLayer()),
 
-              // 2 — auto-hiding chrome: top-left Back + top-right A/V cluster.
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: IgnorePointer(
-                  ignoring: !chromeShown,
-                  child: AnimatedOpacity(
-                    opacity: chromeShown ? 1 : 0,
-                    duration: const Duration(milliseconds: 200),
-                    child: _WatchChrome(
-                      watching: watching,
-                      dock: _dock,
-                      chatOpen: _chatOpen,
-                      onBack: _minimize,
-                      onToggleChat: () =>
-                          setState(() => _chatOpen = !_chatOpen),
-                      onToggleLayout: () => setState(() => _dock = !_dock),
+                  // 2 — auto-hiding chrome: top-left Back + top-right A/V cluster.
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      ignoring: !chromeShown,
+                      child: AnimatedOpacity(
+                        opacity: chromeShown ? 1 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: _WatchChrome(
+                          watching: watching,
+                          dock: _dock,
+                          chatOpen: _chatOpen,
+                          compact: compact,
+                          onBack: _minimize,
+                          onToggleChat: () =>
+                              setState(() => _chatOpen = !_chatOpen),
+                          onToggleLayout: () => setState(() => _dock = !_dock),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
 
-              // 3 — host-only join requests (a notification: never faded).
-              const Positioned(top: 64, right: 12, child: _JoinRequestsLayer()),
+                  // 3 — host-only join requests (a notification: never faded).
+                  const Positioned(
+                    top: 64,
+                    right: 12,
+                    child: _JoinRequestsLayer(),
+                  ),
 
-              // 4 — LiveKit error banner (always visible).
-              const Positioned(
-                top: 70,
-                left: 0,
-                right: 0,
-                child: _LiveKitErrorBanner(),
-              ),
+                  // 4 — LiveKit error banner (always visible).
+                  const Positioned(
+                    top: 70,
+                    left: 0,
+                    right: 0,
+                    child: _LiveKitErrorBanner(),
+                  ),
 
-              // 5 — opaque chat rail. The stage narrows while this is open, so
-              // chat never covers or blurs the movie.
-              _ChatSlideOver(
-                open: _chatOpen,
-                onClose: () => setState(() => _chatOpen = false),
-              ),
-            ],
+                  // 5 — opaque chat rail. The stage narrows while this is open, so
+                  // chat never covers or blurs the movie.
+                  _ChatSlideOver(
+                    open: _chatOpen,
+                    width: chatWidth,
+                    onClose: () => setState(() => _chatOpen = false),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -516,6 +529,7 @@ class _WatchChrome extends ConsumerWidget {
     required this.watching,
     required this.dock,
     required this.chatOpen,
+    required this.compact,
     required this.onBack,
     required this.onToggleChat,
     required this.onToggleLayout,
@@ -524,6 +538,7 @@ class _WatchChrome extends ConsumerWidget {
   final bool watching;
   final bool dock;
   final bool chatOpen;
+  final bool compact;
   final VoidCallback onBack;
   final VoidCallback onToggleChat;
   final VoidCallback onToggleLayout;
@@ -580,7 +595,7 @@ class _WatchChrome extends ConsumerWidget {
               active: lkState.hideSelf,
               onTap: () => lk.setHideSelf(!lkState.hideSelf),
             ),
-            if (watching)
+            if (watching && !compact)
               _AvIconButton(
                 icon: dock
                     ? Icons.view_sidebar_outlined
@@ -1163,8 +1178,13 @@ class _JoinRequests extends ConsumerWidget {
 /// Right-side chat rail. It is deliberately opaque and blur-free; the movie
 /// stage narrows by the same width while open instead of sitting behind it.
 class _ChatSlideOver extends StatelessWidget {
-  const _ChatSlideOver({required this.open, required this.onClose});
+  const _ChatSlideOver({
+    required this.open,
+    required this.width,
+    required this.onClose,
+  });
   final bool open;
+  final double width;
   final VoidCallback onClose;
 
   @override
@@ -1174,8 +1194,8 @@ class _ChatSlideOver extends StatelessWidget {
       curve: Curves.easeOutCubic,
       top: 0,
       bottom: 0,
-      right: open ? 0 : -372,
-      width: 360,
+      right: open ? 0 : -(width + 12),
+      width: width,
       child: SafeArea(
         left: false,
         child: DecoratedBox(
