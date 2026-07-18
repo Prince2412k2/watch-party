@@ -267,7 +267,9 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       try {
         // Routed through the on-device caching proxy (Phase 2), not a direct
         // signed URL — it mints/re-mints one itself as bytes are requested.
-        final url = _ref.read(mediaCacheProxyProvider).urlFor(mediaId!);
+        final url = _ref
+            .read(mediaCacheProxyProvider)
+            .urlFor(mediaId!, mediaSourceId: s.mediaSourceId);
         // autoplay:false — the sync engine starts/positions playback from the
         // authoritative schedule, so playback stays in sync across clients.
         await controller.open(url, autoplay: false);

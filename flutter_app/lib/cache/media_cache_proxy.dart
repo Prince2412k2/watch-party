@@ -45,8 +45,8 @@ class _Segment {
 /// instead of writing a separate file, and add eviction; neither exists yet.
 class MediaCacheProxy {
   MediaCacheProxy({required ApiClient apiClient, RangeCacheStore? store})
-      : _apiClient = apiClient,
-        _store = store ?? RangeCacheStore();
+    : _apiClient = apiClient,
+      _store = store ?? RangeCacheStore();
 
   final ApiClient _apiClient;
   final RangeCacheStore _store;
@@ -90,12 +90,20 @@ class MediaCacheProxy {
 
   /// The URL the player should open for [itemId] in place of a direct signed
   /// stream URL. Throws [StateError] if [start] hasn't been awaited yet.
-  String urlFor(String itemId) {
+  String urlFor(String itemId, {String? mediaSourceId}) {
     final p = port;
     if (p == null) {
       throw StateError('MediaCacheProxy.start() must complete before urlFor()');
     }
-    return 'http://127.0.0.1:$p/m/$itemId';
+    return Uri(
+      scheme: 'http',
+      host: '127.0.0.1',
+      port: p,
+      pathSegments: ['m', itemId],
+      queryParameters: mediaSourceId == null
+          ? null
+          : {'mediaSourceId': mediaSourceId},
+    ).toString();
   }
 
   /// Cached spans for [itemId] as 0..1 fractions of its total length, for the
@@ -151,7 +159,11 @@ class MediaCacheProxy {
         await request.response.close();
         return;
       }
-      await _serve(request, segments[1]);
+      await _serve(
+        request,
+        segments[1],
+        mediaSourceId: request.uri.queryParameters['mediaSourceId'],
+      );
     } catch (_) {
       // Client disconnects surface here too (broken pipe writing the
       // response) — never let one request crash the server.
@@ -162,13 +174,21 @@ class MediaCacheProxy {
     }
   }
 
-  Future<void> _serve(HttpRequest request, String itemId) async {
+  Future<void> _serve(
+    HttpRequest request,
+    String itemId, {
+    String? mediaSourceId,
+  }) async {
     final entry = await _store.open(itemId);
     await entry.touch();
 
     var total = entry.totalLength;
     if (total == null) {
-      total = await _learnTotalLength(itemId, entry);
+      total = await _learnTotalLength(
+        itemId,
+        entry,
+        mediaSourceId: mediaSourceId,
+      );
       if (total == null) {
         request.response.statusCode = HttpStatus.badGateway;
         await request.response.close();
@@ -213,7 +233,14 @@ class MediaCacheProxy {
     }
 
     try {
-      await _streamRange(entry, itemId, start, end, response);
+      await _streamRange(
+        entry,
+        itemId,
+        start,
+        end,
+        response,
+        mediaSourceId: mediaSourceId,
+      );
     } catch (_) {
       // Client aborted mid-response, or the upstream fetch failed after we'd
       // already committed headers — nothing more we can do for this request.
@@ -224,7 +251,9 @@ class MediaCacheProxy {
     }
 
     // Fire-and-forget: keep filling the cache beyond what was just served.
-    unawaited(_readAhead(entry, itemId, end, total));
+    unawaited(
+      _readAhead(entry, itemId, end, total, mediaSourceId: mediaSourceId),
+    );
   }
 
   /// Serves `[start, end)` to [response], reading present sub-ranges from the
@@ -234,8 +263,9 @@ class MediaCacheProxy {
     String itemId,
     int start,
     int end,
-    HttpResponse response,
-  ) async {
+    HttpResponse response, {
+    String? mediaSourceId,
+  }) async {
     final gaps = entry.missingRanges(start, end);
     final segments = <_Segment>[];
     var cursor = start;
@@ -257,7 +287,14 @@ class MediaCacheProxy {
           await response.flush();
         }
       } else {
-        await _fetchAndForward(entry, itemId, segment.start, segment.end, response);
+        await _fetchAndForward(
+          entry,
+          itemId,
+          segment.start,
+          segment.end,
+          response,
+          mediaSourceId: mediaSourceId,
+        );
       }
     }
   }
@@ -267,9 +304,15 @@ class MediaCacheProxy {
     String itemId,
     int start,
     int end,
-    HttpResponse response,
-  ) async {
-    final upstream = await _fetchRemoteRange(itemId, start, end);
+    HttpResponse response, {
+    String? mediaSourceId,
+  }) async {
+    final upstream = await _fetchRemoteRange(
+      itemId,
+      start,
+      end,
+      mediaSourceId: mediaSourceId,
+    );
     try {
       var offset = start;
       await for (final chunk in upstream.response) {
@@ -288,7 +331,13 @@ class MediaCacheProxy {
   /// [_readAheadWindow]) so upcoming playback hits cache. One pass per title
   /// at a time; on any fetch error the pass just stops early — the next
   /// on-demand request re-fetches whatever's still missing.
-  Future<void> _readAhead(CacheEntry entry, String itemId, int from, int total) async {
+  Future<void> _readAhead(
+    CacheEntry entry,
+    String itemId,
+    int from,
+    int total, {
+    String? mediaSourceId,
+  }) async {
     if (_readAheadInFlight.contains(itemId)) return;
     _readAheadInFlight.add(itemId);
     try {
@@ -297,7 +346,13 @@ class MediaCacheProxy {
       final gaps = entry.missingRanges(from, windowEnd);
       for (final gap in gaps) {
         try {
-          await fetchAndStore(itemId, entry, gap.start, gap.end);
+          await fetchAndStore(
+            itemId,
+            entry,
+            gap.start,
+            gap.end,
+            mediaSourceId: mediaSourceId,
+          );
         } catch (_) {
           return; // give up this pass; on-demand fetches will fill gaps later
         }
@@ -310,10 +365,14 @@ class MediaCacheProxy {
   /// Ensures [entry]'s [CacheEntry.totalLength] is known, learning it from
   /// the remote if necessary. Reusable by anything that needs the title's
   /// size before it can plan a fetch (the fill controller, in particular).
-  Future<int?> ensureTotalLength(String itemId, CacheEntry entry) async {
+  Future<int?> ensureTotalLength(
+    String itemId,
+    CacheEntry entry, {
+    String? mediaSourceId,
+  }) async {
     final known = entry.totalLength;
     if (known != null) return known;
-    return _learnTotalLength(itemId, entry);
+    return _learnTotalLength(itemId, entry, mediaSourceId: mediaSourceId);
   }
 
   /// Fetches `[start, end)` from the remote and writes it into [entry],
@@ -330,11 +389,24 @@ class MediaCacheProxy {
   /// it also has to stream bytes to the client response as they arrive;
   /// unifying that with this method isn't worth the risk of changing live
   /// playback's fetch cadence.
-  Future<void> fetchAndStore(String itemId, CacheEntry entry, int start, int end) async {
+  Future<void> fetchAndStore(
+    String itemId,
+    CacheEntry entry,
+    int start,
+    int end, {
+    String? mediaSourceId,
+  }) async {
     var pos = start;
     while (pos < end) {
-      final chunkEnd = (pos + _fetchChunkSize) > end ? end : pos + _fetchChunkSize;
-      final upstream = await _fetchRemoteRange(itemId, pos, chunkEnd);
+      final chunkEnd = (pos + _fetchChunkSize) > end
+          ? end
+          : pos + _fetchChunkSize;
+      final upstream = await _fetchRemoteRange(
+        itemId,
+        pos,
+        chunkEnd,
+        mediaSourceId: mediaSourceId,
+      );
       try {
         var offset = pos;
         await for (final chunk in upstream.response) {
@@ -354,8 +426,17 @@ class MediaCacheProxy {
   /// Probes the remote with a 1-byte ranged GET purely to learn the title's
   /// total length from `Content-Range`, and opportunistically caches that
   /// first byte since we already paid for the round trip.
-  Future<int?> _learnTotalLength(String itemId, CacheEntry entry) async {
-    final upstream = await _fetchRemoteRange(itemId, 0, 1);
+  Future<int?> _learnTotalLength(
+    String itemId,
+    CacheEntry entry, {
+    String? mediaSourceId,
+  }) async {
+    final upstream = await _fetchRemoteRange(
+      itemId,
+      0,
+      1,
+      mediaSourceId: mediaSourceId,
+    );
     try {
       final res = upstream.response;
       if (res.statusCode != HttpStatus.ok &&
@@ -390,7 +471,12 @@ class MediaCacheProxy {
   /// the signed token has expired (401/403) — the token embeds its own TTL
   /// server-side, so a long-idle title's stale link fails this way rather
   /// than at request time.
-  Future<_Upstream> _fetchRemoteRange(String itemId, int start, int end) async {
+  Future<_Upstream> _fetchRemoteRange(
+    String itemId,
+    int start,
+    int end, {
+    String? mediaSourceId,
+  }) async {
     Future<_Upstream> attempt(String url) async {
       final client = HttpClient();
       try {
@@ -404,12 +490,20 @@ class MediaCacheProxy {
       }
     }
 
-    var signed = await _apiClient.nativeStreamUrl(itemId, purpose: 'stream');
+    var signed = await _apiClient.nativeStreamUrl(
+      itemId,
+      purpose: 'stream',
+      mediaSourceId: mediaSourceId,
+    );
     var upstream = await attempt(signed.url);
     if (upstream.response.statusCode == HttpStatus.unauthorized ||
         upstream.response.statusCode == HttpStatus.forbidden) {
       upstream.close();
-      signed = await _apiClient.nativeStreamUrl(itemId, purpose: 'stream');
+      signed = await _apiClient.nativeStreamUrl(
+        itemId,
+        purpose: 'stream',
+        mediaSourceId: mediaSourceId,
+      );
       upstream = await attempt(signed.url);
     }
     return upstream;

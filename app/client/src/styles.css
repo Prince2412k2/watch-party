@@ -115,7 +115,6 @@ media-player, media-player:focus, media-player:focus-visible,
 @keyframes in    { from { opacity:0; transform:translateY(-8px) scale(.97); } to { opacity:1; transform:none; } }
 @keyframes up    { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
 @keyframes ring  { 0% { transform:scale(1); opacity:.5; } 100% { transform:scale(1.75); opacity:0; } }
-@keyframes sonar { 0% { transform:scale(.4); opacity:.8; } 100% { transform:scale(1.6); opacity:0; } }
 @keyframes shim  { to { background-position: 200% 0; } }
 @keyframes chatIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 @keyframes edgeRipple { 0% { opacity: .6; transform: translateX(0) scaleX(1); } 100% { opacity: 0; transform: translateX(-14px) scaleX(1.4); } }
@@ -129,7 +128,7 @@ media-player, media-player:focus, media-player:focus-visible,
    Collapse decorative motion to a near-instant step so state stays visible but
    nothing animates: sheet/scrim entrances (sheetIn/scrimIn), the notification
    edge ripple (edgeRipple), menu/overflow pop-ins ("up"/"in"/"chatIn"), and the
-   looping decorative pulses (talking dot & downloading "pulse", "sonar"/"ring"
+   looping decorative pulses (talking dot & downloading "pulse", "ring"
    avatar rings, speaking "bar"s, "shim"mer) all fold to ~0ms. Duration is a hair
    above 0 (not `animation: none`) so animationend still fires — the edge ripple
    cleans itself up on that event. The double-tap seek label is essential
