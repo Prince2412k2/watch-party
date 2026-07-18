@@ -176,6 +176,20 @@ void main() {
       ]);
     });
 
+    test('readChunks bounds allocations for a fully cached range', () async {
+      final store = RangeCacheStore(overrideDir: tmpDir);
+      final entry = await store.open('chunked-item');
+      final bytes = List<int>.generate(25, (i) => i);
+      await entry.write(0, bytes);
+
+      final chunks = await entry
+          .readChunks(0, bytes.length, chunkSize: 8)
+          .toList();
+
+      expect(chunks.map((chunk) => chunk.length), [8, 8, 8, 1]);
+      expect(chunks.expand((chunk) => chunk), bytes);
+    });
+
     test('multiple writes coalesce and are independently readable', () async {
       final store = RangeCacheStore(overrideDir: tmpDir);
       final entry = await store.open('item-2');

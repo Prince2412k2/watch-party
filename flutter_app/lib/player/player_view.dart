@@ -38,6 +38,7 @@ class PlayerView extends StatefulWidget {
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
+    this.preferredSubtitleStreamIndex,
     this.cachedSpans,
     this.visible,
     this.onWake,
@@ -76,7 +77,8 @@ class PlayerView extends StatefulWidget {
         _autoplay = autoplay,
         itemId = itemId,
         mediaSourceId = null,
-        apiClient = apiClient,
+         apiClient = apiClient,
+         preferredSubtitleStreamIndex = null,
         onSeek = null,
         visible = null,
         onWake = null,
@@ -93,6 +95,8 @@ class PlayerView extends StatefulWidget {
   final String _purpose;
   final Duration _startAt;
   final bool _autoplay;
+
+  final int? preferredSubtitleStreamIndex;
 
   /// Read-only transport bar when false — E5 passes this for a guest without
   /// playback-control rights (PLAN §4 E5.2 `canControl` gating).
@@ -237,6 +241,7 @@ class _PlayerViewState extends State<PlayerView> {
             itemId: widget.itemId ?? widget._itemId,
             mediaSourceId: widget.mediaSourceId,
             apiClient: widget.apiClient ?? widget._apiClient,
+            preferredSubtitleStreamIndex: widget.preferredSubtitleStreamIndex,
             cachedSpans: widget.cachedSpans,
             visible: widget.visible,
             onWake: widget.onWake,

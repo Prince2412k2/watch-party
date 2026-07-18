@@ -196,7 +196,6 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   bool _ready = false;
   bool _isFullscreen = false;
   bool _exiting = false;
-  bool _allowPop = false;
   bool _popping = false;
   bool _handoffToParty = false;
   Future<void>? _openFuture;
@@ -232,13 +231,11 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
     if (_isFullscreen) await windowManager.setFullScreen(false);
   }
 
-  Future<void> _exit() async {
+  void _exit() {
     if (_popping) return;
     _popping = true;
-    await _stopPlayback();
-    if (!mounted) return;
-    setState(() => _allowPop = true);
-    await Navigator.of(context).maybePop();
+    _exiting = true;
+    Navigator.of(context).pop();
   }
 
   void _retry() {
@@ -310,9 +307,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
   @override
   Widget build(BuildContext context) {
     return PopScope<void>(
-      canPop: _allowPop,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_exit());
+        if (!didPop) _exit();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -342,8 +339,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                   PlayerView(
                     controller: ref.watch(playerControllerProvider),
                     itemId: widget.itemId,
-                    apiClient: ref.watch(apiClientProvider),
-                    onToggleFullscreen: _toggleFullscreen,
+                  apiClient: ref.watch(apiClientProvider),
+                  preferredSubtitleStreamIndex: widget.subtitleStreamIndex,
+                  onToggleFullscreen: _toggleFullscreen,
                     isFullscreen: _isFullscreen,
                     cachedSpans: _usesCacheProxy
                         ? ref
