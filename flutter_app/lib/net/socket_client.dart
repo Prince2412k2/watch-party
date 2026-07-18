@@ -42,7 +42,7 @@ abstract class SocketClient {
 /// [DioApiClient]'s jar). Same origin as [AppConfig.apiBase].
 class IoSocketClient implements SocketClient {
   IoSocketClient({String? url, this.cookieHeader, this.cookieHeaderProvider})
-      : _url = url ?? AppConfig.socketUrl;
+    : _url = url ?? AppConfig.socketUrl;
 
   String _url;
 
@@ -65,14 +65,7 @@ class IoSocketClient implements SocketClient {
   @override
   Future<void> connect() async {
     final cookie = cookieHeader ?? await cookieHeaderProvider?.call();
-    final builder = io.OptionBuilder()
-        .setTransports(['websocket'])
-        .disableAutoConnect()
-        .enableForceNew();
-    if (cookie != null) {
-      builder.setExtraHeaders({'Cookie': cookie});
-    }
-    final socket = io.io(_url, builder.build());
+    final socket = io.io(_url, socketOptionsFor(_url, cookie));
     _socket = socket;
     final completer = Completer<void>();
     socket.onConnect((_) {
@@ -107,9 +100,13 @@ class IoSocketClient implements SocketClient {
       return Future.error(StateError('socket not connected'));
     }
     final completer = Completer<dynamic>();
-    socket.emitWithAck(event, data ?? const {}, ack: (resp) {
-      if (!completer.isCompleted) completer.complete(resp);
-    });
+    socket.emitWithAck(
+      event,
+      data ?? const {},
+      ack: (resp) {
+        if (!completer.isCompleted) completer.complete(resp);
+      },
+    );
     return completer.future;
   }
 
@@ -121,6 +118,25 @@ class IoSocketClient implements SocketClient {
 
   @override
   Stream<bool> get connectionState => _connCtrl.stream;
+}
+
+Map<String, dynamic> socketOptionsFor(String url, String? cookie) {
+  final uri = Uri.parse(url);
+  final builder = io.OptionBuilder()
+      // Polling keeps parties usable when a reverse proxy cannot upgrade a
+      // particular handshake; Socket.IO upgrades to WebSocket when available.
+      .setTransports(['polling', 'websocket'])
+      .disableAutoConnect()
+      .enableForceNew();
+  if (cookie != null) builder.setExtraHeaders({'Cookie': cookie});
+  final options = Map<String, dynamic>.from(builder.build());
+  // socket_io_client <=3.1.3 parsed multi-label HTTPS hosts as port 0. Keep an
+  // explicit default in our own options so persisted origins remain safe even
+  // if dependency resolution or an older packaged binary regresses.
+  options['port'] = uri.port == 0
+      ? (const {'https', 'wss'}.contains(uri.scheme) ? 443 : 80)
+      : uri.port;
+  return options;
 }
 
 /// Offline mock: records emissions, lets tests inject inbound events.
