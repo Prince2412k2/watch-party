@@ -126,6 +126,33 @@ void main() {
     expect(untouched.url, streamUrl);
   });
 
+  test('completed media is served by the proxy without an upstream request',
+      () async {
+    const itemId = 'complete-title';
+    final bytes = List<int>.generate(
+      MediaCacheProxy.fetchChunkSize * 2 + 17,
+      (i) => i % 251,
+    );
+    final entry = await proxy.openEntry(itemId);
+    entry.setTotalLength(bytes.length);
+    await entry.write(0, bytes);
+    await entry.flushMetadata();
+    await proxy.start();
+    addTearDown(proxy.dispose);
+
+    final client = HttpClient();
+    addTearDown(() => client.close(force: true));
+    final request = await client.getUrl(Uri.parse(proxy.urlFor(itemId)));
+    final response = await request.close();
+    final received = await response.fold<List<int>>(
+      <int>[],
+      (all, chunk) => all..addAll(chunk),
+    );
+
+    expect(response.statusCode, HttpStatus.ok);
+    expect(received, bytes);
+  });
+
   test('remove() deletes the cache entry and drops the record', () async {
     const itemId = 'title-remove';
     final entry = await proxy.openEntry(itemId);

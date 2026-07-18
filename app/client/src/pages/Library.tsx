@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
+import { forwardRef, useEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useParty } from '../context/PartyContext'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -9,6 +9,7 @@ import { mirror } from '../mirror'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
 import { C, SANS, MONO, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui'
 import { fmtRuntimeFromTicks, fmtSpeed } from '../lib/format'
+import { movePosterSelection } from '../components/posterSelection'
 import { apiJson, arrayOf, isLibraryItemJson, isRecord, isTorrentJson } from '../types/guards'
 import type { PlaybackTrack } from '../types/media'
 
@@ -68,6 +69,26 @@ function parseDetailPlayback(value: unknown): DetailPlayback | null {
 }
 
 const img = (id: string, type = 'Primary') => `/api/library/image/${id}?type=${type}`
+
+let posterCueContext: AudioContext | null = null
+function playPosterMoveCue() {
+  try {
+    const context = posterCueContext ??= new AudioContext()
+    const oscillator = context.createOscillator()
+    const gain = context.createGain()
+    const now = context.currentTime
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(460, now)
+    oscillator.frequency.exponentialRampToValueAtTime(360, now + .045)
+    gain.gain.setValueAtTime(.018, now)
+    gain.gain.exponentialRampToValueAtTime(.0001, now + .055)
+    oscillator.connect(gain).connect(context.destination)
+    oscillator.start(now)
+    oscillator.stop(now + .06)
+  } catch {
+    // Audio feedback is optional when Web Audio is unavailable or blocked.
+  }
+}
 
 function setBalancedPoster(id: string) {
   document.documentElement.style.setProperty('--balanced-poster', `url("${img(id, 'Backdrop')}"), url("${img(id)}")`)
@@ -747,33 +768,129 @@ function ViewCard({ view, onClick }: { view: LibraryItem; onClick: () => void })
 }
 
 /* ── Poster wall grid (inside a library / season) ───────────────────────── */
-function PosterWall({ children }: { children: ReactNode }) {
+function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen?: (item: LibraryItem) => void; children?: ReactNode }) {
   const mobile = useIsMobile()
   const railRef = useRef<HTMLDivElement>(null)
-  const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * railRef.current.clientWidth * .72, behavior: 'smooth' })
+  const focusAfterMove = useRef(false)
+  const wheelLocked = useRef(false)
+  const wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [selected, setSelected] = useState(0)
+  const [edges, setEdges] = useState({ left: false, right: false })
+  const count = items?.length ?? 0
+
+  const updateEdges = () => {
+    const rail = railRef.current
+    if (!rail) return
+    setEdges({
+      left: rail.scrollLeft > 2,
+      right: rail.scrollLeft + rail.clientWidth < rail.scrollWidth - 2,
+    })
+  }
+
+  useEffect(() => {
+    setSelected(index => Math.min(index, Math.max(0, count - 1)))
+  }, [count])
+
+  useEffect(() => {
+    if (mobile || count === 0) return
+    const poster = railRef.current?.querySelector<HTMLButtonElement>(`[data-poster-index="${selected}"]`)
+    poster?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    if (focusAfterMove.current) {
+      focusAfterMove.current = false
+      poster?.focus({ preventScroll: true })
+    }
+  }, [selected, mobile, count])
+
+  useEffect(() => {
+    const rail = railRef.current
+    if (!rail) return
+    const frame = requestAnimationFrame(updateEdges)
+    const observer = new ResizeObserver(updateEdges)
+    observer.observe(rail)
+    rail.addEventListener('scroll', updateEdges, { passive: true })
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      rail.removeEventListener('scroll', updateEdges)
+    }
+  }, [count])
+
+  useEffect(() => () => {
+    if (wheelTimer.current) clearTimeout(wheelTimer.current)
+  }, [])
+
+  useEffect(() => {
+    const rail = railRef.current
+    if (!rail || mobile || !items) return
+    const handleWheel = (event: WheelEvent) => {
+      const delta = Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+      if (!delta) return
+      event.preventDefault()
+      if (wheelLocked.current) return
+      wheelLocked.current = true
+      setSelected(index => {
+        const next = movePosterSelection(index, count, delta < 0 ? -1 : 1)
+        if (next !== index) playPosterMoveCue()
+        return next
+      })
+      if (wheelTimer.current) clearTimeout(wheelTimer.current)
+      wheelTimer.current = setTimeout(() => { wheelLocked.current = false }, 140)
+    }
+    rail.addEventListener('wheel', handleWheel, { passive: false })
+    return () => rail.removeEventListener('wheel', handleWheel)
+  }, [mobile, count, items])
+
+  const move = (direction: number, focus = false) => {
+    if (mobile || !items) {
+      railRef.current?.scrollBy({ left: direction * (railRef.current.clientWidth * .72), behavior: 'smooth' })
+      return
+    }
+    setSelected(index => {
+      const next = movePosterSelection(index, count, direction)
+      if (next !== index) {
+        focusAfterMove.current = focus
+        playPosterMoveCue()
+      }
+      return next
+    })
+  }
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    move(event.key === 'ArrowLeft' ? -1 : 1, true)
+  }
   return (
-    <div className="library-poster-rail">
+    <div className={`library-poster-rail${edges.left ? ' has-left-overflow' : ''}${edges.right ? ' has-right-overflow' : ''}`}>
       <div className="library-row-controls">
-        <button onClick={() => scroll(-1)} aria-label="Previous titles">‹</button>
-        <button onClick={() => scroll(1)} aria-label="Next titles">›</button>
+        <button onClick={() => move(-1)} disabled={!!items && !mobile && selected === 0} aria-label="Previous title">‹</button>
+        <button onClick={() => move(1)} disabled={!!items && !mobile && selected === count - 1} aria-label="Next title">›</button>
       </div>
-      <div ref={railRef} className="library-poster-wall" style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 118 : 150}px, 1fr))` }}>{children}</div>
+      <div ref={railRef} className="library-poster-wall" role={items ? 'listbox' : undefined} aria-label={items ? 'Titles' : undefined} aria-orientation={items ? 'horizontal' : undefined}
+        onKeyDown={onKeyDown}
+        style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 118 : 150}px, 1fr))` }}>
+        {items ? items.map((item, index) => (
+          <WallPoster key={item.Id} item={item} onClick={() => onOpen?.(item)} selected={index === selected}
+            tabIndex={mobile || index === selected ? 0 : -1} index={index} onSelect={() => setSelected(index)} />
+        )) : children}
+      </div>
     </div>
   )
 }
-function WallPoster({ item, onClick }: { item: LibraryItem; onClick: () => void }) {
+function WallPoster({ item, onClick, selected, tabIndex, index, onSelect }: { item: LibraryItem; onClick: () => void; selected: boolean; tabIndex: number; index: number; onSelect: () => void }) {
   const badge = item.Type === 'Season' ? `S${item.IndexNumber}` : null
-  return <div style={{ width: '100%' }}><PosterCardFluid item={item} onClick={onClick} badge={badge} /></div>
+  return <div className={selected ? 'is-selected' : ''} style={{ width: '100%' }}><PosterCardFluid item={item} onClick={onClick} badge={badge}
+    selected={selected} tabIndex={tabIndex} index={index} onSelect={onSelect} /></div>
 }
 // Poster that fills its grid cell width (rail cards are fixed 170px).
-function PosterCardFluid({ item, onClick, badge }: { item: LibraryItem; onClick: () => void; badge?: string | null }) {
+function PosterCardFluid({ item, onClick, badge, selected, tabIndex, index, onSelect }: { item: LibraryItem; onClick: () => void; badge?: string | null; selected: boolean; tabIndex: number; index: number; onSelect: () => void }) {
   const rating = item.CommunityRating
   const filledStars = rating == null ? 0 : Math.round(rating / 2)
   const isSeries = item.Type === 'Series'
   const epCount = isSeries ? (item.ChildCount ?? item.RecursiveItemCount) : null
   const fullyWatched = item.UserData?.Played
   return (
-    <button className="library-poster-card" onClick={onClick} onFocus={() => setBalancedPoster(item.Id)} onMouseEnter={() => setBalancedPoster(item.Id)} aria-label={item.Name}>
+    <button className="library-poster-card" onClick={onClick} onFocus={() => { onSelect(); setBalancedPoster(item.Id) }} onMouseEnter={() => setBalancedPoster(item.Id)}
+      role="option" aria-selected={selected} tabIndex={tabIndex} data-poster-index={index} aria-label={item.Name}>
       <div className="library-poster-art">
         <Img id={item.Id} type="Primary" alt={item.Name}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -1033,6 +1150,7 @@ function DetailTrackMenu({ itemId, playback, selectedAudio, selectedSubtitle, on
       const data = await apiJson(response).catch(() => ({}))
       if (!response.ok) throw new Error(isRecord(data) && typeof data.error === 'string' ? data.error : 'Subtitle upload failed')
       await onRefresh()
+      if (isRecord(data) && typeof data.subtitleStreamIndex === 'number') onSelectSubtitle(data.subtitleStreamIndex)
     } catch (err) { setError(err instanceof Error ? err.message : 'Subtitle upload failed') }
     finally { setBusy(false); if (inputRef.current) inputRef.current.value = '' }
   }
@@ -1098,13 +1216,13 @@ function GridView({ stack, items, loading, onOpen }: { stack: StackEntry[]; item
           ) : items.length === 0 ? (
             <div className="library-empty"><strong>No titles here yet</strong><span>Add something from Discover.</span></div>
           ) : (
-            <PosterWall>{items.map(item => <WallPoster key={item.Id} item={item} onClick={() => onOpen(item)} />)}</PosterWall>
+            <PosterWall items={items} onOpen={onOpen} />
           )}
         </section>
         {!loading && genreRows.map(row => (
           <section className="library-media-row" key={row.name}>
             <div className="library-title-row"><h2>{row.name}</h2></div>
-            <PosterWall>{row.items.map(item => <WallPoster key={item.Id} item={item} onClick={() => onOpen(item)} />)}</PosterWall>
+            <PosterWall items={row.items} onOpen={onOpen} />
           </section>
         ))}
       </section>

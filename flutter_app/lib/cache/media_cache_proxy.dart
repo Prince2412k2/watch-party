@@ -248,9 +248,14 @@ class MediaCacheProxy {
 
     for (final segment in segments) {
       if (segment.isPresent) {
-        final data = await entry.read(segment.start, segment.end);
-        response.add(data);
-        await response.flush();
+        await for (final data in entry.readChunks(
+          segment.start,
+          segment.end,
+          chunkSize: fetchChunkSize,
+        )) {
+          response.add(data);
+          await response.flush();
+        }
       } else {
         await _fetchAndForward(entry, itemId, segment.start, segment.end, response);
       }

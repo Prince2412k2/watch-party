@@ -1038,25 +1038,42 @@ class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
   String? _error;
 
   Future<void> _upload() async {
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['srt', 'vtt'],
-      withData: true,
-    );
-    final file = picked?.files.single;
-    if (file == null) return;
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['srt', 'vtt'],
+        withData: true,
+      );
+      final file = picked?.files.single;
+      if (file == null) return;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
-      await ref
-          .read(apiClientProvider)
-          .uploadSubtitle(widget.itemId, _toUtf8(bytes), file.name);
+      final api = ref.read(apiClientProvider);
+      final previous = widget.playback.subtitleStreams
+          .map((track) => track.index)
+          .toSet();
+      await api.uploadSubtitle(widget.itemId, _toUtf8(bytes), file.name);
+
+      PlaybackTrack? uploaded;
+      for (var attempt = 0; attempt < 6 && uploaded == null; attempt++) {
+        if (attempt > 0) {
+          await Future<void>.delayed(Duration(milliseconds: 180 * attempt));
+        }
+        final refreshed = await api.playbackInfo(widget.itemId);
+        for (final track in refreshed.subtitleStreams) {
+          if (!previous.contains(track.index)) {
+            uploaded = track;
+            break;
+          }
+        }
+      }
       ref.invalidate(detailPlaybackProvider(widget.itemId));
+      if (uploaded != null) widget.onSelectSubtitle(uploaded.index);
     } catch (e) {
-      if (mounted) setState(() => _error = 'Subtitle upload failed');
+      if (mounted) setState(() => _error = 'Subtitle upload failed: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

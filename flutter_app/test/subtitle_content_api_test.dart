@@ -27,6 +27,27 @@ void main() {
     expect(content, contains('Hello'));
   });
 
+  test('DioApiClient uploads subtitle bytes with filename metadata', () async {
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          expect(options.path, '/api/library/items/movie/subtitles');
+          expect(options.headers[Headers.contentLengthHeader], 3);
+          expect(options.headers['Content-Type'], 'application/octet-stream');
+          expect(options.headers['X-Subtitle-Filename'], 'English%20SDH.srt');
+          handler.resolve(
+            Response(requestOptions: options, statusCode: 201),
+          );
+        },
+      ),
+    );
+
+    await DioApiClient(
+      dio: dio,
+    ).uploadSubtitle('movie', [1, 2, 3], 'English SDH.srt');
+  });
+
   test('PlaybackInfo preserves external subtitle metadata', () {
     final info = PlaybackInfo.fromJson({
       'subtitleStreams': [

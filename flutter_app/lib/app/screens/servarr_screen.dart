@@ -190,13 +190,12 @@ class _DiscoverRail extends ConsumerWidget {
   Widget _shelf(String title, List<ServarrTitle> items) => PosterShelf(
     title: title,
     leftInset: 0,
-    children: [
-      for (var i = 0; i < items.length; i++)
-        _card(items[i], first: i == 0),
-    ],
+    itemCount: items.length,
+    onActivate: (index) => onOpen(items[index]),
+    itemBuilder: (_, index) => _card(items[index]),
   );
 
-  Widget _card(ServarrTitle t, {required bool first}) {
+  Widget _card(ServarrTitle t) {
     final torrent = matchTorrent(t.title, torrents);
     final active = torrent != null && !torrent.isPaused;
     final pct = torrent?.percent ?? 0;
@@ -213,7 +212,6 @@ class _DiscoverRail extends ConsumerWidget {
       rating: t.rating,
       width: _posterWidth,
       aspectRatio: 3 / 5,
-      emphasized: first,
       progress: downloading ? pct / 100 : null,
       onTap: () => onOpen(t),
     );
