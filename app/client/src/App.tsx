@@ -76,6 +76,9 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // Handles /party/new?itemId=xxx and /party/:id. See mobile/screens/Watch.jsx.
   if (path.startsWith('/party/')) return <WatchRoute path={path} />
 
+  // Installer downloads must remain reachable from any device size.
+  if (path === '/desktop-app') return <DesktopApp />
+
   // (2) Phone shell — the new mobile presentation tree (Login/Home/Browse/
   // Downloads). Coarse-pointer gated, so a narrow desktop window keeps desktop.
   if (phone) return <MobileApp path={path} />
@@ -90,8 +93,6 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   if (path === '/series') return shell('series', <Library libraryType="series" />)
   if (path === '/discover') return shell('discover', <FindDownload />)
   if (path === '/downloads') return shell('downloads', <Downloads />)
-  if (path === '/desktop-app') return <DesktopApp />
-
   return <div>404</div>
 }
 
