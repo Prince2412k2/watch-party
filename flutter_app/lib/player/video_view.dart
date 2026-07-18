@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../ui/tokens.dart';
 import 'media_kit_player_controller.dart';
 import 'player_controller.dart';
 
@@ -11,11 +12,7 @@ import 'player_controller.dart';
 /// centered near the bottom with a comfortable margin that keeps them clear of
 /// the transport controls. We emulate that here:
 ///
-/// * `fontFamily` is intentionally left unset so the platform default
-///   sans-serif is used (Roboto/Helvetica-like). The design token
-///   `AppFonts.sans` ('Hanken Grotesk') is NOT bundled in pubspec, so naming it
-///   would only fall back to the same default — the weight + shadow treatment is
-///   what actually reads as "Netflix", not the specific family.
+/// * The bundled Circular XX family keeps subtitles consistent with the app.
 /// * `backgroundColor: transparent` removes media_kit's default `0xAA000000`
 ///   box; legibility comes from the shadow stack instead.
 /// * The four diagonal 1px black shadows fake a thin outline; the two larger
@@ -25,6 +22,7 @@ const _netflixSubtitleStyle = TextStyle(
   color: Color(0xFFFFFFFF),
   fontSize: 34,
   fontWeight: FontWeight.w600,
+  fontFamily: AppFonts.sans,
   height: 1.3,
   letterSpacing: 0.2,
   backgroundColor: Color(0x00000000),

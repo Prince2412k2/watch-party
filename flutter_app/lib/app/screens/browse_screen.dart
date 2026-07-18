@@ -10,8 +10,8 @@ import '../../ui/ui.dart';
 /// meaningful subset (more than one title, fewer than the whole set). No search
 /// field (design guide §Library and discovery shelves).
 ///
-/// The first poster of each shelf is emphasized and carries the `poster-<id>`
-/// Hero tag into `/detail/:id`; hovering a poster drives the ambient wash.
+/// Shelf selection carries the `poster-<id>` Hero tag into `/detail/:id` and
+/// drives the ambient wash from mouse, wheel, or keyboard movement.
 class BrowseScreen extends ConsumerWidget {
   const BrowseScreen({super.key, required this.type});
 
@@ -29,7 +29,7 @@ class BrowseScreen extends ConsumerWidget {
     void setAmbient(String id) =>
         ref.read(ambientArtworkIdProvider.notifier).state = id;
 
-    Widget posterFor(LibraryItem item, {required bool first, String? heroTag}) {
+    Widget posterFor(LibraryItem item, {String? heroTag}) {
       return MouseRegion(
         onEnter: (_) => setAmbient(item.id),
         child: PosterCard(
@@ -38,7 +38,6 @@ class BrowseScreen extends ConsumerWidget {
           imageUrl: api.imageUrl(item.id, tag: item.imageTags?['Primary']),
           width: _posterWidth,
           aspectRatio: 3 / 5,
-          emphasized: first,
           heroTag: heroTag,
           onTap: () => context.go('/detail/${item.id}'),
         ),
@@ -61,11 +60,6 @@ class BrowseScreen extends ConsumerWidget {
           );
         }
 
-        // Unique Hero tag per screen: first occurrence of an id claims
-        // `poster-<id>`; repeats get null (Flutter throws on duplicate tags).
-        final claimed = <String>{};
-        String? heroTag(String id) => claimed.add(id) ? 'poster-$id' : null;
-
         // Genre-subset shelves: a genre that more than one — but not all —
         // titles share (web GridView.genreRows).
         final genres = <String>{for (final it in list) ...it.genres};
@@ -81,19 +75,23 @@ class BrowseScreen extends ConsumerWidget {
           PosterShelf(
             title: _title,
             leftInset: 0,
-            children: [
-              for (var i = 0; i < list.length; i++)
-                posterFor(list[i], first: i == 0, heroTag: heroTag(list[i].id)),
-            ],
+            itemCount: list.length,
+            autofocus: true,
+            onSelectionChanged: (index) => setAmbient(list[index].id),
+            onActivate: (index) => context.go('/detail/${list[index].id}'),
+            itemBuilder: (_, index) =>
+                posterFor(list[index], heroTag: 'poster-${list[index].id}'),
           ),
           for (final entry in genreShelves)
             PosterShelf(
               title: entry.key,
               leftInset: 0,
-              children: [
-                for (var i = 0; i < entry.value.length; i++)
-                  posterFor(entry.value[i], first: i == 0),
-              ],
+              itemCount: entry.value.length,
+              onSelectionChanged: (index) =>
+                  setAmbient(entry.value[index].id),
+              onActivate: (index) =>
+                  context.go('/detail/${entry.value[index].id}'),
+              itemBuilder: (_, index) => posterFor(entry.value[index]),
             ),
         ];
 
