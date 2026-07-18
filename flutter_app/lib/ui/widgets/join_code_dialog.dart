@@ -52,7 +52,7 @@ class _JoinCodeDialogState extends State<JoinCodeDialog> {
       if (mounted) {
         setState(() {
           _joining = false;
-          _error = '$e';
+          _error = partyJoinError(e);
         });
       }
     }
@@ -182,6 +182,19 @@ class _JoinCodeDialogState extends State<JoinCodeDialog> {
   }
 }
 
+String partyJoinError(Object error) {
+  final message = error.toString();
+  final lower = message.toLowerCase();
+  if (lower.contains('websocket') ||
+      lower.contains('socketexception') ||
+      lower.contains('not upgraded') ||
+      lower.contains('connection') ||
+      lower.contains('timed out')) {
+    return 'Could not connect to the party. Check your connection and try again.';
+  }
+  return message.replaceFirst(RegExp(r'^(Exception|StateError):\s*'), '');
+}
+
 /// Restricts input to uppercase hex characters (`0-9A-F`) as the user types —
 /// the party-code alphabet.
 class UpperCaseHexFormatter extends TextInputFormatter {
@@ -190,9 +203,10 @@ class UpperCaseHexFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    final filtered = newValue.text
-        .toUpperCase()
-        .replaceAll(RegExp('[^0-9A-F]'), '');
+    final filtered = newValue.text.toUpperCase().replaceAll(
+      RegExp('[^0-9A-F]'),
+      '',
+    );
     return TextEditingValue(
       text: filtered,
       selection: TextSelection.collapsed(offset: filtered.length),

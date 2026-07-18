@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/state.dart';
 import '../../state/theme_provider.dart';
+import '../../update/desktop_updater.dart';
 import '../palette.dart';
 import '../theme_mode.dart';
 import '../tokens.dart';
@@ -10,7 +11,7 @@ import 'app_dialog.dart';
 
 /// The top-right profile control (`.web-profile`, styles.css:313-331). A
 /// circular avatar showing the signed-in user's initials with a red
-/// notification dot; tapping it opens a dropdown with "Signed in as <name>", a
+/// notification dot; tapping it opens a dropdown with "Signed in as `name`", a
 /// 3-way appearance switch bound to [themeModeProvider], and a red Sign out row.
 ///
 /// A tap anywhere outside the control closes the menu (mirrors the web's
@@ -116,17 +117,18 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-class _Menu extends StatelessWidget {
+class _Menu extends ConsumerWidget {
   const _Menu({required this.name, required this.onSignOut});
 
   final String name;
   final VoidCallback onSignOut;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final wp = context.wp;
+    final update = ref.watch(desktopUpdateProvider);
     return Container(
-      width: 210,
+      width: 250,
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: wp.surface,
@@ -176,8 +178,96 @@ class _Menu extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(6, 0, 6, 6),
             child: _ThemeSwitch(),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 3),
+            child: Text(
+              'Version ${update.installedVersion}',
+              style: TextStyle(
+                fontFamily: AppFonts.sans,
+                fontSize: 11,
+                color: wp.faint,
+              ),
+            ),
+          ),
+          _UpdateButton(
+            state: update,
+            onTap: update.status == UpdateStatus.available
+                ? () => ref.read(desktopUpdateProvider.notifier).install()
+                : update.status == UpdateStatus.checking ||
+                      update.status == UpdateStatus.downloading ||
+                      update.status == UpdateStatus.loading
+                ? null
+                : () => ref.read(desktopUpdateProvider.notifier).check(),
+          ),
+          if (update.message != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
+              child: Text(
+                update.message!,
+                style: TextStyle(
+                  fontFamily: AppFonts.sans,
+                  fontSize: 10,
+                  height: 1.25,
+                  color: update.status == UpdateStatus.error
+                      ? kSemanticRed
+                      : wp.faint,
+                ),
+              ),
+            ),
           _SignOutButton(onTap: onSignOut),
         ],
+      ),
+    );
+  }
+}
+
+class _UpdateButton extends StatelessWidget {
+  const _UpdateButton({required this.state, required this.onTap});
+
+  final UpdateState state;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    final downloading = state.status == UpdateStatus.downloading;
+    final label = state.status == UpdateStatus.available
+        ? 'Update to ${state.release!.version}'
+        : downloading
+        ? 'Downloading ${(state.progress * 100).round()}%'
+        : state.status == UpdateStatus.checking
+        ? 'Checking...'
+        : 'Check for updates';
+    return MouseRegion(
+      cursor: onTap == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                Icons.system_update_alt,
+                size: 16,
+                color: onTap == null ? wp.dim : wp.text,
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontFamily: AppFonts.sans,
+                    fontSize: 12,
+                    color: onTap == null ? wp.dim : wp.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

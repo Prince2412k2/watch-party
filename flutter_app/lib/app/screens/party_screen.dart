@@ -380,6 +380,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     final party = ref.watch(partyProvider)!;
     final controller = ref.watch(playerControllerProvider);
     final canControl = ref.read(partyProvider.notifier).canControl;
+    final notifier = ref.read(partyProvider.notifier);
     final watching = party.stage == 'watching';
 
     // ONE unified auto-hide flag: chrome + transport bar fade together. Stays
@@ -393,6 +394,15 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             mediaSourceId: party.mediaSourceId,
             apiClient: ref.watch(apiClientProvider),
             canControl: canControl,
+            partyPlayback: notifier.playback,
+            subtitlePreferences: notifier.subtitlePreferences,
+            canManagePartyMedia: notifier.isHost,
+            onSetPlaybackTracks: (audio, subtitle) =>
+                notifier.setPlaybackTracks(
+                  audioStreamIndex: audio,
+                  subtitleStreamIndex: subtitle,
+                ),
+            onSetSubtitlePreferences: notifier.setSubtitlePreferences,
             // No title/onBack: the party player has no top bar (web parity) —
             // leave is the top-left Back and host controls are the right-click
             // menu.
@@ -1260,6 +1270,7 @@ class _HostControlsDialog extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final wp = context.wp;
     final party = ref.watch(partyProvider);
     if (party == null) return const SizedBox.shrink();
     final me = ref.watch(currentUserIdProvider);
@@ -1269,30 +1280,30 @@ class _HostControlsDialog extends ConsumerWidget {
     final joinUrl = '${ref.watch(apiClientProvider).baseUrl}/party/${party.id}';
 
     return Dialog(
-      backgroundColor: AppColors.surface,
-      insetPadding: const EdgeInsets.all(AppSpacing.xl),
+      backgroundColor: wp.surface,
+      insetPadding: const EdgeInsets.all(AppSpacing.lg),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-        side: const BorderSide(color: AppColors.line),
+        side: BorderSide(color: wp.line),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 660),
+        constraints: const BoxConstraints(maxWidth: 360, maxHeight: 540),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(
-                AppSpacing.xl,
+                AppSpacing.lg,
                 AppSpacing.lg,
                 AppSpacing.md,
                 AppSpacing.md,
               ),
               child: Row(
                 children: [
-                  const Text(
+                  Text(
                     'Watch party',
                     style: TextStyle(
-                      color: AppColors.text,
+                      color: wp.text,
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
                     ),
@@ -1302,24 +1313,23 @@ class _HostControlsDialog extends ConsumerWidget {
                     tooltip: (context) =>
                         const sc.TooltipContainer(child: Text('Close')),
                     child: sc.IconButton.ghost(
-                      icon: const Icon(
-                        Icons.close,
-                        color: AppColors.dim,
-                        size: 18,
-                      ),
+                      icon: Icon(Icons.close, color: wp.dim, size: 18),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1, color: AppColors.line),
+            Divider(height: 1, color: wp.line),
             Flexible(
               child: ListView(
-                padding: const EdgeInsets.all(AppSpacing.xl),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 shrinkWrap: true,
                 children: [
-                  _sectionLabel('In the party · ${party.participants.length}'),
+                  _sectionLabel(
+                    'In the party · ${party.participants.length}',
+                    wp,
+                  ),
                   const SizedBox(height: AppSpacing.sm),
                   StaggeredList(
                     spacing: AppSpacing.xs,
@@ -1334,10 +1344,10 @@ class _HostControlsDialog extends ConsumerWidget {
                     ],
                   ),
                   if (isHost) ...[
-                    const Divider(color: AppColors.line, height: AppSpacing.xl),
+                    Divider(color: wp.line, height: AppSpacing.lg),
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
@@ -1345,7 +1355,7 @@ class _HostControlsDialog extends ConsumerWidget {
                               Text(
                                 'Collaborative control',
                                 style: TextStyle(
-                                  color: AppColors.text,
+                                  color: wp.text,
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -1353,10 +1363,7 @@ class _HostControlsDialog extends ConsumerWidget {
                               SizedBox(height: 2),
                               Text(
                                 'Let guests browse, play, pause & seek',
-                                style: TextStyle(
-                                  color: AppColors.dim,
-                                  fontSize: 12.5,
-                                ),
+                                style: TextStyle(color: wp.dim, fontSize: 12.5),
                               ),
                             ],
                           ),
@@ -1370,17 +1377,14 @@ class _HostControlsDialog extends ConsumerWidget {
                     ),
                   ],
                   if (watching && isHost) ...[
-                    const Divider(color: AppColors.line, height: AppSpacing.xl),
-                    _sectionLabel('Sync mode'),
+                    Divider(color: wp.line, height: AppSpacing.lg),
+                    _sectionLabel('Sync mode', wp),
                     const SizedBox(height: 6),
                     Text(
                       party.syncMode == 'dragging'
                           ? 'Everyone waits for the slowest viewer'
                           : 'Host never waits; slow viewers catch up',
-                      style: const TextStyle(
-                        color: AppColors.dim,
-                        fontSize: 12.5,
-                      ),
+                      style: TextStyle(color: wp.dim, fontSize: 12.5),
                     ),
                     const SizedBox(height: AppSpacing.md),
                     _SyncModeToggle(
@@ -1411,14 +1415,14 @@ class _HostControlsDialog extends ConsumerWidget {
                       },
                     ),
                   ],
-                  const Divider(color: AppColors.line, height: AppSpacing.xl),
-                  _sectionLabel('Share this code'),
+                  Divider(color: wp.line, height: AppSpacing.lg),
+                  _sectionLabel('Share this code', wp),
                   const SizedBox(height: AppSpacing.md),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      PartyQr(url: joinUrl, size: 96),
-                      const SizedBox(width: AppSpacing.lg),
+                      PartyQr(url: joinUrl, size: 76),
+                      const SizedBox(width: AppSpacing.md),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1426,10 +1430,10 @@ class _HostControlsDialog extends ConsumerWidget {
                           children: [
                             SelectableText(
                               party.id,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: AppFonts.mono,
-                                color: AppColors.text,
-                                fontSize: 22,
+                                color: wp.text,
+                                fontSize: 18,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 2,
                               ),
@@ -1457,8 +1461,8 @@ class _HostControlsDialog extends ConsumerWidget {
                     ],
                   ),
                   if (isHost) ...[
-                    const Divider(color: AppColors.line, height: AppSpacing.xl),
-                    _sectionLabel('Danger zone', danger: true),
+                    Divider(color: wp.line, height: AppSpacing.lg),
+                    _sectionLabel('Danger zone', wp, danger: true),
                     const SizedBox(height: AppSpacing.sm),
                     AppButton(
                       label: 'End party for everyone',
@@ -1493,10 +1497,14 @@ class _HostControlsDialog extends ConsumerWidget {
     );
   }
 
-  static Widget _sectionLabel(String text, {bool danger = false}) => Text(
+  static Widget _sectionLabel(
+    String text,
+    WpPalette wp, {
+    bool danger = false,
+  }) => Text(
     text.toUpperCase(),
     style: TextStyle(
-      color: danger ? AppColors.red : AppColors.faint,
+      color: danger ? _dangerColor(wp) : wp.faint,
       fontSize: 11,
       fontWeight: FontWeight.w700,
       letterSpacing: 1,
@@ -1521,21 +1529,22 @@ class _RosterRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
     final p = participant;
     final showActions = isHost && !p.isHost;
     final row = Row(
       children: [
         if (p.isHost)
-          const Padding(
-            padding: EdgeInsets.only(right: AppSpacing.xs),
-            child: Icon(Icons.star, color: AppColors.text, size: 15),
+          Padding(
+            padding: const EdgeInsets.only(right: AppSpacing.xs),
+            child: Icon(Icons.star, color: wp.text, size: 15),
           ),
         Expanded(
           child: Text(
             p.name,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: AppColors.text,
+            style: TextStyle(
+              color: wp.text,
               fontSize: 14,
               fontWeight: FontWeight.w600,
             ),
@@ -1557,11 +1566,7 @@ class _RosterRow extends StatelessWidget {
             tooltip: (context) =>
                 const sc.TooltipContainer(child: Text('Make host')),
             child: sc.IconButton.ghost(
-              icon: const Icon(
-                Icons.swap_horiz,
-                color: AppColors.faint,
-                size: 18,
-              ),
+              icon: Icon(Icons.swap_horiz, color: wp.faint, size: 18),
               onPressed: () => notifier.transferHost(p.userId),
             ),
           ),
@@ -1569,7 +1574,7 @@ class _RosterRow extends StatelessWidget {
             tooltip: (context) =>
                 const sc.TooltipContainer(child: Text('Kick')),
             child: sc.IconButton.ghost(
-              icon: const Icon(Icons.logout, color: AppColors.red, size: 18),
+              icon: Icon(Icons.logout, color: _dangerColor(wp), size: 18),
               onPressed: () => notifier.kick(p.userId),
             ),
           ),
@@ -1587,15 +1592,18 @@ class _RosterRow extends StatelessWidget {
           child: const Text('Make host'),
         ),
         sc.MenuButton(
-          leading: const Icon(Icons.logout, color: AppColors.red, size: 16),
+          leading: Icon(Icons.logout, color: _dangerColor(wp), size: 16),
           onPressed: (_) => notifier.kick(p.userId),
-          child: const Text('Kick', style: TextStyle(color: AppColors.red)),
+          child: Text('Kick', style: TextStyle(color: _dangerColor(wp))),
         ),
       ],
       child: row,
     );
   }
 }
+
+Color _dangerColor(WpPalette wp) =>
+    wp.brightness == Brightness.dark ? kSemanticRed : const Color(0xFFB4232E);
 
 /// The sync-mode segmented control, an `sc.ButtonGroup` of `sc.Toggle`s. Tapping
 /// the already-selected segment is a no-op (radio semantics), so a mode can
@@ -1625,13 +1633,14 @@ class _SyncModeToggle extends StatelessWidget {
 /// Shows a transient shadcn toast through the app-wide `ToastLayer` (provided by
 /// the root `ShadcnLayer`).
 void _showPartyToast(BuildContext context, String message) {
+  final wp = context.wp;
   sc.showToast(
     context: context,
     location: sc.ToastLocation.topCenter,
     builder: (context, overlay) => sc.SurfaceCard(
       surfaceBlur: AppBlur.overlay,
       surfaceOpacity: 0.9,
-      borderColor: AppColors.line2,
+      borderColor: wp.line2,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.md,
         vertical: AppSpacing.sm,
@@ -1639,16 +1648,12 @@ void _showPartyToast(BuildContext context, String message) {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
-            Icons.check_circle_outline,
-            size: 16,
-            color: AppColors.green,
-          ),
+          Icon(Icons.check_circle_outline, size: 16, color: kSuccessGreen),
           const SizedBox(width: AppSpacing.sm),
           Text(
             message,
-            style: const TextStyle(
-              color: AppColors.text,
+            style: TextStyle(
+              color: wp.text,
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
             ),

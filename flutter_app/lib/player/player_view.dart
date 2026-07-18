@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
+import '../models/playback_info.dart';
+import '../models/subtitle_preferences.dart';
 import '../ui/tokens.dart';
 import '../ui/widgets/error_state.dart';
 import 'media_kit_player_controller.dart';
@@ -39,6 +41,11 @@ class PlayerView extends StatefulWidget {
     this.mediaSourceId,
     this.apiClient,
     this.preferredSubtitleStreamIndex,
+    this.partyPlayback,
+    this.subtitlePreferences,
+    this.canManagePartyMedia = true,
+    this.onSetPlaybackTracks,
+    this.onSetSubtitlePreferences,
     this.cachedSpans,
     this.visible,
     this.onWake,
@@ -78,7 +85,12 @@ class PlayerView extends StatefulWidget {
        itemId = itemId,
        mediaSourceId = null,
        apiClient = apiClient,
-       preferredSubtitleStreamIndex = null,
+        preferredSubtitleStreamIndex = null,
+        partyPlayback = null,
+        subtitlePreferences = null,
+        canManagePartyMedia = true,
+        onSetPlaybackTracks = null,
+        onSetSubtitlePreferences = null,
        onSeek = null,
        visible = null,
        onWake = null,
@@ -97,6 +109,12 @@ class PlayerView extends StatefulWidget {
   final bool _autoplay;
 
   final int? preferredSubtitleStreamIndex;
+  final PlaybackInfo? partyPlayback;
+  final SubtitlePreferences? subtitlePreferences;
+  final bool canManagePartyMedia;
+  final void Function(int? audioStreamIndex, int subtitleStreamIndex)?
+  onSetPlaybackTracks;
+  final ValueChanged<SubtitlePreferences>? onSetSubtitlePreferences;
 
   /// Read-only transport bar when false — E5 passes this for a guest without
   /// playback-control rights (PLAN §4 E5.2 `canControl` gating).
@@ -173,6 +191,7 @@ class _PlayerViewState extends State<PlayerView> {
         mediaSourceId: widget.mediaSourceId,
       );
       final controller = MediaKitPlayerController();
+      controller.prepareVideoOutput();
       await controller.open(
         streamUrl.url,
         startAt: widget._startAt,
@@ -254,6 +273,11 @@ class _PlayerViewState extends State<PlayerView> {
             mediaSourceId: widget.mediaSourceId,
             apiClient: widget.apiClient ?? widget._apiClient,
             preferredSubtitleStreamIndex: widget.preferredSubtitleStreamIndex,
+            partyPlayback: widget.partyPlayback,
+            subtitlePreferences: widget.subtitlePreferences,
+            canManagePartyMedia: widget.canManagePartyMedia,
+            onSetPlaybackTracks: widget.onSetPlaybackTracks,
+            onSetSubtitlePreferences: widget.onSetSubtitlePreferences,
             cachedSpans: widget.cachedSpans,
             visible: widget.visible,
             onWake: widget.onWake,

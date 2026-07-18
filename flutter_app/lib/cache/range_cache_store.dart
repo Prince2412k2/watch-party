@@ -112,18 +112,17 @@ class CacheEntry {
   List<Gap> missingRanges(int start, int end) =>
       rangeSet.missingWithin(start, end);
 
-  // Serializes access to [_raf]. Every file op is a `setPosition` followed by
-  // a read/write across two awaits; the serve path, the fire-and-forget
-  // read-ahead, and any parallel player connections all share this one handle,
-  // so without a lock their setPositions interleave and bytes land at the
-  // wrong offsets — corrupting the cache (playback works the first time from
-  // the forwarded remote bytes, then fails on a later open served from cache).
-  Future<void> _ioLock = Future<void>.value();
+  // Serializes file I/O and the metadata state describing it. Every file op is
+  // a `setPosition` followed by more awaits, while writes, read-ahead, touches,
+  // and flushes may all arrive concurrently. Keeping range mutation and the
+  // atomic sidecar replacement in this same queue prevents both stale metadata
+  // snapshots and multiple writers racing on the shared `.tmp` path.
+  Future<void> _operationLock = Future<void>.value();
 
   Future<T> _locked<T>(Future<T> Function() action) {
-    final prev = _ioLock;
+    final prev = _operationLock;
     final completer = Completer<void>();
-    _ioLock = completer.future;
+    _operationLock = completer.future;
     return prev.then((_) => action()).whenComplete(completer.complete);
   }
 
@@ -136,9 +135,9 @@ class CacheEntry {
     await _locked(() async {
       await _raf.setPosition(offset);
       await _raf.writeFrom(bytes);
+      rangeSet.add(offset, offset + bytes.length);
+      _recomputeCachedSpans();
     });
-    rangeSet.add(offset, offset + bytes.length);
-    _recomputeCachedSpans();
   }
 
   /// Reads `[start, end)` from the data file. Callers must only call this for
@@ -178,13 +177,17 @@ class CacheEntry {
   /// [flushMetadata] separately after a batch of writes, but a touch-only
   /// request has no other flush point.
   Future<void> touch() async {
-    lastAccess = DateTime.now();
-    await flushMetadata();
+    await _locked(() async {
+      lastAccess = DateTime.now();
+      await _flushMetadataUnlocked();
+    });
   }
 
   /// Atomically persists the sidecar metadata (temp file + rename), so a
   /// crash mid-write can't leave a half-written, corrupt JSON file behind.
-  Future<void> flushMetadata() async {
+  Future<void> flushMetadata() => _locked(_flushMetadataUnlocked);
+
+  Future<void> _flushMetadataUnlocked() async {
     final tmp = File('${_metaFile.path}.tmp');
     final json = <String, dynamic>{
       'version': _cacheVersion,
@@ -201,7 +204,7 @@ class CacheEntry {
   // Note: does NOT dispose [_cachedSpans] — that notifier is owned by the
   // [RangeCacheStore] (keyed by itemId, outliving any single open/close of
   // this entry), not by this entry.
-  Future<void> close() => _raf.close();
+  Future<void> close() => _locked(_raf.close);
 }
 
 /// A snapshot of one title's cache footprint, as seen by [selectEvictions] —
@@ -294,14 +297,14 @@ class RangeCacheStore {
   static const ttl = Duration(days: 30);
 
   final Map<String, CacheEntry> _open = {};
+  final Map<String, Future<CacheEntry>> _opening = {};
 
   /// Per-itemId cached-spans notifiers, created lazily and kept alive across
   /// [open] calls — [cachedSpansFor] may be called before an entry is open
   /// (e.g. the player mounts before the proxy has served a byte), so the
   /// notifier is created up front and handed to the [CacheEntry] once it
   /// opens, rather than the entry owning a fresh one.
-  final Map<String, ValueNotifier<List<CachedSpan>>> _cachedSpansNotifiers =
-      {};
+  final Map<String, ValueNotifier<List<CachedSpan>>> _cachedSpansNotifiers = {};
 
   /// A [ValueListenable] of [CachedSpan]s for [itemId], as fractions of the
   /// title's total length, updating as the on-device cache grows. Empty
@@ -337,10 +340,22 @@ class RangeCacheStore {
   /// Loads (or creates) the cache entry for [itemId]. Safe to call
   /// repeatedly — subsequent calls for an already-open entry return the same
   /// instance rather than reopening the file.
-  Future<CacheEntry> open(String itemId) async {
+  Future<CacheEntry> open(String itemId) {
     final existing = _open[itemId];
-    if (existing != null) return existing;
+    if (existing != null) return Future.value(existing);
 
+    final inFlight = _opening[itemId];
+    if (inFlight != null) return inFlight;
+
+    late final Future<CacheEntry> opening;
+    opening = _openEntry(itemId).whenComplete(() {
+      if (identical(_opening[itemId], opening)) _opening.remove(itemId);
+    });
+    _opening[itemId] = opening;
+    return opening;
+  }
+
+  Future<CacheEntry> _openEntry(String itemId) async {
     final dir = await _cacheDir();
     final dataFile = File('${dir.path}/$itemId.data');
     final metaFile = File('${dir.path}/$itemId.meta.json');
@@ -361,7 +376,7 @@ class RangeCacheStore {
               DateTime.tryParse(raw['createdAt'] as String? ?? '') ?? createdAt;
           lastAccess =
               DateTime.tryParse(raw['lastAccess'] as String? ?? '') ??
-                  lastAccess;
+              lastAccess;
           rangeSet = RangeSet.fromJson({
             'intervals': raw['ranges'] ?? const [],
           });
@@ -441,17 +456,20 @@ class RangeCacheStore {
       }
 
       try {
-        final raw = jsonDecode(await entity.readAsString()) as Map<String, dynamic>;
+        final raw =
+            jsonDecode(await entity.readAsString()) as Map<String, dynamic>;
         final rawRanges = (raw['ranges'] as List?) ?? const [];
         final intervals = rawRanges
-            .map((pair) => [
-                  ((pair as List)[0] as num).toInt(),
-                  (pair[1] as num).toInt(),
-                ])
+            .map(
+              (pair) => [
+                ((pair as List)[0] as num).toInt(),
+                (pair[1] as num).toInt(),
+              ],
+            )
             .toList();
         final lastAccess =
             DateTime.tryParse(raw['lastAccess'] as String? ?? '') ??
-                DateTime.now();
+            DateTime.now();
         stats.add(
           CacheStat(
             itemId: itemId,
@@ -523,10 +541,13 @@ class RangeCacheStore {
     final metaFile = File('${dir.path}/$itemId.meta.json');
     if (!await metaFile.exists()) return false;
     try {
-      final raw = jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+      final raw =
+          jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
       final total = (raw['totalLength'] as num?)?.toInt();
       if (total == null || total <= 0) return false;
-      final rangeSet = RangeSet.fromJson({'intervals': raw['ranges'] ?? const []});
+      final rangeSet = RangeSet.fromJson({
+        'intervals': raw['ranges'] ?? const [],
+      });
       return rangeSet.contains(0, total);
     } catch (_) {
       return false;

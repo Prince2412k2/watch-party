@@ -22,6 +22,7 @@
 ///   party:selectMedia   { mediaItemId }             ack: { ok } | { error }        (driver)
 ///   party:backToLobby   (none)                      ack: { ok } | { error }        (driver)
 ///   party:setPlaybackTracks { audioStreamIndex?, subtitleStreamIndex? } ack: { ok, playback } | { error } (host; rebroadcasts party:state)
+///   party:setSubtitlePreferences { preferences } ack: { ok, subtitlePreferences } | { error } (host; rebroadcasts party:state)
 ///   clock:ping          t1                          ack: serverNowMs               (NTP-lite)
 ///   sync:hello          (none)                      → server replies sync:schedule
 ///   sync:play           { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error }
@@ -77,6 +78,7 @@ abstract final class ClientEvent {
   static const partySelectMedia = 'party:selectMedia';
   static const partyBackToLobby = 'party:backToLobby';
   static const partySetPlaybackTracks = 'party:setPlaybackTracks';
+  static const partySetSubtitlePreferences = 'party:setSubtitlePreferences';
   static const clockPing = 'clock:ping';
   static const syncHello = 'sync:hello';
   static const syncPlay = 'sync:play';

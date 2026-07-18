@@ -1,7 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../models/models.dart';
 import '../../state/state.dart';
@@ -21,7 +22,8 @@ import 'watch_party_animation.dart';
 /// No session → "Start a watch party" (create) + "Join with a code" (an 8-char
 /// hex [JoinCodeDialog]). Live → a QR invite + room code + copy-invite, the
 /// people roster (host + kickable guests), the host approve/reject waiting list,
-/// "Open player" (→ `/party/:id`), and a host "End party". Host-only actions are
+/// and a host "End party". Watching sessions navigate from the shell
+/// automatically. Host-only actions are
 /// gated by [PartyNotifier.isHost].
 class PartyWidget extends ConsumerStatefulWidget {
   const PartyWidget({super.key});
@@ -54,17 +56,12 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
 
   Future<void> _join() async {
     setState(() => _error = null);
-    final status = await showDialog<String>(
+    await showDialog<String>(
       context: context,
       builder: (_) => JoinCodeDialog(onJoin: (code) => _party.join(code)),
     );
     if (!mounted) return;
-    // On an immediate admit, drop straight into the player; a 'waiting' status
-    // stays put (the room surfaces here the moment the host approves).
-    if (status == 'joined') {
-      final id = ref.read(partyProvider)?.id;
-      if (id != null && id.isNotEmpty) context.go('/party/$id');
-    }
+    // The shell opens the player when the approved room enters watching.
   }
 
   void _copyInvite(String joinUrl) {
@@ -90,12 +87,15 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
   Widget build(BuildContext context) {
     final wp = context.wp;
     final session = ref.watch(partyProvider);
-    final maxH = MediaQuery.of(context).size.height - 130;
+    final viewport = MediaQuery.sizeOf(context);
+    final width = math.max(0.0, math.min(320.0, viewport.width - 38));
+    final maxHeight = math.max(0.0, viewport.height - 82);
 
     return Container(
-      width: 340,
-      constraints: BoxConstraints(maxHeight: maxH < 240 ? 240 : maxH),
-      padding: const EdgeInsets.all(AppSpacing.xl),
+      key: const ValueKey('party-widget-panel'),
+      width: width,
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
         color: wp.surface,
         borderRadius: BorderRadius.circular(AppSpacing.radiusCard),
@@ -110,18 +110,18 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
 
   Widget _empty(WpPalette wp) {
     if (_starting) {
-      return const SizedBox(
+      return SizedBox(
         height: 300,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            WatchPartyAnimation(size: 190),
-            SizedBox(height: AppSpacing.sm),
+            const WatchPartyAnimation(size: 190),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               'Starting watch party',
               style: TextStyle(
                 fontFamily: AppFonts.sans,
-                color: AppColors.text,
+                color: wp.text,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -272,13 +272,6 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
             ),
         ],
         const SizedBox(height: AppSpacing.xl),
-        AppButton(
-          label: 'Open player',
-          icon: Icons.play_arrow,
-          variant: AppButtonVariant.primary,
-          onPressed: () => context.go('/party/${session.id}'),
-        ),
-        const SizedBox(height: AppSpacing.sm),
         AppButton(
           label: isHost ? 'End party' : 'Leave party',
           variant: AppButtonVariant.danger,

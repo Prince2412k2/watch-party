@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/player/player_chrome.dart';
 import 'package:watchparty/player/player_controller.dart';
+import 'package:watchparty/player/party_track_mapping.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/playback_info.dart';
 import 'package:watchparty/models/trickplay_manifest.dart';
@@ -78,6 +79,40 @@ class _SpyController implements PlayerController {
 }
 
 void main() {
+  test('Jellyfin global indices map by metadata then preserve subtitle off', () {
+    const playback = PlaybackInfo(
+      audioStreams: [
+        PlaybackTrack(index: 1, title: 'English', language: 'eng', codec: 'aac'),
+        PlaybackTrack(index: 5, title: 'Commentary', language: 'eng', codec: 'aac'),
+      ],
+      subtitleStreams: [
+        PlaybackTrack(index: 7, title: 'English SDH', language: 'eng', codec: 'subrip'),
+      ],
+    );
+    const nativeAudio = [
+      PlayerTrack(id: '2', type: 'audio', title: 'Commentary', language: 'eng', codec: 'aac'),
+      PlayerTrack(id: '1', type: 'audio', title: 'English', language: 'eng', codec: 'aac'),
+    ];
+    expect(
+      playerTrackIdForJellyfinIndex(
+        jellyfinIndex: 5,
+        type: 'audio',
+        playerTracks: nativeAudio,
+        playback: playback,
+      ),
+      '2',
+    );
+    expect(
+      jellyfinIndexForPlayerTrack(
+        playerTrackId: null,
+        type: 'subtitle',
+        playerTracks: const [],
+        playback: playback,
+      ),
+      -1,
+    );
+  });
+
   Future<void> pumpChrome(WidgetTester tester, _SpyController c) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -164,6 +199,84 @@ void main() {
     await tester.tap(find.text('Off'));
     await tester.pumpAndSettle();
     expect(c.subtitles, ['s0', null]);
+  });
+
+  testWidgets('canonical party track changes apply and guest menus are read-only', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    const playback = PlaybackInfo(
+      audioStreams: [PlaybackTrack(index: 3, title: 'Commentary')],
+      subtitleStreams: [PlaybackTrack(index: 7, title: 'English SDH')],
+      selectedAudioIndex: 3,
+      selectedSubtitleIndex: 7,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: PlayerChrome(
+            controller: c,
+            partyPlayback: playback,
+            canManagePartyMedia: false,
+          ),
+        ),
+      ),
+    );
+    c.emitTracks(const PlayerTracks(
+      audio: [PlayerTrack(id: 'native-a', type: 'audio', title: 'Commentary')],
+      subtitle: [PlayerTrack(id: 'native-s', type: 'subtitle', title: 'English SDH')],
+    ));
+    await tester.pump();
+    await tester.pump();
+
+    expect(c.audioTracks, contains('native-a'));
+    expect(c.subtitles, contains('native-s'));
+    await tester.tap(find.byIcon(Icons.audiotrack));
+    await tester.pumpAndSettle();
+    expect(find.text('Commentary'), findsNothing);
+  });
+
+  testWidgets('host track choice reports Jellyfin indices to party protocol', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final changes = <(int?, int)>[];
+    const playback = PlaybackInfo(
+      audioStreams: [
+        PlaybackTrack(index: 3, title: 'Commentary'),
+        PlaybackTrack(index: 8, title: 'English'),
+      ],
+      subtitleStreams: [PlaybackTrack(index: 7, title: 'English SDH')],
+      selectedAudioIndex: 3,
+      selectedSubtitleIndex: 7,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: PlayerChrome(
+            controller: c,
+            partyPlayback: playback,
+            onSetPlaybackTracks: (audio, subtitle) =>
+                changes.add((audio, subtitle)),
+          ),
+        ),
+      ),
+    );
+    c.emitTracks(const PlayerTracks(audio: [
+      PlayerTrack(id: 'native-a', type: 'audio', title: 'Commentary'),
+      PlayerTrack(id: 'native-b', type: 'audio', title: 'English'),
+    ]));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.audiotrack));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('English'));
+    await tester.pumpAndSettle();
+
+    expect(changes.last, (8, 7));
   });
 
   testWidgets('external subtitle overlay follows playback and clears on Off', (

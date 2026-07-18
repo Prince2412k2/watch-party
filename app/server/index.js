@@ -36,6 +36,7 @@ import {
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
   transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
+  validateSubtitlePreferences,
 } from './session.js'
 import { resolveMediaSourceId } from './jellyfin.js'
 
@@ -44,6 +45,20 @@ if (process.env.NODE_ENV === 'production' &&
     (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === 'changeme')) {
   console.error('FATAL: SESSION_SECRET must be set to a strong, non-default value in production')
   process.exit(1)
+}
+
+const playbackTrackQueues = new Map()
+
+function enqueuePlaybackTrackChange(partyId, operation) {
+  const previous = playbackTrackQueues.get(partyId) ?? Promise.resolve()
+  const current = previous.then(operation, operation)
+  playbackTrackQueues.set(partyId, current)
+  const cleanup = () => {
+    if (playbackTrackQueues.get(partyId) === current) {
+      playbackTrackQueues.delete(partyId)
+    }
+  }
+  void current.then(cleanup, cleanup)
 }
 
 const app = express()
@@ -499,10 +514,11 @@ io.on('connection', (socket) => {
     try {
       const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
       if (!src) return ack?.({ error: 'item not found' })
+      const maySetTracks = isHost(sess, userId)
       await refreshPlayback(sess, {
         token, userId, itemId: mediaItemId, mediaSourceId: src,
-        audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
-        subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+        audioStreamIndex: maySetTracks && Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
+        subtitleStreamIndex: maySetTracks && Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
       })
       sess.mediaItemId = mediaItemId
       sess.mediaSourceId = src
@@ -539,25 +555,44 @@ io.on('connection', (socket) => {
     ack?.({ ok: true })
   })
 
-  socket.on('party:setPlaybackTracks', async ({ audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
+  socket.on('party:setPlaybackTracks', ({ audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || sess.hostId !== userId || !sess.mediaItemId) return ack?.({ error: 'not allowed' })
-    try {
-      const playback = await refreshPlayback(sess, {
-        token,
-        userId,
-        itemId: sess.mediaItemId,
-        mediaSourceId: sess.mediaSourceId,
-        audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : null,
-        subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : null,
-      })
-      persistSession(sess)
-      io.to(sess.id).emit('party:state', publicSession(sess))
-      ack?.({ ok: true, playback })
-    } catch (err) {
-      console.error('party:setPlaybackTracks', err.message)
-      ack?.({ error: err.message })
-    }
+    const mediaItemId = sess.mediaItemId
+    enqueuePlaybackTrackChange(sess.id, async () => {
+      if (sess.mediaItemId !== mediaItemId || sess.hostId !== userId) {
+        return ack?.({ error: 'media changed' })
+      }
+      try {
+        const playback = await refreshPlayback(sess, {
+          token,
+          userId,
+          itemId: mediaItemId,
+          mediaSourceId: sess.mediaSourceId,
+          audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : null,
+          subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : null,
+        })
+        persistSession(sess)
+        io.to(sess.id).emit('party:state', publicSession(sess))
+        ack?.({ ok: true, playback })
+      } catch (err) {
+        console.error('party:setPlaybackTracks', err.message)
+        ack?.({ error: err.message })
+      }
+    })
+  })
+
+  // Canonical subtitle presentation is part of party state, not a per-device
+  // preference. Only the host can replace the complete validated object.
+  socket.on('party:setSubtitlePreferences', ({ preferences } = {}, ack) => {
+    const sess = findSessionForMember(userId)
+    if (!sess || sess.hostId !== userId) return ack?.({ error: 'not allowed' })
+    const result = validateSubtitlePreferences(preferences)
+    if (result.error) return ack?.({ error: result.error })
+    sess.subtitlePreferences = result.value
+    persistSession(sess)
+    io.to(sess.id).emit('party:state', publicSession(sess))
+    ack?.({ ok: true, subtitlePreferences: sess.subtitlePreferences })
   })
 
   // sync:hello — client asks for the current timeline once it's listening

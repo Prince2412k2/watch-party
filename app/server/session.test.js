@@ -11,6 +11,7 @@ const {
   createSession, deleteSession, persistSession, randomConnectedGuest,
   transferHost, reclaimOriginalHost, validateSyncCommand, authorizeSyncCommand,
   beginMediaGeneration, applyStallReport,
+  validateSubtitlePreferences, DEFAULT_SUBTITLE_PREFERENCES,
 } = await import('./session.js')
 const { loadParty } = await import('./party-store.js')
 
@@ -30,6 +31,14 @@ test('validateSyncCommand rejects non-finite and negative positions', () => {
   assert.equal(validateSyncCommand({ positionTicks: Infinity }).error, 'invalid positionTicks')
   assert.equal(validateSyncCommand({ positionTicks: -1 }).error, 'invalid positionTicks')
   assert.deepEqual(validateSyncCommand({ positionTicks: 12 }).value, { positionTicks: 12 })
+})
+
+test('subtitle preferences accept only the complete bounded protocol object', () => {
+  assert.deepEqual(validateSubtitlePreferences(DEFAULT_SUBTITLE_PREFERENCES).value, DEFAULT_SUBTITLE_PREFERENCES)
+  assert.equal(validateSubtitlePreferences({ ...DEFAULT_SUBTITLE_PREFERENCES, delayMs: 10001 }).error, 'invalid delayMs')
+  assert.equal(validateSubtitlePreferences({ ...DEFAULT_SUBTITLE_PREFERENCES, fontFamily: 'comic' }).error, 'invalid fontFamily')
+  assert.equal(validateSubtitlePreferences({ ...DEFAULT_SUBTITLE_PREFERENCES, textColor: 'red' }).error, 'invalid textColor')
+  assert.equal(validateSubtitlePreferences({ ...DEFAULT_SUBTITLE_PREFERENCES, extra: true }).error, 'invalid subtitlePreferences')
 })
 
 test('authorizeSyncCommand rejects stale versions and duplicate command ids', () => {
@@ -71,6 +80,10 @@ test('create, save, reload, and delete preserve only durable state', async () =>
     hostDeviceId: 'host-device', hostSocketId: 'host-socket', mediaItemId: 'movie',
   })
   sess.playback = { PlaySessionId: 'play-session' }
+  sess.subtitlePreferences = {
+    delayMs: 750, fontScalePercent: 130, verticalPosition: 'top',
+    fontFamily: 'serif', textColor: '#FFE66D', backgroundOpacityPercent: 40,
+  }
   sess.browse = { stack: [{ id: 'folder', name: 'Folder', type: 'CollectionFolder' }] }
   sess.guests.push({
     userId: 'guest', name: 'Guest', token: 'guest-token', deviceId: 'guest-device',
@@ -107,6 +120,7 @@ test('create, save, reload, and delete preserve only durable state', async () =>
     assert.deepEqual(loaded.waiting, [])
     assert.deepEqual([...loaded.approved], ['owner', 'guest'])
     assert.deepEqual(loaded.playback, sess.playback)
+    assert.deepEqual(loaded.subtitlePreferences, sess.subtitlePreferences)
     assert.deepEqual(loaded.browse, sess.browse)
     assert.deepEqual(loaded.messages, sess.messages)
     assert.equal(loaded.collaborativeControl, true)

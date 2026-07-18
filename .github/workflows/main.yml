@@ -123,6 +123,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           VERSION: ${{ steps.version.outputs.value }}
+          BUILD_NUMBER: ${{ github.run_number }}
         run: packaging/build-linux.sh appimage
 
       - uses: actions/upload-artifact@v4
@@ -215,23 +216,38 @@ jobs:
     needs: [macos, linux, windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: desktop-builds
           merge-multiple: true
 
-      - name: Write checksums and build metadata
+      - name: Write release metadata
         shell: bash
         run: |
           set -euo pipefail
           cd desktop-builds
           sha256sum * > SHA256SUMS
-          {
-            echo "commit=${GITHUB_SHA}"
-            echo "run_id=${GITHUB_RUN_ID}"
-            echo "run_number=${GITHUB_RUN_NUMBER}"
-            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } > BUILD.txt
+          base="$(awk '/^version:/{print $2; exit}' ../flutter_app/pubspec.yaml | cut -d+ -f1)"
+          mac="$(printf '%s\n' *.dmg)"
+          linux="$(printf '%s\n' *.AppImage)"
+          windows="$(printf '%s\n' *.exe)"
+          artifact() {
+            jq -n --arg filename "$1" --argjson size "$(stat -c %s "$1")" \
+              --arg sha256 "$(sha256sum "$1" | cut -d' ' -f1)" \
+              '{filename:$filename,size:$size,sha256:$sha256}'
+          }
+          jq -n \
+            --arg version "${base}-main.${GITHUB_RUN_NUMBER}" \
+            --argjson build "$GITHUB_RUN_NUMBER" \
+            --arg commit "$GITHUB_SHA" \
+            --arg builtAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson macos "$(artifact "$mac")" \
+            --argjson linux "$(artifact "$linux")" \
+            --argjson windows "$(artifact "$windows")" \
+            '{version:$version,build:$build,commit:$commit,builtAt:$builtAt,artifacts:{macos:$macos,linux:$linux,windows:$windows}}' \
+            > release.json
 
       - name: Upload builds to server
         uses: appleboy/scp-action@v1
@@ -259,7 +275,13 @@ jobs:
             rm -rf "$root/previous"
             if [ -d "$root/latest" ]; then cp -a "$root/latest" "$root/previous"; fi
             mkdir -p "$root/latest"
-            find "$root/latest" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-            cp -a "$incoming"/. "$root/latest"/
+            find "$incoming" -maxdepth 1 -type f ! -name release.json -exec cp -a {} "$root/latest"/ \;
+            cp "$incoming/release.json" "$root/latest/.release.json.new"
+            mv "$root/latest/.release.json.new" "$root/latest/release.json"
+            for existing in "$root/latest"/*; do
+              [ -e "$existing" ] || continue
+              name="$(basename "$existing")"
+              if [ "$name" != release.json ] && [ ! -e "$incoming/$name" ]; then rm -f "$existing"; fi
+            done
             rm -rf "$incoming"
             find "$root" -maxdepth 1 -type d -name 'incoming-*' -mtime +1 -exec rm -rf {} +
