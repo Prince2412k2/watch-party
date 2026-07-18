@@ -2,8 +2,30 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  buildHlsUrl, getTrickplayProfile, normalizePlaybackInfo, selectTrickplayProfile,
+  buildHlsUrl, getTrickplayProfile, normalizePlaybackInfo,
+  resolveMediaSourceId, selectTrickplayProfile,
 } from './jellyfin.js'
+
+test('media-source lookup includes playable episodes', async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  let requestedUrl
+  globalThis.fetch = async url => {
+    requestedUrl = new URL(url)
+    return new Response(JSON.stringify({
+      Items: [{ Id: 'episode-id', MediaSources: [{ Id: 'source-id' }] }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+
+  const sourceId = await resolveMediaSourceId('token', 'user-id', 'episode-id')
+
+  assert.equal(sourceId, 'source-id')
+  assert.equal(requestedUrl.searchParams.get('Ids'), 'episode-id')
+  assert.equal(
+    requestedUrl.searchParams.get('IncludeItemTypes'),
+    'Movie,Series,Episode',
+  )
+})
 
 test('HLS URLs ask Jellyfin to advertise subtitle renditions', () => {
   for (const options of [{ abr: true }, { maxBitrate: 1_500_000 }, {}]) {

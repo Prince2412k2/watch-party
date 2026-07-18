@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,4 +35,38 @@ void main() {
       <int>[4, 5, 6],
     ]);
   });
+
+  test(
+    'recent artwork is synchronously reusable and memory is bounded',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'artwork-memory-',
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() async {
+        await server.close(force: true);
+        await directory.delete(recursive: true);
+      });
+
+      server.listen((request) {
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..add([request.uri.path == '/one' ? 1 : 2, 3])
+          ..close();
+      });
+      final base = 'http://${server.address.host}:${server.port}';
+      final cache = ArtworkCache(
+        Dio(),
+        directory: directory,
+        maxMemoryBytes: 3,
+      );
+
+      final first = await cache.load('$base/one').single;
+      expect(identical(cache.peek('$base/one'), first), isTrue);
+
+      await cache.load('$base/two').single;
+      expect(cache.peek('$base/one'), isNull);
+      expect(cache.peek('$base/two'), isA<Uint8List>());
+    },
+  );
 }

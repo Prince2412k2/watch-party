@@ -38,7 +38,8 @@ class DetailStage extends ConsumerStatefulWidget {
   });
 
   final String itemId;
-  final void Function(LibraryItem playItem, DetailTrackSelection tracks) onWatch;
+  final void Function(LibraryItem playItem, DetailTrackSelection tracks)
+  onWatch;
   final VoidCallback onBack;
 
   @override
@@ -47,6 +48,7 @@ class DetailStage extends ConsumerStatefulWidget {
 
 class _DetailStageState extends ConsumerState<DetailStage> {
   late String _activeId = widget.itemId;
+  LibraryItem? _activeFallback;
   int? _selAudio;
   int? _selSubtitle;
   bool _trackMenuOpen = false;
@@ -55,10 +57,11 @@ class _DetailStageState extends ConsumerState<DetailStage> {
   /// (e.g. after a subtitle upload) don't clobber a user's choice.
   String? _tracksInitFor;
 
-  void _setActive(String id) {
-    if (id == _activeId) return;
+  void _setActive(LibraryItem item) {
+    if (item.id == _activeId) return;
     setState(() {
-      _activeId = id;
+      _activeId = item.id;
+      _activeFallback = item;
       _trackMenuOpen = false;
     });
   }
@@ -74,8 +77,7 @@ class _DetailStageState extends ConsumerState<DetailStage> {
 
   void _selectAudio(int? index) => setState(() => _selAudio = index);
   void _selectSubtitle(int? index) => setState(() => _selSubtitle = index);
-  void _toggleTrackMenu() =>
-      setState(() => _trackMenuOpen = !_trackMenuOpen);
+  void _toggleTrackMenu() => setState(() => _trackMenuOpen = !_trackMenuOpen);
   void _closeTrackMenu() => setState(() => _trackMenuOpen = false);
 
   @override
@@ -91,20 +93,23 @@ class _DetailStageState extends ConsumerState<DetailStage> {
       fit: StackFit.expand,
       children: [
         ColoredBox(color: wp.bg),
-        activeAsync.when(
-          loading: () => const _StageSkeleton(),
-          error: (e, _) => ErrorState(
-            title: 'Failed to load title',
-            message: '$e',
-            onRetry: () => ref.invalidate(itemDetailProvider(_activeId)),
-          ),
-          data: (d) => _StageBody(
+        if ((activeAsync.valueOrNull ?? _activeFallback) case final active?)
+          _StageBody(
             state: this,
             api: api,
-            active: d,
-            root: rootAsync.valueOrNull ?? d,
+            active: active,
+            root: rootAsync.valueOrNull ?? active,
+          )
+        else
+          activeAsync.when(
+            loading: () => const _StageSkeleton(),
+            error: (e, _) => ErrorState(
+              title: 'Failed to load title',
+              message: '$e',
+              onRetry: () => ref.invalidate(itemDetailProvider(_activeId)),
+            ),
+            data: (_) => const SizedBox.shrink(),
           ),
-        ),
         Positioned(
           top: 25,
           left: desktopLeadingControlInset > 0
@@ -222,13 +227,18 @@ class _StageBody extends ConsumerWidget {
             backdrop,
             const _Wash(),
             Padding(
-              padding: EdgeInsets.fromLTRB(64, 80, 64, rootIsSeries ? 260 : 170),
+              padding: EdgeInsets.fromLTRB(
+                64,
+                80,
+                64,
+                rootIsSeries ? 260 : 170,
+              ),
               child: Row(
                 crossAxisAlignment: rootIsSeries
                     ? CrossAxisAlignment.start
                     : CrossAxisAlignment.center,
                 children: [
-                  Expanded(flex: 92, child: copy),
+                  Expanded(flex: 92, child: SingleChildScrollView(child: copy)),
                   const SizedBox(width: 80),
                   Expanded(
                     flex: 108,
@@ -298,7 +308,8 @@ class _CopyColumn extends StatelessWidget {
     final genres = hero.genres.take(3).toList();
 
     // Play target: series root → first episode; otherwise the active title.
-    final firstEpisode = seasonRows.isNotEmpty && seasonRows.first.episodes.isNotEmpty
+    final firstEpisode =
+        seasonRows.isNotEmpty && seasonRows.first.episodes.isNotEmpty
         ? seasonRows.first.episodes.first
         : null;
     final playItem = active.type == 'Series' ? firstEpisode : active;
@@ -307,7 +318,8 @@ class _CopyColumn extends StatelessWidget {
     final resumeLabel = resumeTicks > 0 ? _fmtRuntime(resumeTicks) : null;
 
     final meta = <String>[
-      if (hero.communityRating != null) '★ ${hero.communityRating!.toStringAsFixed(1)}',
+      if (hero.communityRating != null)
+        '★ ${hero.communityRating!.toStringAsFixed(1)}',
       if (hero.officialRating != null) hero.officialRating!,
       ..._infoLine(active).take(3),
     ];
@@ -617,7 +629,7 @@ class _SeasonSelector extends StatelessWidget {
                     final first = rows[i].episodes.isNotEmpty
                         ? rows[i].episodes.first
                         : null;
-                    if (first != null) state._setActive(first.id);
+                    if (first != null) state._setActive(first);
                   },
                   color: wp.text,
                   faint: wp.faint,
@@ -833,7 +845,7 @@ class _EpisodeDock extends StatelessWidget {
                       api: api,
                       episode: ep,
                       selected: ep.id == activeId,
-                      onTap: () => state._setActive(ep.id),
+                      onTap: () => state._setActive(ep),
                     );
                   },
                 ),
@@ -936,7 +948,10 @@ class _EpisodeCard extends StatelessWidget {
                 children: [
                   Text(
                     '${episode.indexNumber ?? '–'}',
-                    style: AppTheme.mono.copyWith(color: wp.faint, fontSize: 11.5),
+                    style: AppTheme.mono.copyWith(
+                      color: wp.faint,
+                      fontSize: 11.5,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -1126,7 +1141,8 @@ class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
             for (var i = 0; i < pb.subtitleStreams.length; i++)
               _TrackRow(
                 label: _trackLabel(pb.subtitleStreams[i], 'Subtitle ${i + 1}'),
-                selected: widget.selectedSubtitle == pb.subtitleStreams[i].index,
+                selected:
+                    widget.selectedSubtitle == pb.subtitleStreams[i].index,
                 onTap: () =>
                     widget.onSelectSubtitle(pb.subtitleStreams[i].index),
                 onDelete: pb.subtitleStreams[i].isExternal && !_busy
@@ -1357,8 +1373,18 @@ String _formatDate(String iso) {
   final d = DateTime.tryParse(iso);
   if (d == null) return iso;
   const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   return '${months[d.month - 1]} ${d.day}, ${d.year}';
 }

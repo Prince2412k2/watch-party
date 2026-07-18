@@ -37,7 +37,7 @@ import {
   transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
 } from './session.js'
-import { getItems } from './jellyfin.js'
+import { resolveMediaSourceId } from './jellyfin.js'
 
 // Fail fast: never run in production with a missing or default session secret.
 if (process.env.NODE_ENV === 'production' &&
@@ -720,20 +720,12 @@ function setSchedule(sess, next) {
   io.to(sess.id).emit('sync:schedule', sess.schedule)
 }
 
-// Resolve a media item's primary MediaSource id (used at create + select time)
-async function resolveMediaSource(token, userId, mediaItemId) {
-  const data = await getItems(token, userId, { Ids: mediaItemId, Fields: 'MediaSources' })
-  const item = data.Items?.[0]
-  if (!item) return null
-  return item.MediaSources?.[0]?.Id ?? mediaItemId
-}
-
 // Same, but under WP_TEST_MODE a fake Jellyfin token can't reach the real API,
 // so fall back to the given id (or a dummy) — the timeline engine only needs an
 // id to run; the harness never fetches real video. Only reachable in test mode.
 async function resolveMediaSourceSafe(token, userId, mediaItemId) {
   try {
-    const src = await resolveMediaSource(token, userId, mediaItemId)
+    const src = await resolveMediaSourceId(token, userId, mediaItemId)
     if (src) return src
   } catch (err) {
     if (process.env.WP_TEST_MODE !== '1') throw err
