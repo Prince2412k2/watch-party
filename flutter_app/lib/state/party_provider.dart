@@ -34,7 +34,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   /// part of (lobby or watching).
   bool get inParty => state != null;
 
-  bool get isHost => state != null && _myUserId != null && state!.hostId == _myUserId;
+  bool get isHost =>
+      state != null && _myUserId != null && state!.hostId == _myUserId;
 
   bool get canControl => isHost || (state?.collaborativeControl ?? false);
 
@@ -61,7 +62,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     final s = state;
     if (s == null) return;
     state = s.copyWith(
-        participants: s.participants.where((e) => e.userId != userId).toList());
+      participants: s.participants.where((e) => e.userId != userId).toList(),
+    );
   }
 
   void clear() {
@@ -78,66 +80,87 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   void _subscribe() {
     _subscribed = true;
     final socket = _socket;
-    _unsubs.add(socket.on(ServerEvent.partyState, (data) {
-      if (data is Map) _applySession(Map<String, dynamic>.from(data));
-    }));
-    _unsubs.add(socket.on(ServerEvent.partyWaiting, (data) {
-      if (data is! Map) return;
-      final json = Map<String, dynamic>.from(data);
-      final userId = json['userId']?.toString();
-      if (userId == null) return;
-      final name = json['name']?.toString() ?? userId;
-      _ref.read(partyWaitingProvider.notifier).add(
-          Participant(userId: userId, name: name));
-      _toast('$name wants to join', level: 'warning');
-    }));
-    _unsubs.add(socket.on(ServerEvent.partyApproved, (data) {
-      if (data is Map && data['session'] is Map) {
-        _applySession(Map<String, dynamic>.from(data['session'] as Map));
-      }
-      _postJoinSetup();
-    }));
-    _unsubs.add(socket.on(ServerEvent.partyRejected, (_) {
-      _toast('The host declined your request');
-      _leaveLocal();
-    }));
-    _unsubs.add(socket.on(ServerEvent.partyKicked, (data) {
-      final userId = (data is Map) ? data['userId']?.toString() : null;
-      if (userId != null && userId == _myUserId) {
-        _toast('You were removed from the party');
+    _unsubs.add(
+      socket.on(ServerEvent.partyState, (data) {
+        if (data is Map) _applySession(Map<String, dynamic>.from(data));
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.partyWaiting, (data) {
+        if (data is! Map) return;
+        final json = Map<String, dynamic>.from(data);
+        final userId = json['userId']?.toString();
+        if (userId == null) return;
+        final name = json['name']?.toString() ?? userId;
+        _ref
+            .read(partyWaitingProvider.notifier)
+            .add(Participant(userId: userId, name: name));
+        _toast('$name wants to join', level: 'warning');
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.partyApproved, (data) {
+        if (data is Map && data['session'] is Map) {
+          _applySession(Map<String, dynamic>.from(data['session'] as Map));
+        }
+        _postJoinSetup();
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.partyRejected, (_) {
+        _toast('The host declined your request');
         _leaveLocal();
-      } else if (userId != null) {
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.partyKicked, (data) {
+        final userId = (data is Map) ? data['userId']?.toString() : null;
+        if (userId != null && userId == _myUserId) {
+          _toast('You were removed from the party');
+          _leaveLocal();
+        } else if (userId != null) {
+          removeParticipant(userId);
+        }
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.partyEnded, (_) {
+        _toast('The host ended the party');
+        _leaveLocal();
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.hostChanged, (data) {
+        final hostId = (data is Map) ? data['hostId']?.toString() : null;
+        final s = state;
+        if (s == null || hostId == null) return;
+        state = s.copyWith(hostId: hostId);
+        _syncRoleToEngine();
+        if (hostId == _myUserId) {
+          _toast('You are now the host', level: 'success');
+        }
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.userJoined, (data) {
+        if (data is! Map) return;
+        final userId = data['userId']?.toString();
+        if (userId == null) return;
+        final name = data['name']?.toString() ?? userId;
+        upsertParticipant(Participant(userId: userId, name: name));
+        _toast('$name joined');
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.userLeft, (data) {
+        if (data is! Map) return;
+        final userId = data['userId']?.toString();
+        if (userId == null) return;
+        final name = data['name']?.toString() ?? _participantName(userId);
         removeParticipant(userId);
-      }
-    }));
-    _unsubs.add(socket.on(ServerEvent.partyEnded, (_) {
-      _toast('The host ended the party');
-      _leaveLocal();
-    }));
-    _unsubs.add(socket.on(ServerEvent.hostChanged, (data) {
-      final hostId = (data is Map) ? data['hostId']?.toString() : null;
-      final s = state;
-      if (s == null || hostId == null) return;
-      state = s.copyWith(hostId: hostId);
-      _syncRoleToEngine();
-      if (hostId == _myUserId) _toast('You are now the host', level: 'success');
-    }));
-    _unsubs.add(socket.on(ServerEvent.userJoined, (data) {
-      if (data is! Map) return;
-      final userId = data['userId']?.toString();
-      if (userId == null) return;
-      final name = data['name']?.toString() ?? userId;
-      upsertParticipant(Participant(userId: userId, name: name));
-      _toast('$name joined');
-    }));
-    _unsubs.add(socket.on(ServerEvent.userLeft, (data) {
-      if (data is! Map) return;
-      final userId = data['userId']?.toString();
-      if (userId == null) return;
-      final name = data['name']?.toString() ?? _participantName(userId);
-      removeParticipant(userId);
-      _toast('$name left');
-    }));
+        _toast('$name left');
+      }),
+    );
   }
 
   void _unsubscribe() {
@@ -156,12 +179,19 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     final hostName = json['hostName']?.toString();
     final guestsJson = (json['guests'] as List?) ?? const [];
     final participantCandidates = <Participant>[
-      if (hostId.isNotEmpty) Participant(userId: hostId, name: hostName ?? 'Host', isHost: true),
-      ...guestsJson.whereType<Map>().map((g) {
-        final m = Map<String, dynamic>.from(g);
-        final userId = m['userId']?.toString() ?? m['id']?.toString() ?? '';
-        return Participant(userId: userId, name: m['name']?.toString() ?? 'Guest');
-      }).where((p) => p.userId.isNotEmpty && p.userId != hostId),
+      if (hostId.isNotEmpty)
+        Participant(userId: hostId, name: hostName ?? 'Host', isHost: true),
+      ...guestsJson
+          .whereType<Map>()
+          .map((g) {
+            final m = Map<String, dynamic>.from(g);
+            final userId = m['userId']?.toString() ?? m['id']?.toString() ?? '';
+            return Participant(
+              userId: userId,
+              name: m['name']?.toString() ?? 'Guest',
+            );
+          })
+          .where((p) => p.userId.isNotEmpty && p.userId != hostId),
     ];
     final participantsById = <String, Participant>{
       for (final participant in participantCandidates)
@@ -194,11 +224,22 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     );
 
     final waitingJson = (json['waiting'] as List?) ?? const [];
-    _ref.read(partyWaitingProvider.notifier).setAll(waitingJson.whereType<Map>().map((w) {
-      final m = Map<String, dynamic>.from(w);
-      final userId = m['userId']?.toString() ?? '';
-      return Participant(userId: userId, name: m['name']?.toString() ?? 'Guest');
-    }).where((p) => p.userId.isNotEmpty).toList());
+    _ref
+        .read(partyWaitingProvider.notifier)
+        .setAll(
+          waitingJson
+              .whereType<Map>()
+              .map((w) {
+                final m = Map<String, dynamic>.from(w);
+                final userId = m['userId']?.toString() ?? '';
+                return Participant(
+                  userId: userId,
+                  name: m['name']?.toString() ?? 'Guest',
+                );
+              })
+              .where((p) => p.userId.isNotEmpty)
+              .toList(),
+        );
 
     _syncRoleToEngine();
     _syncPlayerToMedia();
@@ -244,10 +285,17 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   // ── Create / join ─────────────────────────────────────────────────────────
   /// Creates a party (optionally pre-selecting media). Returns the new
   /// `partyId`. Throws a [String] error message from the server ack on failure.
-  Future<String> create({String? mediaItemId}) async {
+  Future<String> create({
+    String? mediaItemId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) async {
     await _ensureConnected();
-    final resp = await _socket.emitWithAck(
-        ClientEvent.partyCreate, {if (mediaItemId != null) 'mediaItemId': mediaItemId});
+    final resp = await _socket.emitWithAck(ClientEvent.partyCreate, {
+      'mediaItemId': ?mediaItemId,
+      'audioStreamIndex': ?audioStreamIndex,
+      'subtitleStreamIndex': ?subtitleStreamIndex,
+    });
     if (resp is Map && resp['error'] != null) throw resp['error'].toString();
     final partyId = (resp as Map)['partyId']?.toString();
     if (partyId == null) throw 'party:create did not return a partyId';
@@ -262,7 +310,9 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   /// pending — party:approved/party:rejected resolve it later).
   Future<String> join(String partyId) async {
     await _ensureConnected();
-    final resp = await _socket.emitWithAck(ClientEvent.partyJoin, {'partyId': partyId});
+    final resp = await _socket.emitWithAck(ClientEvent.partyJoin, {
+      'partyId': partyId,
+    });
     if (resp is Map && resp['error'] != null) throw resp['error'].toString();
     final status = (resp as Map)['status']?.toString() ?? 'waiting';
     if (status == 'joined') {
@@ -318,9 +368,11 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _ref.read(partyWaitingProvider.notifier).remove(userId);
   }
 
-  Future<void> kick(String userId) => _ack(ClientEvent.partyKick, {'userId': userId});
+  Future<void> kick(String userId) =>
+      _ack(ClientEvent.partyKick, {'userId': userId});
 
-  Future<void> transferHost(String userId) => _ack(ClientEvent.partyTransferHost, {'userId': userId});
+  Future<void> transferHost(String userId) =>
+      _ack(ClientEvent.partyTransferHost, {'userId': userId});
 
   Future<void> setCollaborative(bool enabled) async {
     await _ack(ClientEvent.partySetCollaborative, {'enabled': enabled});
@@ -342,8 +394,25 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   Future<String> createFromCurrentPlayback({
     required String mediaItemId,
     required Duration position,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
   }) async {
-    final partyId = await create(mediaItemId: mediaItemId);
+    // The shared player is already open on this item. Mark it before applying
+    // the create ack so party state does not reopen the same localhost URL
+    // while the solo-to-party handoff is still in progress.
+    final previouslyOpened = _openedMediaId;
+    _openedMediaId = mediaItemId;
+    late final String partyId;
+    try {
+      partyId = await create(
+        mediaItemId: mediaItemId,
+        audioStreamIndex: audioStreamIndex,
+        subtitleStreamIndex: subtitleStreamIndex,
+      );
+    } catch (_) {
+      _openedMediaId = previouslyOpened;
+      rethrow;
+    }
     if (position > Duration.zero) {
       await _ref.read(syncEngineProvider).requestSeek(position);
     }
@@ -474,8 +543,9 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   }
 }
 
-final partyProvider =
-    StateNotifierProvider<PartyNotifier, PartyState?>((ref) => PartyNotifier(ref));
+final partyProvider = StateNotifierProvider<PartyNotifier, PartyState?>(
+  (ref) => PartyNotifier(ref),
+);
 
 /// Guests awaiting host approval (server's `party:waiting` broadcasts + the
 /// `waiting[]` field on a full `party:state` snapshot). Host-only UI concern.
@@ -487,7 +557,8 @@ class PartyWaitingNotifier extends StateNotifier<List<Participant>> {
     state = [...state, p];
   }
 
-  void remove(String userId) => state = state.where((e) => e.userId != userId).toList();
+  void remove(String userId) =>
+      state = state.where((e) => e.userId != userId).toList();
 
   void setAll(List<Participant> list) {
     state = <String, Participant>{
@@ -500,7 +571,8 @@ class PartyWaitingNotifier extends StateNotifier<List<Participant>> {
 
 final partyWaitingProvider =
     StateNotifierProvider<PartyWaitingNotifier, List<Participant>>(
-        (ref) => PartyWaitingNotifier());
+      (ref) => PartyWaitingNotifier(),
+    );
 
 /// The sync engine driving playback from the party timeline (PLAN §3.4). The
 /// real host-authority [SyncEngineImpl] (E5.1); [PartyNotifier] attaches it

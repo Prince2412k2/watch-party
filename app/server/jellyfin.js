@@ -86,6 +86,17 @@ export function getItems(token, userId, params = {}) {
   return jfetch(`/Users/${userId}/Items?${qs}`, { token })
 }
 
+export async function resolveMediaSourceId(token, userId, itemId) {
+  const data = await getItems(token, userId, {
+    Ids: itemId,
+    IncludeItemTypes: 'Movie,Series,Episode',
+    Fields: 'MediaSources',
+  })
+  const item = data.Items?.[0]
+  if (!item) return null
+  return item.MediaSources?.[0]?.Id ?? itemId
+}
+
 export function getItemChildren(token, userId, parentId) {
   return jfetch(`/Users/${userId}/Items?ParentId=${parentId}&Fields=MediaSources`, { token })
 }
