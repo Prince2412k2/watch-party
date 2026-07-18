@@ -29,6 +29,8 @@ dependencies:
   cookie_jar: ^4.0.9
   dio_cookie_manager: ^3.4.0
   path_provider: ^2.1.5
+  package_info_plus: ^9.0.1
+  crypto: ^3.0.6
 
   # State / routing / persistence.
   flutter_riverpod: ^2.6.1

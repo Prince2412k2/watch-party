@@ -20,7 +20,7 @@ import { usePhone } from '../hooks/useIsMobile'
 import { Z } from '../watchLayers'
 import Library from './Library'
 import Lobby from './Lobby'
-import type { PartySession } from '../types'
+import type { PartySession, SubtitlePreferences } from '../types'
 import { apiJson, stringField } from '../types/guards'
 
 type LiveKitState = ReturnType<typeof useLiveKit>
@@ -43,7 +43,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   const party = useParty()
   const {
     session, role, layoutMode, chatOpen, chatRipple, alertMode,
-    setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks,
+    setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks, setSubtitlePreferences,
   } = party
 
   const lk = useLiveKit({ partyId: session?.id, enabled: role === 'host' || role === 'guest' })
@@ -145,7 +145,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
           embedded
           stack={session.browse?.stack ?? []}
           onNavigate={navigateBrowse}
-          onPickMedia={(item: { Id: string }, tracks) => selectMedia(item.Id, tracks)}
+          onPickMedia={(item: { Id: string }, tracks) => selectMedia(item.Id, isHost ? tracks : {})}
           canDrive={canDrive}
           onPointer={canDrive ? sendPointer : undefined}
           mirrorSubscribe={!canDrive ? mirror.subscribe : undefined}
@@ -184,6 +184,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
       chatOpen={chatOpen} chatRipple={chatRipple} alertMode={alertMode}
       layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat}
       setPlaybackTracks={setPlaybackTracks}
+      setSubtitlePreferences={setSubtitlePreferences}
       hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf}
     />
   )
@@ -194,7 +195,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
 // (desktop) or a tap (phone). See watchLayers.js for the z-index scale.
 function WatchView({
   session, isHost, cameraProps, lk, chatOpen, chatRipple = 0, alertMode, layoutMode,
-  setLayout = () => {}, openChat = () => {}, closeChat = () => {}, setPlaybackTracks = () => {}, hideSelf, onToggleHideSelf = () => {},
+  setLayout = () => {}, openChat = () => {}, closeChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
 }: {
   session: PartySession
   isHost?: boolean
@@ -208,6 +209,7 @@ function WatchView({
   openChat?: (focus?: boolean) => void
   closeChat?: () => void
   setPlaybackTracks?: (tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
+  setSubtitlePreferences?: (preferences: SubtitlePreferences) => void
   hideSelf?: boolean
   onToggleHideSelf?: () => void
 }) {
@@ -448,6 +450,7 @@ function WatchView({
         <HlsPlayer
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
           onSetPlaybackTracks={setPlaybackTracks}
+          onSetSubtitlePreferences={setSubtitlePreferences}
           micOn={lk.micOn} camOn={lk.camOn}
           onToggleMic={() => guardedToggle(() => lk.enableMic(!lk.micOn))}
           onToggleCam={() => guardedToggle(() => lk.enableCamera(!lk.camOn))}
@@ -802,6 +805,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
       hlsUrl={hlsUrl.url}
       mediaItemId={session.mediaItemId}
       playback={session.playback ?? undefined}
+      subtitlePreferences={session.subtitlePreferences}
       isHost={isHost}
       collaborativeControl={collaborativeControl}
       syncMode={session.syncMode}

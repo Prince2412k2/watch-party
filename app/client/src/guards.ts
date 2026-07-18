@@ -1,4 +1,4 @@
-import type { AuthUser, BrowseEntry, ChatMessage, MirrorPoint, PartyBrowse, PartySession, PartyUser } from './types'
+import type { AuthUser, BrowseEntry, ChatMessage, MirrorPoint, PartyBrowse, PartySession, PartyUser, SubtitlePreferences } from './types'
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -42,12 +42,20 @@ function isPlayback(value: unknown): boolean {
     (value.mediaSourceId === undefined || value.mediaSourceId === null || typeof value.mediaSourceId === 'string')
 }
 
+function isSubtitlePreferences(value: unknown): value is SubtitlePreferences {
+  return isObject(value) && Number.isInteger(value.delayMs) && Number.isInteger(value.fontScalePercent) &&
+    ['top', 'middle', 'bottom'].includes(String(value.verticalPosition)) &&
+    ['sans', 'serif', 'mono'].includes(String(value.fontFamily)) &&
+    typeof value.textColor === 'string' && Number.isInteger(value.backgroundOpacityPercent)
+}
+
 export function isPartySession(value: unknown): value is PartySession {
   if (!isObject(value) || typeof value.id !== 'string' || typeof value.hostId !== 'string') return false
   return (value.guests === undefined || (Array.isArray(value.guests) && value.guests.every(isPartyUser))) &&
     (value.waiting === undefined || (Array.isArray(value.waiting) && value.waiting.every(isPartyUser))) &&
     (value.browse === undefined || isPartyBrowse(value.browse)) &&
     (value.playback === undefined || value.playback === null || isPlayback(value.playback)) &&
+    (value.subtitlePreferences === undefined || isSubtitlePreferences(value.subtitlePreferences)) &&
     (value.hostName === undefined || typeof value.hostName === 'string') &&
     (value.stage === undefined || typeof value.stage === 'string') &&
     (value.mediaItemId === undefined || value.mediaItemId === null || typeof value.mediaItemId === 'string')

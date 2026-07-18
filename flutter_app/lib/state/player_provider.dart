@@ -8,6 +8,7 @@ import '../player/player_controller.dart';
 /// the provider is torn down.
 final playerControllerProvider = Provider<PlayerController>((ref) {
   final controller = MediaKitPlayerController();
+  controller.prepareVideoOutput();
   ref.onDispose(controller.dispose);
   return controller;
 });

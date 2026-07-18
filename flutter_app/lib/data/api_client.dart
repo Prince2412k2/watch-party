@@ -84,6 +84,14 @@ abstract class ApiClient {
   Future<User> me();
   Future<void> logout();
 
+  /// Authenticated metadata and artifact transfer from the selected server.
+  Future<Map<String, dynamic>> currentDesktopRelease();
+  Future<void> downloadDesktopArtifact(
+    String url,
+    String savePath, {
+    required void Function(int received, int total) onProgress,
+  });
+
   // ── Library ───────────────────────────────────────────────────────────
   Future<HomeData> home();
   Future<List<LibraryItem>> items({String? parentId});
@@ -266,6 +274,41 @@ class DioApiClient implements ApiClient {
   Future<void> logout() async {
     await _dio.post('/api/auth/logout');
     _cookieHeader = null;
+  }
+
+  @override
+  Future<Map<String, dynamic>> currentDesktopRelease() async {
+    final res = await _dio.get('/api/desktop/releases/current');
+    if (res.statusCode != 200) _fail(res, 'check for updates');
+    return Map<String, dynamic>.from(res.data as Map);
+  }
+
+  @override
+  Future<void> downloadDesktopArtifact(
+    String url,
+    String savePath, {
+    required void Function(int received, int total) onProgress,
+  }) async {
+    final uri = Uri.parse(url);
+    final base = Uri.parse(baseUrl);
+    final sameAbsoluteOrigin =
+        uri.hasScheme &&
+        uri.scheme == base.scheme &&
+        uri.host == base.host &&
+        uri.port == base.port;
+    final safeServerPath =
+        !uri.hasScheme &&
+        !uri.hasAuthority &&
+        uri.path.startsWith('/api/downloads/');
+    if (!sameAbsoluteOrigin && !safeServerPath) {
+      throw ArgumentError('update artifact must come from the selected server');
+    }
+    final res = await _dio.download(
+      url,
+      savePath,
+      onReceiveProgress: onProgress,
+    );
+    if (res.statusCode != 200) _fail(res, 'download update');
   }
 
   @override
