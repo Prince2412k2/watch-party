@@ -123,9 +123,10 @@ class IoSocketClient implements SocketClient {
 Map<String, dynamic> socketOptionsFor(String url, String? cookie) {
   final uri = Uri.parse(url);
   final builder = io.OptionBuilder()
-      // Polling keeps parties usable when a reverse proxy cannot upgrade a
-      // particular handshake; Socket.IO upgrades to WebSocket when available.
-      .setTransports(['polling', 'websocket'])
+      // Native Dart only implements the WebSocket transport. Listing polling
+      // first makes socket_io_client open a WebSocket with transport=polling,
+      // which receives a 101 but can never complete the Engine.IO session.
+      .setTransports(['websocket'])
       .disableAutoConnect()
       .enableForceNew();
   if (cookie != null) builder.setExtraHeaders({'Cookie': cookie});
