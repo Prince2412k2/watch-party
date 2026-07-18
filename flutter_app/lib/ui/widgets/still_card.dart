@@ -57,6 +57,9 @@ class _StillCardState extends State<StillCard> {
               AuthedNetworkImage(
                 widget.imageUrl!,
                 fit: BoxFit.cover,
+                cacheWidth:
+                    (widget.width * MediaQuery.devicePixelRatioOf(context))
+                        .round(),
                 errorBuilder: (_, _, _) => const _StillFallback(),
               )
             else

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +16,65 @@ class _ZeroRuntimeApi extends MockApiClient {
     final item = await super.item(id);
     return item.copyWith(runTimeTicks: 0);
   }
+}
+
+class _SeriesApi extends MockApiClient {
+  static const series = LibraryItem(
+    id: 'series',
+    name: 'Signal',
+    type: 'Series',
+    overview:
+        'A deliberately long series synopsis that exercises the bounded '
+        'desktop copy layout while the episode dock remains visible below it. '
+        'The copy keeps going so a short window must scroll rather than overflow.',
+    genres: ['Drama', 'Mystery'],
+  );
+  static const season = LibraryItem(
+    id: 'season-1',
+    name: 'Season 1',
+    type: 'Season',
+    indexNumber: 1,
+  );
+  static const first = LibraryItem(
+    id: 'episode-1',
+    name: 'First Contact',
+    type: 'Episode',
+    seriesId: 'series',
+    seriesName: 'Signal',
+    parentId: 'season-1',
+    parentIndexNumber: 1,
+    indexNumber: 1,
+    runTimeTicks: 30000000000,
+  );
+  static const second = LibraryItem(
+    id: 'episode-2',
+    name: 'The Extremely Long Second Episode Name',
+    type: 'Episode',
+    seriesId: 'series',
+    seriesName: 'Signal',
+    parentId: 'season-1',
+    parentIndexNumber: 1,
+    indexNumber: 2,
+    runTimeTicks: 30000000000,
+  );
+
+  final secondDetail = Completer<LibraryItem>();
+
+  @override
+  Future<LibraryItem> item(String id) {
+    if (id == second.id) return secondDetail.future;
+    return Future.value(switch (id) {
+      'episode-1' => first,
+      _ => series,
+    });
+  }
+
+  @override
+  Future<List<LibraryItem>> children(String itemId) async => switch (itemId) {
+    'series' => [season],
+    'season-1' => [first, second],
+    _ => const [],
+  };
 }
 
 void main() {
@@ -68,5 +129,53 @@ void main() {
       isEmpty,
       reason: 'layout/semantics errors: ${errors.take(2)}',
     );
+  });
+
+  testWidgets('episode selection keeps show details visible while loading', (
+    tester,
+  ) async {
+    final errors = <String>[];
+    final previousOnError = FlutterError.onError;
+    FlutterError.onError = (details) => errors.add(details.exceptionAsString());
+    addTearDown(() => FlutterError.onError = previousOnError);
+
+    final api = _SeriesApi();
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(api),
+          authProvider.overrideWith((ref) {
+            final notifier = AuthNotifier(ref);
+            notifier.state = const AuthState(
+              user: User(userId: 'u1', name: 'Test User'),
+              initialized: true,
+            );
+            return notifier;
+          }),
+        ],
+        child: MaterialApp(
+          builder: (context, child) => sc.ShadcnLayer(
+            theme: AppShadcnTheme.dark,
+            themeMode: sc.ThemeMode.dark,
+            child: child!,
+          ),
+          home: const DetailScreen(itemId: 'series'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(_SeriesApi.second.name));
+    await tester.pump();
+
+    expect(find.text('Signal'), findsOneWidget);
+    expect(find.textContaining('S1 E2'), findsOneWidget);
+    expect(api.secondDetail.isCompleted, isFalse);
+    expect(errors, isEmpty, reason: 'layout errors: ${errors.take(2)}');
+
+    api.secondDetail.complete(_SeriesApi.second);
+    await tester.pumpAndSettle();
   });
 }

@@ -19,12 +19,16 @@ class AuthedNetworkImage extends ConsumerStatefulWidget {
     this.url, {
     super.key,
     this.fit,
+    this.cacheWidth,
+    this.cacheHeight,
     this.errorBuilder,
     this.loadingBuilder,
   });
 
   final String url;
   final BoxFit? fit;
+  final int? cacheWidth;
+  final int? cacheHeight;
   final ImageErrorWidgetBuilder? errorBuilder;
   final ImageLoadingBuilder? loadingBuilder;
 
@@ -53,22 +57,22 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
   void _load() {
     final generation = ++_generation;
     _subscription?.cancel();
-    _bytes = null;
-    _error = null;
     final cache = ref.read(artworkCacheProvider);
+    _bytes = cache?.peek(widget.url);
+    _error = null;
     if (cache == null) return;
     _subscription = cache
         .load(widget.url)
         .listen(
-      (bytes) {
-        if (mounted && generation == _generation) {
-          setState(() => _bytes = bytes);
-        }
-      },
-      onError: (Object error, StackTrace stack) {
-        if (mounted && generation == _generation) {
-          setState(() => _error = error);
-        }
+          (bytes) {
+            if (mounted && generation == _generation) {
+              setState(() => _bytes = bytes);
+            }
+          },
+          onError: (Object error, StackTrace stack) {
+            if (mounted && generation == _generation) {
+              setState(() => _error = error);
+            }
           },
         );
   }
@@ -88,6 +92,8 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
         return Image.memory(
           _bytes!,
           fit: widget.fit,
+          cacheWidth: widget.cacheWidth,
+          cacheHeight: widget.cacheHeight,
           gaplessPlayback: true,
           errorBuilder: widget.errorBuilder,
         );
@@ -106,6 +112,8 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
     return Image.network(
       widget.url,
       fit: widget.fit,
+      cacheWidth: widget.cacheWidth,
+      cacheHeight: widget.cacheHeight,
       errorBuilder: widget.errorBuilder,
       loadingBuilder: widget.loadingBuilder,
       headers: cookie == null ? null : {'Cookie': cookie},
