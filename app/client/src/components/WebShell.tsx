@@ -154,7 +154,6 @@ function WebPartyWidget({ open = true, onClose, onStartParty, onJoinParty, start
         {guests.map(guest => <Person key={guest.userId} user={guest} actions={isHost ? <button className="party-person-action" onClick={() => kickUser(guest.userId)} aria-label={`Remove ${guest.name}`}><Icon name="x" size={14} /></button> : undefined} />)}
       </div>
       {isHost && waiting.length ? <div className="party-waiting"><strong>Waiting to join</strong>{waiting.map(person => <Person key={person.userId} user={person} actions={<div className="party-person-actions"><button onClick={() => rejectUser(person.userId)} aria-label={`Reject ${person.name}`}><Icon name="x" size={14} /></button><button onClick={() => approveUser(person.userId)} aria-label={`Accept ${person.name}`}><Icon name="check" size={14} /></button></div>} />)}</div> : null}
-      <button className="party-open-player" onClick={() => navigate(`/party/${session.id}`)}><Icon name="play" size={16} fill="currentColor" />Open player</button>
       {isHost ? <button className="party-end" onClick={() => { if (window.confirm('End this party for everyone?')) void endParty() }}>End party</button> : null}
     </aside>
   )

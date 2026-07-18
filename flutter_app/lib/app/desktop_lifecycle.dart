@@ -43,6 +43,19 @@ class DesktopLifecycle with WindowListener, TrayListener {
   /// user believes they closed. Set from `main.dart` once the providers exist.
   void Function()? onBeforeHide;
 
+  /// Fully exits even though ordinary window close requests hide to tray.
+  Future<void> quitForUpdate() async {
+    _quitting = true;
+    try {
+      await _persistBounds();
+      await trayManager.destroy();
+      await windowManager.setPreventClose(false);
+      await windowManager.destroy();
+    } finally {
+      exit(0);
+    }
+  }
+
   Future<void> init() async {
     await windowManager.ensureInitialized();
     _prefs = await SharedPreferences.getInstance();

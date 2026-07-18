@@ -88,4 +88,22 @@ void main() {
       expect(shellSectionTitle('/'), 'Watchparty');
     });
   });
+
+  test('partyPlayerRoute opens only a watching session with selected media', () {
+    expect(
+      partyPlayerRoute(
+        const PartyState(
+          id: 'ROOM1234',
+          hostId: 'host',
+          stage: 'watching',
+          mediaItemId: 'movie-1',
+        ),
+      ),
+      '/party/ROOM1234',
+    );
+    expect(
+      partyPlayerRoute(const PartyState(id: 'ROOM1234', hostId: 'host')),
+      isNull,
+    );
+  });
 }

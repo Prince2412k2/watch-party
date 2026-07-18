@@ -3,8 +3,9 @@ import type { ReactNode } from 'react'
 import { useSocket } from '../hooks/useSocket'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
-import type { BrowseEntry, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, ToastRecord } from '../types'
+import type { BrowseEntry, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types'
 import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards'
+import { partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority'
 
 const PartyContext = createContext<PartyContextValue | null>(null)
 
@@ -112,13 +113,18 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   const stateRef = useRef<PartyState>(initialState)
   stateRef.current = state
 
+  function applySession(sess: PartySession, role: PartyContextValue['role']) {
+    dispatch({ type: 'SET_SESSION', session: sess, role })
+    if (shouldOpenPartyPlayer(sess, role, window.location.pathname)) navigate(`/party/${sess.id}`)
+  }
+
   useEffect(() => {
     const resume = () => {
       if (stateRef.current.session) return
       socket.emit('party:resume', {}, (value: unknown) => {
         if (!isObject(value) || !isPartySession(value.session)) return
         const sess = value.session
-        dispatch({ type: 'SET_SESSION', session: sess, role: sess.hostId === userId ? 'host' : 'guest' })
+        applySession(sess, sess.hostId === userId ? 'host' : 'guest')
       })
     }
     if (socket.connected) resume()
@@ -136,8 +142,9 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     socket.on('party:state', (value: unknown) => {
       if (!isPartySession(value)) return
       const sess = value
-      const role = sess.hostId === userId ? 'host' : 'guest'
-      dispatch({ type: 'SET_SESSION', session: sess, role })
+      const role = partyRoleForUser(sess, userId)
+      if (!role) return
+      applySession(sess, role)
     })
 
     socket.on('party:waiting', (value: unknown) => {
@@ -150,8 +157,8 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     socket.on('party:approved', (value: unknown) => {
       if (!isObject(value) || !isPartySession(value.session)) return
       const sess = value.session
-      dispatch({ type: 'SET_SESSION', session: sess, role: 'guest' })
-      if (sess.browse?.tab) {
+      applySession(sess, 'guest')
+      if (sess.stage !== 'watching' && sess.browse?.tab) {
         const target = sess.browse.tab === 'movies' ? '/movies' : sess.browse.tab === 'series' ? '/series' : sess.browse.tab === 'discover' ? '/discover' : '/downloads'
         navigate(target)
       }
@@ -271,7 +278,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
         }
         if (value.status === 'joined' && isPartySession(value.session)) {
           const role = value.session.hostId === userId ? 'host' : 'guest'
-          dispatch({ type: 'SET_SESSION', session: value.session, role })
+          applySession(value.session, role)
         }
       })
     }
@@ -341,7 +348,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
         if (typeof value.error === 'string') return reject(new Error(value.error))
         if (value.status === 'joined' && isPartySession(value.session)) {
           const role = value.session.hostId === userId ? 'host' : 'guest'
-          dispatch({ type: 'SET_SESSION', session: value.session, role })
+          applySession(value.session, role)
         } else {
           dispatch({ type: 'SET_ROLE', role: 'waiting' })
         }
@@ -396,6 +403,10 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     socket.emit('party:setPlaybackTracks', { audioStreamIndex, subtitleStreamIndex })
   }
 
+  function setSubtitlePreferences(preferences: SubtitlePreferences) {
+    socket.emit('party:setSubtitlePreferences', { preferences })
+  }
+
   function sendMessage(text: string) {
     socket.emit('chat:message', { text })
   }
@@ -429,6 +440,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       approveUser, rejectUser, kickUser, transferHost, endParty,
       setCollaborative, setSyncMode, sendMessage, removeCamera,
       setPlaybackTracks,
+      setSubtitlePreferences,
       setLayout, toggleChat, openChat, closeChat, setAlertMode,
     }}>
       {children}
