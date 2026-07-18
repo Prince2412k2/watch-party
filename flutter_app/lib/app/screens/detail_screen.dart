@@ -85,7 +85,6 @@ class DetailScreen extends ConsumerWidget {
                 await Navigator.of(context).push(
                   _playerRouteFor(
                     itemId: playItem.id,
-                    title: playItem.name,
                     audioStreamIndex: tracks.audioStreamIndex,
                     subtitleStreamIndex: tracks.subtitleStreamIndex,
                   ),
@@ -124,7 +123,10 @@ class _GuestOfflineDetailBody extends StatelessWidget {
             icon: Icon(Icons.arrow_back, color: wp.dim),
           ),
           const SizedBox(height: AppSpacing.xl),
-          Text(record.title, style: AppTheme.displaySmall.copyWith(color: wp.text)),
+          Text(
+            record.title,
+            style: AppTheme.displaySmall.copyWith(color: wp.text),
+          ),
           if (runtime != null) ...[
             const SizedBox(height: AppSpacing.sm),
             Text(runtime, style: AppTheme.mono.copyWith(color: wp.dim)),
@@ -134,9 +136,9 @@ class _GuestOfflineDetailBody extends StatelessWidget {
             label: 'Play',
             icon: Icons.play_arrow,
             variant: AppButtonVariant.primary,
-            onPressed: () => Navigator.of(context).push(
-              _playerRouteFor(itemId: record.itemId, title: record.title),
-            ),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(_playerRouteFor(itemId: record.itemId)),
           ),
         ],
       ),
@@ -149,7 +151,6 @@ class _GuestOfflineDetailBody extends StatelessWidget {
 /// selection through to playback (web `onWatch(item, tracks)`).
 Route<void> _playerRouteFor({
   required String itemId,
-  required String title,
   int? audioStreamIndex,
   int? subtitleStreamIndex,
 }) {
@@ -158,7 +159,6 @@ Route<void> _playerRouteFor({
     reverseTransitionDuration: AppMotion.page,
     pageBuilder: (context, animation, secondaryAnimation) => _SoloPlayer(
       itemId: itemId,
-      title: title,
       audioStreamIndex: audioStreamIndex,
       subtitleStreamIndex: subtitleStreamIndex,
     ),
@@ -180,12 +180,10 @@ Route<void> _playerRouteFor({
 class _SoloPlayer extends ConsumerStatefulWidget {
   const _SoloPlayer({
     required this.itemId,
-    required this.title,
     this.audioStreamIndex,
     this.subtitleStreamIndex,
   });
   final String itemId;
-  final String title;
   final int? audioStreamIndex;
   final int? subtitleStreamIndex;
 
@@ -272,7 +270,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
           (widget.audioStreamIndex != null ||
               widget.subtitleStreamIndex != null)) {
         try {
-          await ref.read(apiClientProvider).playbackInfo(
+          await ref
+              .read(apiClientProvider)
+              .playbackInfo(
                 widget.itemId,
                 audioStreamIndex: widget.audioStreamIndex,
                 subtitleStreamIndex: widget.subtitleStreamIndex,
@@ -317,54 +317,70 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
       child: Scaffold(
         backgroundColor: Colors.black,
         body: _error != null
-          ? Center(
-              child: ErrorState(
-                title: 'Playback failed',
-                message: _error is ApiException
-                    ? (_error as ApiException).message
-                    : 'Could not open this title. Check your connection and try again.',
-                onRetry: _retry,
-              ),
-            )
-          : !_ready
-          ? const Center(
-              child: SizedBox(
-                width: 32,
-                height: 32,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.text,
+            ? Center(
+                child: ErrorState(
+                  title: 'Playback failed',
+                  message: _error is ApiException
+                      ? (_error as ApiException).message
+                      : 'Could not open this title. Check your connection and try again.',
+                  onRetry: _retry,
                 ),
-              ),
-            )
-          : Stack(
-              children: [
-                PlayerView(
-                  controller: ref.watch(playerControllerProvider),
-                  itemId: widget.itemId,
-                  apiClient: ref.watch(apiClientProvider),
-                  title: widget.title,
-                  onBack: _exit,
-                  onToggleFullscreen: _toggleFullscreen,
-                  isFullscreen: _isFullscreen,
-                  cachedSpans: _usesCacheProxy
-                      ? ref
-                            .watch(mediaCacheProxyProvider)
-                            .cachedSpansFor(widget.itemId)
-                      : null,
-                ),
-                Positioned(
-                  top: 8,
-                  right: 8 + desktopTrailingControlInset,
-                  child: SafeArea(
-                    child: _StartPartyButton(
-                      itemId: widget.itemId,
-                      onHandoff: () => _handoffToParty = true,
-                    ),
+              )
+            : !_ready
+            ? const Center(
+                child: SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.text,
                   ),
                 ),
-              ],
-            ),
+              )
+            : Stack(
+                children: [
+                  PlayerView(
+                    controller: ref.watch(playerControllerProvider),
+                    itemId: widget.itemId,
+                    apiClient: ref.watch(apiClientProvider),
+                    onToggleFullscreen: _toggleFullscreen,
+                    isFullscreen: _isFullscreen,
+                    cachedSpans: _usesCacheProxy
+                        ? ref
+                              .watch(mediaCacheProxyProvider)
+                              .cachedSpansFor(widget.itemId)
+                        : null,
+                  ),
+                  Positioned(
+                    top: _isFullscreen ? 8 : integratedDesktopChromeHeight + 8,
+                    left: 8 + (_isFullscreen ? 0 : desktopLeadingControlInset),
+                    right:
+                        8 + (_isFullscreen ? 0 : desktopTrailingControlInset),
+                    child: SafeArea(
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Back',
+                            onPressed: _exit,
+                            icon: const Icon(Icons.arrow_back),
+                            style: IconButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              backgroundColor: Colors.black54,
+                            ),
+                          ),
+                          const Spacer(),
+                          _StartPartyButton(
+                            itemId: widget.itemId,
+                            audioStreamIndex: widget.audioStreamIndex,
+                            subtitleStreamIndex: widget.subtitleStreamIndex,
+                            onHandoff: () => _handoffToParty = true,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -375,9 +391,16 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
 /// into [PartyNotifier.createFromCurrentPlayback], then hands off to the
 /// immersive party screen.
 class _StartPartyButton extends ConsumerStatefulWidget {
-  const _StartPartyButton({required this.itemId, required this.onHandoff});
+  const _StartPartyButton({
+    required this.itemId,
+    required this.onHandoff,
+    this.audioStreamIndex,
+    this.subtitleStreamIndex,
+  });
   final String itemId;
   final VoidCallback onHandoff;
+  final int? audioStreamIndex;
+  final int? subtitleStreamIndex;
 
   @override
   ConsumerState<_StartPartyButton> createState() => _StartPartyButtonState();
@@ -395,6 +418,8 @@ class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
           .createFromCurrentPlayback(
             mediaItemId: widget.itemId,
             position: position,
+            audioStreamIndex: widget.audioStreamIndex,
+            subtitleStreamIndex: widget.subtitleStreamIndex,
           );
       if (!mounted) return;
       widget.onHandoff();
