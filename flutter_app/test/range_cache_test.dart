@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -160,21 +161,24 @@ void main() {
       tmpDir.deleteSync(recursive: true);
     });
 
-    test('write then read round-trips the exact bytes at the right offset', () async {
-      final store = RangeCacheStore(overrideDir: tmpDir);
-      final entry = await store.open('item-1');
+    test(
+      'write then read round-trips the exact bytes at the right offset',
+      () async {
+        final store = RangeCacheStore(overrideDir: tmpDir);
+        final entry = await store.open('item-1');
 
-      await entry.write(100, [1, 2, 3, 4, 5]);
+        await entry.write(100, [1, 2, 3, 4, 5]);
 
-      expect(entry.hasRange(100, 105), isTrue);
-      expect(entry.hasRange(99, 105), isFalse);
-      expect(entry.hasRange(100, 106), isFalse);
-      expect(await entry.read(100, 105), [1, 2, 3, 4, 5]);
-      expect(entry.missingRanges(0, 200), [
-        const Gap(0, 100),
-        const Gap(105, 200),
-      ]);
-    });
+        expect(entry.hasRange(100, 105), isTrue);
+        expect(entry.hasRange(99, 105), isFalse);
+        expect(entry.hasRange(100, 106), isFalse);
+        expect(await entry.read(100, 105), [1, 2, 3, 4, 5]);
+        expect(entry.missingRanges(0, 200), [
+          const Gap(0, 100),
+          const Gap(105, 200),
+        ]);
+      },
+    );
 
     test('readChunks bounds allocations for a fully cached range', () async {
       final store = RangeCacheStore(overrideDir: tmpDir);
@@ -201,34 +205,43 @@ void main() {
       expect(await entry.read(0, 6), [10, 11, 12, 13, 14, 15]);
     });
 
-    test('metadata (total length + ranges) persists across a fresh open', () async {
-      final store = RangeCacheStore(overrideDir: tmpDir);
-      final entry = await store.open('item-3');
-      entry.setTotalLength(1000);
-      await entry.write(0, List<int>.filled(50, 7));
-      await entry.flushMetadata();
+    test(
+      'metadata (total length + ranges) persists across a fresh open',
+      () async {
+        final store = RangeCacheStore(overrideDir: tmpDir);
+        final entry = await store.open('item-3');
+        entry.setTotalLength(1000);
+        await entry.write(0, List<int>.filled(50, 7));
+        await entry.flushMetadata();
 
-      // A second store instance simulates a fresh app launch reopening the
-      // same on-disk cache.
-      final reopenedStore = RangeCacheStore(overrideDir: tmpDir);
-      final reopened = await reopenedStore.open('item-3');
+        // A second store instance simulates a fresh app launch reopening the
+        // same on-disk cache.
+        final reopenedStore = RangeCacheStore(overrideDir: tmpDir);
+        final reopened = await reopenedStore.open('item-3');
 
-      expect(reopened.totalLength, 1000);
-      expect(reopened.hasRange(0, 50), isTrue);
-      expect(await reopened.read(0, 50), List<int>.filled(50, 7));
-    });
+        expect(reopened.totalLength, 1000);
+        expect(reopened.hasRange(0, 50), isTrue);
+        expect(await reopened.read(0, 50), List<int>.filled(50, 7));
+      },
+    );
 
-    test('metadata sidecar is written via a rename, never left as a bare .tmp', () async {
-      final store = RangeCacheStore(overrideDir: tmpDir);
-      final entry = await store.open('item-4');
-      await entry.write(0, [1, 2, 3]);
-      await entry.flushMetadata();
+    test(
+      'metadata sidecar is written via a rename, never left as a bare .tmp',
+      () async {
+        final store = RangeCacheStore(overrideDir: tmpDir);
+        final entry = await store.open('item-4');
+        await entry.write(0, [1, 2, 3]);
+        await entry.flushMetadata();
 
-      final cacheDir = Directory('${tmpDir.path}/media-cache');
-      final names = cacheDir.listSync().map((f) => f.path.split('/').last).toSet();
-      expect(names, contains('item-4.meta.json'));
-      expect(names.any((n) => n.endsWith('.tmp')), isFalse);
-    });
+        final cacheDir = Directory('${tmpDir.path}/media-cache');
+        final names = cacheDir
+            .listSync()
+            .map((f) => f.path.split('/').last)
+            .toSet();
+        expect(names, contains('item-4.meta.json'));
+        expect(names.any((n) => n.endsWith('.tmp')), isFalse);
+      },
+    );
 
     test('a title opened twice from the same store shares one entry', () async {
       final store = RangeCacheStore(overrideDir: tmpDir);
@@ -236,6 +249,49 @@ void main() {
       final second = await store.open('item-5');
       expect(first, same(second));
     });
+
+    test('concurrent opens are single-flight and share one entry', () async {
+      final store = RangeCacheStore(overrideDir: tmpDir);
+
+      final entries = await Future.wait(
+        List.generate(40, (_) => store.open('single-flight-item')),
+      );
+
+      expect(entries.every((entry) => identical(entry, entries.first)), isTrue);
+      await entries.first.write(0, [1, 2, 3]);
+      expect(await entries.last.read(0, 3), [1, 2, 3]);
+    });
+
+    test(
+      'concurrent writes, touches, and flushes persist consistent metadata',
+      () async {
+        final store = RangeCacheStore(overrideDir: tmpDir);
+        final entry = await store.open('concurrent-metadata-item');
+        entry.setTotalLength(400);
+
+        await Future.wait([
+          for (var i = 0; i < 40; i++) ...[
+            () async {
+              await entry.write(i * 10, List<int>.filled(10, i));
+              await entry.flushMetadata();
+            }(),
+            entry.touch(),
+          ],
+        ]);
+
+        final metaFile = File(
+          '${tmpDir.path}/media-cache/concurrent-metadata-item.meta.json',
+        );
+        final raw =
+            jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+        expect(raw['ranges'], [
+          [0, 400],
+        ]);
+        expect(File('${metaFile.path}.tmp').existsSync(), isFalse);
+        expect(entry.hasRange(0, 400), isTrue);
+        expect(await entry.read(0, 400), hasLength(400));
+      },
+    );
 
     test('cachedSpansFor updates as an entry is written to', () async {
       final store = RangeCacheStore(overrideDir: tmpDir);
@@ -246,13 +302,19 @@ void main() {
       expect(spans.value, isEmpty); // totalLength still unknown
 
       entry.setTotalLength(1000);
-      expect(spans.value, isEmpty); // total length known, but no bytes written yet
+      expect(
+        spans.value,
+        isEmpty,
+      ); // total length known, but no bytes written yet
 
       await entry.write(0, List.filled(100, 1));
       expect(spans.value, [const CachedSpan(0, 0.1)]);
 
       await entry.write(500, List.filled(100, 1));
-      expect(spans.value, [const CachedSpan(0, 0.1), const CachedSpan(0.5, 0.6)]);
+      expect(spans.value, [
+        const CachedSpan(0, 0.1),
+        const CachedSpan(0.5, 0.6),
+      ]);
     });
   });
 
@@ -263,66 +325,139 @@ void main() {
     test('nothing over cap and all fresh => evicts nothing', () {
       final stats = [
         CacheStat(itemId: 'a', cachedBytes: 100, lastAccess: now),
-        CacheStat(itemId: 'b', cachedBytes: 100, lastAccess: now.subtract(const Duration(days: 1))),
+        CacheStat(
+          itemId: 'b',
+          cachedBytes: 100,
+          lastAccess: now.subtract(const Duration(days: 1)),
+        ),
       ];
       expect(
-        selectEvictions(stats: stats, maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
+        selectEvictions(
+          stats: stats,
+          maxBytes: 1000,
+          now: now,
+          ttl: ttl,
+          protected: const {},
+        ),
         isEmpty,
       );
     });
 
     test('entry older than TTL is evicted even though total is under cap', () {
       final stats = [
-        CacheStat(itemId: 'old', cachedBytes: 10, lastAccess: now.subtract(const Duration(days: 31))),
+        CacheStat(
+          itemId: 'old',
+          cachedBytes: 10,
+          lastAccess: now.subtract(const Duration(days: 31)),
+        ),
         CacheStat(itemId: 'fresh', cachedBytes: 10, lastAccess: now),
       ];
       expect(
-        selectEvictions(stats: stats, maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
+        selectEvictions(
+          stats: stats,
+          maxBytes: 1000,
+          now: now,
+          ttl: ttl,
+          protected: const {},
+        ),
         ['old'],
       );
     });
 
-    test('an entry exactly at the TTL boundary is not evicted (isBefore, not isBefore-or-equal)', () {
-      final stats = [
-        CacheStat(itemId: 'boundary', cachedBytes: 10, lastAccess: now.subtract(ttl)),
-      ];
-      expect(
-        selectEvictions(stats: stats, maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
-        isEmpty,
-      );
-    });
+    test(
+      'an entry exactly at the TTL boundary is not evicted (isBefore, not isBefore-or-equal)',
+      () {
+        final stats = [
+          CacheStat(
+            itemId: 'boundary',
+            cachedBytes: 10,
+            lastAccess: now.subtract(ttl),
+          ),
+        ];
+        expect(
+          selectEvictions(
+            stats: stats,
+            maxBytes: 1000,
+            now: now,
+            ttl: ttl,
+            protected: const {},
+          ),
+          isEmpty,
+        );
+      },
+    );
 
     test('over cap evicts oldest-first until back under the cap', () {
       final stats = [
-        CacheStat(itemId: 'oldest', cachedBytes: 40, lastAccess: now.subtract(const Duration(days: 3))),
-        CacheStat(itemId: 'middle', cachedBytes: 40, lastAccess: now.subtract(const Duration(days: 2))),
-        CacheStat(itemId: 'newest', cachedBytes: 40, lastAccess: now.subtract(const Duration(days: 1))),
+        CacheStat(
+          itemId: 'oldest',
+          cachedBytes: 40,
+          lastAccess: now.subtract(const Duration(days: 3)),
+        ),
+        CacheStat(
+          itemId: 'middle',
+          cachedBytes: 40,
+          lastAccess: now.subtract(const Duration(days: 2)),
+        ),
+        CacheStat(
+          itemId: 'newest',
+          cachedBytes: 40,
+          lastAccess: now.subtract(const Duration(days: 1)),
+        ),
       ];
       // Total = 120, cap = 90 -> must evict at least 30 bytes; evicting just
       // "oldest" (40) brings it to 80, which is <= 90, so only one eviction
       // is needed and it must be the oldest.
       expect(
-        selectEvictions(stats: stats, maxBytes: 90, now: now, ttl: ttl, protected: const {}),
+        selectEvictions(
+          stats: stats,
+          maxBytes: 90,
+          now: now,
+          ttl: ttl,
+          protected: const {},
+        ),
         ['oldest'],
       );
     });
 
     test('over cap keeps evicting oldest-first until under, not just one', () {
       final stats = [
-        CacheStat(itemId: 'a', cachedBytes: 50, lastAccess: now.subtract(const Duration(days: 5))),
-        CacheStat(itemId: 'b', cachedBytes: 50, lastAccess: now.subtract(const Duration(days: 4))),
-        CacheStat(itemId: 'c', cachedBytes: 50, lastAccess: now.subtract(const Duration(days: 3))),
+        CacheStat(
+          itemId: 'a',
+          cachedBytes: 50,
+          lastAccess: now.subtract(const Duration(days: 5)),
+        ),
+        CacheStat(
+          itemId: 'b',
+          cachedBytes: 50,
+          lastAccess: now.subtract(const Duration(days: 4)),
+        ),
+        CacheStat(
+          itemId: 'c',
+          cachedBytes: 50,
+          lastAccess: now.subtract(const Duration(days: 3)),
+        ),
       ];
       // Total = 150, cap = 40 -> must evict a, then b, then c to fit.
       expect(
-        selectEvictions(stats: stats, maxBytes: 40, now: now, ttl: ttl, protected: const {}),
+        selectEvictions(
+          stats: stats,
+          maxBytes: 40,
+          now: now,
+          ttl: ttl,
+          protected: const {},
+        ),
         ['a', 'b', 'c'],
       );
     });
 
     test('protected entries are never evicted, even if oldest and over cap', () {
       final stats = [
-        CacheStat(itemId: 'protected-old', cachedBytes: 100, lastAccess: now.subtract(const Duration(days: 40))),
+        CacheStat(
+          itemId: 'protected-old',
+          cachedBytes: 100,
+          lastAccess: now.subtract(const Duration(days: 40)),
+        ),
         CacheStat(itemId: 'newer', cachedBytes: 100, lastAccess: now),
       ];
       // The protected entry is both past TTL and would be the LRU pick, but
@@ -343,24 +478,39 @@ void main() {
 
     test('empty stats list evicts nothing', () {
       expect(
-        selectEvictions(stats: const [], maxBytes: 1000, now: now, ttl: ttl, protected: const {}),
+        selectEvictions(
+          stats: const [],
+          maxBytes: 1000,
+          now: now,
+          ttl: ttl,
+          protected: const {},
+        ),
         isEmpty,
       );
     });
 
-    test('ties in lastAccess are both eligible and evicted in encounter order', () {
-      final sameTime = now.subtract(const Duration(days: 1));
-      final stats = [
-        CacheStat(itemId: 'x', cachedBytes: 60, lastAccess: sameTime),
-        CacheStat(itemId: 'y', cachedBytes: 60, lastAccess: sameTime),
-      ];
-      // Total = 120, cap = 50 -> both must go since even removing one (60)
-      // leaves 60 > 50.
-      expect(
-        selectEvictions(stats: stats, maxBytes: 50, now: now, ttl: ttl, protected: const {}),
-        containsAll(['x', 'y']),
-      );
-    });
+    test(
+      'ties in lastAccess are both eligible and evicted in encounter order',
+      () {
+        final sameTime = now.subtract(const Duration(days: 1));
+        final stats = [
+          CacheStat(itemId: 'x', cachedBytes: 60, lastAccess: sameTime),
+          CacheStat(itemId: 'y', cachedBytes: 60, lastAccess: sameTime),
+        ];
+        // Total = 120, cap = 50 -> both must go since even removing one (60)
+        // leaves 60 > 50.
+        expect(
+          selectEvictions(
+            stats: stats,
+            maxBytes: 50,
+            now: now,
+            ttl: ttl,
+            protected: const {},
+          ),
+          containsAll(['x', 'y']),
+        );
+      },
+    );
   });
 
   group('RangeCacheStore.evict (filesystem)', () {
@@ -374,80 +524,108 @@ void main() {
       tmpDir.deleteSync(recursive: true);
     });
 
-    test('evicts a TTL-expired entry\'s files while leaving a fresh one intact', () async {
-      final store = RangeCacheStore(overrideDir: tmpDir);
+    test(
+      'evicts a TTL-expired entry\'s files while leaving a fresh one intact',
+      () async {
+        final store = RangeCacheStore(overrideDir: tmpDir);
 
-      final oldEntry = await store.open('old-item');
-      oldEntry.setTotalLength(1000);
-      await oldEntry.write(0, List.filled(100, 1));
-      oldEntry.lastAccess = DateTime.now().subtract(const Duration(days: 40));
-      await oldEntry.flushMetadata();
-      await oldEntry.close();
+        final oldEntry = await store.open('old-item');
+        oldEntry.setTotalLength(1000);
+        await oldEntry.write(0, List.filled(100, 1));
+        oldEntry.lastAccess = DateTime.now().subtract(const Duration(days: 40));
+        await oldEntry.flushMetadata();
+        await oldEntry.close();
 
-      final freshEntry = await store.open('fresh-item');
-      freshEntry.setTotalLength(1000);
-      await freshEntry.write(0, List.filled(100, 1));
-      await freshEntry.flushMetadata();
-      await freshEntry.close();
+        final freshEntry = await store.open('fresh-item');
+        freshEntry.setTotalLength(1000);
+        await freshEntry.write(0, List.filled(100, 1));
+        await freshEntry.flushMetadata();
+        await freshEntry.close();
 
-      // Reopen with a brand-new store so neither entry is in the `_open` map
-      // (simulating a cold-boot eviction scan over on-disk sidecars).
-      final freshStore = RangeCacheStore(overrideDir: tmpDir);
-      await freshStore.evict();
+        // Reopen with a brand-new store so neither entry is in the `_open` map
+        // (simulating a cold-boot eviction scan over on-disk sidecars).
+        final freshStore = RangeCacheStore(overrideDir: tmpDir);
+        await freshStore.evict();
 
-      final cacheDir = Directory('${tmpDir.path}/media-cache');
-      final names = cacheDir.listSync().map((f) => f.path.split('/').last).toSet();
+        final cacheDir = Directory('${tmpDir.path}/media-cache');
+        final names = cacheDir
+            .listSync()
+            .map((f) => f.path.split('/').last)
+            .toSet();
 
-      expect(names.where((n) => n.startsWith('old-item')), isEmpty);
-      expect(names, contains('fresh-item.data'));
-      expect(names, contains('fresh-item.meta.json'));
-    });
+        expect(names.where((n) => n.startsWith('old-item')), isEmpty);
+        expect(names, contains('fresh-item.data'));
+        expect(names, contains('fresh-item.meta.json'));
+      },
+    );
 
-    test('a currently-open entry is never evicted even if it is TTL-expired', () async {
-      final store = RangeCacheStore(overrideDir: tmpDir);
+    test(
+      'a currently-open entry is never evicted even if it is TTL-expired',
+      () async {
+        final store = RangeCacheStore(overrideDir: tmpDir);
 
-      final entry = await store.open('playing-item');
-      entry.setTotalLength(1000);
-      await entry.write(0, List.filled(100, 1));
-      entry.lastAccess = DateTime.now().subtract(const Duration(days: 40));
-      await entry.flushMetadata();
-      // Deliberately left open (no close()) — still in store's `_open` map.
+        final entry = await store.open('playing-item');
+        entry.setTotalLength(1000);
+        await entry.write(0, List.filled(100, 1));
+        entry.lastAccess = DateTime.now().subtract(const Duration(days: 40));
+        await entry.flushMetadata();
+        // Deliberately left open (no close()) — still in store's `_open` map.
 
-      await store.evict();
+        await store.evict();
 
-      final cacheDir = Directory('${tmpDir.path}/media-cache');
-      final names = cacheDir.listSync().map((f) => f.path.split('/').last).toSet();
-      expect(names, contains('playing-item.data'));
-      expect(names, contains('playing-item.meta.json'));
-    });
+        final cacheDir = Directory('${tmpDir.path}/media-cache');
+        final names = cacheDir
+            .listSync()
+            .map((f) => f.path.split('/').last)
+            .toSet();
+        expect(names, contains('playing-item.data'));
+        expect(names, contains('playing-item.meta.json'));
+      },
+    );
 
-    test('a corrupt sidecar is evicted rather than crashing the scan', () async {
-      final store = RangeCacheStore(overrideDir: tmpDir);
-      final entry = await store.open('corrupt-item');
-      entry.setTotalLength(1000);
-      await entry.write(0, List.filled(50, 1));
-      await entry.flushMetadata();
-      await entry.close();
+    test(
+      'a corrupt sidecar is evicted rather than crashing the scan',
+      () async {
+        final store = RangeCacheStore(overrideDir: tmpDir);
+        final entry = await store.open('corrupt-item');
+        entry.setTotalLength(1000);
+        await entry.write(0, List.filled(50, 1));
+        await entry.flushMetadata();
+        await entry.close();
 
-      final cacheDir = Directory('${tmpDir.path}/media-cache');
-      final metaFile = File('${cacheDir.path}/corrupt-item.meta.json');
-      await metaFile.writeAsString('{not valid json');
+        final cacheDir = Directory('${tmpDir.path}/media-cache');
+        final metaFile = File('${cacheDir.path}/corrupt-item.meta.json');
+        await metaFile.writeAsString('{not valid json');
 
-      final freshStore = RangeCacheStore(overrideDir: tmpDir);
-      await freshStore.evict(); // must not throw
+        final freshStore = RangeCacheStore(overrideDir: tmpDir);
+        await freshStore.evict(); // must not throw
 
-      final names = cacheDir.listSync().map((f) => f.path.split('/').last).toSet();
-      expect(names.where((n) => n.startsWith('corrupt-item')), isEmpty);
-    });
+        final names = cacheDir
+            .listSync()
+            .map((f) => f.path.split('/').last)
+            .toSet();
+        expect(names.where((n) => n.startsWith('corrupt-item')), isEmpty);
+      },
+    );
   });
 
   group('cachedSpansFromIntervals', () {
     test('totalLength null => empty', () {
-      expect(cachedSpansFromIntervals([[0, 100]], null), isEmpty);
+      expect(
+        cachedSpansFromIntervals([
+          [0, 100],
+        ], null),
+        isEmpty,
+      );
     });
 
     test('totalLength unknown/zero-or-negative => empty', () {
-      expect(cachedSpansFromIntervals([[0, 100]], 0), isEmpty);
+      expect(
+        cachedSpansFromIntervals([
+          [0, 100],
+        ], 0),
+        isEmpty,
+      );
     });
 
     test('no intervals => empty', () {
@@ -456,14 +634,19 @@ void main() {
 
     test('full file => a single 0..1 span', () {
       expect(
-        cachedSpansFromIntervals([[0, 1000]], 1000),
+        cachedSpansFromIntervals([
+          [0, 1000],
+        ], 1000),
         [const CachedSpan(0, 1)],
       );
     });
 
     test('a middle gap => two spans around it', () {
       expect(
-        cachedSpansFromIntervals([[0, 250], [750, 1000]], 1000),
+        cachedSpansFromIntervals([
+          [0, 250],
+          [750, 1000],
+        ], 1000),
         [const CachedSpan(0, 0.25), const CachedSpan(0.75, 1)],
       );
     });

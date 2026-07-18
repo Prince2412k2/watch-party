@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/bottom_nav.dart';
-import '../../ui/widgets/popcorn_control.dart';
 import '../../ui/widgets/profile_menu.dart';
 import '../shortcuts.dart';
 
@@ -52,6 +52,14 @@ String shellSectionTitle(String location) {
   return 'Watchparty';
 }
 
+String? partyPlayerRoute(PartyState? party) {
+  if (party?.stage != 'watching' ||
+      !(party?.mediaItemId?.isNotEmpty ?? false)) {
+    return null;
+  }
+  return '/party/${party!.id}';
+}
+
 /// The persistent, edge-to-edge shell that wraps the primary destinations
 /// (`.web-app`/`.web-stage`, styles.css). No top bar, no left rail, no outer
 /// frame: a full-bleed [AmbientWash] backdrop under a translucent stage scrim,
@@ -61,21 +69,43 @@ String shellSectionTitle(String location) {
 /// While a guest is watching a host's shared session, the content layer is
 /// pointer-locked and labelled "Shared host view" (mirrors `WebShell.tsx:264`);
 /// the floating chrome stays interactive.
-class AppShell extends ConsumerWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.child, required this.location});
 
   final Widget child;
   final String location;
 
+  @override
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> {
+  String? _navigatedPartyId;
+
   String _currentOf(List<NavDestination> destinations) {
     for (final d in destinations) {
-      if (location.startsWith(d.route)) return d.route;
+      if (widget.location.startsWith(d.route)) return d.route;
     }
     return destinations.first.route;
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    void openParty(PartyState? party) {
+      final route = partyPlayerRoute(party);
+      if (route == null) {
+        _navigatedPartyId = null;
+        return;
+      }
+      if (_navigatedPartyId == party!.id) return;
+      _navigatedPartyId = party.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go(route);
+      });
+    }
+
+    ref.listen<PartyState?>(partyProvider, (_, party) => openParty(party));
+    openParty(ref.read(partyProvider));
     final wp = context.wp;
     final isAuthenticated = ref.watch(
       authProvider.select((s) => s.isAuthenticated),
@@ -99,7 +129,10 @@ class AppShell extends ConsumerWidget {
               child: Semantics(
                 container: sharedHostView,
                 label: sharedHostView ? 'Shared host view' : null,
-                child: IgnorePointer(ignoring: sharedHostView, child: child),
+                child: IgnorePointer(
+                  ignoring: sharedHostView,
+                  child: widget.child,
+                ),
               ),
             ),
             Positioned(

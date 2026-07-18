@@ -3,6 +3,28 @@ import { loadParties, removeParty, saveParty } from './party-store.js'
 
 const sessions = new Map() // partyId → Session
 
+export const DEFAULT_SUBTITLE_PREFERENCES = Object.freeze({
+  delayMs: 0,
+  fontScalePercent: 100,
+  verticalPosition: 'bottom',
+  fontFamily: 'sans',
+  textColor: '#FFFFFF',
+  backgroundOpacityPercent: 65,
+})
+
+export function validateSubtitlePreferences(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { error: 'invalid subtitlePreferences' }
+  const keys = Object.keys(DEFAULT_SUBTITLE_PREFERENCES)
+  if (Object.keys(value).length !== keys.length || keys.some(key => !(key in value))) return { error: 'invalid subtitlePreferences' }
+  if (!Number.isInteger(value.delayMs) || value.delayMs < -10_000 || value.delayMs > 10_000) return { error: 'invalid delayMs' }
+  if (!Number.isInteger(value.fontScalePercent) || value.fontScalePercent < 60 || value.fontScalePercent > 200) return { error: 'invalid fontScalePercent' }
+  if (!['top', 'middle', 'bottom'].includes(value.verticalPosition)) return { error: 'invalid verticalPosition' }
+  if (!['sans', 'serif', 'mono'].includes(value.fontFamily)) return { error: 'invalid fontFamily' }
+  if (typeof value.textColor !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(value.textColor)) return { error: 'invalid textColor' }
+  if (!Number.isInteger(value.backgroundOpacityPercent) || value.backgroundOpacityPercent < 0 || value.backgroundOpacityPercent > 100) return { error: 'invalid backgroundOpacityPercent' }
+  return { value: { ...value, textColor: value.textColor.toUpperCase() } }
+}
+
 function durableState(session) {
   const durableGuest = ({ userId, name, token, deviceId, joinedAt }) => ({
     userId, name, token, deviceId, joinedAt,
@@ -18,6 +40,7 @@ function durableState(session) {
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
     playback: session.playback,
+    subtitlePreferences: session.subtitlePreferences,
     stage: session.stage,
     browse: session.browse,
     guests: session.guests.map(durableGuest),
@@ -47,6 +70,7 @@ function runtimeState(saved) {
     mediaItemId: saved.mediaItemId ?? null,
     mediaSourceId: saved.mediaSourceId ?? null,
     playback: saved.playback ?? null,
+    subtitlePreferences: validateSubtitlePreferences(saved.subtitlePreferences).value ?? { ...DEFAULT_SUBTITLE_PREFERENCES },
     stage: saved.stage ?? (saved.mediaItemId ? 'watching' : 'lobby'),
     browse: saved.browse ?? { stack: [] },
     guests: (saved.guests ?? []).map(guest => ({ ...guest, socketId: null })),
@@ -94,6 +118,7 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     mediaItemId,      // null until a title is chosen in the lobby
     mediaSourceId,
     playback: null,   // normalized PlaybackInfo for the current title
+    subtitlePreferences: { ...DEFAULT_SUBTITLE_PREFERENCES },
     // 'lobby'    = everyone's in, browsing the library together, no title yet
     // 'watching' = a title is selected, playback sync engine is live
     stage: mediaItemId ? 'watching' : 'lobby',

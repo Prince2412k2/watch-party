@@ -10,6 +10,7 @@ class PlayerTrack {
     this.language,
     this.codec,
     this.isDefault = false,
+    this.jellyfinIndex,
   });
 
   /// Opaque id understood by the concrete player.
@@ -21,6 +22,7 @@ class PlayerTrack {
   final String? language;
   final String? codec;
   final bool isDefault;
+  final int? jellyfinIndex;
 }
 
 /// Snapshot of the available track lists, emitted on the [PlayerController.tracks]
