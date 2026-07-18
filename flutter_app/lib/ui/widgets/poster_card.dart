@@ -72,6 +72,9 @@ class _PosterCardState extends State<PosterCard> {
               AuthedNetworkImage(
                 widget.imageUrl!,
                 fit: BoxFit.cover,
+                cacheWidth:
+                    (widget.width * MediaQuery.devicePixelRatioOf(context))
+                        .round(),
                 errorBuilder: (_, _, _) => const _PosterFallback(),
               )
             else

@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:watchparty/cache/media_cache_proxy.dart';
 import 'package:watchparty/data/api_client.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
@@ -14,8 +15,12 @@ import 'package:watchparty/sync/sync_engine_impl.dart';
 /// tests don't need and shouldn't depend on being reachable.
 class _NoopLiveKitRoomService extends LiveKitRoomService {
   @override
-  Future<void> connect(String url, String token,
-      {bool enableMic = true, bool enableCamera = true}) async {}
+  Future<void> connect(
+    String url,
+    String token, {
+    bool enableMic = true,
+    bool enableCamera = true,
+  }) async {}
 
   @override
   Future<void> disconnect() async {}
@@ -37,8 +42,17 @@ class _ScriptedSocket extends MockSocketClient {
 /// Minimal no-op [PlayerController] — the sync engine only needs a `playing`
 /// stream and synchronous position getters to attach without throwing.
 class _NoopPlayer implements PlayerController {
+  int openCalls = 0;
+
   @override
-  Future<void> open(String url, {Duration startAt = Duration.zero, bool autoplay = false}) async {}
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {
+    openCalls++;
+  }
+
   @override
   Future<void> play() async {}
   @override
@@ -88,36 +102,49 @@ class _StubApiClient extends MockApiClient {
 Map<String, dynamic> _session({
   required String hostId,
   String hostName = 'Host',
+  String stage = 'lobby',
+  String? mediaItemId,
+  String? mediaSourceId,
   bool collaborativeControl = false,
   List<Map<String, dynamic>> guests = const [],
-}) =>
-    {
-      'id': 'party-1',
-      'hostId': hostId,
-      'hostName': hostName,
-      'stage': 'lobby',
-      'collaborativeControl': collaborativeControl,
-      'syncMode': 'hopping',
-      'guests': guests,
-      'schedule': {},
-      'browse': {'stack': []},
-      'waiting': [],
-    };
+}) => {
+  'id': 'party-1',
+  'hostId': hostId,
+  'hostName': hostName,
+  'stage': stage,
+  'mediaItemId': mediaItemId,
+  'mediaSourceId': mediaSourceId,
+  'collaborativeControl': collaborativeControl,
+  'syncMode': 'hopping',
+  'guests': guests,
+  'schedule': {},
+  'browse': {'stack': []},
+  'waiting': [],
+};
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late _ScriptedSocket socket;
   late ProviderContainer container;
+  late _NoopPlayer player;
 
-  ProviderContainer build(String myUserId, Map<String, dynamic> Function(String, Object?) responder) {
+  ProviderContainer build(
+    String myUserId,
+    Map<String, dynamic> Function(String, Object?) responder, {
+    MediaCacheProxy? proxy,
+  }) {
     socket = _ScriptedSocket(responder);
-    final c = ProviderContainer(overrides: [
-      socketClientProvider.overrideWithValue(socket),
-      apiClientProvider.overrideWithValue(_StubApiClient()),
-      playerControllerProvider.overrideWithValue(_NoopPlayer()),
-      livekitRoomServiceProvider.overrideWithValue(_NoopLiveKitRoomService()),
-      currentUserIdProvider.overrideWithValue(myUserId),
-    ]);
+    player = _NoopPlayer();
+    final c = ProviderContainer(
+      overrides: [
+        socketClientProvider.overrideWithValue(socket),
+        apiClientProvider.overrideWithValue(_StubApiClient()),
+        playerControllerProvider.overrideWithValue(player),
+        if (proxy != null) mediaCacheProxyProvider.overrideWithValue(proxy),
+        livekitRoomServiceProvider.overrideWithValue(_NoopLiveKitRoomService()),
+        currentUserIdProvider.overrideWithValue(myUserId),
+      ],
+    );
     addTearDown(() async {
       await c.read(syncEngineProvider).detach();
       c.dispose();
@@ -125,91 +152,158 @@ void main() {
     return c;
   }
 
-  test('create() makes the creator host: isHost/canControl true, wired onto the engine', () async {
-    container = build('host1', (event, data) {
-      if (event == ClientEvent.partyCreate) {
-        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
-      }
-      return {'ok': true};
-    });
+  test(
+    'create() makes the creator host: isHost/canControl true, wired onto the engine',
+    () async {
+      container = build('host1', (event, data) {
+        if (event == ClientEvent.partyCreate) {
+          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
 
-    final notifier = container.read(partyProvider.notifier);
-    final partyId = await notifier.create();
+      final notifier = container.read(partyProvider.notifier);
+      final partyId = await notifier.create();
 
-    expect(partyId, 'party-1');
-    expect(notifier.isHost, isTrue);
-    expect(notifier.canControl, isTrue);
+      expect(partyId, 'party-1');
+      expect(notifier.isHost, isTrue);
+      expect(notifier.canControl, isTrue);
 
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.isHost, isTrue);
-    expect(engine.canControl, isTrue);
-  });
+      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+      expect(engine.isHost, isTrue);
+      expect(engine.canControl, isTrue);
+    },
+  );
 
-  test('join() as a guest with collaborativeControl off: not host, canControl false', () async {
-    container = build('guest1', (event, data) {
-      if (event == ClientEvent.partyJoin) {
-        return {'status': 'joined', 'session': _session(hostId: 'host1', collaborativeControl: false)};
-      }
-      return {'ok': true};
-    });
+  test(
+    'solo handoff reuses open episode and preserves track selection',
+    () async {
+      final proxy = MediaCacheProxy(apiClient: _StubApiClient());
+      await proxy.start();
+      addTearDown(proxy.dispose);
+      container = build('host1', (event, data) {
+        if (event == ClientEvent.partyCreate) {
+          return {
+            'partyId': 'party-1',
+            'session': _session(
+              hostId: 'host1',
+              stage: 'watching',
+              mediaItemId: 'episode-1',
+              mediaSourceId: 'source-1',
+            ),
+          };
+        }
+        return {'ok': true};
+      }, proxy: proxy);
 
-    final notifier = container.read(partyProvider.notifier);
-    final status = await notifier.join('party-1');
+      await container
+          .read(partyProvider.notifier)
+          .createFromCurrentPlayback(
+            mediaItemId: 'episode-1',
+            position: const Duration(minutes: 12),
+            audioStreamIndex: 3,
+            subtitleStreamIndex: -1,
+          );
 
-    expect(status, 'joined');
-    expect(notifier.isHost, isFalse);
-    expect(notifier.canControl, isFalse);
+      expect(player.openCalls, 0);
+      final create = socket.emitted.firstWhere(
+        (entry) => entry.$1 == ClientEvent.partyCreate,
+      );
+      expect(create.$2, {
+        'mediaItemId': 'episode-1',
+        'audioStreamIndex': 3,
+        'subtitleStreamIndex': -1,
+      });
+    },
+  );
 
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.isHost, isFalse);
-    expect(engine.canControl, isFalse);
-  });
+  test(
+    'join() as a guest with collaborativeControl off: not host, canControl false',
+    () async {
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin) {
+          return {
+            'status': 'joined',
+            'session': _session(hostId: 'host1', collaborativeControl: false),
+          };
+        }
+        return {'ok': true};
+      });
 
-  test('join() waiting for approval only fully attaches after party:approved', () async {
-    container = build('guest1', (event, data) {
-      if (event == ClientEvent.partyJoin) return {'status': 'waiting'};
-      return {'ok': true};
-    });
+      final notifier = container.read(partyProvider.notifier);
+      final status = await notifier.join('party-1');
 
-    final notifier = container.read(partyProvider.notifier);
-    final status = await notifier.join('party-1');
+      expect(status, 'joined');
+      expect(notifier.isHost, isFalse);
+      expect(notifier.canControl, isFalse);
 
-    expect(status, 'waiting');
-    expect(container.read(partyProvider), isNull);
-    expect((container.read(syncEngineProvider) as SyncEngineImpl).canControl, isFalse);
+      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+      expect(engine.isHost, isFalse);
+      expect(engine.canControl, isFalse);
+    },
+  );
 
-    // Host approves — the server pushes party:approved with the session.
-    socket.inject(
-        ServerEvent.partyApproved, {'session': _session(hostId: 'host1', collaborativeControl: true)});
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+  test(
+    'join() waiting for approval only fully attaches after party:approved',
+    () async {
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin) return {'status': 'waiting'};
+        return {'ok': true};
+      });
 
-    expect(container.read(partyProvider), isNotNull);
-    expect(notifier.canControl, isTrue); // collaborative control granted on entry
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.canControl, isTrue);
-    expect(engine.isHost, isFalse);
-  });
+      final notifier = container.read(partyProvider.notifier);
+      final status = await notifier.join('party-1');
 
-  test('setCollaborative(true) flips a guest\'s canControl without a host role', () async {
-    container = build('guest1', (event, data) {
-      if (event == ClientEvent.partyJoin) {
-        return {'status': 'joined', 'session': _session(hostId: 'host1', collaborativeControl: false)};
-      }
-      return {'ok': true};
-    });
+      expect(status, 'waiting');
+      expect(container.read(partyProvider), isNull);
+      expect(
+        (container.read(syncEngineProvider) as SyncEngineImpl).canControl,
+        isFalse,
+      );
 
-    final notifier = container.read(partyProvider.notifier);
-    await notifier.join('party-1');
-    expect(notifier.canControl, isFalse);
+      // Host approves — the server pushes party:approved with the session.
+      socket.inject(ServerEvent.partyApproved, {
+        'session': _session(hostId: 'host1', collaborativeControl: true),
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    await notifier.setCollaborative(true);
+      expect(container.read(partyProvider), isNotNull);
+      expect(
+        notifier.canControl,
+        isTrue,
+      ); // collaborative control granted on entry
+      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+      expect(engine.canControl, isTrue);
+      expect(engine.isHost, isFalse);
+    },
+  );
 
-    expect(notifier.canControl, isTrue);
-    expect(notifier.isHost, isFalse);
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.canControl, isTrue);
-    expect(engine.isHost, isFalse);
-  });
+  test(
+    'setCollaborative(true) flips a guest\'s canControl without a host role',
+    () async {
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin) {
+          return {
+            'status': 'joined',
+            'session': _session(hostId: 'host1', collaborativeControl: false),
+          };
+        }
+        return {'ok': true};
+      });
+
+      final notifier = container.read(partyProvider.notifier);
+      await notifier.join('party-1');
+      expect(notifier.canControl, isFalse);
+
+      await notifier.setCollaborative(true);
+
+      expect(notifier.canControl, isTrue);
+      expect(notifier.isHost, isFalse);
+      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+      expect(engine.canControl, isTrue);
+      expect(engine.isHost, isFalse);
+    },
+  );
 
   test('host:changed transfers host authority to the engine', () async {
     container = build('guest1', (event, data) {
@@ -232,30 +326,33 @@ void main() {
     expect(engine.canControl, isTrue);
   });
 
-  test('selectMedia carries detail track choices into the active party', () async {
-    container = build('host1', (event, data) {
-      if (event == ClientEvent.partyCreate) {
-        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
-      }
-      return {'ok': true};
-    });
+  test(
+    'selectMedia carries detail track choices into the active party',
+    () async {
+      container = build('host1', (event, data) {
+        if (event == ClientEvent.partyCreate) {
+          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
 
-    final notifier = container.read(partyProvider.notifier);
-    await notifier.create();
-    await notifier.selectMedia(
-      'movie-1',
-      audioStreamIndex: 3,
-      subtitleStreamIndex: 7,
-    );
+      final notifier = container.read(partyProvider.notifier);
+      await notifier.create();
+      await notifier.selectMedia(
+        'movie-1',
+        audioStreamIndex: 3,
+        subtitleStreamIndex: 7,
+      );
 
-    final event = socket.emitted.last;
-    expect(event.$1, ClientEvent.partySelectMedia);
-    expect(event.$2, {
-      'mediaItemId': 'movie-1',
-      'audioStreamIndex': 3,
-      'subtitleStreamIndex': 7,
-    });
-  });
+      final event = socket.emitted.last;
+      expect(event.$1, ClientEvent.partySelectMedia);
+      expect(event.$2, {
+        'mediaItemId': 'movie-1',
+        'audioStreamIndex': 3,
+        'subtitleStreamIndex': 7,
+      });
+    },
+  );
 
   test('session snapshots deduplicate participant identities', () async {
     container = build('host1', (event, data) {
@@ -277,29 +374,32 @@ void main() {
 
     await container.read(partyProvider.notifier).create();
 
-    expect(
-      container.read(partyProvider)!.participants.map((p) => p.userId),
-      ['host1', 'guest1'],
-    );
+    expect(container.read(partyProvider)!.participants.map((p) => p.userId), [
+      'host1',
+      'guest1',
+    ]);
   });
 
-  test('end() (host) detaches the engine and clears local party state', () async {
-    container = build('host1', (event, data) {
-      if (event == ClientEvent.partyCreate) {
-        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
-      }
-      return {'ok': true};
-    });
+  test(
+    'end() (host) detaches the engine and clears local party state',
+    () async {
+      container = build('host1', (event, data) {
+        if (event == ClientEvent.partyCreate) {
+          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
 
-    final notifier = container.read(partyProvider.notifier);
-    await notifier.create();
-    expect(container.read(partyProvider), isNotNull);
+      final notifier = container.read(partyProvider.notifier);
+      await notifier.create();
+      expect(container.read(partyProvider), isNotNull);
 
-    await notifier.end();
+      await notifier.end();
 
-    expect(container.read(partyProvider), isNull);
-    expect(socket.isConnected, isFalse);
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.isHost, isFalse);
-  });
+      expect(container.read(partyProvider), isNull);
+      expect(socket.isConnected, isFalse);
+      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+      expect(engine.isHost, isFalse);
+    },
+  );
 }
