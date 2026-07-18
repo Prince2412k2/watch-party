@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/bottom_nav.dart';
-import '../../ui/widgets/popcorn_control.dart';
 import '../../ui/widgets/profile_menu.dart';
 import '../shortcuts.dart';
 
@@ -82,8 +81,11 @@ class AppShell extends ConsumerWidget {
     );
     final party = ref.watch(partyProvider);
     final currentUserId = ref.watch(currentUserIdProvider);
+    final media = MediaQuery.of(context);
+    final compact = media.size.width < 600;
     final sharedHostView =
-        party != null && (currentUserId == null || party.hostId != currentUserId);
+        party != null &&
+        (currentUserId == null || party.hostId != currentUserId);
 
     final destinations = isAuthenticated
         ? kShellDestinations
@@ -103,9 +105,9 @@ class AppShell extends ConsumerWidget {
               ),
             ),
             Positioned(
-              left: 0,
-              right: 0,
-              bottom: 10,
+              left: compact ? 8 : 0,
+              right: compact ? 8 : 0,
+              bottom: 8 + media.padding.bottom,
               child: Center(
                 child: BottomNav(
                   destinations: destinations,
@@ -115,12 +117,19 @@ class AppShell extends ConsumerWidget {
               ),
             ),
             Positioned(
-              top: 20,
-              right: 28 + desktopTrailingControlInset,
-              child: isAuthenticated ? const ProfileMenu() : const _LoginButton(),
+              top: 10 + media.padding.top,
+              right: (compact ? 16 : 28) + desktopTrailingControlInset,
+              child: isAuthenticated
+                  ? const ProfileMenu()
+                  : const _LoginButton(),
             ),
             if (isAuthenticated)
-              const Positioned(right: 22, bottom: 10, child: PopcornControl()),
+              Positioned(
+                right: compact ? 16 : 22,
+                top: compact ? 62 + media.padding.top : null,
+                bottom: compact ? null : 10,
+                child: const PopcornControl(),
+              ),
           ],
         ),
       ),

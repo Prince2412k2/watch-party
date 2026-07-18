@@ -76,8 +76,9 @@ class _ServarrScreenState extends ConsumerState<ServarrScreen> {
           );
         }
 
+        final compact = MediaQuery.sizeOf(context).width < 600;
         return ListView(
-          padding: const EdgeInsets.fromLTRB(44, 24, 0, 120),
+          padding: EdgeInsets.fromLTRB(compact ? 20 : 44, 24, 0, 120),
           children: [
             Padding(
               padding: const EdgeInsets.only(right: 24, bottom: 28),
@@ -86,8 +87,8 @@ class _ServarrScreenState extends ConsumerState<ServarrScreen> {
                 children: [
                   Text('Discover', style: AppTheme.displaySmall),
                   const SizedBox(height: 18),
-                  SizedBox(
-                    width: 440,
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
                     child: AppTextField(
                       hint: _activeKind == ServarrKind.movie
                           ? 'Search movies'

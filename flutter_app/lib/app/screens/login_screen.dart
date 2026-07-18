@@ -86,112 +86,119 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       backgroundColor: wp.bg,
       body: Stack(
         children: [
-          Center(
-            child: SingleChildScrollView(
-              child: SizedBox(
-                width: 380,
-                child: sc.Card(
-                  filled: true,
-                  fillColor: wp.surface,
-                  borderColor: wp.line,
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 36,
-                    vertical: 48,
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        'Watchparty',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: wp.text,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.1,
-                        ),
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) => Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: SizedBox(
+                    width: constraints.maxWidth > 412
+                        ? 380
+                        : constraints.maxWidth - 32,
+                    child: sc.Card(
+                      filled: true,
+                      fillColor: wp.surface,
+                      borderColor: wp.line,
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 36,
+                        vertical: 48,
                       ),
-                      const SizedBox(height: 44),
-                      Text(
-                        'Welcome back',
-                        style: TextStyle(
-                          color: wp.text,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                          height: 1.15,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Sign in with your Jellyfin account',
-                        style: TextStyle(
-                          color: wp.dim,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      _Field(
-                        caption: 'Username',
-                        child: AppTextField(
-                          controller: _user,
-                          autofocus: true,
-                          enabled: !auth.loading,
-                          onSubmitted: (_) => _submit(),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.lg),
-                      _Field(
-                        caption: 'Password',
-                        child: AppTextField(
-                          controller: _pass,
-                          obscureText: true,
-                          enabled: !auth.loading,
-                          onSubmitted: (_) => _submit(),
-                        ),
-                      ),
-                      if (auth.error != null) ...[
-                        const SizedBox(height: AppSpacing.lg),
-                        // Animate the error in each time it appears/changes.
-                        // The tint/stroke are the web's literal danger rgba
-                        // (theme-independent, as in Login.tsx:66).
-                        Reveal(
-                          key: ValueKey(auth.error),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0x1FE0655E),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: const Color(0x59E0655E),
-                              ),
-                            ),
-                            child: Text(
-                              auth.error!,
-                              style: const TextStyle(
-                                color: AppColors.red,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w500,
-                              ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'Watchparty',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: wp.text,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.1,
                             ),
                           ),
-                        ),
-                      ],
-                      const SizedBox(height: AppSpacing.xl),
-                      AppButton(
-                        label: auth.loading ? 'Signing in…' : 'Sign in',
-                        variant: AppButtonVariant.primary,
-                        expand: true,
-                        busy: auth.loading,
-                        onPressed: auth.loading ? null : _submit,
+                          const SizedBox(height: 44),
+                          Text(
+                            'Welcome back',
+                            style: TextStyle(
+                              color: wp.text,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                              height: 1.15,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Sign in with your Jellyfin account',
+                            style: TextStyle(
+                              color: wp.dim,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          _Field(
+                            caption: 'Username',
+                            child: AppTextField(
+                              controller: _user,
+                              autofocus: true,
+                              enabled: !auth.loading,
+                              onSubmitted: (_) => _submit(),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
+                          _Field(
+                            caption: 'Password',
+                            child: AppTextField(
+                              controller: _pass,
+                              obscureText: true,
+                              enabled: !auth.loading,
+                              onSubmitted: (_) => _submit(),
+                            ),
+                          ),
+                          if (auth.error != null) ...[
+                            const SizedBox(height: AppSpacing.lg),
+                            // Animate the error in each time it appears/changes.
+                            // The tint/stroke are the web's literal danger rgba
+                            // (theme-independent, as in Login.tsx:66).
+                            Reveal(
+                              key: ValueKey(auth.error),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x1FE0655E),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: const Color(0x59E0655E),
+                                  ),
+                                ),
+                                child: Text(
+                                  auth.error!,
+                                  style: const TextStyle(
+                                    color: AppColors.red,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: AppSpacing.xl),
+                          AppButton(
+                            label: auth.loading ? 'Signing in…' : 'Sign in',
+                            variant: AppButtonVariant.primary,
+                            expand: true,
+                            busy: auth.loading,
+                            onPressed: auth.loading ? null : _submit,
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -199,11 +206,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
           // Corner control to configure the backend URL.
           Positioned(
-            top: 10,
-            right: 10,
-            child: _ServerConfigButton(
-              host: _hostOf(server),
-              onTap: _configureServer,
+            top: 0,
+            right: 0,
+            child: SafeArea(
+              minimum: const EdgeInsets.all(10),
+              child: _ServerConfigButton(
+                host: _hostOf(server),
+                onTap: _configureServer,
+              ),
             ),
           ),
         ],

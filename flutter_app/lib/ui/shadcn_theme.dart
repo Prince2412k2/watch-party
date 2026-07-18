@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
@@ -60,7 +61,7 @@ abstract final class AppShadcnTheme {
     radius: AppSpacing.radius / 12,
     surfaceOpacity: 1.0,
     surfaceBlur: 0,
-    platform: TargetPlatform.linux,
+    platform: defaultTargetPlatform,
   );
 
   static sc.ThemeData get light => build(kLightPalette);

@@ -55,7 +55,8 @@ class MediaCacheProxy {
 
   /// How far past a served request to keep fetching in the background so the
   /// next chunk of playback is already cached by the time mpv asks for it.
-  static const _readAheadWindow = 96 * 1024 * 1024; // 96 MiB
+  static int get _readAheadWindow =>
+      (Platform.isIOS || Platform.isAndroid ? 16 : 96) * 1024 * 1024;
 
   /// 1 MiB per upstream call. Public so other cache-filling code (the
   /// download-fill controller) can default to the same chunk size without

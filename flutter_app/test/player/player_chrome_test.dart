@@ -78,7 +78,15 @@ class _SpyController implements PlayerController {
 }
 
 void main() {
-  Future<void> pumpChrome(WidgetTester tester, _SpyController c) async {
+  Future<void> pumpChrome(
+    WidgetTester tester,
+    _SpyController c, {
+    Size? size,
+  }) async {
+    if (size != null) {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.binding.setSurfaceSize(size);
+    }
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark,
@@ -97,6 +105,31 @@ void main() {
     ],
     subtitle: [PlayerTrack(id: 's0', type: 'subtitle', title: 'English SDH')],
   );
+
+  testWidgets('compact transport keeps touch controls inside an iPhone', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    await pumpChrome(tester, c, size: const Size(390, 844));
+    c.emitTracks(tracks);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('volumeSlider')), findsNothing);
+    for (final tooltip in [
+      'Play',
+      'Mute',
+      'Audio track',
+      'Subtitles',
+      'Full screen',
+    ]) {
+      final rect = tester.getRect(find.byTooltip(tooltip));
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(390));
+      expect(rect.bottom, lessThanOrEqualTo(844));
+    }
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('mute toggle calls setVolume(0) then restores the prior level', (
     tester,

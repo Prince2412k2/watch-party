@@ -1026,64 +1026,76 @@ class _TransportBar extends StatelessWidget {
               ],
             ),
           ),
-          Row(
-            children: [
-              _ChromeIconButton(
-                icon: playing ? Icons.pause : Icons.play_arrow,
-                tooltip: playing ? 'Pause' : 'Play',
-                onPressed: canControl ? onTogglePlay : null,
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              Text(
-                '${_fmt(position)} / ${_fmt(duration)}',
-                style: AppTheme.mono.copyWith(
-                  color: AppColors.dim,
-                  fontSize: 12,
-                ),
-              ),
-              const Spacer(),
-              _VolumeControl(
-                volume: volume,
-                onChanged: onVolume,
-                onToggleMute: onToggleMute,
-              ),
-              if (onDecode != null)
-                _DecodeMenu(
-                  hardware: hardwareDecoding,
-                  enabled: canControl,
-                  onChanged: onDecode!,
-                ),
-              if (tracks.audio.isNotEmpty)
-                _TrackMenu(
-                  icon: Icons.audiotrack,
-                  tooltip: 'Audio track',
-                  tracks: tracks.audio,
-                  selected: selectedAudio,
-                  enabled: true,
-                  allowNone: false,
-                  onChanged: onAudio,
-                ),
-              if (onAddSubtitle != null || tracks.subtitle.isNotEmpty)
-                _SubtitleControl(
-                  tracks: tracks.subtitle,
-                  selected: selectedSubtitle,
-                  enabled: true,
-                  onChanged: onSubtitle,
-                  onAddFile: onAddSubtitle,
-                ),
-              if (onSubtitleSettings != null)
-                _ChromeIconButton(
-                  icon: Icons.tune,
-                  tooltip: 'Subtitle settings',
-                  onPressed: onSubtitleSettings,
-                ),
-              if (onToggleFullscreen != null)
-                _ChromeIconButton(
-                  icon: isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                  tooltip: isFullscreen ? 'Exit full screen' : 'Full screen',
-                  onPressed: onToggleFullscreen,
-                ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 600;
+              return Row(
+                children: [
+                  _ChromeIconButton(
+                    icon: playing ? Icons.pause : Icons.play_arrow,
+                    tooltip: playing ? 'Pause' : 'Play',
+                    onPressed: canControl ? onTogglePlay : null,
+                  ),
+                  if (!compact) const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    compact
+                        ? _fmt(position)
+                        : '${_fmt(position)} / ${_fmt(duration)}',
+                    style: AppTheme.mono.copyWith(
+                      color: AppColors.dim,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const Spacer(),
+                  _VolumeControl(
+                    volume: volume,
+                    compact: compact,
+                    onChanged: onVolume,
+                    onToggleMute: onToggleMute,
+                  ),
+                  if (onDecode != null && !compact)
+                    _DecodeMenu(
+                      hardware: hardwareDecoding,
+                      enabled: canControl,
+                      onChanged: onDecode!,
+                    ),
+                  if (tracks.audio.isNotEmpty)
+                    _TrackMenu(
+                      icon: Icons.audiotrack,
+                      tooltip: 'Audio track',
+                      tracks: tracks.audio,
+                      selected: selectedAudio,
+                      enabled: true,
+                      allowNone: false,
+                      onChanged: onAudio,
+                    ),
+                  if (onAddSubtitle != null || tracks.subtitle.isNotEmpty)
+                    _SubtitleControl(
+                      tracks: tracks.subtitle,
+                      selected: selectedSubtitle,
+                      enabled: true,
+                      onChanged: onSubtitle,
+                      onAddFile: onAddSubtitle,
+                    ),
+                  if (onSubtitleSettings != null && !compact)
+                    _ChromeIconButton(
+                      icon: Icons.tune,
+                      tooltip: 'Subtitle settings',
+                      onPressed: onSubtitleSettings,
+                    ),
+                  if (onToggleFullscreen != null)
+                    _ChromeIconButton(
+                      icon: isFullscreen
+                          ? Icons.fullscreen_exit
+                          : Icons.fullscreen,
+                      tooltip: isFullscreen
+                          ? 'Exit full screen'
+                          : 'Full screen',
+                      onPressed: onToggleFullscreen,
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -1264,11 +1276,13 @@ class _CachedRangesTrackShape extends SliderTrackShape
 class _VolumeControl extends StatelessWidget {
   const _VolumeControl({
     required this.volume,
+    required this.compact,
     required this.onChanged,
     required this.onToggleMute,
   });
 
   final double volume;
+  final bool compact;
   final ValueChanged<double> onChanged;
   final VoidCallback onToggleMute;
 
@@ -1285,26 +1299,27 @@ class _VolumeControl extends StatelessWidget {
           tooltip: muted ? 'Unmute' : 'Mute',
           onPressed: onToggleMute,
         ),
-        SizedBox(
-          width: 76,
-          child: SliderTheme(
-            data: SliderThemeData(
-              trackHeight: 3,
-              activeTrackColor: AppColors.accent,
-              inactiveTrackColor: AppColors.line2,
-              thumbColor: AppColors.accent,
-              overlayShape: SliderComponentShape.noOverlay,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-            ),
-            child: Slider(
-              key: const Key('volumeSlider'),
-              value: volume.clamp(0, 100),
-              min: 0,
-              max: 100,
-              onChanged: onChanged,
+        if (!compact)
+          SizedBox(
+            width: 76,
+            child: SliderTheme(
+              data: SliderThemeData(
+                trackHeight: 3,
+                activeTrackColor: AppColors.accent,
+                inactiveTrackColor: AppColors.line2,
+                thumbColor: AppColors.accent,
+                overlayShape: SliderComponentShape.noOverlay,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+              ),
+              child: Slider(
+                key: const Key('volumeSlider'),
+                value: volume.clamp(0, 100),
+                min: 0,
+                max: 100,
+                onChanged: onChanged,
+              ),
             ),
           ),
-        ),
       ],
     );
   }
