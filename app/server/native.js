@@ -88,6 +88,10 @@ function verify(token, secret) {
 // verbatim, whether it's a 200 (full body) or a 206 (ranged).
 const PASSTHROUGH_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges']
 
+export function buildNativeStreamTarget({ baseUrl, itemId, mediaSourceId = itemId, jellyfinToken }) {
+  return `${baseUrl}/Videos/${encodeURIComponent(itemId)}/stream?static=true&mediaSourceId=${encodeURIComponent(mediaSourceId)}&api_key=${encodeURIComponent(jellyfinToken)}`
+}
+
 export function registerNativeRoutes(app) {
   // Read at registration time. This supports local `.env` loading in index.js,
   // whose assignments run after ESM dependencies have been evaluated.
@@ -108,9 +112,12 @@ export function registerNativeRoutes(app) {
   app.get('/api/library/native/stream-url/:itemId', requireAuth, (req, res) => {
     const { itemId } = req.params
     const purpose = req.query.purpose === 'download' ? 'download' : 'stream'
+    const mediaSourceId = typeof req.query.mediaSourceId === 'string'
+      ? req.query.mediaSourceId
+      : itemId
     const { baseUrl, token: jellyfinToken, userId } = getJellyfin(req)
     const exp = Date.now() + TTL_MS[purpose]
-    const token = sign({ itemId, purpose, userId, jellyfinToken, baseUrl, exp }, secret)
+    const token = sign({ itemId, mediaSourceId, purpose, userId, jellyfinToken, baseUrl, exp }, secret)
     const url = `${req.protocol}://${req.get('host')}/api/library/native/file?token=${encodeURIComponent(token)}`
     res.json({ url, expiresAt: exp })
   })
@@ -124,8 +131,8 @@ export function registerNativeRoutes(app) {
     const payload = verify(req.query.token, secret)
     if (!payload) return res.status(401).json({ error: 'invalid or expired token' })
 
-    const { itemId, jellyfinToken, baseUrl } = payload
-    const target = `${baseUrl}/Videos/${encodeURIComponent(itemId)}/stream?static=true&mediaSourceId=${encodeURIComponent(itemId)}&api_key=${encodeURIComponent(jellyfinToken)}`
+    const { itemId, mediaSourceId = itemId, jellyfinToken, baseUrl } = payload
+    const target = buildNativeStreamTarget({ baseUrl, itemId, mediaSourceId, jellyfinToken })
 
     try {
       const upstream = await fetchUpstreamWithRetry(

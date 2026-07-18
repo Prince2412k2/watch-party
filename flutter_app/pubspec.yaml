@@ -51,6 +51,7 @@ dependencies:
   window_manager: ^0.5.2
   tray_manager: ^0.5.3
   flutter_skill: ^0.9.36
+  lottie: ^3.5.1
 
 dev_dependencies:
   flutter_test:
@@ -69,6 +70,7 @@ flutter:
 
   assets:
     - assets/popcorn.png
+    - assets/watch_party.lottie
     - assets/fonts/
 
   fonts:

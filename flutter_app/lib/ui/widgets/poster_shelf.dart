@@ -22,6 +22,7 @@ class PosterShelf extends StatefulWidget {
     this.itemWidth = 190,
     this.spacing = 16,
     this.leftInset = 0,
+    this.fillAvailableHeight = false,
   });
 
   final String title;
@@ -34,6 +35,7 @@ class PosterShelf extends StatefulWidget {
   final double itemWidth;
   final double spacing;
   final double leftInset;
+  final bool fillAvailableHeight;
 
   @override
   State<PosterShelf> createState() => _PosterShelfState();
@@ -70,9 +72,7 @@ class _PosterShelfState extends State<PosterShelf> {
     final position = _controller.position;
     final next = _programmaticScroll
         ? _selectedIndex
-        : (_controller.offset / _stride)
-              .round()
-              .clamp(0, widget.itemCount - 1);
+        : (_controller.offset / _stride).round().clamp(0, widget.itemCount - 1);
     final canLeft = position.pixels > position.minScrollExtent + 1;
     final canRight = position.pixels < position.maxScrollExtent - 1;
     if (next != _selectedIndex ||
@@ -98,14 +98,19 @@ class _PosterShelfState extends State<PosterShelf> {
     }
   }
 
-  void _select(int index, {bool animate = true}) {
+  void _select(
+    int index, {
+    bool animate = true,
+    bool scroll = true,
+    bool playSound = true,
+  }) {
     if (widget.itemCount == 0) return;
     final next = index.clamp(0, widget.itemCount - 1);
     if (next == _selectedIndex) return;
     setState(() => _selectedIndex = next);
     widget.onSelectionChanged?.call(next);
-    _playMovementSound();
-    if (!_controller.hasClients) return;
+    if (playSound) _playMovementSound();
+    if (!scroll || !_controller.hasClients) return;
     final target = (next * _stride).clamp(
       _controller.position.minScrollExtent,
       _controller.position.maxScrollExtent,
@@ -113,11 +118,13 @@ class _PosterShelfState extends State<PosterShelf> {
     if (animate) {
       _programmaticScroll = true;
       unawaited(
-        _controller.animateTo(
-          target,
-          duration: const Duration(milliseconds: 260),
-          curve: Curves.easeOutCubic,
-        ).whenComplete(() => _programmaticScroll = false),
+        _controller
+            .animateTo(
+              target,
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+            )
+            .whenComplete(() => _programmaticScroll = false),
       );
     } else {
       _controller.jumpTo(target);
@@ -171,73 +178,90 @@ class _PosterShelfState extends State<PosterShelf> {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Padding(
-          padding: EdgeInsets.only(left: widget.leftInset, right: 24),
-          child: Text(
-            widget.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.headlineLarge.copyWith(color: wp.text),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Focus(
-          focusNode: _focusNode,
-          autofocus: widget.autofocus,
-          onKeyEvent: _onKeyEvent,
-          child: Listener(
-            onPointerDown: (_) => _focusNode.requestFocus(),
-            onPointerSignal: _onPointerSignal,
-            child: SizedBox(
-              height: _railHeight,
-              child: ShaderMask(
-                blendMode: BlendMode.dstIn,
-                shaderCallback: (bounds) => LinearGradient(
-                  colors: [
-                    _canScrollLeft ? Colors.transparent : Colors.black,
-                    Colors.black,
-                    Colors.black,
-                    _canScrollRight ? Colors.transparent : Colors.black,
-                  ],
-                  stops: const [0, 0.035, 0.965, 1],
-                ).createShader(bounds),
-                child: ListView.separated(
-                  controller: _controller,
-                  scrollDirection: Axis.horizontal,
-                  clipBehavior: Clip.none,
-                  padding: EdgeInsets.only(
-                    left: widget.leftInset,
-                    right: 40,
-                    top: 24,
-                    bottom: 30,
-                  ),
-                  itemCount: widget.itemCount,
-                  separatorBuilder: (_, _) => SizedBox(width: widget.spacing),
-                  itemBuilder: (context, index) {
-                    final selected = index == _selectedIndex;
-                    return Semantics(
-                      selected: selected,
-                      child: AnimatedScale(
-                        scale: selected ? 1.1 : 1,
-                        alignment: Alignment.bottomCenter,
-                        duration: const Duration(milliseconds: 240),
-                        curve: Curves.easeOutCubic,
-                        child: Align(
-                          alignment: Alignment.bottomLeft,
-                          child: widget.itemBuilder(context, index),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+    final heading = Padding(
+      padding: EdgeInsets.only(left: widget.leftInset, right: 24),
+      child: Text(
+        widget.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppTheme.headlineLarge.copyWith(color: wp.text),
+      ),
+    );
+    final rail = Focus(
+      focusNode: _focusNode,
+      autofocus: widget.autofocus,
+      onKeyEvent: _onKeyEvent,
+      child: Listener(
+        onPointerDown: (_) => _focusNode.requestFocus(),
+        onPointerSignal: _onPointerSignal,
+        child: SizedBox(
+          height: _railHeight,
+          child: ShaderMask(
+            blendMode: BlendMode.dstIn,
+            shaderCallback: (bounds) => LinearGradient(
+              colors: [
+                _canScrollLeft ? Colors.transparent : Colors.black,
+                Colors.black,
+                Colors.black,
+                _canScrollRight ? Colors.transparent : Colors.black,
+              ],
+              stops: const [0, 0.035, 0.965, 1],
+            ).createShader(bounds),
+            child: ListView.separated(
+              controller: _controller,
+              scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.hardEdge,
+              padding: EdgeInsets.only(
+                left: widget.leftInset,
+                right: 40,
+                top: 24,
+                bottom: 30,
               ),
+              itemCount: widget.itemCount,
+              separatorBuilder: (_, _) => SizedBox(width: widget.spacing),
+              itemBuilder: (context, index) {
+                final selected = index == _selectedIndex;
+                return MouseRegion(
+                  key: ValueKey('poster-shelf-item-$index'),
+                  onEnter: (_) {
+                    _focusNode.requestFocus();
+                    _select(index, scroll: false, playSound: false);
+                  },
+                  child: Semantics(
+                    selected: selected,
+                    child: AnimatedScale(
+                      scale: selected ? 1.1 : 1,
+                      alignment: Alignment.bottomCenter,
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeOutCubic,
+                      child: Align(
+                        alignment: Alignment.bottomLeft,
+                        child: widget.itemBuilder(context, index),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ),
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: widget.fillAvailableHeight
+          ? MainAxisSize.max
+          : MainAxisSize.min,
+      children: [
+        heading,
+        if (widget.fillAvailableHeight)
+          Expanded(
+            child: Align(alignment: Alignment.centerLeft, child: rail),
+          )
+        else ...[
+          const SizedBox(height: 12),
+          rail,
+        ],
       ],
     );
   }

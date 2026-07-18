@@ -61,7 +61,14 @@ export default function RoomControls({
     setTimeout(() => setCopyLabel('Copy link'), 2000)
   }
 
-  function leaveRoom() {
+  async function leaveRoom() {
+    // Back from a host-owned room is a real teardown, not just browser
+    // navigation. Otherwise the app-wide socket remains in the room and guests
+    // keep playing because the server never observes a disconnect.
+    if (isHost) {
+      await endParty()
+      return
+    }
     if (window.history.length > 1) {
       window.history.back()
       return
@@ -114,7 +121,7 @@ export default function RoomControls({
 
       {/* Top-left room controls (fades with auto-hide) */}
       <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 58px)' : top, left: phone ? 'calc(var(--sa-l) + 8px)' : 14, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 4, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
-        <button onClick={leaveRoom} title="Back" aria-label="Back" style={iconBtn(true)} onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)' }} onMouseLeave={e => { e.currentTarget.style.color = 'var(--red)' }}>
+        <button onClick={() => { void leaveRoom() }} title="Back" aria-label="Back" style={iconBtn(true)} onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)' }} onMouseLeave={e => { e.currentTarget.style.color = 'var(--red)' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /><path d="M9 12h12" /></svg>
         </button>
       </div>
