@@ -109,35 +109,21 @@ media_kit-based AppImage packaging guide uses.
   actually exits. Wired from `lib/main.dart` with a single
   `await DesktopLifecycle.instance.init()` call — see the `// E10:` comment
   there.
-- Icons live in `assets/icons/` (`app_icon.png` for the window/app icon,
-  `tray_icon.png` — a smaller variant — for the tray).
+- The Linux package icon reuses the 512px macOS app icon from
+  `macos/Runner/Assets.xcassets/AppIcon.appiconset/`.
 
-## Windows / macOS — CI builds + releases
+## Desktop CI builds
 
-Built in CI by `.github/workflows/release-desktop.yml` (Linux is still built
-locally via `build-linux.sh` above — add it to the workflow later if you want
-all three in one release).
+Every push to `main` (including a pull request merged into `main`) runs
+`.github/workflows/main.yml`. The workflow deploys the server and builds:
 
-### How to cut a release
+- `Watchparty-<version>-macos.dmg`
+- `Watchparty-<version>-x86_64.AppImage`
+- `Watchparty-<version>-windows-setup.exe`
 
-```
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The workflow builds macOS + Windows on GitHub-hosted runners and publishes a
-GitHub Release named after the tag with:
-
-- `Watchparty-<version>-macos.dmg` — universal (Intel + Apple Silicon) `.app`
-  in a drag-to-Applications `.dmg`.
-- `Watchparty-<version>-windows-x64.zip` — extracts to a single `Watchparty/`
-  folder (exe + plugin DLLs + the bundled MSVC runtime + `data/`); run
-  `Watchparty/watchparty.exe`.
-- `SHA256SUMS` — verify with `sha256sum -c SHA256SUMS` (or `Get-FileHash` on
-  Windows) before running the unsigned artifacts.
-
-You can also trigger it manually (Actions → **Release Desktop** → Run workflow)
-to produce build artifacts without publishing a release.
+The installers are retained as GitHub Actions artifacts and replace the latest
+desktop builds served by the app. Pull requests, tags, other branches, and
+manual dispatches do not run deployment or packaging.
 
 ### Signing (not done — artifacts are unsigned)
 
