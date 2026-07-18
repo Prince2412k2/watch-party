@@ -22,13 +22,15 @@ dependencies:
   livekit_client: ^2.8.1
 
   # Sync signaling (same socket.io contract as the web app).
-  socket_io_client: ^3.1.2
+  socket_io_client: ^3.1.6
 
   # HTTP + session-cookie persistence.
   dio: ^5.10.0
   cookie_jar: ^4.0.9
   dio_cookie_manager: ^3.4.0
   path_provider: ^2.1.5
+  package_info_plus: ^9.0.1
+  crypto: ^3.0.6
 
   # State / routing / persistence.
   flutter_riverpod: ^2.6.1

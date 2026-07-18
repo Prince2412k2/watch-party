@@ -11,9 +11,11 @@ import 'package:flutter/services.dart';
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
+import '../models/subtitle_preferences.dart';
 import '../models/trickplay_manifest.dart';
 import '../ui/ui.dart';
 import 'media_kit_player_controller.dart';
+import 'party_track_mapping.dart';
 import 'player_controller.dart';
 import 'subtitle_cues.dart';
 import 'trickplay_preview.dart';
@@ -51,6 +53,11 @@ class PlayerChrome extends StatefulWidget {
     this.mediaSourceId,
     this.apiClient,
     this.preferredSubtitleStreamIndex,
+    this.partyPlayback,
+    this.subtitlePreferences,
+    this.canManagePartyMedia = true,
+    this.onSetPlaybackTracks,
+    this.onSetSubtitlePreferences,
     this.cachedSpans,
     this.visible,
     this.onWake,
@@ -93,6 +100,12 @@ class PlayerChrome extends StatefulWidget {
   final String? mediaSourceId;
   final ApiClient? apiClient;
   final int? preferredSubtitleStreamIndex;
+  final PlaybackInfo? partyPlayback;
+  final SubtitlePreferences? subtitlePreferences;
+  final bool canManagePartyMedia;
+  final void Function(int? audioStreamIndex, int subtitleStreamIndex)?
+  onSetPlaybackTracks;
+  final ValueChanged<SubtitlePreferences>? onSetSubtitlePreferences;
 
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
@@ -137,6 +150,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
   int _subPos = 100;
   double _subDelay = 0.0;
   String _subFont = 'sans-serif';
+  String _subColor = '#FFFFFF';
+  int _subBackgroundOpacity = 65;
+  PlaybackInfo? _playbackInfo;
 
   Duration? _dragPosition;
   Duration? _previewPosition;
@@ -158,6 +174,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     // Seed the mixer/track UI from the real player state so the controls match
     // what's actually playing (rather than assuming 100% / 1.0× / no track).
     if (c is MediaKitPlayerController) {
+      _error = c.lastError;
       _tracks = c.latestTracks;
       _volume = c.volumeNow;
       _preMuteVolume = _volume > 0 ? _volume : 100;
@@ -168,6 +185,8 @@ class _PlayerChromeState extends State<PlayerChrome> {
       _subPos = c.subtitlePosition;
       _subDelay = c.subtitleDelay;
       _subFont = c.subtitleFont;
+      _subColor = c.subtitleColor;
+      _subBackgroundOpacity = c.subtitleBackgroundOpacity;
     }
 
     _subs.add(c.position.listen((p) => setState(() => _position = p)));
@@ -193,6 +212,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
             }
           }
         });
+        _applyCanonicalTracks();
       }),
     );
 
@@ -206,6 +226,10 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _scheduleIdle();
     _loadTrickplay();
     _loadExternalSubtitles();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _applyCanonicalSubtitlePreferences();
+      _applyCanonicalTracks();
+    });
   }
 
   @override
@@ -222,6 +246,13 @@ class _PlayerChromeState extends State<PlayerChrome> {
         oldWidget.apiClient != widget.apiClient) {
       _loadTrickplay();
       _loadExternalSubtitles();
+    }
+    if (oldWidget.partyPlayback != widget.partyPlayback) {
+      _playbackInfo = widget.partyPlayback;
+      _applyCanonicalTracks();
+    }
+    if (oldWidget.subtitlePreferences != widget.subtitlePreferences) {
+      _applyCanonicalSubtitlePreferences();
     }
   }
 
@@ -322,6 +353,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
         return;
       }
       final external = info.subtitleStreams.where((track) => track.isExternal);
+      _playbackInfo = widget.partyPlayback ?? info;
       _externalSubtitleById.clear();
       for (final track in external) {
         _externalSubtitleById[_externalSubtitleId(track.index)] = track;
@@ -337,11 +369,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
               language: track.language,
               codec: track.codec,
               isDefault: track.isDefault,
+              jellyfinIndex: track.index,
             ),
         ];
       });
       if (_selectedSubtitle == null) {
-        final preferred = widget.preferredSubtitleStreamIndex;
+        final preferred =
+            widget.partyPlayback?.selectedSubtitleIndex ??
+            widget.preferredSubtitleStreamIndex;
         PlaybackTrack? requested;
         if (preferred != null) {
           for (final track in external) {
@@ -357,6 +392,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
           await _setSubtitle(_externalSubtitleId(initial.index));
         }
       }
+      await _applyCanonicalTracks();
     } catch (e) {
       if (mounted && widget.itemId == itemId) setState(() => _error = '$e');
     }
@@ -462,6 +498,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (c is! MediaKitPlayerController) return;
     setState(() => _subScale = v);
     await c.setSubtitleScale(v);
+    _emitSubtitlePreferences(fontScalePercent: (v * 100).round());
     _wake();
   }
 
@@ -470,6 +507,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (c is! MediaKitPlayerController) return;
     setState(() => _subPos = v);
     await c.setSubtitlePosition(v);
+    _emitSubtitlePreferences(
+      verticalPosition: v <= 25 ? 'top' : (v <= 75 ? 'middle' : 'bottom'),
+    );
     _wake();
   }
 
@@ -478,6 +518,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (c is! MediaKitPlayerController) return;
     setState(() => _subDelay = v);
     await c.setSubtitleDelay(v);
+    _emitSubtitlePreferences(delayMs: (v * 1000).round());
     _wake();
   }
 
@@ -486,7 +527,119 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (c is! MediaKitPlayerController) return;
     setState(() => _subFont = font);
     await c.setSubtitleFont(font);
+    _emitSubtitlePreferences(
+      fontFamily: font == 'monospace'
+          ? 'mono'
+          : (font == 'serif' ? 'serif' : 'sans'),
+    );
     _wake();
+  }
+
+  Future<void> _setSubtitleColor(String color) async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    setState(() => _subColor = color.toUpperCase());
+    await c.setSubtitleColor(_subColor);
+    _emitSubtitlePreferences(textColor: _subColor);
+  }
+
+  Future<void> _setSubtitleBackgroundOpacity(int percent) async {
+    final c = widget.controller;
+    if (c is! MediaKitPlayerController) return;
+    setState(() => _subBackgroundOpacity = percent);
+    await c.setSubtitleBackgroundOpacity(percent);
+    _emitSubtitlePreferences(backgroundOpacityPercent: percent);
+  }
+
+  void _emitSubtitlePreferences({
+    int? delayMs,
+    int? fontScalePercent,
+    String? verticalPosition,
+    String? fontFamily,
+    String? textColor,
+    int? backgroundOpacityPercent,
+  }) {
+    final callback = widget.onSetSubtitlePreferences;
+    if (callback == null || !widget.canManagePartyMedia) return;
+    final local = SubtitlePreferences(
+      delayMs: (_subDelay * 1000).round(),
+      fontScalePercent: (_subScale * 100).round(),
+      verticalPosition: _subPos <= 25
+          ? 'top'
+          : (_subPos <= 75 ? 'middle' : 'bottom'),
+      fontFamily: _subFont == 'monospace'
+          ? 'mono'
+          : (_subFont == 'serif' ? 'serif' : 'sans'),
+      textColor: _subColor,
+      backgroundOpacityPercent: _subBackgroundOpacity,
+    );
+    callback(
+      local.copyWith(
+        delayMs: delayMs,
+        fontScalePercent: fontScalePercent,
+        verticalPosition: verticalPosition,
+        fontFamily: fontFamily,
+        textColor: textColor,
+        backgroundOpacityPercent: backgroundOpacityPercent,
+      ),
+    );
+  }
+
+  Future<void> _applyCanonicalSubtitlePreferences() async {
+    final preferences = widget.subtitlePreferences;
+    if (preferences == null) return;
+    final position = switch (preferences.verticalPosition) {
+      'top' => 10,
+      'middle' => 50,
+      _ => 100,
+    };
+    final font = switch (preferences.fontFamily) {
+      'serif' => 'serif',
+      'mono' => 'monospace',
+      _ => 'sans-serif',
+    };
+    if (mounted) {
+      setState(() {
+        _subScale = preferences.fontScalePercent / 100;
+        _subPos = position;
+        _subDelay = preferences.delayMs / 1000;
+        _subFont = font;
+        _subColor = preferences.textColor;
+        _subBackgroundOpacity = preferences.backgroundOpacityPercent;
+      });
+    }
+    final c = widget.controller;
+    if (c is MediaKitPlayerController) {
+      await c.setSubtitleScale(_subScale);
+      await c.setSubtitlePosition(_subPos);
+      await c.setSubtitleDelay(_subDelay);
+      await c.setSubtitleFont(_subFont);
+      await c.setSubtitleColor(_subColor);
+      await c.setSubtitleBackgroundOpacity(_subBackgroundOpacity);
+    }
+  }
+
+  Future<void> _applyCanonicalTracks() async {
+    final playback = widget.partyPlayback ?? _playbackInfo;
+    if (playback == null) return;
+    final audioId = playerTrackIdForJellyfinIndex(
+      jellyfinIndex: playback.selectedAudioIndex,
+      type: 'audio',
+      playerTracks: _tracks.audio,
+      playback: playback,
+    );
+    final subtitleId = playerTrackIdForJellyfinIndex(
+      jellyfinIndex: playback.selectedSubtitleIndex,
+      type: 'subtitle',
+      playerTracks: _visibleSubtitleTracks,
+      playback: playback,
+    );
+    if (playback.selectedAudioIndex != null && audioId != null) {
+      await _setAudio(audioId, authored: false);
+    }
+    if (playback.selectedSubtitleIndex != null) {
+      await _setSubtitle(subtitleId, authored: false);
+    }
   }
 
   /// Opens a compact panel with sliders for subtitle size, vertical position,
@@ -504,22 +657,41 @@ class _PlayerChromeState extends State<PlayerChrome> {
         position: _subPos,
         delay: _subDelay,
         font: _subFont,
+        color: _subColor,
+        backgroundOpacity: _subBackgroundOpacity,
+        enabled: widget.canManagePartyMedia,
         onScale: _setSubtitleScale,
         onPosition: _setSubtitlePosition,
         onDelay: _setSubtitleDelay,
         onFont: _setSubtitleFont,
+        onColor: _setSubtitleColor,
+        onBackgroundOpacity: _setSubtitleBackgroundOpacity,
       ),
     );
     _wake();
   }
 
-  Future<void> _setAudio(String? id) async {
+  Future<void> _setAudio(String? id, {bool authored = true}) async {
     setState(() => _selectedAudio = id);
     await widget.controller.setAudioTrack(id);
+    if (authored && widget.onSetPlaybackTracks != null) {
+      final playback = widget.partyPlayback ?? _playbackInfo;
+      if (playback != null) {
+        widget.onSetPlaybackTracks!(
+          jellyfinIndexForPlayerTrack(
+            playerTrackId: id,
+            type: 'audio',
+            playerTracks: _tracks.audio,
+            playback: playback,
+          ),
+          playback.selectedSubtitleIndex ?? -1,
+        );
+      }
+    }
     _wake();
   }
 
-  Future<void> _setSubtitle(String? id) async {
+  Future<void> _setSubtitle(String? id, {bool authored = true}) async {
     final previous = _selectedSubtitle;
     final version = ++_subtitleSelectionVersion;
     final external = id == null ? null : _externalSubtitleById[id];
@@ -582,6 +754,21 @@ class _PlayerChromeState extends State<PlayerChrome> {
     }
     if (mounted && version == _subtitleSelectionVersion) {
       setState(() => _selectedSubtitle = id);
+    }
+    if (authored && widget.onSetPlaybackTracks != null) {
+      final playback = widget.partyPlayback ?? _playbackInfo;
+      if (playback != null) {
+        widget.onSetPlaybackTracks!(
+          playback.selectedAudioIndex,
+          jellyfinIndexForPlayerTrack(
+                playerTrackId: id,
+                type: 'subtitle',
+                playerTracks: _visibleSubtitleTracks,
+                playback: playback,
+              ) ??
+              -1,
+        );
+      }
     }
     _wake();
   }
@@ -716,6 +903,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
                 alignment: Alignment.bottomCenter,
                 child: _TransportBar(
                   canControl: widget.canControl,
+                  canManageTracks: widget.canManagePartyMedia,
                   playing: _playing,
                   position: _dragPosition ?? _position,
                   duration: _duration,
@@ -772,6 +960,8 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   scale: _subScale,
                   position: _subPos,
                   font: _subFont,
+                  color: _subColor,
+                  backgroundOpacity: _subBackgroundOpacity,
                 ),
             ],
           ),
@@ -787,12 +977,16 @@ class _SubtitleOverlay extends StatelessWidget {
     required this.scale,
     required this.position,
     required this.font,
+    required this.color,
+    required this.backgroundOpacity,
   });
 
   final String text;
   final double scale;
   final int position;
   final String font;
+  final String color;
+  final int backgroundOpacity;
 
   @override
   Widget build(BuildContext context) {
@@ -811,7 +1005,15 @@ class _SubtitleOverlay extends StatelessWidget {
             key: const Key('externalSubtitleOverlay'),
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white,
+              color: Color(
+                int.parse(color.substring(1), radix: 16) | 0xFF000000,
+              ),
+              backgroundColor: Color.fromRGBO(
+                0,
+                0,
+                0,
+                backgroundOpacity.clamp(0, 100) / 100,
+              ),
               fontSize: 22 * scale,
               fontFamily: family,
               fontFamilyFallback: fallbacks,
@@ -898,6 +1100,7 @@ class _TopBar extends StatelessWidget {
 class _TransportBar extends StatelessWidget {
   const _TransportBar({
     required this.canControl,
+    required this.canManageTracks,
     required this.playing,
     required this.position,
     required this.duration,
@@ -928,6 +1131,7 @@ class _TransportBar extends StatelessWidget {
   });
 
   final bool canControl;
+  final bool canManageTracks;
   final bool playing;
   final Duration position;
   final Duration duration;
@@ -1059,7 +1263,7 @@ class _TransportBar extends StatelessWidget {
                   tooltip: 'Audio track',
                   tracks: tracks.audio,
                   selected: selectedAudio,
-                  enabled: true,
+                  enabled: canManageTracks,
                   allowNone: false,
                   onChanged: onAudio,
                 ),
@@ -1067,7 +1271,7 @@ class _TransportBar extends StatelessWidget {
                 _SubtitleControl(
                   tracks: tracks.subtitle,
                   selected: selectedSubtitle,
-                  enabled: true,
+                  enabled: canManageTracks,
                   onChanged: onSubtitle,
                   onAddFile: onAddSubtitle,
                 ),
@@ -1362,20 +1566,30 @@ class _SubtitleSettingsDialog extends StatefulWidget {
     required this.position,
     required this.delay,
     required this.font,
+    required this.color,
+    required this.backgroundOpacity,
+    required this.enabled,
     required this.onScale,
     required this.onPosition,
     required this.onDelay,
     required this.onFont,
+    required this.onColor,
+    required this.onBackgroundOpacity,
   });
 
   final double scale;
   final int position;
   final double delay;
   final String font;
+  final String color;
+  final int backgroundOpacity;
+  final bool enabled;
   final ValueChanged<double> onScale;
   final ValueChanged<int> onPosition;
   final ValueChanged<double> onDelay;
   final ValueChanged<String> onFont;
+  final ValueChanged<String> onColor;
+  final ValueChanged<int> onBackgroundOpacity;
 
   @override
   State<_SubtitleSettingsDialog> createState() =>
@@ -1387,14 +1601,29 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
   late int _position = widget.position;
   late double _delay = widget.delay;
   late String _font = widget.font;
+  late String _color = widget.color;
+  late int _backgroundOpacity = widget.backgroundOpacity;
 
   @override
   Widget build(BuildContext context) {
+    final wp = context.wp;
+    final titleStyle = TextStyle(
+      fontFamily: AppFonts.sans,
+      fontSize: 17,
+      fontWeight: FontWeight.w700,
+      color: wp.text,
+    );
+    final bodyStyle = TextStyle(
+      fontFamily: AppFonts.sans,
+      fontSize: 13,
+      color: wp.text,
+    );
+    final dimStyle = bodyStyle.copyWith(color: wp.dim);
     return Dialog(
-      backgroundColor: AppColors.surface,
+      backgroundColor: wp.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppSpacing.radius),
-        side: const BorderSide(color: AppColors.line),
+        side: BorderSide(color: wp.line),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 380),
@@ -1404,19 +1633,16 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Subtitle settings', style: AppTheme.titleMedium),
+              Text('Subtitle settings', style: titleStyle),
               const SizedBox(height: AppSpacing.md),
-              Text('Font', style: AppTheme.dim),
+              Text('Font', style: dimStyle),
               DropdownButton<String>(
                 key: const Key('subtitleFont'),
                 value: _font,
                 isExpanded: true,
-                dropdownColor: AppColors.surface,
+                dropdownColor: wp.surface,
+                style: bodyStyle,
                 items: const [
-                  DropdownMenuItem(
-                    value: 'CircularXX',
-                    child: Text('Circular XX'),
-                  ),
                   DropdownMenuItem(
                     value: 'sans-serif',
                     child: Text('Sans serif'),
@@ -1427,74 +1653,125 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
                     child: Text('Monospace'),
                   ),
                 ],
-                onChanged: (font) {
-                  if (font == null) return;
-                  setState(() => _font = font);
-                  widget.onFont(font);
+                onChanged: !widget.enabled
+                    ? null
+                    : (font) {
+                        if (font == null) return;
+                        setState(() => _font = font);
+                        widget.onFont(font);
+                      },
+              ),
+              Text('Text color', style: dimStyle),
+              TextFormField(
+                key: const Key('subtitleTextColor'),
+                initialValue: _color,
+                enabled: widget.enabled,
+                decoration: const InputDecoration(hintText: '#RRGGBB'),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[#0-9A-Fa-f]')),
+                  LengthLimitingTextInputFormatter(7),
+                ],
+                onChanged: (color) {
+                  if (!RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(color)) return;
+                  setState(() => _color = color.toUpperCase());
+                  widget.onColor(_color);
                 },
               ),
               const SizedBox(height: AppSpacing.sm),
               _slider(
+                palette: wp,
                 label: 'Size',
                 value: _scale,
-                min: 0.5,
+                min: 0.6,
                 max: 2.0,
-                divisions: 30,
+                divisions: 14,
                 display: '${(_scale * 100).round()}%',
-                onChanged: (v) {
-                  setState(() => _scale = v);
-                  widget.onScale(v);
-                },
+                onChanged: !widget.enabled
+                    ? null
+                    : (v) {
+                        setState(() => _scale = v);
+                        widget.onScale(v);
+                      },
               ),
               _slider(
-                // sub-pos: 100 = bottom, lower = higher up. Show a "height"
-                // reading so the slider reads left→low, right→high.
+                palette: wp,
                 label: 'Position',
                 value: _position.toDouble(),
-                min: 0,
-                max: 150,
-                divisions: 150,
-                display: '${150 - _position}',
-                onChanged: (v) {
-                  setState(() => _position = v.round());
-                  widget.onPosition(_position);
-                },
+                min: 10,
+                max: 100,
+                divisions: 2,
+                display: _position <= 25
+                    ? 'Top'
+                    : (_position <= 75 ? 'Middle' : 'Bottom'),
+                onChanged: !widget.enabled
+                    ? null
+                    : (v) {
+                        final position = v < 33 ? 10 : (v < 78 ? 50 : 100);
+                        setState(() => _position = position);
+                        widget.onPosition(_position);
+                      },
               ),
               _slider(
+                palette: wp,
                 label: 'Delay',
                 value: _delay,
                 min: -10.0,
                 max: 10.0,
-                divisions: 200,
+                divisions: 80,
                 display:
                     '${_delay >= 0 ? '+' : ''}${_delay.toStringAsFixed(1)}s',
-                onChanged: (v) {
-                  setState(() => _delay = double.parse(v.toStringAsFixed(1)));
-                  widget.onDelay(_delay);
-                },
+                onChanged: !widget.enabled
+                    ? null
+                    : (v) {
+                        setState(
+                          () => _delay = double.parse(v.toStringAsFixed(2)),
+                        );
+                        widget.onDelay(_delay);
+                      },
+              ),
+              _slider(
+                palette: wp,
+                label: 'Background',
+                value: _backgroundOpacity.toDouble(),
+                min: 0,
+                max: 100,
+                divisions: 20,
+                display: '$_backgroundOpacity%',
+                onChanged: !widget.enabled
+                    ? null
+                    : (v) {
+                        setState(() => _backgroundOpacity = v.round());
+                        widget.onBackgroundOpacity(_backgroundOpacity);
+                      },
               ),
               const SizedBox(height: AppSpacing.sm),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _font = 'sans-serif';
-                        _scale = 1;
-                        _position = 100;
-                        _delay = 0;
-                      });
-                      widget.onFont(_font);
-                      widget.onScale(_scale);
-                      widget.onPosition(_position);
-                      widget.onDelay(_delay);
-                    },
-                    child: const Text('Reset', style: AppTheme.body),
+                    onPressed: !widget.enabled
+                        ? null
+                        : () {
+                            setState(() {
+                              _font = 'sans-serif';
+                              _scale = 1;
+                              _position = 100;
+                              _delay = 0;
+                              _color = '#FFFFFF';
+                              _backgroundOpacity = 65;
+                            });
+                            widget.onFont(_font);
+                            widget.onScale(_scale);
+                            widget.onPosition(_position);
+                            widget.onDelay(_delay);
+                            widget.onColor(_color);
+                            widget.onBackgroundOpacity(_backgroundOpacity);
+                          },
+                    child: Text('Reset', style: bodyStyle),
                   ),
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Done', style: AppTheme.body),
+                    child: Text('Done', style: bodyStyle),
                   ),
                 ],
               ),
@@ -1506,13 +1783,14 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
   }
 
   Widget _slider({
+    required WpPalette palette,
     required String label,
     required double value,
     required double min,
     required double max,
     required int divisions,
     required String display,
-    required ValueChanged<double> onChanged,
+    required ValueChanged<double>? onChanged,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1520,16 +1798,30 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label, style: AppTheme.dim),
-            Text(display, style: AppTheme.mono.copyWith(color: AppColors.dim)),
+            Text(
+              label,
+              style: TextStyle(
+                fontFamily: AppFonts.sans,
+                fontSize: 13,
+                color: palette.dim,
+              ),
+            ),
+            Text(
+              display,
+              style: TextStyle(
+                fontFamily: AppFonts.mono,
+                fontSize: 12,
+                color: palette.dim,
+              ),
+            ),
           ],
         ),
         SliderTheme(
           data: SliderThemeData(
             trackHeight: 3,
-            activeTrackColor: AppColors.accent,
-            inactiveTrackColor: AppColors.line2,
-            thumbColor: AppColors.accent,
+            activeTrackColor: palette.text,
+            inactiveTrackColor: palette.line2,
+            thumbColor: palette.text,
             overlayShape: SliderComponentShape.noOverlay,
             thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
           ),
