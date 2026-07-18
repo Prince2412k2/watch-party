@@ -156,6 +156,17 @@ Future<bool> verifyArtifact(File file, ReleaseArtifact artifact) async {
   return digest.toString() == artifact.sha256;
 }
 
+Future<File> updateArtifactDestination(
+  ReleaseArtifact artifact, {
+  Directory? applicationSupportDirectory,
+}) async {
+  final support =
+      applicationSupportDirectory ?? await getApplicationSupportDirectory();
+  final updates = Directory('${support.path}${Platform.pathSeparator}updates');
+  await updates.create(recursive: true);
+  return File('${updates.path}${Platform.pathSeparator}${artifact.filename}');
+}
+
 Future<bool> canWriteUpdateBeside(String executablePath) async {
   final parent = File(executablePath).parent;
   final probe = File(
@@ -264,11 +275,7 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
           await canWriteUpdateBeside(appImage)) {
         file = File('$appImage.update');
       } else {
-        final downloads =
-            await getDownloadsDirectory() ?? await getTemporaryDirectory();
-        file = File(
-          '${downloads.path}${Platform.pathSeparator}${artifact.filename}',
-        );
+        file = await updateArtifactDestination(artifact);
       }
       if (await file.exists()) await file.delete();
       state = state.copyWith(
