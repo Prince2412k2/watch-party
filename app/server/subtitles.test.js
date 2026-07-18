@@ -3,14 +3,45 @@ import assert from 'node:assert/strict'
 
 import {
   findExternalSubtitleStream,
+  findNewExternalSubtitle,
+  pollForNewExternalSubtitle,
   resolveJellyfinDeliveryUrl,
   srtToVtt,
+  subtitleTextToVtt,
   subtitleMutationError,
 } from './subtitles.js'
 
 test('srtToVtt removes sequence numbers and converts comma timestamps', () => {
   const result = srtToVtt('\uFEFF1\r\n00:00:01,250 --> 00:00:03,500\r\nHello!\r\n\r\n2\r\n00:01:02,000 --> 00:01:05,125\r\nAgain')
   assert.equal(result, 'WEBVTT\n\n00:00:01.250 --> 00:00:03.500\nHello!\n\n00:01:02.000 --> 00:01:05.125\nAgain\n')
+})
+
+test('subtitleTextToVtt preserves WebVTT and converts SRT response content', () => {
+  assert.equal(subtitleTextToVtt('\uFEFFWEBVTT\r\n\r\n00:01.000 --> 00:02.000\r\nHi'), 'WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n')
+  assert.equal(subtitleTextToVtt('1\n00:00:01,000 --> 00:00:02,500\nHi'), 'WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nHi\n')
+})
+
+test('findNewExternalSubtitle ignores existing and embedded tracks', () => {
+  const before = { MediaSources: [{ Id: 'source', MediaStreams: [{ Type: 'Subtitle', Index: 2, IsExternal: true }] }] }
+  const after = { MediaSources: [{ Id: 'source', MediaStreams: [
+    { Type: 'Subtitle', Index: 2, IsExternal: true },
+    { Type: 'Subtitle', Index: 3, IsExternal: false },
+    { Type: 'Subtitle', Index: 4, IsExternal: true },
+  ] }] }
+  assert.equal(findNewExternalSubtitle(before, after, 'source')?.Index, 4)
+})
+
+test('pollForNewExternalSubtitle retries stale playback with a finite schedule', async () => {
+  const before = { MediaSources: [{ MediaStreams: [] }] }
+  const fresh = { MediaSources: [{ MediaStreams: [{ Type: 'Subtitle', Index: 8, IsExternal: true }] }] }
+  const responses = [before, before, fresh]
+  const waits = []
+  const result = await pollForNewExternalSubtitle(() => Promise.resolve(responses.shift()), before, {
+    delays: [0, 10, 20, 40],
+    wait: ms => { waits.push(ms); return Promise.resolve() },
+  })
+  assert.equal(result.stream?.Index, 8)
+  assert.deepEqual(waits, [10, 20])
 })
 
 test('findExternalSubtitleStream requires an exact external stream index with a delivery URL', () => {
