@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,17 +33,50 @@ void main() {
       tester.getSize(find.byType(WindowsCaptionControls)),
       const Size(windowsCaptionControlWidth * 3, integratedDesktopChromeHeight),
     );
-    expect(
-      tester
-          .widgetList<IconButton>(find.byType(IconButton))
-          .map((button) => button.tooltip),
-      ['Minimize', 'Maximize', 'Close'],
-    );
+    expect(find.byTooltip('Minimize'), findsOneWidget);
+    expect(find.byTooltip('Maximize'), findsOneWidget);
+    expect(find.byTooltip('Close'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('windows-minimize')));
     await tester.tap(find.byKey(const ValueKey('windows-maximize')));
     await tester.tap(find.byKey(const ValueKey('windows-close')));
     expect((minimized, maximized, closed), (true, true, true));
+  });
+
+  testWidgets('Windows caption surfaces remain transparent after hover', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: WindowsCaptionControls(
+          maximized: false,
+          onMinimize: () {},
+          onToggleMaximize: () {},
+          onClose: () {},
+        ),
+      ),
+    );
+
+    final surface = find.byKey(const ValueKey('windows-minimize-surface'));
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(surface));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<ColoredBox>(
+            find.descendant(of: surface, matching: find.byType(ColoredBox)),
+          )
+          .color,
+      Colors.transparent,
+    );
+
+    await mouse.moveTo(const Offset(300, 300));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('PartyWidget stays inside a compact desktop viewport', (
