@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -111,9 +112,9 @@ class WindowsCaptionControls extends StatelessWidget {
   });
 
   final bool maximized;
-  final VoidCallback onMinimize;
-  final VoidCallback onToggleMaximize;
-  final VoidCallback onClose;
+  final FutureOr<void> Function() onMinimize;
+  final FutureOr<void> Function() onToggleMaximize;
+  final FutureOr<void> Function() onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -151,7 +152,7 @@ class WindowsCaptionControls extends StatelessWidget {
   }
 }
 
-class _CaptionControl extends StatelessWidget {
+class _CaptionControl extends StatefulWidget {
   const _CaptionControl({
     super.key,
     required this.tooltip,
@@ -163,35 +164,71 @@ class _CaptionControl extends StatelessWidget {
   final String tooltip;
   final IconData icon;
   final Color color;
-  final VoidCallback onPressed;
+  final FutureOr<void> Function() onPressed;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: windowsCaptionControlWidth,
-    height: integratedDesktopChromeHeight,
-    child: IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(
-        width: windowsCaptionControlWidth,
-        height: integratedDesktopChromeHeight,
-      ),
-      style: ButtonStyle(
-        foregroundColor: WidgetStatePropertyAll(color),
-        backgroundColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.hovered)
-              ? color.withValues(alpha: 0.14)
-              : Colors.transparent,
+  State<_CaptionControl> createState() => _CaptionControlState();
+}
+
+class _CaptionControlState extends State<_CaptionControl> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  void _setHovered(bool value) {
+    if (_hovered != value) setState(() => _hovered = value);
+  }
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
+  void _activate() {
+    setState(() {
+      _hovered = false;
+      _pressed = false;
+    });
+    unawaited(Future<void>.sync(widget.onPressed));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final opacity = _pressed ? 0.52 : (_hovered ? 1.0 : 0.78);
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.basic,
+        onEnter: (_) => _setHovered(true),
+        onExit: (_) {
+          _setHovered(false);
+          _setPressed(false);
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (_) => _setPressed(true),
+          onTapCancel: () => _setPressed(false),
+          onTapUp: (_) => _setPressed(false),
+          onTap: _activate,
+          child: Semantics(
+            button: true,
+            label: widget.tooltip,
+            child: SizedBox(
+              key: ValueKey('windows-${widget.tooltip.toLowerCase()}-surface'),
+              width: windowsCaptionControlWidth,
+              height: integratedDesktopChromeHeight,
+              child: ColoredBox(
+                color: Colors.transparent,
+                child: Center(
+                  child: AnimatedOpacity(
+                    opacity: opacity,
+                    duration: const Duration(milliseconds: 90),
+                    child: Icon(widget.icon, size: 15, color: widget.color),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
-        overlayColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.pressed)
-              ? color.withValues(alpha: 0.22)
-              : Colors.transparent,
-        ),
-        shape: const WidgetStatePropertyAll(RoundedRectangleBorder()),
       ),
-      icon: Icon(icon, size: 15),
-    ),
-  );
+    );
+  }
 }
