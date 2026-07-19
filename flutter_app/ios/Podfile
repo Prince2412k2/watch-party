@@ -3,6 +3,11 @@ platform :ios, '14.0'
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
+# Let macOS use its system trust store when a stale Linux CA path is inherited.
+if ENV['SSL_CERT_FILE'] && !File.exist?(ENV['SSL_CERT_FILE'])
+  ENV.delete('SSL_CERT_FILE')
+end
+
 project 'Runner', {
   'Debug' => :debug,
   'Profile' => :release,
