@@ -6,7 +6,7 @@ const { nekoConfig, assertNekoEnabled, validateNekoConfig } = await import('./co
 const NEKO_VARS = [
   'NEKO_ENABLED', 'NEKO_CONCURRENCY_ENABLED', 'NEKO_INTERNAL_URL', 'NEKO_PUBLIC_WS',
   'NEKO_API_TOKEN', 'NEKO_USER_PASSWORD', 'NEKO_IDLE_TIMEOUT_MS', 'NEKO_SSH_HOST',
-  'NEKO_SSH_KEY_PATH', 'NEKO_USERNAME_SECRET',
+  'NEKO_SSH_KEY_PATH', 'NEKO_USERNAME_SECRET', 'NEKO_RECREATE_MODE',
 ]
 
 function withEnv(overrides, fn) {
@@ -41,6 +41,19 @@ test('disabled by default; validateNekoConfig no-ops', () => {
     assert.equal(config.enabled, false)
     assert.doesNotThrow(() => validateNekoConfig())
     assert.throws(() => assertNekoEnabled(), /neko disabled/)
+  })
+})
+
+test('recreateMode defaults to ssh', () => {
+  withEnv({}, () => {
+    assert.equal(nekoConfig().recreateMode, 'ssh')
+  })
+})
+
+test('recreateMode=noop does not require ssh vars when enabled', () => {
+  withEnv({ ...validEnv, NEKO_RECREATE_MODE: 'noop', NEKO_SSH_HOST: '', NEKO_SSH_KEY_PATH: '' }, () => {
+    assert.equal(nekoConfig().recreateMode, 'noop')
+    assert.doesNotThrow(() => validateNekoConfig())
   })
 })
 
@@ -85,6 +98,12 @@ test('enabled + missing required var throws', () => {
 test('enabled + bad internal url protocol throws', () => {
   withEnv({ ...validEnv, NEKO_INTERNAL_URL: 'ftp://neko.internal' }, () => {
     assert.throws(() => validateNekoConfig(), /NEKO_INTERNAL_URL/)
+  })
+})
+
+test('enabled + relative-path public ws does not throw', () => {
+  withEnv({ ...validEnv, NEKO_PUBLIC_WS: '/neko' }, () => {
+    assert.doesNotThrow(() => validateNekoConfig())
   })
 })
 

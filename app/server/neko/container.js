@@ -18,6 +18,10 @@ function defaultRunner(config) {
 
 export async function recreateContainer({ runner } = {}) {
   const config = nekoConfig()
+  if (config.recreateMode === 'noop') {
+    console.log('neko container: recreate skipped (NEKO_RECREATE_MODE=noop)')
+    return
+  }
   const run = runner || (() => defaultRunner(config))
   await run(config)
 }

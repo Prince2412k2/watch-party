@@ -110,11 +110,12 @@ services:
       - NEKO_USER_PASSWORD=${NEKO_MEMBER_MULTIUSER_USER_PASSWORD:-}
       - NEKO_USERNAME_SECRET=${NEKO_USERNAME_SECRET:-}
       # Browser-facing WebRTC signaling endpoint — override in .env for a real deploy.
-      - NEKO_PUBLIC_WS=${NEKO_PUBLIC_WS:-ws://localhost:9876}
+      - NEKO_PUBLIC_WS=${NEKO_PUBLIC_WS:-/neko}
       # SSH forced-command recreate target (docs/ops/neko-recreate.md). PLACEHOLDER:
       # fill in a real host/tailnet name and mount a real key before enabling.
+      - NEKO_RECREATE_MODE=${NEKO_RECREATE_MODE:-ssh}
       - NEKO_SSH_HOST=${NEKO_SSH_HOST:-neko-host.example}
-      - NEKO_SSH_KEY_PATH=/run/secrets/neko-recreate-key
+      - NEKO_SSH_KEY_PATH=${NEKO_SSH_KEY_PATH:-/run/secrets/neko-recreate-key}
       - NEKO_IDLE_TIMEOUT_MS=${NEKO_IDLE_TIMEOUT_MS:-300000}
     depends_on:
       jellyfin:

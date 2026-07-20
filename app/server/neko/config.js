@@ -10,6 +10,10 @@ function parseIdleTimeout(value) {
   return Number.isNaN(parsed) ? 300_000 : parsed
 }
 
+function parseRecreateMode(value) {
+  return value === 'noop' ? 'noop' : 'ssh'
+}
+
 export function nekoConfig() {
   return {
     enabled: parseBool(process.env.NEKO_ENABLED),
@@ -23,6 +27,7 @@ export function nekoConfig() {
     sshHost: process.env.NEKO_SSH_HOST || '',
     sshKeyPath: process.env.NEKO_SSH_KEY_PATH || '',
     usernameSecret: process.env.NEKO_USERNAME_SECRET || '',
+    recreateMode: parseRecreateMode(process.env.NEKO_RECREATE_MODE),
   }
 }
 
@@ -48,8 +53,10 @@ export function validateNekoConfig() {
     NEKO_USER_PASSWORD: config.userPassword,
     NEKO_USERNAME_SECRET: config.usernameSecret,
     NEKO_INTERNAL_URL: config.internalUrl,
-    NEKO_SSH_HOST: config.sshHost,
-    NEKO_SSH_KEY_PATH: config.sshKeyPath,
+  }
+  if (config.recreateMode === 'ssh') {
+    requiredVars.NEKO_SSH_HOST = config.sshHost
+    requiredVars.NEKO_SSH_KEY_PATH = config.sshKeyPath
   }
   for (const [name, value] of Object.entries(requiredVars)) {
     if (!value) throw new Error(`neko config: ${name} is required when NEKO_ENABLED=true`)
@@ -58,8 +65,12 @@ export function validateNekoConfig() {
   if (!validUrlProtocol(config.internalUrl, ['http:', 'https:'])) {
     throw new Error('neko config: NEKO_INTERNAL_URL must be a valid http(s) URL')
   }
-  if (!validUrlProtocol(config.publicWs, ['ws:', 'wss:'])) {
-    throw new Error('neko config: NEKO_PUBLIC_WS must be a valid ws(s) URL')
+  // Accept either an absolute ws(s) URL or a same-origin relative path
+  // (e.g. "/neko") — the latter lets the client derive ws(s) from its own
+  // page origin, which is what a plain-http local demo needs.
+  const publicWsIsRelativePath = config.publicWs.startsWith('/')
+  if (!publicWsIsRelativePath && !validUrlProtocol(config.publicWs, ['ws:', 'wss:'])) {
+    throw new Error('neko config: NEKO_PUBLIC_WS must be a valid ws(s) URL or an absolute path')
   }
   if (!(config.idleTimeoutMs > 0)) {
     throw new Error('neko config: NEKO_IDLE_TIMEOUT_MS must be positive')
