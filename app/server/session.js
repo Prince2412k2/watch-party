@@ -95,10 +95,34 @@ function runtimeState(saved) {
   }
 }
 
+// Registered by index.js at startup so this module (loaded before `io`
+// exists) can still emit party state from the restore-grace expiry below.
+let ioInstance = null
+export function setIo(io) {
+  ioInstance = io
+}
+
 const restoreGraceMs = Number(process.env.PARTY_RESTORE_GRACE_MS) || 60_000
 for (const saved of loadParties()) {
   const session = runtimeState(saved)
-  session.hostDisconnectTimer = setTimeout(() => deleteSession(session.id), restoreGraceMs)
+  session.hostDisconnectTimer = setTimeout(async () => {
+    // A restored party that never got a socket reconnect within the grace
+    // window is deleted — but if it held the Neko browser lease, the
+    // browser must be torn down first (finding #13: lease release happens
+    // only after the party is persisted back to lobby).
+    if (session.activity === 'remote-browser') {
+      const { getLease } = await import('./neko/lease.js')
+      const { teardownBrowser } = await import('./neko/teardown.js')
+      const lease = getLease()
+      if (lease?.partyId === session.id) {
+        await teardownBrowser(session.id, {
+          reason: 'restore-grace-expired',
+          deps: ioInstance ? { emitState: () => emitPartyState(ioInstance, session) } : {},
+        })
+      }
+    }
+    deleteSession(session.id)
+  }, restoreGraceMs)
   session.hostDisconnectTimer.unref()
   sessions.set(saved.id, session)
 }
