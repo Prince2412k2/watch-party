@@ -22,10 +22,13 @@ auth/isolation/control.
   root-equivalent host control from a public-facing Node process. `docker restart` is
   insufficient (writable layer survives) so `--force-recreate` is required for SC-006.
 - **Lease is a single durable row with an explicit state machine**
-  `free → starting → active → cleaning → free`, plus a monotonic `generation` counter.
-  **`free` is represented by the ABSENCE of the row** (`loadLease() === null`); there is
-  no persisted `state='free'` row. `acquireLease` is the only `null → starting`
-  transition. Proxy, session-broker, and control ops only work in `active`. Both
+  `free → starting → active → cleaning → free`, plus a **random unguessable
+  `leaseId = randomUUID()`** minted at each acquisition (finding #1). **`free` is
+  represented by the ABSENCE of the row** (`loadLease() === null`); there is no persisted
+  `state='free'` row and no monotonic counter to lose on release — a fresh `leaseId` on
+  every acquire guarantees stale sessions/usernames from a prior lease can never be
+  reused, surviving process restart. `acquireLease` is the only `null → starting`
+  transition. ("generation" below means this `leaseId`.) Proxy, session-broker, and control ops only work in `active`. Both
   `starting → cleaning` (startup rollback/crash) and `active → cleaning` (normal
   teardown) are allowed, so a failure during startup can never wedge the lease in
   `starting` (finding #1). Release to `free` (row cleared) happens only after the owning
@@ -152,10 +155,17 @@ Files: create `app/server/neko/config.js` + `.test.js`.
 Interfaces: `nekoConfig() → { enabled, concurrencyEnabled, internalUrl, publicWs,
 apiToken, userPassword, idleTimeoutMs, cookieName:'NEKO_SESSION', sshHost, sshKeyPath,
 usernameSecret }`; `assertNekoEnabled() → void` throws `Error('neko disabled')` when
-`!enabled`.
-Verify: `node --test app/server/neko/config.test.js` — unset/`false` → `enabled:false`;
-`NEKO_IDLE_TIMEOUT_MS=1000` overrides `300000`; `NEKO_CONCURRENCY_ENABLED` parsed but
-reserved. (FR-014, FR-015, FR-008 default.)
+`!enabled`. `validateNekoConfig() → void` (finding #5) — called at startup in `index.js`
+**before `httpServer.listen()`**; when `NEKO_ENABLED=true` it THROWS (not just logs) if
+any of `NEKO_API_TOKEN`, `NEKO_USER_PASSWORD`, `NEKO_USERNAME_SECRET`, `NEKO_INTERNAL_URL`,
+`NEKO_SSH_HOST`, `NEKO_SSH_KEY_PATH` is empty/missing, if `internalUrl`/`publicWs`
+protocols are invalid, if `idleTimeoutMs <= 0`, or if a secret is below minimum entropy
+length. When `NEKO_ENABLED=false` it is a no-op.
+Verify: `node --test app/server/neko/config.test.js` — unset/`false` → `enabled:false` and
+`validateNekoConfig` no-ops; `NEKO_IDLE_TIMEOUT_MS=1000` overrides `300000`;
+`NEKO_CONCURRENCY_ENABLED` parsed but reserved; **enabled + any required var missing/bad
+URL/non-positive timeout/weak secret → `validateNekoConfig` throws** (finding #5).
+(FR-014, FR-015, FR-008 default.)
 
 ### Task C2 [P]: Neko admin API adapter
 Files: create `app/server/neko/admin.js` + `.test.js`.
@@ -174,8 +184,11 @@ outputs, error mapping. (FR-005, FR-005a, FR-006 unit layer.)
 Files: create `app/server/neko/container.js` + `.test.js`.
 Interfaces:
   - `recreateContainer({ runner } = {}) → void` — injected `runner` default
-    `execFile('ssh', ['-i', sshKeyPath, '-o', 'StrictHostKeyChecking=yes',
-    'neko-recreate@' + sshHost])` triggering the fixed remote script; rejects non-zero.
+    `execFile('ssh', ['-i', sshKeyPath, '-o', 'StrictHostKeyChecking=yes', '-o',
+    'BatchMode=yes', '-o', 'ConnectTimeout=10', 'neko-recreate@' + sshHost], { timeout:
+    45000 })` (finding #8 — non-interactive, bounded, so DNS/SSH/auth failures can't hang
+    the serialized lifecycle op) triggering the fixed remote script; rejects non-zero or
+    on timeout.
   - `waitForHealthy({ timeoutMs=30000, poll } = {}) → void` — polls `GET /health` on
     `internalUrl`.
 Verify: `node --test app/server/neko/container.test.js` — runner called once, failure
@@ -204,31 +217,35 @@ are reachable** (finding #4). (FR-009 deployability, FR-012 boundary.)
 
 ### Task C4: Durable lease store (state machine) + startup reconciliation
 Files: modify `app/server/party-store.js` (add `neko_lease` table: single row keyed
-`'global'`, columns `partyId, hostName, state, generation, sessions(JSON), acquiredAt`);
+`'global'`, columns `partyId, hostName, state, leaseId, sessions(JSON), acquiredAt`);
 create `app/server/neko/lease.js` + `.test.js`.
 Interfaces:
   - store: `saveLease(row) → void`, `loadLease() → row|null`, `clearLease() → void`.
-  - lease.js: `acquireLease({partyId, hostName}) → {ok:true, generation} | {ok:false,
+  - lease.js: `acquireLease({partyId, hostName}) → {ok:true, leaseId} | {ok:false,
     hostName}` — atomic; only succeeds when `loadLease() === null` (i.e. `free`); writes
-    the row `state:'starting'`, bumps `generation`. `markActive(partyId) → void`
-    (`starting→active`). `beginCleaning(partyId) → void` — allows **both**
-    `starting→cleaning` and `active→cleaning` (finding #1); idempotent if already
+    the row `state:'starting'` with a freshly minted `leaseId = randomUUID()`.
+    `markActive(partyId) → void` (`starting→active`). `beginCleaning(partyId) → void` —
+    allows **both** `starting→cleaning` and `active→cleaning`; idempotent if already
     `cleaning`. `releaseLease(partyId) → void` (`cleaning→free`, clears the row — `free`
     is the absent row, finding #10). `getLease() → {partyId, hostName, state,
-    generation}|null`. `recordUserSession(partyId, generation, userId, nekoSessionId) →
-    void` (persists mapping; ignores stale generation — finding #4).
-    `removeUserSessions(partyId, userId) → {nekoSessionId}[]` (drops + returns a user's
-    mappings — for member detachment, finding #2). `sessionsFor(partyId) → {userId,
-    nekoSessionId}[]`. `controllerUserFor(nekoSessionId) → userId|null` (shared
-    authoritative mapping — finding #9). `reconcileLease({listSessions, teardown}) →
-    void` (startup: a `starting` lease OR a lease row with no live party OR mismatched
-    live sessions → teardown [which drives `→cleaning→free`] + clear; a valid `active`
-    lease is kept and returned so the idle monitor can be (re)started — finding #10).
+    leaseId}|null`. `recordUserSession(partyId, leaseId, userId, nekoSessionId) → void`
+    (persists mapping; ignores a stale `leaseId` — findings #4/#1).
+    **Transactional detach interface (finding #2):** `sessionsForUser(partyId, userId) →
+    {nekoSessionId}[]` (read, does NOT drop), and `removeUserSession(partyId, userId,
+    nekoSessionId) → void` (drop a SINGLE mapping, called only AFTER its Neko delete
+    succeeds/confirms 404). `sessionsFor(partyId) → {userId, nekoSessionId}[]`.
+    `controllerUserFor(nekoSessionId) → userId|null` (shared authoritative mapping —
+    finding #9). `reconcileLease({listSessions, teardown}) → void` (startup: a `starting`
+    lease OR a lease row with no live party OR mismatched live sessions → teardown [drives
+    `→cleaning→free`] + clear; a valid `active` lease is kept and returned so the idle
+    monitor can be (re)started — finding #10).
 Verify: `node --test app/server/neko/lease.test.js` (sets `PARTY_DB_PATH`) — acquire when
 `null` ok; second acquire `{ok:false, hostName}`; `beginCleaning` works from BOTH
-`starting` and `active`; `releaseLease` clears the row (→ `null`); stale generation
-`recordUserSession` ignored; `removeUserSessions` returns+drops a user's mappings;
-reconcile clears a `starting` lease and a dangling lease, keeps a valid `active` one.
+`starting` and `active`; `releaseLease` clears the row (→ `null`); **release then
+reacquire yields a DIFFERENT `leaseId`, including across a simulated process restart**
+(finding #1); stale-`leaseId` `recordUserSession` ignored; `sessionsForUser` reads
+without dropping and `removeUserSession` drops one mapping; reconcile clears a `starting`
+lease and a dangling lease, keeps a valid `active` one.
 (FR-002, FR-002a, SC-007, findings #1/#2/#4/#9/#10/#13.)
 
 ### Task C5: `remote-browser` activity + transition guards in session model
@@ -304,17 +321,21 @@ host-kick (~420-430), guest `disconnect` (~724-738), and any logout/session-inva
 path. This is distinct from full teardown (C6/C8): the party keeps its browser; only the
 departing user is severed.
 Interfaces (Consumes `admin.{deleteSession,resetControl,controlStatus}`,
-`lease.{removeUserSessions,getLease}`, `controller.currentController`):
-  - `detachMember(partyId, userId) → void` — idempotent: (1) `removeUserSessions(partyId,
-    userId)` → for each returned `nekoSessionId` call `admin.deleteSession` (closes that
-    user's Neko WS + WebRTC — A0#4), (2) if the user was the current controller
-    (`currentController(partyId)?.userId === userId`) → `resetControl()` + broadcast
-    `browser:control {controllerUserId:null}`. No-op when the party doesn't hold an
-    active lease or the user has no mapped sessions.
+`lease.{sessionsForUser,removeUserSession,getLease}`, `controller.currentController`):
+  - `detachMember(partyId, userId) → void` — idempotent, **transactional order to avoid
+    orphans (finding #2)**: (1) determine controller status FIRST via
+    `currentController(partyId)?.userId === userId` (mapping still present); (2)
+    `sessionsForUser(partyId, userId)` (read, keep mappings); (3) for each `nekoSessionId`
+    `await admin.deleteSession` — on success/404 `removeUserSession(partyId, userId,
+    nekoSessionId)`; **on delete failure leave the mapping recorded for retry** (do not
+    drop); (4) if the user was controller → `resetControl()` + broadcast `browser:control
+    {controllerUserId:null}`. No-op when no active lease or no mapped sessions.
 Verify: unit `node --test app/server/neko/detach.test.js` (mock admin) — deletes exactly
-the user's sessions, resets control only when they controlled; **integration** in C17
-(`NEKO_IT=1`) proves a kicked member's established Neko WebSocket actually closes.
-(finding #2; complements FR-006/US-3 authority.)
+the user's sessions, controller status read before mappings dropped, a failed
+`deleteSession` leaves the mapping recorded for retry (no orphan), resets control only
+when they controlled; **integration** in C17 (`NEKO_IT=1`) proves a kicked member's
+established Neko WebSocket actually closes. (finding #2; complements FR-006/US-3
+authority.)
 
 ### Task C9: Process-level idle monitor (finding #10)
 Files: create `app/server/neko/idle.js` + `.test.js`; start it once after startup
@@ -326,12 +347,12 @@ Interfaces (Consumes `admin.listSessions`, `lease.{getLease,sessionsFor}`,
     (`sessionsFor`) that are connected (or `is_watching` if the spike shows
     connected-but-idle is common — A0 item 5). Zero for a continuous `idleTimeoutMs`
     window → `teardownBrowser(partyId,{reason:'idle'})`. Reset the timer on any viewer
-    reconnect and on lease `generation` change. On `listSessions()` failure: log, skip
+    reconnect and on lease `leaseId` change. On `listSessions()` failure: log, skip
     the tick, do NOT count as idle. Runs for a lease restored by reconciliation, not only
     one started via C7 (finding #10).
   - `stopIdleMonitor(handle) → void`.
 Verify: `node --test app/server/neko/idle.test.js` (fake clock) — zero-across-window →
-teardown; reconnect resets; generation change resets; a restored lease is monitored;
+teardown; reconnect resets; leaseId change resets; a restored lease is monitored;
 `listSessions` failure doesn't trigger teardown. (FR-008, US-4, SC-003.)
 
 ### Task C10: Per-user viewer-session broker endpoint (idempotent)
@@ -339,22 +360,24 @@ Files: create `app/server/neko/routes.js` (`registerNekoRoutes(app, io)`); regis
 `index.js` ~211.
 Interfaces — `POST /api/party/:id/browser/session` (`requireAuth`): reject `!enabled`;
 404 missing party; 403 non-member; 409 if lease not `active` for this party. Derive an
-**opaque, generation-scoped** Neko username `wp-<HMAC(NEKO_USERNAME_SECRET,
-partyId:generation:userId)>` truncated to a Neko-valid length/charset (finding #8) — the
+**opaque, lease-scoped** Neko username `wp-<HMAC(NEKO_USERNAME_SECRET,
+partyId:leaseId:userId)>` truncated to a Neko-valid length/charset (finding #8) — the
 stable Jellyfin `userId` is never placed in Neko session metadata; the mapping is kept
-server-side via `recordUserSession`. **Idempotency (finding #4):** before minting, delete
-any prior recorded Neko session for `(partyId, userId)` (`admin.deleteSession`) then
-`loginViewer`; `recordUserSession(partyId, currentGeneration, userId, sessionId)` — the
-generation stamp means a session from a previous container generation can never be
-reused. Set the
+server-side via `recordUserSession`. **Concurrency + idempotency (findings #3/#4):**
+serialize broker calls with an in-flight keyed lock on `(partyId, leaseId, userId)` so two
+simultaneous POSTs cannot each mint a session and race the mapping write; within the lock,
+delete any prior recorded Neko session for `(partyId, userId)` (`admin.deleteSession`)
+then `loginViewer`; `recordUserSession(partyId, leaseId, userId, sessionId)` — the
+`leaseId` stamp means a session from a previous lease can never be reused. Set the
 returned `NEKO_SESSION` cookie on OUR response scoped to `/neko`; body returns
 `{ wsUrl: publicWs, controllerUserId }` — where `controllerUserId` is derived from
 `controller.currentController(partyId)` so the client hydrates authoritative control
 state on mount/refresh (finding #5) — never password/admin token/raw Neko token.
-Verify: `node --test app/server/neko/routes.test.js` — authz matrix (403/409/200); double
-POST leaves exactly one recorded session; cookie relayed `Path=/neko`; secret-free body;
+Verify: `node --test app/server/neko/routes.test.js` — authz matrix (403/409/200);
+**concurrent** POSTs (not just sequential) leave exactly one recorded session and no
+orphan (finding #3); cookie relayed `Path=/neko`; secret-free body incl. no leaseId leak;
 `NEKO_ENABLED=false` rejected; lease not `active` → 409. (FR-005/005a, US-6, SC-001
-backend half, SC-004, SC-005, finding #4.)
+backend half, SC-004, SC-005, findings #3/#4.)
 
 ### Task C11: Same-origin Neko proxy — allow-list, feature-gated (findings #3/#7/#8/#12)
 Files: modify `app/server/index.js` (add `/neko` proxy near `/livekit` ~147-158 + upgrade
@@ -367,13 +390,19 @@ WS upgrade; (4) **allow-list** router — forward ONLY the paths captured in A0 
 including `/metrics`, `/api/profile`, `/api/room/control*`, legacy `/ws`, and any request
 carrying `usr`/`pwd`/`token` query params (finding #12). Then
 `createProxyMiddleware({target:internalUrl, changeOrigin:true, ws:true, pathRewrite})`
-with path-prefix handling per A0 item 8 (finding #8). WS upgrade wired into
-`httpServer.on('upgrade')` alongside `/livekit`. Logging redacts cookies/tokens. Media
-NOT proxied (FR-013).
-Verify: `node --test app/server/neko/proxy.test.js` — disabled→403; unauth→401;
+with path-prefix handling per A0 item 8. **WS upgrade authorization is implemented
+explicitly (finding #4)** — `app.use()` middleware does NOT cover raw upgrades, so the
+`httpServer.on('upgrade')` handler for `/neko` (alongside `/livekit`) MUST: run
+`sessionMiddleware` against the upgrade `req`, validate `req.session.jellyfin`, resolve
+party membership + `active` lease, and only then call `proxy.upgrade()`; on any failure
+write the appropriate `401`/`403` status line and `socket.destroy()`. Logging redacts
+cookies/tokens. Media NOT proxied (FR-013).
+Verify: `node --test app/server/neko/proxy.test.js` — HTTP: disabled→403; unauth→401;
 non-lease-member→403; `/neko/metrics`,`/neko/api/room/control/reset`,`?token=x`,legacy
-`/ws`→403; allow-listed path from active-lease member→forwarded (mock upstream).
-(FR-006a, FR-012, FR-013, US-8 proxy half.)
+`/ws`→403; allow-listed path from active-lease member→forwarded. **Actual WS upgrade
+tests (finding #4)**: unauthenticated, non-member, inactive-lease → socket destroyed with
+the right status; permitted active-lease member → upgraded to a mock upstream. (FR-006a,
+FR-012, FR-013, US-8 proxy half.)
 
 ### Task C12: Neko-enforced control socket events (request / assign / revoke)
 Files: modify `app/server/neko/routes.js`; register socket events in `index.js`. Depends
@@ -383,18 +412,24 @@ Interfaces (Consumes admin control fns + C5b + lease mapping):
     held: `controlStatus()`; if `!hasHost` → `giveControl(requesterNekoSessionId)` →
     broadcast `browser:control {controllerUserId}`; else `ack({error:'held'})`. Members
     can't self-seize (lock on; only backend gives — FR-006a).
-  - `browser:assignControl ({userId}, ack)` — host only: `giveControl(targetNekoSessionId)`
-    (revokes prior at Neko level), broadcast.
+  - `browser:assignControl ({userId}, ack)` — host only: resolve the target's mapped Neko
+    session; **if the target has no active mapped session** (their iframe hasn't loaded /
+    called the broker yet) → `ack({error:'viewer not connected'})` and do nothing (finding
+    #6); else `giveControl(targetNekoSessionId)` (revokes prior at Neko level), broadcast.
+    `browser:requestControl` returns the same error if the requester somehow has no mapped
+    session.
   - `browser:revokeControl (_p, ack)` — host only: `resetControl()`, broadcast
     `browser:control {controllerUserId:null}`.
   - `browser:getControl (_p, ack)` — any member: `ack({controllerUserId})` derived from
     `controller.currentController(partyId)`; lets a client re-hydrate authoritative
     control state on mount/reconnect rather than relying on cached broadcasts (finding
     #5). Web calls it on `RemoteBrowser` mount and on socket reconnect.
+Also: the web roster (C14) disables assign for members with no active mapped session.
 Verify: `node --test app/server/neko/control.test.js` (mock admin) — request-when-free
 assigns; when-held denied; host reassign revokes prior; non-host cannot assign;
-`currentController` reflects Neko truth. Live/pinned-container check per A0 item 3.
-(FR-006/006a, FR-007b, US-3, SC-008.)
+**assign to a member with no/stale mapped session → `{error:'viewer not connected'}`**
+(finding #6); `currentController` reflects Neko truth. Live/pinned-container check per A0
+item 3. (FR-006/006a, FR-007b, US-3, SC-008.)
 
 ### Task C13: Reject media mutation while `remote-browser`
 Files: modify `app/server/index.js` — `party:selectMedia` (~511), `party:setPlaybackTracks`
@@ -471,7 +506,10 @@ SC-008 real proof; findings #9/#11.)
 ## Success-criteria coverage
 - SC-001 → C7+C10+C14 (+manual live). SC-002 → C7. SC-003 → C9. SC-004 → B0+C10.
   SC-005 → C1+C7+C10+C11. SC-006 → C3/C6 + **C17 real proof**. SC-007 → C4 reconciliation.
-  SC-008 → C12 + **C17 real proof**.
+  SC-008 → C12 + C17 verify the **control API / control-state** (who Neko reports as host);
+  proving a non-controller's actual **data-channel input is rejected** requires a real
+  browser and is a Playwright path OR a documented **manual A0 live acceptance** (finding
+  #7) — not claimed as automated in `node:test`.
 
 ## FR coverage
 FR-000→A0; FR-001→C5; FR-002/002a→C4; FR-003/004→C7; FR-005/005a→C10(+C2);
