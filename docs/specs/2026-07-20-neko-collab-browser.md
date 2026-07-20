@@ -58,7 +58,8 @@ implementation is planned in detail.
 ### US-1 (P1): Start a shared browser session
 As a party member, I can start a "remote browser" activity so everyone in the party
 watches the same live browser session together.
-- **Independent test**: from lobby, trigger "start browser", see `activity.kind` become
+- **Independent test**: from lobby, trigger "start browser", see the session's `activity`
+  field become
   `remote-browser` and a viewable stream appear for all members.
 - Given a party in lobby (no active media) and the global Neko lease free,
   When any party member starts the browser activity,
@@ -177,7 +178,8 @@ As a user on either client, the app behaves correctly when a party is in
   media transport.
 
 ### Lease, activity & isolation
-- **FR-001**: System MUST add `remote-browser` as a new party activity kind, mutually
+- **FR-001**: System MUST add a session field `activity: 'none' | 'remote-browser'`
+  (a plain string, not a nested object) as a new party activity dimension, mutually
   exclusive with Jellyfin playback.
 - **FR-002**: System MUST track a single global lease (which party, if any, holds the
   shared Neko instance).
