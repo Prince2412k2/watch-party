@@ -1,0 +1,37 @@
+# Standalone Neko for the A0 spike — runs in isolation, no servarr / no app stack.
+#
+# Bring up:   docker compose -f docker-compose.neko.yml up -d
+# Tear down:  docker compose -f docker-compose.neko.yml down
+#
+# Purpose: local, throwaway instance to prove the Task A0 assumptions
+# (docs/specs/2026-07-20-neko-spike-decision.md) without depending on contab.
+#
+# Pinned to a tag >= 3.1.2 (GHSA-2gw9-c2r2-f5qf). NAT1TO1 is 127.0.0.1 because the
+# browser and the container are on the same host for this local spike.
+services:
+  neko:
+    image: ghcr.io/m1k1o/neko/firefox:3.1.4
+    container_name: neko-spike
+    restart: "no"
+    shm_size: 2gb
+    ports:
+      - "9876:8080"
+      - "56000-56100:56000-56100/udp"
+    environment:
+      # WebRTC — local host only
+      NEKO_WEBRTC_EPR: "56000-56100"
+      NEKO_WEBRTC_ICELITE: "1"
+      NEKO_WEBRTC_NAT1TO1: "127.0.0.1"
+      # Auth — multiuser provider (two shared passwords)
+      NEKO_MEMBER_PROVIDER: "multiuser"
+      NEKO_MEMBER_MULTIUSER_USER_PASSWORD: "neko"
+      NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "admin"
+      # Server-only admin API token (spike item 2 — synthetic always-admin session)
+      NEKO_SESSION_API_TOKEN: "spike-admin-api-token-000"
+      # Cookie auth (spike item 1 — credential-free iframe via Set-Cookie relay)
+      NEKO_SESSION_COOKIE_ENABLED: "true"
+      NEKO_SESSION_COOKIE_NAME: "NEKO_SESSION"
+      # Path prefix (spike item 8 — serve under /neko behind our proxy)
+      NEKO_SERVER_PATH_PREFIX: "/neko"
+      # Desktop
+      NEKO_DESKTOP_SCREEN: "1280x720@30"
