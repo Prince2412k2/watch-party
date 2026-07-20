@@ -1,4 +1,5 @@
-import { readFileSync } from 'fs'
+import { readFileSync, accessSync, constants as fsConstants } from 'fs'
+import { execFileSync } from 'child_process'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -52,6 +53,26 @@ import { nekoMembershipGate, nekoAllowListGate, authorizeNekoUpgrade } from './n
 
 // Fail fast: a broken Neko config must never boot the server (finding #5).
 validateNekoConfig()
+
+// Startup preflight (C3b): when Neko is enabled, verify the recreate path is
+// actually usable — the `ssh` binary is on PATH and the mounted private key
+// is readable. This does NOT throw/exit: a missing key only impairs the
+// reset-on-start feature, not the rest of the app, so we log loudly instead
+// of crashing the whole server (validateNekoConfig above already throws for
+// missing required vars).
+if (nekoConfig().enabled) {
+  const config = nekoConfig()
+  try {
+    execFileSync('ssh', ['-V'], { stdio: 'ignore' })
+  } catch {
+    console.error('NEKO PREFLIGHT: `ssh` binary not found on PATH — container-recreate reset will fail. See docs/ops/neko-recreate.md.')
+  }
+  try {
+    accessSync(config.sshKeyPath, fsConstants.R_OK)
+  } catch {
+    console.error(`NEKO PREFLIGHT: SSH key not readable at NEKO_SSH_KEY_PATH=${config.sshKeyPath} — container-recreate reset will fail. See docs/ops/neko-recreate.md.`)
+  }
+}
 
 // Fail fast: never run in production with a missing or default session secret.
 if (process.env.NODE_ENV === 'production' &&

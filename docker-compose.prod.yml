@@ -102,19 +102,6 @@ services:
       # (Tailscale or local health checks). Bound to 0.0.0.0: also reachable
       # on the public interface unless you firewall it yourself.
       - "0.0.0.0:3001:3000"
-    volumes:
-      # Persistent session store so a redeploy (--build) doesn't log everyone
-      # out — express-session's default MemoryStore is wiped on every
-      # container recreate. See app/server/index.js's sessionStoreDir.
-      - ./data/sessions:/data/sessions
-      - ./data/subtitles:/data/subtitles
-      - ./data:/app/data
-      # Desktop build artifacts served by GET /api/downloads (see
-      # app/server/desktop-builds.js). Mounted read-only at the same path the
-      # route defaults to (DESKTOP_BUILDS_DIR), so no env override is needed;
-      # without this mount the container can't see the host's builds and the
-      # endpoint returns an empty list.
-      - /opt/watch-party/builds/desktop/latest:/opt/watch-party/builds/desktop/latest:ro
     env_file:
       - ./secrets/.env
       - ./secrets/.env.local
@@ -133,6 +120,41 @@ services:
       - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-}
       - SERVE_CLIENT=1
       - PORT=3000
+      # ── Neko collaborative browser (see docs/ops/neko-recreate.md) ─────────
+      # Disabled by default. Flip to true in secrets/.env only once the `neko`
+      # service below is fully configured and the SSH forced-command host
+      # (NEKO_SSH_HOST) is reachable from this container.
+      - NEKO_ENABLED=${NEKO_ENABLED:-false}
+      - NEKO_INTERNAL_URL=http://neko:8080
+      # Must equal the `neko` service's NEKO_SESSION_API_TOKEN below.
+      - NEKO_API_TOKEN=${NEKO_API_TOKEN:-}
+      - NEKO_USER_PASSWORD=${NEKO_MEMBER_MULTIUSER_USER_PASSWORD:-}
+      - NEKO_USERNAME_SECRET=${NEKO_USERNAME_SECRET:-}
+      # Served through Caddy under the app origin — see secrets/Caddyfile.
+      - NEKO_PUBLIC_WS=${NEKO_PUBLIC_WS:-wss://watch.sniffkin.tech/neko/api/ws}
+      # SSH forced-command recreate target on the Neko HOST (docs/ops/neko-recreate.md).
+      # PLACEHOLDER: set to the real tailnet hostname/IP; the key below must exist.
+      - NEKO_SSH_HOST=${NEKO_SSH_HOST:-neko-host.example}
+      - NEKO_SSH_KEY_PATH=/run/secrets/neko-recreate-key
+      - NEKO_IDLE_TIMEOUT_MS=${NEKO_IDLE_TIMEOUT_MS:-300000}
+    volumes:
+      # Persistent session store so a redeploy (--build) doesn't log everyone
+      # out — express-session's default MemoryStore is wiped on every
+      # container recreate. See app/server/index.js's sessionStoreDir.
+      - ./data/sessions:/data/sessions
+      - ./data/subtitles:/data/subtitles
+      - ./data:/app/data
+      # Desktop build artifacts served by GET /api/downloads (see
+      # app/server/desktop-builds.js). Mounted read-only at the same path the
+      # route defaults to (DESKTOP_BUILDS_DIR), so no env override is needed;
+      # without this mount the container can't see the host's builds and the
+      # endpoint returns an empty list.
+      - /opt/watch-party/builds/desktop/latest:/opt/watch-party/builds/desktop/latest:ro
+      # SSH private key for the Neko recreate forced-command — read-only,
+      # never baked into the image. PLACEHOLDER: generate per
+      # docs/ops/neko-recreate.md and place at ./secrets/neko-recreate-key
+      # before setting NEKO_ENABLED=true.
+      - ./secrets/neko-recreate-key:/run/secrets/neko-recreate-key:ro
     depends_on:
       jellyfin:
         condition: service_started
@@ -148,6 +170,37 @@ services:
         condition: service_healthy
       qbittorrent:
         condition: service_started
+
+  # Collaborative remote browser. Pinned >= 3.1.2 (GHSA-2gw9-c2r2-f5qf) — never
+  # `:latest`. TCP 8080 is intentionally NOT published to the host/public
+  # interface: reachable only from `watchparty` over the internal
+  # watchparty-net network (via the /neko proxy), per the network-boundary
+  # requirement in docs/ops/neko-recreate.md — a leaked NEKO_SESSION cookie
+  # must not be able to hit Neko directly from a client device. Only the
+  # WebRTC EPR/UDP range is published for client reachability.
+  neko:
+    image: ghcr.io/m1k1o/neko/firefox:3.1.4
+    container_name: watchparty-neko
+    restart: unless-stopped
+    networks: [watchparty-net]
+    shm_size: 2gb
+    ports:
+      - "0.0.0.0:${NEKO_WEBRTC_EPR:-56000-56100}:${NEKO_WEBRTC_EPR:-56000-56100}/udp"
+    environment:
+      NEKO_WEBRTC_EPR: "${NEKO_WEBRTC_EPR:-56000-56100}"
+      NEKO_WEBRTC_ICELITE: "1"
+      # PLACEHOLDER: set to VPS_PUBLIC_IP (same source as livekit's NODE_IP above).
+      NEKO_WEBRTC_NAT1TO1: "${VPS_PUBLIC_IP}"
+      NEKO_MEMBER_PROVIDER: "multiuser"
+      # PLACEHOLDER secrets — set real values in secrets/.env before enabling.
+      NEKO_MEMBER_MULTIUSER_USER_PASSWORD: "${NEKO_MEMBER_MULTIUSER_USER_PASSWORD:-changeme-user}"
+      NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "${NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD:-changeme-admin}"
+      # Must equal the app service's NEKO_API_TOKEN above.
+      NEKO_SESSION_API_TOKEN: "${NEKO_API_TOKEN:-}"
+      NEKO_SESSION_COOKIE_ENABLED: "true"
+      NEKO_SESSION_COOKIE_NAME: "NEKO_SESSION"
+      NEKO_SERVER_PATH_PREFIX: "/neko"
+      NEKO_DESKTOP_SCREEN: "1280x720@30"
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
