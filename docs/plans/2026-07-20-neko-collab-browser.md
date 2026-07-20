@@ -61,6 +61,12 @@ auth/isolation/control.
   impl), `NEKO_IDLE_TIMEOUT_MS` (default `300000`), `NEKO_API_TOKEN`, `NEKO_USER_PASSWORD`,
   `NEKO_INTERNAL_URL`, `NEKO_PUBLIC_WS`, `NEKO_SSH_HOST`, `NEKO_SSH_KEY_PATH`,
   `NEKO_USERNAME_SECRET` (HMAC key for opaque per-user Neko usernames — finding #8).
+- **Neko-side deploy env (confirmed by A0, set ON the Neko container)**:
+  `NEKO_SESSION_API_TOKEN` (server-only admin bearer), `NEKO_SESSION_COOKIE_ENABLED=true`
+  (login must emit `Set-Cookie: NEKO_SESSION`), `NEKO_SERVER_PATH_PREFIX=/neko` (serve
+  under the proxy prefix), plus `NEKO_WEBRTC_*` and `NEKO_MEMBER_MULTIUSER_*`. Control
+  field is `locked_controls`. Cookie is `HttpOnly; Secure; SameSite=None` ⇒ `/neko` must
+  be HTTPS. See `docs/specs/2026-07-20-neko-spike-decision.md`.
 - **Session field**: `activity: 'none' | 'remote-browser'` — a plain string (finding #5),
   matching the spec FR-001. `stage` stays `'lobby'|'watching'`.
 - **Client capability flag**: clients that understand remote-browser connect with
