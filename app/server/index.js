@@ -47,6 +47,8 @@ import * as nekoController from './neko/controller.js'
 import { teardownBrowser } from './neko/teardown.js'
 import { detachMember } from './neko/detach.js'
 import { startIdleMonitor } from './neko/idle.js'
+import { registerNekoRoutes, registerControlEvents } from './neko/routes.js'
+import { nekoMembershipGate, nekoAllowListGate, authorizeNekoUpgrade } from './neko/proxy.js'
 
 // Fail fast: a broken Neko config must never boot the server (finding #5).
 validateNekoConfig()
@@ -178,11 +180,68 @@ const livekitProxy = createProxyMiddleware({
   pathRewrite: { '^/livekit': '' },
 })
 app.use('/livekit', requireAuth, livekitProxy)
-// Proxy the WebSocket upgrade for /livekit only. socket.io owns /socket.io
-// upgrades on the same server; the path filter keeps the two from colliding.
-httpServer.on('upgrade', (req, socket, head) => {
-  if (req.url && req.url.startsWith('/livekit')) livekitProxy.upgrade(req, socket, head)
+
+// Same-origin Neko proxy (C11): Neko is deployed with server.path_prefix=/neko
+// (A0 decision record) so no pathRewrite is needed — the upstream already
+// serves under /neko. Gate order matters: feature flag -> auth -> membership
+// + active-lease -> allow-list -> proxy. `nekoInternalTarget` falls back to a
+// harmless placeholder when disabled so createProxyMiddleware never has to
+// parse an empty URL; the gate above always 403s before it would be reached.
+const nekoInternalTarget = nekoConfig().internalUrl || 'http://127.0.0.1:1'
+const nekoProxy = createProxyMiddleware({
+  target: nekoInternalTarget,
+  changeOrigin: true,
+  ws: true,
+  on: {
+    // Redact cookies/tokens — never log the NEKO_SESSION cookie or query auth.
+    proxyReq: (proxyReq, req) => {
+      if (process.env.NODE_ENV !== 'production') return
+      console.log('neko proxy', req.method, req.path)
+    },
+  },
 })
+function nekoEnabledGate(req, res, next) {
+  try {
+    assertNekoEnabled()
+  } catch {
+    return res.status(403).end()
+  }
+  next()
+}
+app.use('/neko', nekoEnabledGate, requireAuth, nekoMembershipGate(), nekoAllowListGate, nekoProxy)
+
+// Proxy the WebSocket upgrade for /livekit and /neko only. socket.io owns
+// /socket.io upgrades on the same server; the path filter keeps the three
+// from colliding. app.use() middleware does NOT run for raw upgrades, so
+// /neko's auth (feature flag, session, membership, active lease, allow-list)
+// is re-checked explicitly here via the pure authorizeNekoUpgrade() decision
+// function before the upgrade is ever forwarded.
+httpServer.on('upgrade', (req, socket, head) => {
+  if (req.url && req.url.startsWith('/livekit')) return livekitProxy.upgrade(req, socket, head)
+  if (req.url && req.url.startsWith('/neko')) {
+    sessionMiddleware(req, upgradeFakeRes(), () => {
+      const decision = authorizeNekoUpgrade(req)
+      if (!decision.ok) return destroyUpgrade(socket, decision.status)
+      nekoProxy.upgrade(req, socket, head)
+    })
+  }
+})
+
+// express-session needs a response-like object to run against a raw upgrade
+// request (it never actually writes a response here — we only need it to
+// populate req.session from the cookie). Minimal stub, same pattern
+// socket.io's engine.io uses internally for its own upgrade handshake.
+function upgradeFakeRes() {
+  return {
+    getHeader() {}, setHeader() {}, removeHeader() {}, writeHead() {}, end() {},
+    on() {}, once() {}, emit() {},
+  }
+}
+function destroyUpgrade(socket, status) {
+  const statusText = { 401: 'Unauthorized', 403: 'Forbidden' }[status] || 'Error'
+  socket.write(`HTTP/1.1 ${status} ${statusText}\r\n\r\n`)
+  socket.destroy()
+}
 
 app.use(express.json())
 
@@ -237,6 +296,7 @@ registerLibraryRoutes(app)
 registerSubtitleRoutes(app, io)
 registerLiveKitRoutes(app)
 registerServarrRoutes(app)
+registerNekoRoutes(app, io)
 registerNativeRoutes(app)
 registerDesktopBuildRoutes(app)
 
@@ -272,7 +332,8 @@ if (process.env.SERVE_CLIENT === '1') {
     // SPA fallback — hand any non-API, non-socket, non-proxy path to index.html
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') ||
-          req.path.startsWith('/jellyfin') || req.path.startsWith('/livekit')) return next()
+          req.path.startsWith('/jellyfin') || req.path.startsWith('/livekit') ||
+          req.path.startsWith('/neko')) return next()
       res.sendFile(join(clientDist, 'index.html'))
     })
   } else {
