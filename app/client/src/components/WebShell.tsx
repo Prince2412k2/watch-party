@@ -115,8 +115,9 @@ function WebPartyWidget({ open = true, onClose, onStartParty, onJoinParty, start
   onJoinParty?: () => void
   starting?: boolean
 } = {}) {
-  const { session, role, approveUser, rejectUser, kickUser, endParty } = useParty()
+  const { session, role, approveUser, rejectUser, kickUser, endParty, startBrowser } = useParty()
   const [copied, setCopied] = useState(false)
+  const [browserMsg, setBrowserMsg] = useState('')
   if (!open) return null
 
   if (!session) {
@@ -154,6 +155,22 @@ function WebPartyWidget({ open = true, onClose, onStartParty, onJoinParty, start
         {guests.map(guest => <Person key={guest.userId} user={guest} actions={isHost ? <button className="party-person-action" onClick={() => kickUser(guest.userId)} aria-label={`Remove ${guest.name}`}><Icon name="x" size={14} /></button> : undefined} />)}
       </div>
       {isHost && waiting.length ? <div className="party-waiting"><strong>Waiting to join</strong>{waiting.map(person => <Person key={person.userId} user={person} actions={<div className="party-person-actions"><button onClick={() => rejectUser(person.userId)} aria-label={`Reject ${person.name}`}><Icon name="x" size={14} /></button><button onClick={() => approveUser(person.userId)} aria-label={`Accept ${person.name}`}><Icon name="check" size={14} /></button></div>} />)}</div> : null}
+      {isHost && session.activity !== 'remote-browser' ? (
+        <button
+          className="party-secondary-action"
+          onClick={() => {
+            setBrowserMsg('')
+            void startBrowser().then(res => {
+              if (res.error === 'busy') setBrowserMsg(res.message || 'A shared browser is already running')
+              else if (res.error === 'browser disabled') setBrowserMsg('Shared browsing is disabled on this server')
+              else if (res.error) setBrowserMsg(res.message || res.error)
+            })
+          }}
+        >
+          <Icon name="compass" size={18} />Start shared browser
+        </button>
+      ) : null}
+      {browserMsg ? <div className="web-dialog-error" role="alert">{browserMsg}</div> : null}
       {isHost ? <button className="party-end" onClick={() => { if (window.confirm('End this party for everyone?')) void endParty() }}>End party</button> : null}
     </aside>
   )
