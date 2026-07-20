@@ -13,6 +13,7 @@ const {
   beginMediaGeneration, applyStallReport,
   validateSubtitlePreferences, DEFAULT_SUBTITLE_PREFERENCES,
   publicSession, publicSessionFor,
+  canStartBrowser, setBrowserActivity, isBrowserActive,
 } = await import('./session.js')
 const { loadParty } = await import('./party-store.js')
 
@@ -243,5 +244,52 @@ test('publicSessionFor: modern sees activity, legacy sees lobby fallback', () =>
     // even if stage were something other than lobby while activity is remote-browser,
     // legacy must still present lobby so the old client shows the library harmlessly
     assert.equal(legacyWatching.stage, 'lobby')
+  } finally { deleteSession(sess.id) }
+})
+
+test('activity round-trips through save/loadParty', () => {
+  const sess = fresh()
+  try {
+    assert.equal(sess.activity, 'none')
+    setBrowserActivity(sess, true)
+    assert.equal(sess.activity, 'remote-browser')
+    persistSession(sess)
+    const reloaded = loadParty(sess.id)
+    assert.equal(reloaded.activity, 'remote-browser')
+
+    setBrowserActivity(sess, false)
+    assert.equal(sess.activity, 'none')
+    persistSession(sess)
+    assert.equal(loadParty(sess.id).activity, 'none')
+  } finally { deleteSession(sess.id) }
+})
+
+test('canStartBrowser is only true in an idle lobby', () => {
+  const sess = fresh()
+  try {
+    assert.equal(sess.stage, 'lobby')
+    assert.equal(canStartBrowser(sess), true)
+
+    sess.stage = 'watching'
+    assert.equal(canStartBrowser(sess), false)
+
+    sess.stage = 'lobby'
+    setBrowserActivity(sess, true)
+    assert.equal(canStartBrowser(sess), false)
+    assert.equal(isBrowserActive(sess), true)
+
+    setBrowserActivity(sess, false)
+    assert.equal(canStartBrowser(sess), true)
+    assert.equal(isBrowserActive(sess), false)
+  } finally { deleteSession(sess.id) }
+})
+
+test('setBrowserActivity(on) is a no-op outside the lobby', () => {
+  const sess = fresh()
+  try {
+    sess.stage = 'watching'
+    setBrowserActivity(sess, true)
+    assert.equal(sess.activity, 'none')
+    assert.equal(isBrowserActive(sess), false)
   } finally { deleteSession(sess.id) }
 })

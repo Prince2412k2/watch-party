@@ -42,6 +42,7 @@ function durableState(session) {
     playback: session.playback,
     subtitlePreferences: session.subtitlePreferences,
     stage: session.stage,
+    activity: session.activity,
     browse: session.browse,
     guests: session.guests.map(durableGuest),
     approved: [...session.approved],
@@ -72,6 +73,7 @@ function runtimeState(saved) {
     playback: saved.playback ?? null,
     subtitlePreferences: validateSubtitlePreferences(saved.subtitlePreferences).value ?? { ...DEFAULT_SUBTITLE_PREFERENCES },
     stage: saved.stage ?? (saved.mediaItemId ? 'watching' : 'lobby'),
+    activity: saved.activity ?? 'none',
     browse: saved.browse ?? { stack: [] },
     guests: (saved.guests ?? []).map(guest => ({ ...guest, socketId: null })),
     waiting: [],
@@ -122,6 +124,9 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     // 'lobby'    = everyone's in, browsing the library together, no title yet
     // 'watching' = a title is selected, playback sync engine is live
     stage: mediaItemId ? 'watching' : 'lobby',
+    // What collaborative activity (if any) currently owns the party's screen.
+    // 'none' = normal library/playback flow. 'remote-browser' = Neko session live.
+    activity: 'none',
     // Host-authority browse state, mirrored to guests (the "shared screen").
     // stack = drill path: [] = home, else [{ id, name, type }, …]
     browse: { stack: [] },
@@ -278,6 +283,26 @@ export function pushMessage(session, msg) {
 
 export function isHost(session, userId) {
   return session.hostId === userId
+}
+
+// A remote-browser activity may only be started from an idle lobby — never
+// while a title is playing, and never while another activity already owns
+// the screen.
+export function canStartBrowser(session) {
+  return session.stage === 'lobby' && session.activity === 'none'
+}
+
+export function setBrowserActivity(session, on) {
+  if (on) {
+    if (session.stage !== 'lobby') return
+    session.activity = 'remote-browser'
+  } else {
+    session.activity = 'none'
+  }
+}
+
+export function isBrowserActive(session) {
+  return session.activity === 'remote-browser'
 }
 
 export function isMember(session, userId) {
