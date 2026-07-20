@@ -17,6 +17,15 @@ db.exec(`
     state TEXT NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS neko_lease (
+    key TEXT PRIMARY KEY,
+    partyId TEXT NOT NULL,
+    hostName TEXT,
+    state TEXT NOT NULL,
+    leaseId TEXT NOT NULL,
+    sessions TEXT NOT NULL,
+    acquiredAt INTEGER NOT NULL
+  );
 `)
 
 const upsert = db.prepare(`
@@ -56,4 +65,52 @@ export function loadParty(id) {
   } catch {
     return null
   }
+}
+
+const upsertLease = db.prepare(`
+  INSERT INTO neko_lease (key, partyId, hostName, state, leaseId, sessions, acquiredAt)
+  VALUES ('global', ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(key) DO UPDATE SET
+    partyId = excluded.partyId,
+    hostName = excluded.hostName,
+    state = excluded.state,
+    leaseId = excluded.leaseId,
+    sessions = excluded.sessions,
+    acquiredAt = excluded.acquiredAt
+`)
+const selectLease = db.prepare("SELECT * FROM neko_lease WHERE key = 'global'")
+const deleteLease = db.prepare("DELETE FROM neko_lease WHERE key = 'global'")
+
+export function saveLease(row) {
+  upsertLease.run(
+    row.partyId,
+    row.hostName ?? null,
+    row.state,
+    row.leaseId,
+    JSON.stringify(row.sessions ?? []),
+    row.acquiredAt,
+  )
+}
+
+export function loadLease() {
+  const row = selectLease.get()
+  if (!row) return null
+  let sessions = []
+  try {
+    sessions = JSON.parse(row.sessions)
+  } catch {
+    sessions = []
+  }
+  return {
+    partyId: row.partyId,
+    hostName: row.hostName,
+    state: row.state,
+    leaseId: row.leaseId,
+    sessions,
+    acquiredAt: row.acquiredAt,
+  }
+}
+
+export function clearLease() {
+  deleteLease.run()
 }
