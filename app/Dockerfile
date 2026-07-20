@@ -1,5 +1,11 @@
 FROM node:22-alpine
 
+# openssh-client: the Neko container-recreate reset (app/server/neko/container.js)
+# shells out to `ssh neko-recreate@<host>` with a forced-command key mounted at
+# runtime (NEKO_SSH_KEY_PATH) — never baked into this image. See
+# docs/ops/neko-recreate.md.
+RUN apk add --no-cache openssh-client
+
 WORKDIR /app
 
 # Server deps

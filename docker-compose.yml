@@ -69,6 +69,11 @@ services:
       # container recreate. See app/server/index.js's sessionStoreDir.
       - ./data/sessions:/data/sessions
       - ./data/subtitles:/data/subtitles
+      # SSH private key used to trigger the recreate-reset forced-command on the
+      # Neko host — read-only, never baked into the image (see app/Dockerfile).
+      # PLACEHOLDER: generate this keypair per docs/ops/neko-recreate.md; the
+      # file must exist and be readable before NEKO_ENABLED=true.
+      - ./secrets/neko-recreate-key:/run/secrets/neko-recreate-key:ro
     env_file:
       # .env  = base (internal URLs, LiveKit keys, SESSION_SECRET)
       # .env.local = optional real secrets (servarr API keys, LiveKit keys).
@@ -94,6 +99,23 @@ services:
       # ── Serve config ──
       - SERVE_CLIENT=1
       - PORT=3000
+      # ── Neko collaborative browser (see docs/ops/neko-recreate.md) ─────────
+      # Disabled by default. Flip to true only once the `neko` service below
+      # is configured with matching secrets and the SSH forced-command host is
+      # reachable — see NEKO_SSH_HOST/NEKO_SSH_KEY_PATH below.
+      - NEKO_ENABLED=${NEKO_ENABLED:-false}
+      - NEKO_INTERNAL_URL=http://neko:8080
+      # NEKO_API_TOKEN must equal the `neko` service's NEKO_SESSION_API_TOKEN below.
+      - NEKO_API_TOKEN=${NEKO_API_TOKEN:-}
+      - NEKO_USER_PASSWORD=${NEKO_MEMBER_MULTIUSER_USER_PASSWORD:-}
+      - NEKO_USERNAME_SECRET=${NEKO_USERNAME_SECRET:-}
+      # Browser-facing WebRTC signaling endpoint — override in .env for a real deploy.
+      - NEKO_PUBLIC_WS=${NEKO_PUBLIC_WS:-ws://localhost:9876}
+      # SSH forced-command recreate target (docs/ops/neko-recreate.md). PLACEHOLDER:
+      # fill in a real host/tailnet name and mount a real key before enabling.
+      - NEKO_SSH_HOST=${NEKO_SSH_HOST:-neko-host.example}
+      - NEKO_SSH_KEY_PATH=/run/secrets/neko-recreate-key
+      - NEKO_IDLE_TIMEOUT_MS=${NEKO_IDLE_TIMEOUT_MS:-300000}
     depends_on:
       jellyfin:
         condition: service_started
@@ -109,6 +131,39 @@ services:
         condition: service_healthy
       qbittorrent:
         condition: service_started
+
+  # Collaborative remote browser (see docs/specs/2026-07-20-neko-spike-decision.md
+  # and docs/ops/neko-recreate.md). Pinned >= 3.1.2 (GHSA-2gw9-c2r2-f5qf) — never
+  # `:latest`. The app reaches it internally at http://neko:8080; the reset
+  # mechanism (container-recreate) is triggered over SSH from the app container
+  # via a forced-command on the Neko HOST, not this compose file's docker socket.
+  neko:
+    image: ghcr.io/m1k1o/neko/firefox:3.1.4
+    container_name: watchparty-neko
+    restart: unless-stopped
+    networks: [watchparty-net]
+    shm_size: 2gb
+    ports:
+      # WebRTC EPR UDP range — must be reachable by client devices. TCP 8080 is
+      # NOT published here on purpose; it's reached only via the app's /neko
+      # proxy over the internal network (see docs/ops/neko-recreate.md's
+      # network-boundary note).
+      - "${NEKO_WEBRTC_EPR:-56000-56100}:${NEKO_WEBRTC_EPR:-56000-56100}/udp"
+    environment:
+      NEKO_WEBRTC_EPR: "${NEKO_WEBRTC_EPR:-56000-56100}"
+      NEKO_WEBRTC_ICELITE: "1"
+      # PLACEHOLDER: set to this host's public/tailnet IP reachable by clients.
+      NEKO_WEBRTC_NAT1TO1: "${NEKO_WEBRTC_NAT1TO1:-127.0.0.1}"
+      NEKO_MEMBER_PROVIDER: "multiuser"
+      # PLACEHOLDER secrets — override in .env/.env.local before enabling.
+      NEKO_MEMBER_MULTIUSER_USER_PASSWORD: "${NEKO_MEMBER_MULTIUSER_USER_PASSWORD:-changeme-user}"
+      NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "${NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD:-changeme-admin}"
+      # Must equal the app service's NEKO_API_TOKEN above.
+      NEKO_SESSION_API_TOKEN: "${NEKO_API_TOKEN:-}"
+      NEKO_SESSION_COOKIE_ENABLED: "true"
+      NEKO_SESSION_COOKIE_NAME: "NEKO_SESSION"
+      NEKO_SERVER_PATH_PREFIX: "/neko"
+      NEKO_DESKTOP_SCREEN: "1280x720@30"
 
   # ── Media-acquisition stack (Servarr + qBittorrent) ────────────────────────
   # All on watchparty-net so the app reaches them by name and they reach each
