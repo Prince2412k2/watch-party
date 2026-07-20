@@ -36,3 +36,6 @@ secrets/
 
 # Subagent working copies — never commit
 .pi-subagents/
+
+# A0 spike throwaway probes
+/scratch/
