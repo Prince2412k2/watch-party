@@ -104,7 +104,9 @@ services:
       # is configured with matching secrets and the SSH forced-command host is
       # reachable — see NEKO_SSH_HOST/NEKO_SSH_KEY_PATH below.
       - NEKO_ENABLED=${NEKO_ENABLED:-false}
-      - NEKO_INTERNAL_URL=http://neko:8080
+      # Includes the /neko path prefix (NEKO_SERVER_PATH_PREFIX) — the server→Neko
+      # REST calls and health poll must hit the prefixed routes.
+      - NEKO_INTERNAL_URL=${NEKO_INTERNAL_URL:-http://neko:8080/neko}
       # NEKO_API_TOKEN must equal the `neko` service's NEKO_SESSION_API_TOKEN below.
       - NEKO_API_TOKEN=${NEKO_API_TOKEN:-}
       - NEKO_USER_PASSWORD=${NEKO_MEMBER_MULTIUSER_USER_PASSWORD:-}
