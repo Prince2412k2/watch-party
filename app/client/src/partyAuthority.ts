@@ -7,8 +7,11 @@ export function partyRoleForUser(session: PartySession, userId?: string): PartyR
 }
 
 export function shouldOpenPartyPlayer(session: PartySession, role: PartyRole, pathname: string): boolean {
-  return (role === 'host' || role === 'guest') && session.stage === 'watching' &&
-    typeof session.mediaItemId === 'string' && !pathname.startsWith('/party/')
+  if (!(role === 'host' || role === 'guest') || pathname.startsWith('/party/')) return false
+  // A remote-browser activity has its own full-screen view (RemoteBrowser),
+  // reached through the same party-player route as watching.
+  if (session.activity === 'remote-browser') return true
+  return session.stage === 'watching' && typeof session.mediaItemId === 'string'
 }
 
 export function canManagePartyMedia(role: PartyRole): boolean {
