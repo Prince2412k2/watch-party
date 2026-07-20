@@ -36,9 +36,20 @@ import {
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
   transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSessionFor, emitPartyState, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
-  validateSubtitlePreferences,
+  validateSubtitlePreferences, canStartBrowser, setBrowserActivity, isBrowserActive, setIo,
 } from './session.js'
 import { resolveMediaSourceId } from './jellyfin.js'
+import { nekoConfig, assertNekoEnabled, validateNekoConfig } from './neko/config.js'
+import * as nekoAdmin from './neko/admin.js'
+import * as nekoContainer from './neko/container.js'
+import * as nekoLease from './neko/lease.js'
+import * as nekoController from './neko/controller.js'
+import { teardownBrowser } from './neko/teardown.js'
+import { detachMember } from './neko/detach.js'
+import { startIdleMonitor } from './neko/idle.js'
+
+// Fail fast: a broken Neko config must never boot the server (finding #5).
+validateNekoConfig()
 
 // Fail fast: never run in production with a missing or default session secret.
 if (process.env.NODE_ENV === 'production' &&
@@ -59,6 +70,22 @@ function enqueuePlaybackTrackChange(partyId, operation) {
     }
   }
   void current.then(cleanup, cleanup)
+}
+
+// Wraps teardownBrowser with an emitState that re-fetches the session (it may
+// have just been mutated in place by teardown itself) and broadcasts via the
+// capability-aware emitPartyState. Shared by every deletion/lifecycle path
+// below so none of them has to repeat the closure.
+function teardownWithEmit(partyId, opts) {
+  return teardownBrowser(partyId, {
+    ...opts,
+    deps: {
+      emitState: () => {
+        const sess = getSession(partyId)
+        if (sess) emitPartyState(io, sess)
+      },
+    },
+  })
 }
 
 const app = express()
@@ -321,7 +348,13 @@ io.on('connection', (socket) => {
       ack?.({ partyId: sess.id, session: publicSessionFor(sess, { caps: socket.caps }) })
     } catch (err) {
       console.error('party:create', err.message)
-      if (sess) deleteSession(sess.id)
+      if (sess) {
+        const lease = nekoLease.getLease()
+        if (lease?.partyId === sess.id) {
+          await teardownWithEmit(sess.id, { reason: 'create-failed' }).catch(teardownErr => console.error('teardown after failed create', teardownErr.message))
+        }
+        deleteSession(sess.id)
+      }
       ack?.({ error: err.message })
     }
   })
@@ -429,6 +462,11 @@ io.on('connection', (socket) => {
     io.to(g.socketId).emit('party:kicked', { userId: targetId })
     io.to(sess.id).emit('user:left', { userId: targetId, name: g.name })
     persistSession(sess)
+    const lease = nekoLease.getLease()
+    if (lease?.partyId === sess.id) {
+      detachMember(sess.id, targetId, { deps: { broadcast: (payload) => io.to(sess.id).emit('browser:control', payload) } })
+        .catch(err => console.error('detachMember (kick)', err.message))
+    }
     ack?.({ ok: true })
   })
 
@@ -436,11 +474,15 @@ io.on('connection', (socket) => {
   // (handleHostDisconnect below), this is instant and final: no grace period,
   // no promoting a guest to host. The session is torn down immediately and
   // everyone still connected is told to leave.
-  socket.on('party:end', (_p, ack) => {
+  socket.on('party:end', async (_p, ack) => {
     const sess = findSessionByHost(userId)
     if (!sess) return ack?.({ error: 'not host' })
     clearTimeout(sess.hostDisconnectTimer)
     clearTimeout(sess._stallTimer)
+    const lease = nekoLease.getLease()
+    if (lease?.partyId === sess.id) {
+      await teardownWithEmit(sess.id, { reason: 'party-end' }).catch(err => console.error('teardown on party:end', err.message))
+    }
     socket.to(sess.id).emit('party:ended', {})
     deleteSession(sess.id)
     ack?.({ ok: true })
@@ -513,6 +555,7 @@ io.on('connection', (socket) => {
   socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    if (isBrowserActive(sess)) return ack?.({ error: 'browser active' })
     try {
       const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
       if (!src) return ack?.({ error: 'item not found' })
@@ -542,10 +585,31 @@ io.on('connection', (socket) => {
     }
   })
 
-  // party:backToLobby — stop the movie, return everyone to shared browsing
-  socket.on('party:backToLobby', (_p, ack) => {
+  // party:backToLobby — stop the movie, return everyone to shared browsing.
+  // When a remote browser is live, this doubles as "stop the browser" — same
+  // host/controller authorization as party:stopBrowser (finding #9) — since
+  // the party is already in the lobby stage while activity==='remote-browser'.
+  socket.on('party:backToLobby', async (_p, ack) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    if (!sess) return ack?.({ error: 'not allowed' })
+
+    if (isBrowserActive(sess)) {
+      const partyId = sess.id
+      const authorized = isHost(sess, userId) || await nekoController.isController(partyId, userId)
+      if (!authorized) return ack?.({ error: 'not allowed' })
+      enqueuePlaybackTrackChange(partyId, async () => {
+        try {
+          await teardownWithEmit(partyId, { reason: 'back-to-lobby' })
+          ack?.({ ok: true })
+        } catch (err) {
+          console.error('party:backToLobby (stop browser)', err.message)
+          ack?.({ error: err.message })
+        }
+      })
+      return
+    }
+
+    if (!canDrive(sess)) return ack?.({ error: 'not allowed' })
     sess.mediaItemId = null
     sess.mediaSourceId = null
     sess.playback = null
@@ -557,9 +621,65 @@ io.on('connection', (socket) => {
     ack?.({ ok: true })
   })
 
+  // party:startBrowser — start the shared Neko remote-browser activity for
+  // this (lobby) party. Serialized per party (same queue as playback-track
+  // changes — it's generic on partyId) so a start/stop race can't interleave.
+  socket.on('party:startBrowser', (_p, ack) => {
+    try {
+      assertNekoEnabled()
+    } catch {
+      return ack?.({ error: 'browser disabled' })
+    }
+    const sess = findSessionForMember(userId)
+    if (!sess) return ack?.({ error: 'not allowed' })
+    const partyId = sess.id
+    enqueuePlaybackTrackChange(partyId, async () => {
+      if (!canStartBrowser(sess)) return ack?.({ error: 'not allowed' })
+
+      const acquired = nekoLease.acquireLease({ partyId, hostName: sess.hostName })
+      if (!acquired.ok) {
+        return ack?.({ error: 'busy', message: `In use by ${acquired.hostName}` })
+      }
+
+      try {
+        await nekoContainer.recreateContainer()
+        await nekoContainer.waitForHealthy()
+        await nekoAdmin.setControlLock(true)
+        setBrowserActivity(sess, true)
+        persistSession(sess)
+        nekoLease.markActive(partyId)
+        emitPartyState(io, sess)
+        ack?.({ ok: true })
+      } catch (err) {
+        console.error('party:startBrowser', err.message)
+        await teardownWithEmit(partyId, { reason: 'start-failed' }).catch(teardownErr => console.error('teardown after failed start', teardownErr.message))
+        ack?.({ error: err.message })
+      }
+    })
+  })
+
+  // party:stopBrowser — host OR the current Neko controller may stop it.
+  socket.on('party:stopBrowser', (_p, ack) => {
+    const sess = findSessionForMember(userId)
+    if (!sess) return ack?.({ error: 'not allowed' })
+    const partyId = sess.id
+    enqueuePlaybackTrackChange(partyId, async () => {
+      const authorized = isHost(sess, userId) || await nekoController.isController(partyId, userId)
+      if (!authorized) return ack?.({ error: 'not allowed' })
+      try {
+        await teardownWithEmit(partyId, { reason: 'stop' })
+        ack?.({ ok: true })
+      } catch (err) {
+        console.error('party:stopBrowser', err.message)
+        ack?.({ error: err.message })
+      }
+    })
+  })
+
   socket.on('party:setPlaybackTracks', ({ audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || sess.hostId !== userId || !sess.mediaItemId) return ack?.({ error: 'not allowed' })
+    if (isBrowserActive(sess)) return ack?.({ error: 'browser active' })
     const mediaItemId = sess.mediaItemId
     enqueuePlaybackTrackChange(sess.id, async () => {
       if (sess.mediaItemId !== mediaItemId || sess.hostId !== userId) {
@@ -737,6 +857,13 @@ io.on('connection', (socket) => {
       // A departing member must not keep the group frozen in dragging mode
       const stallChanged = sess.stalled.delete(userId) || sess.stallFallback.delete(userId)
       if (stallChanged) reconcile(sess)
+      if (g) {
+        const lease = nekoLease.getLease()
+        if (lease?.partyId === sess.id) {
+          detachMember(sess.id, userId, { deps: { broadcast: (payload) => io.to(sess.id).emit('browser:control', payload) } })
+            .catch(err => console.error('detachMember (disconnect)', err.message))
+        }
+      }
     }
   })
 })
@@ -867,10 +994,14 @@ function handleHostDisconnect(sess) {
   setSchedule(sess, { positionTicks: frozenPos, t0: 0, rate: 0, paused: true, phase: 'paused' })
   io.to(sess.id).emit('sync:host_gone')
 
-  sess.hostDisconnectTimer = setTimeout(() => {
+  sess.hostDisconnectTimer = setTimeout(async () => {
     sess.hostDisconnectTimer = null
     const next = randomConnectedGuest(sess, socketId => io.sockets.sockets.has(socketId))
     if (!next) {
+      const lease = nekoLease.getLease()
+      if (lease?.partyId === sess.id) {
+        await teardownWithEmit(sess.id, { reason: 'host-loss-expired' }).catch(err => console.error('teardown on host-loss expiry', err.message))
+      }
       deleteSession(sess.id)
       return
     }
@@ -891,6 +1022,25 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   console.error('uncaughtException:', err)
 })
+
+// ── Neko lease reconciliation + process-level idle monitor (C4/C9) ─────────
+// session.js needs `io` to emit party state from its restore-grace expiry
+// path, but it's loaded (and that path runs) before `io` exists here.
+setIo(io)
+
+if (nekoConfig().enabled) {
+  nekoLease.reconcileLease({
+    listSessions: nekoAdmin.listSessions,
+    teardown: (partyId) => teardownWithEmit(partyId, { reason: 'startup-reconcile' }),
+    hasLiveParty: (partyId) => Boolean(getSession(partyId)),
+  }).catch(err => console.error('neko lease reconcile failed:', err.message))
+
+  startIdleMonitor({
+    deps: {
+      teardownBrowser: (partyId, opts) => teardownWithEmit(partyId, opts),
+    },
+  })
+}
 
 const PORT = process.env.PORT || 3001
 httpServer.listen(PORT, () => console.log(`server listening on :${PORT}`))
