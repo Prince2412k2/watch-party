@@ -23,10 +23,15 @@ auth/isolation/control.
   insufficient (writable layer survives) so `--force-recreate` is required for SC-006.
 - **Lease is a single durable row with an explicit state machine**
   `free → starting → active → cleaning → free`, plus a monotonic `generation` counter.
-  Proxy, session-broker, and control ops only work in `active`. Release to `free` happens
-  only after the owning party is persisted back to lobby (finding #13). Reconciled on
-  startup. *Rejected:* boolean/in-memory lease — crash leaves orphans (fails SC-007) and
-  a bare boolean races on teardown (finding #13).
+  **`free` is represented by the ABSENCE of the row** (`loadLease() === null`); there is
+  no persisted `state='free'` row. `acquireLease` is the only `null → starting`
+  transition. Proxy, session-broker, and control ops only work in `active`. Both
+  `starting → cleaning` (startup rollback/crash) and `active → cleaning` (normal
+  teardown) are allowed, so a failure during startup can never wedge the lease in
+  `starting` (finding #1). Release to `free` (row cleared) happens only after the owning
+  party is persisted back to lobby (finding #13). Reconciled on startup. *Rejected:*
+  boolean/in-memory lease — crash leaves orphans (fails SC-007) and a bare boolean races
+  on teardown.
 - **Single authorization path in all environments.** Vite dev-proxy forwards `/neko` to
   the **Watchparty backend**, which is the only thing that proxies to Neko. No client
   ever reaches Neko directly (finding #3).
@@ -51,7 +56,8 @@ auth/isolation/control.
   session, Jellyfin `token`/`accessToken`, `deviceId`, `socketId`. (SC-004, US-6, US-7.)
 - **Env vars, verbatim**: `NEKO_ENABLED`, `NEKO_CONCURRENCY_ENABLED` (reserved, off, no
   impl), `NEKO_IDLE_TIMEOUT_MS` (default `300000`), `NEKO_API_TOKEN`, `NEKO_USER_PASSWORD`,
-  `NEKO_INTERNAL_URL`, `NEKO_PUBLIC_WS`, `NEKO_SSH_HOST`, `NEKO_SSH_KEY_PATH`.
+  `NEKO_INTERNAL_URL`, `NEKO_PUBLIC_WS`, `NEKO_SSH_HOST`, `NEKO_SSH_KEY_PATH`,
+  `NEKO_USERNAME_SECRET` (HMAC key for opaque per-user Neko usernames — finding #8).
 - **Session field**: `activity: 'none' | 'remote-browser'` — a plain string (finding #5),
   matching the spec FR-001. `stage` stays `'lobby'|'watching'`.
 - **Client capability flag**: clients that understand remote-browser connect with
@@ -99,8 +105,10 @@ go/no-go stop point.**
 
 ### Task B0: Replace `publicSession()` with a per-socket, capability-aware allow-list DTO
 Files: modify `app/server/session.js` (`publicSession` at 287-294, add
-`publicSessionFor`); audit and update **all ~19 call sites** across
-`app/server/index.js` and `app/server/subtitles.js` (finding #1).
+`publicSessionFor`); modify `app/server/index.js` socket `io.on('connection')` (~267) to
+**ingest and store capabilities**; audit and update **all ~19 call sites** across
+`app/server/index.js` and `app/server/subtitles.js` — both room broadcasts AND every
+per-socket acknowledgement / unicast (finding #3).
 Interfaces:
   - `publicSession(session) → {...allow-listed}` — explicit construction (allow-list),
     NOT destructuring exclusion. Includes `id, hostId, hostName, stage, activity,
@@ -113,17 +121,27 @@ Interfaces:
     (`caps.remoteBrowser`) gets the full DTO incl. `activity`; legacy gets the DTO with
     `activity` omitted and, when `activity==='remote-browser'`, `stage` presented as
     `'lobby'` (finding #1 + Task C13 fallback, unified here).
-  - Introduce a **centralized emit helper** `emitPartyState(io, session)` that iterates
-    the room's sockets and sends each `publicSessionFor(session, {caps: socket.caps})`
-    (per-socket, since one room now needs two snapshots — finding #1). Replace the ~19
-    broadcast call sites with it.
+  - **Capability ingestion (finding #3):** on `io.on('connection')`, validate and store
+    `socket.caps = { remoteBrowser: socket.handshake.auth?.caps?.remoteBrowser === true }`
+    (also on the `io.use` middleware path so it is set before the first emit). Absent/
+    malformed ⇒ legacy.
+  - Introduce a **centralized emit helper** `emitPartyState(io, session)` for room
+    broadcasts (iterates the room's sockets, sends each `publicSessionFor(session,
+    {caps: socket.caps})` — one room now needs two snapshots). For **per-socket
+    acknowledgements and unicasts** (resume/join/create/approve, etc.) the handler MUST
+    use `publicSessionFor(sess, {caps: socket.caps})` — never raw `publicSession(sess)`
+    — so a legacy client cannot receive modern state through an ack (finding #3).
+    Replace all ~19 sites accordingly (broadcasts → `emitPartyState`; acks/unicasts →
+    `publicSessionFor`).
 Steps: failing test (deep-scan no forbidden keys; modern vs legacy snapshot differs on
-`activity`/`stage`) → RED → implement allow-list + `publicSessionFor` + `emitPartyState`,
-migrate call sites → GREEN → commit.
+`activity`/`stage`; a legacy socket's join/resume ACK omits `activity`) → RED → implement
+capability ingestion + allow-list + `publicSessionFor` + `emitPartyState`, migrate call
+sites → GREEN → commit.
 Verify: `node --test app/server/session.test.js` incl.
-`publicSession exposes only allow-listed fields` and
-`publicSessionFor: modern sees activity, legacy sees lobby fallback`. (FR-011, US-7,
-US-9 snapshot half, SC-004 publicSession half.)
+`publicSession exposes only allow-listed fields`,
+`publicSessionFor: modern sees activity, legacy sees lobby fallback`, and
+`legacy socket resume/join/approve ACKs never leak activity`. (FR-011, US-7, US-9
+snapshot half, SC-004 publicSession half, finding #3.)
 
 ---
 
@@ -132,8 +150,9 @@ US-9 snapshot half, SC-004 publicSession half.)
 ### Task C1 [P]: Neko config module + feature gate
 Files: create `app/server/neko/config.js` + `.test.js`.
 Interfaces: `nekoConfig() → { enabled, concurrencyEnabled, internalUrl, publicWs,
-apiToken, userPassword, idleTimeoutMs, cookieName:'NEKO_SESSION', sshHost, sshKeyPath }`;
-`assertNekoEnabled() → void` throws `Error('neko disabled')` when `!enabled`.
+apiToken, userPassword, idleTimeoutMs, cookieName:'NEKO_SESSION', sshHost, sshKeyPath,
+usernameSecret }`; `assertNekoEnabled() → void` throws `Error('neko disabled')` when
+`!enabled`.
 Verify: `node --test app/server/neko/config.test.js` — unset/`false` → `enabled:false`;
 `NEKO_IDLE_TIMEOUT_MS=1000` overrides `300000`; `NEKO_CONCURRENCY_ENABLED` parsed but
 reserved. (FR-014, FR-015, FR-008 default.)
@@ -172,9 +191,16 @@ line with `restrict,command="/usr/local/bin/neko-recreate"`, the script running
 handling — key never baked into the image); add a startup preflight in `index.js` that,
 when `NEKO_ENABLED`, verifies the ssh binary + key are present and logs a clear error
 otherwise.
+Also document + apply the **network boundary** (finding #4): Neko TCP 8080 (HTTP/WS/API,
+incl. `/metrics`) MUST accept traffic ONLY from the Watchparty backend — via Tailscale
+ACL and/or host firewall on `contab` — so a user who extracts their `NEKO_SESSION` cookie
+cannot hit `contab:8080` directly and bypass the C11 allow-list; only the WebRTC EPR/UDP
+(or TURN) ports are reachable by client devices.
 Verify: manual — from inside a built app container, `recreateContainer()` triggers a real
-recreate on `contab` and nothing else (attempt an arbitrary command → refused by
-forced-command). Preflight fails loudly when key missing. (FR-009 deployability.)
+recreate on `contab` and nothing else (arbitrary command → refused by forced-command);
+preflight fails loudly when key missing; **from a client device on the tailnet,
+`curl contab:8080/metrics` and `/api/sessions` are refused, while the WebRTC UDP ports
+are reachable** (finding #4). (FR-009 deployability, FR-012 boundary.)
 
 ### Task C4: Durable lease store (state machine) + startup reconciliation
 Files: modify `app/server/party-store.js` (add `neko_lease` table: single row keyed
@@ -183,21 +209,27 @@ create `app/server/neko/lease.js` + `.test.js`.
 Interfaces:
   - store: `saveLease(row) → void`, `loadLease() → row|null`, `clearLease() → void`.
   - lease.js: `acquireLease({partyId, hostName}) → {ok:true, generation} | {ok:false,
-    hostName}` — atomic; only succeeds from `free`; sets state `starting`, bumps
-    `generation`. `markActive(partyId) → void` (`starting→active`).
-    `beginCleaning(partyId) → void` (`active→cleaning`). `releaseLease(partyId) → void`
-    (`cleaning→free`, clears row). `getLease() → {partyId, hostName, state, generation}
-    |null`. `recordUserSession(partyId, generation, userId, nekoSessionId) → void`
-    (persists mapping; ignores stale generation — finding #4). `sessionsFor(partyId) →
-    {userId, nekoSessionId}[]`. `controllerUserFor(nekoSessionId) → userId|null` (shared
+    hostName}` — atomic; only succeeds when `loadLease() === null` (i.e. `free`); writes
+    the row `state:'starting'`, bumps `generation`. `markActive(partyId) → void`
+    (`starting→active`). `beginCleaning(partyId) → void` — allows **both**
+    `starting→cleaning` and `active→cleaning` (finding #1); idempotent if already
+    `cleaning`. `releaseLease(partyId) → void` (`cleaning→free`, clears the row — `free`
+    is the absent row, finding #10). `getLease() → {partyId, hostName, state,
+    generation}|null`. `recordUserSession(partyId, generation, userId, nekoSessionId) →
+    void` (persists mapping; ignores stale generation — finding #4).
+    `removeUserSessions(partyId, userId) → {nekoSessionId}[]` (drops + returns a user's
+    mappings — for member detachment, finding #2). `sessionsFor(partyId) → {userId,
+    nekoSessionId}[]`. `controllerUserFor(nekoSessionId) → userId|null` (shared
     authoritative mapping — finding #9). `reconcileLease({listSessions, teardown}) →
-    void` (startup: lease row with no live party OR mismatched live sessions → teardown +
-    clear; a valid `active` lease is kept and returned so the idle monitor can be
-    (re)started — finding #10).
-Verify: `node --test app/server/neko/lease.test.js` (sets `PARTY_DB_PATH`) — acquire from
-free ok; second acquire `{ok:false, hostName}`; state transitions enforce order; stale
-generation `recordUserSession` ignored; reconcile clears dangling / keeps valid.
-(FR-002, FR-002a, SC-007, findings #4/#9/#13.)
+    void` (startup: a `starting` lease OR a lease row with no live party OR mismatched
+    live sessions → teardown [which drives `→cleaning→free`] + clear; a valid `active`
+    lease is kept and returned so the idle monitor can be (re)started — finding #10).
+Verify: `node --test app/server/neko/lease.test.js` (sets `PARTY_DB_PATH`) — acquire when
+`null` ok; second acquire `{ok:false, hostName}`; `beginCleaning` works from BOTH
+`starting` and `active`; `releaseLease` clears the row (→ `null`); stale generation
+`recordUserSession` ignored; `removeUserSessions` returns+drops a user's mappings;
+reconcile clears a `starting` lease and a dangling lease, keeps a valid `active` one.
+(FR-002, FR-002a, SC-007, findings #1/#2/#4/#9/#10/#13.)
 
 ### Task C5: `remote-browser` activity + transition guards in session model
 Files: modify `app/server/session.js` (`createSession`, `durableState`, `runtimeState`,
@@ -224,14 +256,19 @@ Files: create `app/server/neko/teardown.js` + `.test.js`.
 Interfaces (Consumes admin, container, lease, session helpers, `emitPartyState`):
   - `teardownBrowser(partyId, { reason }) → void` — idempotent single-flight
     (`Map<partyId,Promise>`). Order (finding #13 — lease released LAST, after party is
-    persisted to lobby): (1) `lease.beginCleaning` (state→`cleaning`; blocks new
-    acquire/proxy/session), (2) delete every recorded per-user session (ignore 404),
-    (3) `resetControl()`, (4) `recreateContainer()`+`waitForHealthy()`, (5) set owning
-    session `activity='none'`, `stage='lobby'` + persist, (6) `emitPartyState`,
-    (7) `lease.releaseLease` (→`free`). Retries 2-4 up to 3×. No-lease → no-op.
+    persisted to lobby): (1) `lease.beginCleaning` (from `starting` OR `active` →
+    `cleaning`; blocks new acquire/proxy/session — finding #1), (2) delete every recorded
+    per-user session (ignore 404), (3) `resetControl()`, (4)
+    `recreateContainer()`+`waitForHealthy()`, (5) set owning session `activity='none'`,
+    `stage='lobby'` + persist, (6) `emitPartyState`, (7) `lease.releaseLease` (→`free`,
+    row cleared). Retries 2-4 up to 3×. No-lease → no-op. Because step 1 accepts
+    `starting`, this is also the startup-rollback path invoked by C7 on any start-step
+    failure and by reconciliation for a wedged `starting` lease.
 Verify: `node --test app/server/neko/teardown.test.js` — call order (cleaning before
 release), idempotency, retry, no-op; a concurrent `acquireLease` during `cleaning` is
-rejected. (FR-010, FR-005a, FR-009, SC-006 contract, finding #13.)
+rejected; **teardown from a `starting` lease** (each start-step failure: recreate,
+health, control-lock, persist, markActive) drives `starting→cleaning→free` and never
+wedges (finding #1). (FR-010, FR-005a, FR-009, SC-006 contract, findings #1/#13.)
 
 ### Task C7: Start / stop browser socket events (serialization + rollback + states)
 Files: modify `app/server/index.js` (handlers near `party:selectMedia` ~511; per-party
@@ -261,6 +298,24 @@ same host/controller authz as C7, finding #9), and `session.js` restore-grace ex
 Verify: `node --test app/server/neko/teardown-wiring.test.js` — each deletion path invokes
 teardown exactly once when the lease is held, never otherwise. (FR-010, US-4.)
 
+### Task C8b: Per-member Neko detachment on leave/kick/logout (finding #2)
+Files: create `app/server/neko/detach.js` + `.test.js`; wire into `app/server/index.js`
+host-kick (~420-430), guest `disconnect` (~724-738), and any logout/session-invalidation
+path. This is distinct from full teardown (C6/C8): the party keeps its browser; only the
+departing user is severed.
+Interfaces (Consumes `admin.{deleteSession,resetControl,controlStatus}`,
+`lease.{removeUserSessions,getLease}`, `controller.currentController`):
+  - `detachMember(partyId, userId) → void` — idempotent: (1) `removeUserSessions(partyId,
+    userId)` → for each returned `nekoSessionId` call `admin.deleteSession` (closes that
+    user's Neko WS + WebRTC — A0#4), (2) if the user was the current controller
+    (`currentController(partyId)?.userId === userId`) → `resetControl()` + broadcast
+    `browser:control {controllerUserId:null}`. No-op when the party doesn't hold an
+    active lease or the user has no mapped sessions.
+Verify: unit `node --test app/server/neko/detach.test.js` (mock admin) — deletes exactly
+the user's sessions, resets control only when they controlled; **integration** in C17
+(`NEKO_IT=1`) proves a kicked member's established Neko WebSocket actually closes.
+(finding #2; complements FR-006/US-3 authority.)
+
 ### Task C9: Process-level idle monitor (finding #10)
 Files: create `app/server/neko/idle.js` + `.test.js`; start it once after startup
 reconciliation (C4) in `index.js`, and (re)bind it to the active lease from C7.
@@ -283,13 +338,19 @@ teardown; reconnect resets; generation change resets; a restored lease is monito
 Files: create `app/server/neko/routes.js` (`registerNekoRoutes(app, io)`); register in
 `index.js` ~211.
 Interfaces — `POST /api/party/:id/browser/session` (`requireAuth`): reject `!enabled`;
-404 missing party; 403 non-member; 409 if lease not `active` for this party. Derive
-username `wp-<userId>`. **Idempotency (finding #4):** before minting, delete any prior
-recorded Neko session for `(partyId, userId)` (`admin.deleteSession`) then `loginViewer`;
-`recordUserSession(partyId, currentGeneration, userId, sessionId)` — the generation
-stamp means a session from a previous container generation can never be reused. Set the
+404 missing party; 403 non-member; 409 if lease not `active` for this party. Derive an
+**opaque, generation-scoped** Neko username `wp-<HMAC(NEKO_USERNAME_SECRET,
+partyId:generation:userId)>` truncated to a Neko-valid length/charset (finding #8) — the
+stable Jellyfin `userId` is never placed in Neko session metadata; the mapping is kept
+server-side via `recordUserSession`. **Idempotency (finding #4):** before minting, delete
+any prior recorded Neko session for `(partyId, userId)` (`admin.deleteSession`) then
+`loginViewer`; `recordUserSession(partyId, currentGeneration, userId, sessionId)` — the
+generation stamp means a session from a previous container generation can never be
+reused. Set the
 returned `NEKO_SESSION` cookie on OUR response scoped to `/neko`; body returns
-`{ wsUrl: publicWs }` only — never password/admin token/raw Neko token.
+`{ wsUrl: publicWs, controllerUserId }` — where `controllerUserId` is derived from
+`controller.currentController(partyId)` so the client hydrates authoritative control
+state on mount/refresh (finding #5) — never password/admin token/raw Neko token.
 Verify: `node --test app/server/neko/routes.test.js` — authz matrix (403/409/200); double
 POST leaves exactly one recorded session; cookie relayed `Path=/neko`; secret-free body;
 `NEKO_ENABLED=false` rejected; lease not `active` → 409. (FR-005/005a, US-6, SC-001
@@ -326,6 +387,10 @@ Interfaces (Consumes admin control fns + C5b + lease mapping):
     (revokes prior at Neko level), broadcast.
   - `browser:revokeControl (_p, ack)` — host only: `resetControl()`, broadcast
     `browser:control {controllerUserId:null}`.
+  - `browser:getControl (_p, ack)` — any member: `ack({controllerUserId})` derived from
+    `controller.currentController(partyId)`; lets a client re-hydrate authoritative
+    control state on mount/reconnect rather than relying on cached broadcasts (finding
+    #5). Web calls it on `RemoteBrowser` mount and on socket reconnect.
 Verify: `node --test app/server/neko/control.test.js` (mock admin) — request-when-free
 assigns; when-held denied; host reassign revokes prior; non-host cannot assign;
 `currentController` reflects Neko truth. Live/pinned-container check per A0 item 3.
@@ -353,10 +418,12 @@ busy/disabled/error acks; add a branch before `stage==='lobby'` ~136 that render
 `app/client/src/pages/RemoteBrowser.tsx` (on mount POST the session endpoint with
 loading + error states; `<iframe src="/neko/">`; controller display; request-control
 button; host assign/revoke UI; stop button gated to host/controller).
-Verify: `cd app/client && npm run build` + `npm run lint`; manual live on `contab`:
-lobby→start→embed renders (not the player), busy message shows for a 2nd party, control
-request/assign/revoke reflect, stop returns to lobby. (US-1/3/4, FR-012 client, US-9 web,
-SC-001 client half, findings #1/#2.)
+Verify: `cd app/client && npm run typecheck && npm run test && npm run build` (there is no
+`lint` script — finding #7); manual live on `contab`: lobby→start→embed renders (not the
+player), busy message shows for a 2nd party, control request/assign/revoke reflect,
+controller display correct after refresh (calls `browser:getControl` — finding #5), stop
+returns to lobby. (US-1/3/4, FR-012 client, US-9 web, SC-001 client half, findings
+#2/#5.)
 
 ### Task C15: Flutter — capability flag + explicit unsupported state (finding #1)
 Files: modify `flutter_app/lib/net/socket_client.dart:123-140` (`socketOptionsFor()`
@@ -370,8 +437,10 @@ the library harmlessly. (US-9 Flutter, finding #1.)
 
 ### Task C16: Vite dev-proxy `/neko` → backend (finding #3)
 Files: modify `app/client/vite.config.ts` — add `/neko` to `server.proxy` targeting the
-**Watchparty backend** (`http://localhost:3000`, `ws:true`, `changeOrigin:true`), NOT
-Neko directly, so C11's single authorization path applies in dev too.
+**Watchparty backend** on its actual local port `http://localhost:3001` (matching the
+existing `/api` proxy target — finding #6; use the same configurable base as `/api`, not
+`:3000`), `ws:true`, `changeOrigin:true`, NOT Neko directly, so C11's single
+authorization path applies in dev too.
 Verify: `cd app/client && npm run build`; manual dev: `/neko` requests carry the session
 cookie to the backend and are authorized there before reaching Neko; an unauthenticated
 `/neko/api/...` is rejected by the backend. (FR-012 dev-proxy, finding #3.)
@@ -382,12 +451,20 @@ image, ephemeral ports) + `docs/ops/neko-test-fixture.md`; create
 `app/server/neko/integration.test.js` (guarded by env `NEKO_IT=1`, skipped in default
 `node --test`).
 Interfaces: the integration test stands up the pinned container and asserts against a
-REAL Neko: session deletion closes WS/WebRTC (A0#4), control lock + admin give/reset
-(A0#3, SC-008), container recreate isolation (A0#6, SC-006), cookie/path-prefix behavior
-where practical (A0#8).
-Verify: `NEKO_IT=1 node --test app/server/neko/integration.test.js` passes locally/CI
-runner with Docker. **Default CI and the mocked unit suites never touch production
-`contab`** (spec Test strategy). (SC-006, SC-008 real proof; finding #11.)
+REAL Neko. **WebRTC test mechanism (finding #9):** the `ws`-only Node runtime cannot open
+an `RTCPeerConnection`, so split the assertions —
+  - **Automated (node:test + `ws`)**: session/WS lifecycle (a deleted session's `/api/ws`
+    closes — A0#4 WS half), control lock + admin give/reset (A0#3, SC-008), container
+    recreate isolation via a fresh HTTP/cookie probe (A0#6, SC-006), member-detach closes
+    the target's WS (finding #2), cookie/path-prefix behavior (A0#8).
+  - **Media termination** (WS+WebRTC fully torn down) is proven either by a Playwright/
+    Chromium-driven check (preferred, if added to devDeps) OR remains a documented
+    **manual A0 acceptance** step (A0#4 media half) — the plan does NOT claim to automate
+    `RTCPeerConnection` teardown in `node:test`.
+Verify: `NEKO_IT=1 node --test app/server/neko/integration.test.js` passes on a Docker-
+capable runner; media-termination check recorded (manual or Playwright). **Default CI and
+the mocked unit suites never touch production `contab`** (spec Test strategy). (SC-006,
+SC-008 real proof; findings #9/#11.)
 
 ---
 
@@ -404,7 +481,9 @@ FR-010→C6/C8; FR-011→B0; FR-012→C11/C14/C16; FR-013→C11; FR-014/015→C1
 ## Dependency / ordering
 - Phase A (A0) and Phase B (B0) precede all Phase C.
 - `[P]` parallel: C1, C2, C3. C3b after C3. 
-- C4, C5, C5b, C6 precede C7/C8/C9. C5b precedes C7 (stop authz) and C12.
+- C4, C5, C5b, C6 precede C7/C8/C8b/C9. C5b precedes C7 (stop authz), C8b (detach), C12.
+- C8b (member detach) depends on C4 (`removeUserSessions`) + C5b; wired into kick/
+  disconnect/logout paths.
 - C10, C11 precede C12/C14. C14 depends on C10/C11/C12 events; C16 pairs with C11.
 - C17 (fixture) can be built in parallel once A0 fixes the pinned version; it gates the
   *real* verification of SC-006/SC-008 (C6/C12).
