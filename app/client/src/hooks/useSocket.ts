@@ -8,7 +8,12 @@ function getSocket(): Socket {
     // The deployed proxy path is failing WebSocket frames (`Invalid frame header`),
     // which breaks room state sync and prevents playback-track updates from
     // propagating. Socket.IO polling works with this server, so prefer it here.
-    socketSingleton = io({ withCredentials: true, autoConnect: true, transports: ['polling'] })
+    socketSingleton = io({
+      withCredentials: true,
+      autoConnect: true,
+      transports: ['polling'],
+      auth: { caps: { remoteBrowser: true } },
+    })
   }
   return socketSingleton
 }

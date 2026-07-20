@@ -20,6 +20,7 @@ import { usePhone } from '../hooks/useIsMobile'
 import { Z } from '../watchLayers'
 import Library from './Library'
 import Lobby from './Lobby'
+import RemoteBrowser from './RemoteBrowser'
 import type { PartySession, SubtitlePreferences } from '../types'
 import { apiJson, stringField } from '../types/guards'
 
@@ -44,7 +45,9 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   const {
     session, role, layoutMode, chatOpen, chatRipple, alertMode,
     setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks, setSubtitlePreferences,
+    startBrowser,
   } = party
+  const [browserMsg, setBrowserMsg] = useState<string | null>(null)
 
   const lk = useLiveKit({ partyId: session?.id, enabled: role === 'host' || role === 'guest' })
   const [removedCameras, setRemovedCameras] = useState<Set<string>>(new Set())
@@ -58,6 +61,12 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   // published to everyone, I just don't see myself. Driven only by camOn, so the
   // coupling is strictly camera → self-view, never the reverse.
   useEffect(() => { setHideSelf(!lk.camOn) }, [lk.camOn, setHideSelf])
+
+  useEffect(() => {
+    if (!browserMsg) return
+    const t = window.setTimeout(() => setBrowserMsg(null), 4000)
+    return () => window.clearTimeout(t)
+  }, [browserMsg])
 
   const joinedRef = useRef(false)
   useEffect(() => {
@@ -132,6 +141,13 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
     },
   }
 
+  // ── REMOTE BROWSER: the shared Neko session owns the screen ───────────────
+  // Takes priority over the lobby/watching split — mutually exclusive with
+  // both (the server rejects media mutation while a browser is active).
+  if (session.activity === 'remote-browser') {
+    return <RemoteBrowser session={session} isHost={isHost} />
+  }
+
   // ── LOBBY: everyone browses the library together, no title yet ───────────
   if (session.stage === 'lobby') {
     return (
@@ -150,9 +166,36 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
           onPointer={canDrive ? sendPointer : undefined}
           mirrorSubscribe={!canDrive ? mirror.subscribe : undefined}
           driverName={session.hostName}
-          headerRight={<CodePill code={session.id} count={participantCount} />}
+          headerRight={(
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {isHost && (
+                <StartBrowserButton
+                  onClick={() => {
+                    startBrowser().then(res => {
+                      if (res.error === 'busy') setBrowserMsg(res.message || 'A shared browser is already running')
+                      else if (res.error === 'browser disabled') setBrowserMsg('Shared browsing is disabled on this server')
+                      else if (res.error === 'not allowed') setBrowserMsg('Only the host can start a shared browser')
+                      else if (res.error) setBrowserMsg(res.message || res.error)
+                    })
+                  }}
+                />
+              )}
+              <CodePill code={session.id} count={participantCount} />
+            </div>
+          )}
           banner={!canDrive ? <ChoosingBanner host={session.hostName} /> : null}
         />
+
+        {browserMsg && (
+          <div role="alert" style={{
+            position: 'absolute', top: 'calc(var(--sa-t) + 70px)', left: '50%', transform: 'translateX(-50%)', zIndex: Z.toast, maxWidth: '80vw',
+            padding: '11px 16px', borderRadius: 12,
+            background: 'rgba(224,101,94,.14)', border: '1px solid rgba(224,101,94,.4)', color: 'var(--text)',
+            fontSize: 13.5, fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,.55)',
+          }}>
+            {browserMsg}
+          </div>
+        )}
 
         {layoutMode === 'float' && <CameraGrid {...cameraProps} />}
         {/* Chat: phones get the same dismissible slide-over sheet + scrim as the
@@ -682,6 +725,21 @@ function CodePill({ code, count }: { code?: string; count?: number } = {}) {
         {count}
       </span>
     </div>
+  )
+}
+
+function StartBrowserButton({ onClick }: { onClick?: () => void } = {}) {
+  return (
+    <button onClick={onClick} title="Start a shared browser" style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px 8px 12px', borderRadius: 999,
+      background: 'var(--glass2)', border: '1px solid var(--stroke)', color: 'var(--text)',
+      fontSize: 13, fontWeight: 700, cursor: 'pointer',
+    }}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9">
+        <circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+      </svg>
+      Start shared browser
+    </button>
   )
 }
 

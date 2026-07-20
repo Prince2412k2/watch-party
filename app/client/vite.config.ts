@@ -25,6 +25,14 @@ export default defineConfig({
         target: 'http://localhost:3001',
         ws: true,
       },
+      // Neko (shared browser) — proxied through the Watchparty backend, NOT
+      // Neko directly, so the backend's single authorization path (party
+      // membership + active-lease check) applies in dev too.
+      '/neko': {
+        target: 'http://localhost:3001',
+        ws: true,
+        changeOrigin: true,
+      },
       // Jellyfin media (manifest + segments) — keeps everything same-origin
       '/jellyfin': {
         target: process.env.JELLYFIN_URL || 'http://localhost:8096',
