@@ -29,8 +29,8 @@ function makeSession(overrides = {}) {
   })
 }
 
-function makeReq({ params, session }) {
-  return { params, session }
+function makeReq({ params, session, secure = false, headers = {} }) {
+  return { params, session, secure, headers }
 }
 function makeRes() {
   const res = {
@@ -109,6 +109,19 @@ test('scopeCookieToNeko passes through null', () => {
   assert.equal(scopeCookieToNeko(null), null)
 })
 
+test('scopeCookieToNeko strips Secure when not a secure request', () => {
+  const rewritten = scopeCookieToNeko('NEKO_SESSION=abc; Path=/; HttpOnly; Secure; SameSite=None', { secure: false })
+  assert.doesNotMatch(rewritten, /Secure/)
+  assert.match(rewritten, /HttpOnly/)
+  assert.match(rewritten, /SameSite=None/)
+  assert.match(rewritten, /Path=\/neko/)
+})
+
+test('scopeCookieToNeko keeps Secure when request is secure', () => {
+  const rewritten = scopeCookieToNeko('NEKO_SESSION=abc; Path=/; HttpOnly; Secure; SameSite=None', { secure: true })
+  assert.match(rewritten, /Secure/)
+})
+
 test('disabled neko -> 404', async () => {
   process.env.NEKO_ENABLED = 'false'
   try {
@@ -185,6 +198,35 @@ test('member of active-lease party -> 200 with cookie relayed and secret-free bo
   assert.doesNotMatch(json, /apiToken/i)
   assert.doesNotMatch(json, /token/i)
   assert.doesNotMatch(json, /leaseId/i)
+})
+
+test('non-secure request relays cookie without Secure attribute', async () => {
+  const sess = makeSession()
+  const deps = makeDeps({ partyId: sess.id })
+  const app = fakeApp()
+  registerNekoRoutes(app, fakeIo(), deps)
+  const req = makeReq({ params: { id: sess.id }, session: { jellyfin: { userId: 'host-1' } }, secure: false })
+  const res = makeRes()
+  await app.routes['/api/party/:id/browser/session'](req, res)
+  assert.equal(res.statusCode, 200)
+  assert.doesNotMatch(res.headers['Set-Cookie'], /Secure/)
+})
+
+test('secure request (via x-forwarded-proto) relays cookie with Secure attribute', async () => {
+  const sess = makeSession()
+  const deps = makeDeps({ partyId: sess.id })
+  const app = fakeApp()
+  registerNekoRoutes(app, fakeIo(), deps)
+  const req = makeReq({
+    params: { id: sess.id },
+    session: { jellyfin: { userId: 'host-1' } },
+    secure: false,
+    headers: { 'x-forwarded-proto': 'https' },
+  })
+  const res = makeRes()
+  await app.routes['/api/party/:id/browser/session'](req, res)
+  assert.equal(res.statusCode, 200)
+  assert.match(res.headers['Set-Cookie'], /Secure/)
 })
 
 test('concurrent POSTs for same user leave exactly one recorded session, no orphan', async () => {

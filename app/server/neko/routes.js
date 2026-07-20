@@ -24,11 +24,14 @@ export function deriveUsername(partyId, leaseId, userId, secret = nekoConfig().u
 
 // Rewrite the Set-Cookie's Path to /neko so it never travels to unrelated
 // same-origin routes, while preserving every other attribute (HttpOnly,
-// Secure, SameSite, expiry) Neko already set.
-export function scopeCookieToNeko(setCookieHeader) {
+// Secure, SameSite, expiry) Neko already set. When `secure` is false (plain
+// http, e.g. local demo on localhost), the Secure attribute is stripped —
+// browsers refuse to store a Secure cookie set over a non-https response.
+export function scopeCookieToNeko(setCookieHeader, { secure = true } = {}) {
   if (!setCookieHeader) return null
   const parts = setCookieHeader.split(';').map(p => p.trim())
-  const rest = parts.filter(p => !/^path=/i.test(p))
+  let rest = parts.filter(p => !/^path=/i.test(p))
+  if (!secure) rest = rest.filter(p => !/^secure$/i.test(p))
   rest.push('Path=/neko')
   return rest.join('; ')
 }
@@ -96,7 +99,8 @@ export function registerNekoRoutes(app, io, { admin = defaultAdmin, lease = defa
 
     try {
       const { cookie, controllerUserId } = await broker.mintSession(sess.id, activeLease.leaseId, userId)
-      const scoped = scopeCookieToNeko(cookie)
+      const isSecureRequest = req.secure === true || req.headers?.['x-forwarded-proto'] === 'https'
+      const scoped = scopeCookieToNeko(cookie, { secure: isSecureRequest })
       if (scoped) res.setHeader('Set-Cookie', scoped)
       res.json({ wsUrl: nekoConfig().publicWs, controllerUserId })
     } catch (err) {
