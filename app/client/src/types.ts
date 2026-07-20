@@ -71,6 +71,18 @@ export interface PartySession {
   mediaItemId?: string | null
   mediaSourceId?: string | null
   subtitlePreferences?: SubtitlePreferences
+  activity?: 'none' | 'remote-browser'
+}
+
+export interface BrowserActionResult {
+  ok?: boolean
+  error?: string
+  message?: string
+}
+
+export interface ControlRequestResult {
+  controllerUserId?: string | null
+  error?: string
 }
 
 export interface ToastRecord {
@@ -124,6 +136,13 @@ export interface PartyContextValue {
   openChat: (focus?: boolean) => void
   closeChat: () => void
   setAlertMode: (mode: 'focus' | 'on' | 'mute') => void
+  controllerUserId: string | null
+  startBrowser: () => Promise<BrowserActionResult>
+  stopBrowser: () => Promise<BrowserActionResult>
+  requestControl: () => Promise<ControlRequestResult>
+  assignControl: (userId: string) => Promise<ControlRequestResult>
+  revokeControl: () => Promise<BrowserActionResult>
+  getControl: () => Promise<ControlRequestResult>
 }
 
 export interface MirrorPoint {

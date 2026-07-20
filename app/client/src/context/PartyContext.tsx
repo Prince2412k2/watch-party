@@ -1,9 +1,9 @@
-import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
+import { createContext, useContext, useEffect, useReducer, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSocket } from '../hooks/useSocket'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
-import type { BrowseEntry, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types'
+import type { BrowseEntry, BrowserActionResult, ControlRequestResult, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types'
 import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards'
 import { partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority'
 
@@ -112,6 +112,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   const { socket } = useSocket()
   const stateRef = useRef<PartyState>(initialState)
   stateRef.current = state
+  const [controllerUserId, setControllerUserId] = useState<string | null>(null)
 
   function applySession(sess: PartySession, role: PartyContextValue['role']) {
     dispatch({ type: 'SET_SESSION', session: sess, role })
@@ -237,6 +238,11 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       dispatch({ type: 'SET_MESSAGES', msgs: value.filter(isChatMessage) })
     })
 
+    socket.on('browser:control', (value: unknown) => {
+      if (!isObject(value)) return
+      setControllerUserId(typeof value.controllerUserId === 'string' ? value.controllerUserId : null)
+    })
+
     return () => {
       socket.off('party:state')
       socket.off('party:waiting')
@@ -251,6 +257,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       socket.off('browse:pointer')
       socket.off('chat:message')
       socket.off('chat:history')
+      socket.off('browser:control')
     }
   }, [socket, userId])
 
@@ -339,6 +346,68 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   // Stop the movie, return the room to shared browsing.
   function backToLobby() {
     socket.emit('party:backToLobby', {})
+  }
+
+  // Ask the server to spin up (or attach to) the party's shared Neko browser.
+  // Ack shapes: {ok:true} | {error:'busy'|'browser disabled'|'not allowed', message?}
+  function startBrowser(): Promise<BrowserActionResult> {
+    return new Promise((resolve) => {
+      socket.emit('party:startBrowser', {}, (value: unknown) => {
+        resolve(isObject(value) ? (value as BrowserActionResult) : { error: 'unknown' })
+      })
+    })
+  }
+
+  function stopBrowser(): Promise<BrowserActionResult> {
+    return new Promise((resolve) => {
+      socket.emit('party:stopBrowser', {}, (value: unknown) => {
+        resolve(isObject(value) ? (value as BrowserActionResult) : { error: 'unknown' })
+      })
+    })
+  }
+
+  // Any member may ask for control when no one currently holds it.
+  function requestControl(): Promise<ControlRequestResult> {
+    return new Promise((resolve) => {
+      socket.emit('browser:requestControl', {}, (value: unknown) => {
+        if (!isObject(value)) return resolve({ error: 'unknown' })
+        if (typeof value.controllerUserId === 'string') setControllerUserId(value.controllerUserId)
+        resolve(value as ControlRequestResult)
+      })
+    })
+  }
+
+  // Host-only: hand control to a specific member.
+  function assignControl(targetUserId: string): Promise<ControlRequestResult> {
+    return new Promise((resolve) => {
+      socket.emit('browser:assignControl', { userId: targetUserId }, (value: unknown) => {
+        if (!isObject(value)) return resolve({ error: 'unknown' })
+        if (typeof value.controllerUserId === 'string') setControllerUserId(value.controllerUserId)
+        resolve(value as ControlRequestResult)
+      })
+    })
+  }
+
+  // Host-only: take control away from whoever currently holds it.
+  function revokeControl(): Promise<BrowserActionResult> {
+    return new Promise((resolve) => {
+      socket.emit('browser:revokeControl', {}, (value: unknown) => {
+        setControllerUserId(null)
+        resolve(isObject(value) ? (value as BrowserActionResult) : { ok: true })
+      })
+    })
+  }
+
+  // Re-hydrate authoritative control state on mount/reconnect rather than
+  // relying on a cached 'browser:control' broadcast that may predate us.
+  function getControl(): Promise<ControlRequestResult> {
+    return new Promise((resolve) => {
+      socket.emit('browser:getControl', {}, (value: unknown) => {
+        if (!isObject(value)) return resolve({ error: 'unknown' })
+        setControllerUserId(typeof value.controllerUserId === 'string' ? value.controllerUserId : null)
+        resolve(value as ControlRequestResult)
+      })
+    })
   }
 
   function joinParty(partyId: string): Promise<string> {
@@ -442,6 +511,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       setPlaybackTracks,
       setSubtitlePreferences,
       setLayout, toggleChat, openChat, closeChat, setAlertMode,
+      controllerUserId, startBrowser, stopBrowser, requestControl, assignControl, revokeControl, getControl,
     }}>
       {children}
     </PartyContext.Provider>
