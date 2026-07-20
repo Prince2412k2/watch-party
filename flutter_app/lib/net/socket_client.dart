@@ -128,7 +128,15 @@ Map<String, dynamic> socketOptionsFor(String url, String? cookie) {
       // which receives a 101 but can never complete the Engine.IO session.
       .setTransports(['websocket'])
       .disableAutoConnect()
-      .enableForceNew();
+      .enableForceNew()
+      // Declares this as a modern client so the server includes `activity`
+      // in PartyState (see docs/plans/2026-07-20-neko-collab-browser.md
+      // Task C15). Without this cap the server treats the client as legacy
+      // and never sends `activity: 'remote-browser'`, falling back to
+      // `stage: 'lobby'` instead.
+      .setAuth({
+        'caps': {'remoteBrowser': true},
+      });
   if (cookie != null) builder.setExtraHeaders({'Cookie': cookie});
   final options = Map<String, dynamic>.from(builder.build());
   // socket_io_client <=3.1.3 parsed multi-label HTTPS hosts as port 0. Keep an
