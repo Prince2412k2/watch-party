@@ -51,6 +51,10 @@ class PartyState with _$PartyState {
     String? hostName,
     /// 'lobby' | 'watching'
     @Default('lobby') String stage,
+    /// 'none' | 'remote-browser'. Only sent to clients that connect with
+    /// `caps: { remoteBrowser: true }` (see `socketOptionsFor()`); legacy
+    /// clients never see anything but the B0 lobby fallback.
+    @Default('none') String activity,
     String? mediaItemId,
     String? mediaSourceId,
     @Default(false) bool collaborativeControl,

@@ -378,6 +378,15 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   @override
   Widget build(BuildContext context) {
     final party = ref.watch(partyProvider)!;
+
+    // A remote-browser activity has no Flutter renderer (native client is a
+    // separate future effort) — show an explicit unsupported screen instead
+    // of falling through to the stage-based rendering below, which would let
+    // a legacy media UI show underneath a shared browser session.
+    if (party.activity == 'remote-browser') {
+      return const _RemoteBrowserUnsupported();
+    }
+
     final controller = ref.watch(playerControllerProvider);
     final canControl = ref.read(partyProvider.notifier).canControl;
     final notifier = ref.read(partyProvider.notifier);
@@ -803,6 +812,43 @@ class _LiveKitErrorBanner extends ConsumerWidget {
                   ],
                 ),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the party's shared activity is a remote browser session — Neko
+/// has no Flutter renderer, so this client can't join it (a native client is
+/// a separate future effort). Takes precedence over the normal stage-based
+/// rendering so a legacy media UI never shows underneath.
+class _RemoteBrowserUnsupported extends StatelessWidget {
+  const _RemoteBrowserUnsupported();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black,
+      alignment: Alignment.center,
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.web_asset_off, color: Colors.white70, size: 48),
+            const SizedBox(height: 16),
+            const Text(
+              'remote browser not supported on this client',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Open this party in a web browser to join the shared browser.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
             ),
           ],
         ),
