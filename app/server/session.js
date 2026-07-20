@@ -285,12 +285,54 @@ export function isMember(session, userId) {
 }
 
 export function publicSession(session) {
-  const {
-    hostToken, hostDisconnectTimer, approved,
-    stalled, intent, pos, playT0, effPlaying, _stallTimer, reports, seenCommandIds,
-    ...pub
-  } = session
-  return { ...pub, stallFallback: [...session.stallFallback] }
+  return {
+    id: session.id,
+    hostId: session.hostId,
+    hostName: session.hostName,
+    stage: session.stage,
+    activity: session.activity ?? 'none',
+    mediaItemId: session.mediaItemId,
+    mediaSourceId: session.mediaSourceId,
+    playback: session.playback,
+    subtitlePreferences: session.subtitlePreferences,
+    collaborativeControl: session.collaborativeControl,
+    syncMode: session.syncMode,
+    browse: session.browse,
+    schedule: session.schedule,
+    mediaGeneration: session.mediaGeneration,
+    guests: session.guests.map(({ userId, name }) => ({ userId, name })),
+    waiting: session.waiting.map(({ userId, name }) => ({ userId, name })),
+    stallFallback: [...session.stallFallback],
+  }
+}
+
+// Capability-aware wrapper around publicSession(). Modern clients (those that
+// announced `caps.remoteBrowser` on connect) get the full DTO including
+// `activity`. Legacy clients get the DTO with `activity` stripped, and — when
+// the party is actually in `remote-browser` — `stage` is presented as `lobby`
+// so an old client shows the library harmlessly instead of a stage it can't
+// render.
+export function publicSessionFor(session, { caps } = {}) {
+  const pub = publicSession(session)
+  if (caps?.remoteBrowser === true) return pub
+  const { activity, ...legacy } = pub
+  if (activity === 'remote-browser') legacy.stage = 'lobby'
+  return legacy
+}
+
+// Centralized room broadcast: sends every socket currently in the party's
+// room its own capability-appropriate snapshot, so a legacy client can never
+// receive modern state (e.g. `activity`) through a broadcast. `except` skips
+// a socket id (mirrors the `socket.to(id).emit` self-exclusion pattern).
+export function emitPartyState(io, session, { except } = {}) {
+  const room = io.sockets.adapter.rooms.get(session.id)
+  if (!room) return
+  for (const socketId of room) {
+    if (except && socketId === except) continue
+    const target = io.sockets.sockets.get(socketId)
+    if (!target) continue
+    io.to(socketId).emit('party:state', publicSessionFor(session, { caps: target.caps }))
+  }
 }
 
 export function validateSyncCommand(payload = {}) {

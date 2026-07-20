@@ -2,7 +2,7 @@ import express from 'express'
 
 import { requireAuth, getJellyfin } from './auth.js'
 import { BASE, getPlaybackInfo } from './jellyfin.js'
-import { findSessionForMember, publicSession } from './session.js'
+import { findSessionForMember, publicSessionFor, emitPartyState } from './session.js'
 import { refreshPlayback } from './playback.js'
 
 const ITEM_ID = /^[A-Za-z0-9-]{1,128}$/
@@ -154,7 +154,7 @@ async function refreshSessionPlayback(io, session, { token, userId, subtitleStre
     subtitleStreamIndex,
     playSessionId: session.playback?.playSessionId ?? null,
   })
-  io?.to(session.id).emit('party:state', publicSession(session))
+  if (io) emitPartyState(io, session)
   return playback
 }
 
@@ -301,7 +301,7 @@ export function registerSubtitleRoutes(app, io) {
         ok: true,
         label: cleanLabel(upload.filename),
         subtitleStreamIndex: result.stream.Index,
-        session: publicSession(session),
+        session: publicSessionFor(session, { caps: {} }),
         playback: session.playback,
       })
     } catch (err) {
@@ -334,7 +334,7 @@ export function registerSubtitleRoutes(app, io) {
         userId,
         subtitleStreamIndex: null,
       })
-      res.json({ ok: true, session: publicSession(session), playback: session.playback })
+      res.json({ ok: true, session: publicSessionFor(session, { caps: {} }), playback: session.playback })
     } catch (err) {
       sendSubtitleMutationError(res, err, 'party delete')
     }

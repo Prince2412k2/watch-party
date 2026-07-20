@@ -34,7 +34,7 @@ import {
   createSession, getSession, deleteSession,
   findSessionBySocket, findSessionForMember, findSessionByHost,
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
-  transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
+  transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSessionFor, emitPartyState, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
   validateSubtitlePreferences,
 } from './session.js'
@@ -259,6 +259,7 @@ io.use((socket, next) => {
   const jf = socket.request.session?.jellyfin
   if (!jf) return next(new Error('unauthenticated'))
   socket.user = { userId: jf.userId, name: jf.name, token: jf.accessToken, deviceId: jf.deviceId }
+  socket.caps = { remoteBrowser: socket.handshake.auth?.caps?.remoteBrowser === true }
   next()
 })
 
@@ -287,8 +288,8 @@ io.on('connection', (socket) => {
     }
     socket.join(sess.id)
     io.to(socket.id).emit('chat:history', sess.messages)
-    ack?.({ session: publicSession(sess) })
-    socket.to(sess.id).emit('party:state', publicSession(sess))
+    ack?.({ session: publicSessionFor(sess, { caps: socket.caps }) })
+    emitPartyState(io, sess, { except: socket.id })
   })
 
   // party:create ────────────────────────────────────────────────────────────
@@ -317,7 +318,7 @@ io.on('connection', (socket) => {
       }
 
       socket.join(sess.id)
-      ack?.({ partyId: sess.id, session: publicSession(sess) })
+      ack?.({ partyId: sess.id, session: publicSessionFor(sess, { caps: socket.caps }) })
     } catch (err) {
       console.error('party:create', err.message)
       if (sess) deleteSession(sess.id)
@@ -347,8 +348,8 @@ io.on('connection', (socket) => {
       reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
       restoreSocket()
       io.to(sess.id).emit('host:changed', { hostId: userId })
-      io.to(sess.id).emit('party:state', publicSession(sess))
-      return ack?.({ status: 'joined', session: publicSession(sess) })
+      emitPartyState(io, sess)
+      return ack?.({ status: 'joined', session: publicSessionFor(sess, { caps: socket.caps }) })
     }
 
     if (sess.hostId === userId) {
@@ -360,14 +361,14 @@ io.on('connection', (socket) => {
       sess.hostSocketId = socket.id
       persistSession(sess)
       restoreSocket()
-      return ack?.({ status: 'joined', session: publicSession(sess) })
+      return ack?.({ status: 'joined', session: publicSessionFor(sess, { caps: socket.caps }) })
     }
 
     if (isMember(sess, userId)) {
       const guest = sess.guests.find(g => g.userId === userId)
       if (guest) guest.socketId = socket.id
       restoreSocket()
-      return ack?.({ status: 'joined', session: publicSession(sess) })
+      return ack?.({ status: 'joined', session: publicSessionFor(sess, { caps: socket.caps }) })
     }
 
     // Previously approved → re-enter freely (no re-approval needed unless kicked)
@@ -378,7 +379,7 @@ io.on('connection', (socket) => {
       // The ack's session snapshot already contains this guest. Exclude the
       // rejoining socket so its reducer cannot append itself a second time.
       socket.to(sess.id).emit('user:joined', { userId, name })
-      return ack?.({ status: 'joined', session: publicSession(sess) })
+      return ack?.({ status: 'joined', session: publicSessionFor(sess, { caps: socket.caps }) })
     }
 
     const added = addToWaiting(sess, { userId, name, socketId: socket.id, token, deviceId })
@@ -396,7 +397,8 @@ io.on('connection', (socket) => {
     const guest = approveGuest(sess, targetId)
     if (!guest) return ack?.({ error: 'user not waiting' })
 
-    io.to(guest.socketId).emit('party:approved', { session: publicSession(sess) })
+    const guestSocket = io.sockets.sockets.get(guest.socketId)
+    io.to(guest.socketId).emit('party:approved', { session: publicSessionFor(sess, { caps: guestSocket?.caps }) })
     // Hand the joiner the current timeline so it locks straight onto the schedule
     io.to(guest.socketId).emit('sync:schedule', sess.schedule)
     io.to(sess.id).emit('user:joined', { userId: guest.userId, name: guest.name })
@@ -463,7 +465,7 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ error: 'not host' })
     sess.collaborativeControl = !!enabled
     persistSession(sess)
-    io.to(sess.id).emit('party:state', publicSession(sess))
+    emitPartyState(io, sess)
     ack?.({ ok: true })
   })
 
@@ -532,7 +534,7 @@ io.on('connection', (socket) => {
       sess.intent.playing = true
       startSegment(sess, Date.now())
       persistSession(sess)
-      io.to(sess.id).emit('party:state', publicSession(sess))
+      emitPartyState(io, sess)
       ack?.({ ok: true })
     } catch (err) {
       console.error('party:selectMedia', err.message)
@@ -551,7 +553,7 @@ io.on('connection', (socket) => {
     beginMediaGeneration(sess)
     resetTimeline(sess)
     persistSession(sess)
-    io.to(sess.id).emit('party:state', publicSession(sess))
+    emitPartyState(io, sess)
     ack?.({ ok: true })
   })
 
@@ -573,7 +575,7 @@ io.on('connection', (socket) => {
           subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : null,
         })
         persistSession(sess)
-        io.to(sess.id).emit('party:state', publicSession(sess))
+        emitPartyState(io, sess)
         ack?.({ ok: true, playback })
       } catch (err) {
         console.error('party:setPlaybackTracks', err.message)
@@ -591,7 +593,7 @@ io.on('connection', (socket) => {
     if (result.error) return ack?.({ error: result.error })
     sess.subtitlePreferences = result.value
     persistSession(sess)
-    io.to(sess.id).emit('party:state', publicSession(sess))
+    emitPartyState(io, sess)
     ack?.({ ok: true, subtitlePreferences: sess.subtitlePreferences })
   })
 
@@ -688,7 +690,7 @@ io.on('connection', (socket) => {
       sess.stallFallback.clear()
     }
     persistSession(sess)
-    io.to(sess.id).emit('party:state', publicSession(sess))
+    emitPartyState(io, sess)
     reconcile(sess)
     ack?.({ ok: true })
   })
