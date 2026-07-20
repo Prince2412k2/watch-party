@@ -28,8 +28,11 @@ services:
       NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: "admin"
       # Server-only admin API token (spike item 2 — synthetic always-admin session)
       NEKO_SESSION_API_TOKEN: "spike-admin-api-token-000"
-      # Cookie auth (spike item 1 — credential-free iframe via Set-Cookie relay)
-      NEKO_SESSION_COOKIE_ENABLED: "true"
+      # Cookie auth (spike item 1 — credential-free iframe via Set-Cookie relay).
+      # DISABLED for manual eyeballing: Neko's OWN bundled login page uses token
+      # auth and breaks with cookie auth on ("token not found"). Our feature's
+      # brokered-iframe flow re-enables this; for hand-login testing keep it off.
+      NEKO_SESSION_COOKIE_ENABLED: "false"
       NEKO_SESSION_COOKIE_NAME: "NEKO_SESSION"
       # Path prefix (spike item 8 — serve under /neko behind our proxy)
       NEKO_SERVER_PATH_PREFIX: "/neko"
