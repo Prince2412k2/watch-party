@@ -12,6 +12,7 @@ const {
   transferHost, reclaimOriginalHost, validateSyncCommand, authorizeSyncCommand,
   beginMediaGeneration, applyStallReport,
   validateSubtitlePreferences, DEFAULT_SUBTITLE_PREFERENCES,
+  publicSession, publicSessionFor,
 } = await import('./session.js')
 const { loadParty } = await import('./party-store.js')
 
@@ -179,5 +180,68 @@ test('host transfer persists ownership and original host can reclaim it', () => 
     assert.equal(sess.guests.some(guest => guest.userId === 'guest'), true)
     assert.equal(loadParty(sess.id).hostId, 'owner')
     assert.equal(reclaimOriginalHost(sess, {}), false)
+  } finally { deleteSession(sess.id) }
+})
+
+const FORBIDDEN_KEYS = new Set([
+  'token', 'hostToken', 'deviceId', 'hostDeviceId', 'socketId', 'hostSocketId',
+  'approved', 'originalHostId',
+])
+
+function findForbiddenKeys(value, path = '$') {
+  if (!value || typeof value !== 'object') return []
+  let hits = []
+  for (const [key, nested] of Object.entries(value)) {
+    if (FORBIDDEN_KEYS.has(key)) hits.push(`${path}.${key}`)
+    hits = hits.concat(findForbiddenKeys(nested, `${path}.${key}`))
+  }
+  return hits
+}
+
+test('publicSession exposes only allow-listed fields with no auth/device/socket leakage', () => {
+  const sess = createSession({
+    hostId: 'owner', hostName: 'Owner', hostToken: 'host-token',
+    hostDeviceId: 'host-device', hostSocketId: 'host-socket',
+  })
+  sess.guests.push({
+    userId: 'guest', name: 'Guest', token: 'guest-token', deviceId: 'guest-device',
+    socketId: 'guest-socket', joinedAt: 1,
+  })
+  sess.waiting.push({
+    userId: 'waiting', name: 'Waiting', token: 'waiting-token', deviceId: 'waiting-device',
+    socketId: 'waiting-socket',
+  })
+
+  try {
+    const pub = publicSession(sess)
+    assert.deepEqual(findForbiddenKeys(pub), [])
+    assert.deepEqual(pub.guests, [{ userId: 'guest', name: 'Guest' }])
+    assert.deepEqual(pub.waiting, [{ userId: 'waiting', name: 'Waiting' }])
+    assert.equal(pub.activity, 'none')
+  } finally { deleteSession(sess.id) }
+})
+
+test('publicSessionFor: modern sees activity, legacy sees lobby fallback', () => {
+  const sess = createSession({ hostId: 'owner', hostName: 'Owner' })
+  sess.activity = 'remote-browser'
+  sess.stage = 'lobby'
+
+  try {
+    const modern = publicSessionFor(sess, { caps: { remoteBrowser: true } })
+    assert.equal(modern.activity, 'remote-browser')
+    assert.equal(modern.stage, 'lobby')
+
+    const legacy = publicSessionFor(sess, { caps: {} })
+    assert.equal('activity' in legacy, false)
+    assert.equal(legacy.stage, 'lobby')
+
+    const legacyUndefinedCaps = publicSessionFor(sess)
+    assert.equal('activity' in legacyUndefinedCaps, false)
+
+    sess.stage = 'watching'
+    const legacyWatching = publicSessionFor(sess, { caps: { remoteBrowser: false } })
+    // even if stage were something other than lobby while activity is remote-browser,
+    // legacy must still present lobby so the old client shows the library harmlessly
+    assert.equal(legacyWatching.stage, 'lobby')
   } finally { deleteSession(sess.id) }
 })
