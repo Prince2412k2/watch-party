@@ -31,7 +31,14 @@ export function scopeCookieToNeko(setCookieHeader, { secure = true } = {}) {
   if (!setCookieHeader) return null
   const parts = setCookieHeader.split(';').map(p => p.trim())
   let rest = parts.filter(p => !/^path=/i.test(p))
-  if (!secure) rest = rest.filter(p => !/^secure$/i.test(p))
+  if (!secure) {
+    // Over plain http a `Secure` cookie is dropped, and `SameSite=None` REQUIRES
+    // `Secure` (browsers reject None+non-Secure, silently discarding the cookie).
+    // The embed is same-origin, so downgrade to Lax and drop Secure so the
+    // relayed NEKO_SESSION cookie is actually stored and sent to the iframe.
+    rest = rest.filter(p => !/^secure$/i.test(p) && !/^samesite=/i.test(p))
+    rest.push('SameSite=Lax')
+  }
   rest.push('Path=/neko')
   return rest.join('; ')
 }
