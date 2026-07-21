@@ -20,7 +20,7 @@ export async function loginViewer(username, config = nekoConfig(), fetchImpl = d
   await assertOk(response, 'loginViewer')
   const cookie = response.headers.get('set-cookie') || null
   const body = await response.json().catch(() => ({}))
-  return { sessionId: body.id ?? body.sessionId ?? null, cookie }
+  return { sessionId: body.id ?? body.sessionId ?? null, cookie, token: body.token ?? null }
 }
 
 export async function listSessions(config = nekoConfig(), fetchImpl = defaultFetch) {

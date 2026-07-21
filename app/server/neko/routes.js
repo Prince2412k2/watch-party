@@ -65,11 +65,11 @@ export function createSessionBroker({ admin = defaultAdmin, lease = defaultLease
       }
 
       const username = deriveUsername(partyId, leaseId, userId)
-      const { sessionId, cookie } = await admin.loginViewer(username)
+      const { sessionId, cookie, token } = await admin.loginViewer(username)
       lease.recordUserSession(partyId, leaseId, userId, sessionId)
 
       const controllerInfo = await controller.currentController(partyId)
-      return { cookie, controllerUserId: controllerInfo?.userId ?? null }
+      return { cookie, token, controllerUserId: controllerInfo?.userId ?? null }
     })
 
     inFlight.set(key, task)
@@ -105,11 +105,11 @@ export function registerNekoRoutes(app, io, { admin = defaultAdmin, lease = defa
     }
 
     try {
-      const { cookie, controllerUserId } = await broker.mintSession(sess.id, activeLease.leaseId, userId)
+      const { cookie, token, controllerUserId } = await broker.mintSession(sess.id, activeLease.leaseId, userId)
       const isSecureRequest = req.secure === true || req.headers?.['x-forwarded-proto'] === 'https'
       const scoped = scopeCookieToNeko(cookie, { secure: isSecureRequest })
       if (scoped) res.setHeader('Set-Cookie', scoped)
-      res.json({ wsUrl: nekoConfig().publicWs, controllerUserId })
+      res.json({ wsUrl: nekoConfig().publicWs, token, controllerUserId })
     } catch (err) {
       console.error('browser session broker', err.message)
       res.status(502).json({ error: 'could not start browser session' })
