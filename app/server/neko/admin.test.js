@@ -31,8 +31,8 @@ function makeFetch(response) {
   return fetchImpl
 }
 
-test('loginViewer posts credentials and returns cookie without password', async () => {
-  const fetchImpl = makeFetch(jsonResponse(200, { id: 'sess-1' }, { 'set-cookie': 'NEKO_SESSION=abc; Path=/' }))
+test('loginViewer posts credentials and returns cookie and token without password', async () => {
+  const fetchImpl = makeFetch(jsonResponse(200, { id: 'sess-1', token: 'sess-token-1' }, { 'set-cookie': 'NEKO_SESSION=abc; Path=/' }))
   const result = await loginViewer('wp-user1', config, fetchImpl)
   assert.equal(fetchImpl.calls.length, 1)
   assert.equal(fetchImpl.calls[0].url, `${config.internalUrl}/api/login`)
@@ -40,7 +40,7 @@ test('loginViewer posts credentials and returns cookie without password', async 
   const sentBody = JSON.parse(fetchImpl.calls[0].options.body)
   assert.equal(sentBody.username, 'wp-user1')
   assert.equal(sentBody.password, config.userPassword)
-  assert.deepEqual(result, { sessionId: 'sess-1', cookie: 'NEKO_SESSION=abc; Path=/' })
+  assert.deepEqual(result, { sessionId: 'sess-1', cookie: 'NEKO_SESSION=abc; Path=/', token: 'sess-token-1' })
   assert.ok(!JSON.stringify(result).includes(config.userPassword))
 })
 

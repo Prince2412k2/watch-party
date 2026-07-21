@@ -1,24 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useParty } from '../context/PartyContext'
+import { useAuth } from '../context/AuthContext'
 import { useSocket } from '../hooks/useSocket'
 import { navigate } from '../router'
 import { glass } from '../glass'
 import CameraGrid from '../components/CameraGrid'
 import Dock from '../components/Dock'
 import Chat from '../components/Chat'
+import NekoScreen from '../components/NekoScreen'
 import { ChatSheet } from './Party'
 import type { CameraProps, LiveKitState } from './Party'
 import { Z } from '../watchLayers'
 import type { PartySession } from '../types'
 import { apiJson, stringField } from '../types/guards'
 
-// Renders the party's shared Neko browser embed — Neko's own chrome (header,
-// members, chat, menu) is stripped via ?embed=1 so only the video + input
-// surface shows; Watchparty's own floating cameras and chat sit on top of it,
-// same as the watch screen. The heavy lifting (auth, container lifecycle,
-// proxying) all lives server-side — this page just mints a viewer session,
-// drops in the same-origin iframe, and surfaces control hand-off through the
+// Renders the party's shared Neko browser via our own client (NekoScreen)
+// speaking Neko's WS+WebRTC protocol directly, authenticated with a per-user
+// session token — not Neko's bundled client (which only supports
+// URL-password auth). Watchparty's own floating cameras and chat sit on top
+// of it, same as the watch screen. The heavy lifting (auth, container
+// lifecycle, proxying) all lives server-side — this page just mints a
+// viewer session + token, and surfaces control hand-off through the
 // existing socket-emit + ack pattern the rest of PartyContext uses.
 export default function RemoteBrowser({
   session, isHost, cameraProps, lk, layoutMode, setLayout = () => {},
@@ -37,11 +40,13 @@ export default function RemoteBrowser({
   phone?: boolean
 }) {
   const party = useParty()
+  const { user } = useAuth()
   const { socket } = useSocket()
   const { controllerUserId, getControl, requestControl, assignControl, revokeControl, stopBrowser } = party
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [actionMsg, setActionMsg] = useState<string | null>(null)
+  const [token, setToken] = useState<string | null>(null)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -61,7 +66,13 @@ export default function RemoteBrowser({
         }
         return apiJson(r)
       })
-      .then(() => { if (!cancelled) setStatus('ready') })
+      .then((body) => {
+        if (cancelled) return
+        const sessionToken = stringField(body, 'token')
+        if (!sessionToken) throw new Error('shared browser session response was missing a token')
+        setToken(sessionToken)
+        setStatus('ready')
+      })
       .catch((err) => {
         if (cancelled) return
         setError(err?.message || 'Could not connect to the shared browser')
@@ -138,13 +149,13 @@ export default function RemoteBrowser({
         </div>
       )}
 
-      {status === 'ready' && (
+      {status === 'ready' && token && (
         <div style={{ position: 'absolute', inset: 0, marginLeft: showDock ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
-          <iframe
-            src="/neko/?embed=1"
-            title="Shared browser"
-            allow="autoplay; clipboard-read; clipboard-write; fullscreen"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
+          <NekoScreen
+            wsUrl={`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/neko/api/ws`}
+            token={token}
+            canControl={!!user && controllerUserId === user.userId}
+            onError={(err) => { setError(err.message); setStatus('error') }}
           />
           {showCameraGrid && <CameraGrid {...cameraProps!} />}
         </div>
