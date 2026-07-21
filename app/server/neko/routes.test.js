@@ -113,7 +113,9 @@ test('scopeCookieToNeko strips Secure when not a secure request', () => {
   const rewritten = scopeCookieToNeko('NEKO_SESSION=abc; Path=/; HttpOnly; Secure; SameSite=None', { secure: false })
   assert.doesNotMatch(rewritten, /Secure/)
   assert.match(rewritten, /HttpOnly/)
-  assert.match(rewritten, /SameSite=None/)
+  // SameSite=None requires Secure; over http it must be downgraded to Lax
+  assert.doesNotMatch(rewritten, /SameSite=None/)
+  assert.match(rewritten, /SameSite=Lax/)
   assert.match(rewritten, /Path=\/neko/)
 })
 
