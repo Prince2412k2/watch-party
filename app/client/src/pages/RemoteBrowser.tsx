@@ -4,15 +4,38 @@ import { useParty } from '../context/PartyContext'
 import { useSocket } from '../hooks/useSocket'
 import { navigate } from '../router'
 import { glass } from '../glass'
+import CameraGrid from '../components/CameraGrid'
+import Dock from '../components/Dock'
+import Chat from '../components/Chat'
+import { ChatSheet } from './Party'
+import type { CameraProps, LiveKitState } from './Party'
+import { Z } from '../watchLayers'
 import type { PartySession } from '../types'
 import { apiJson, stringField } from '../types/guards'
 
-// Renders the party's shared Neko browser embed. The heavy lifting (auth,
-// container lifecycle, proxying) all lives server-side — this page just
-// mints a viewer session, drops in the same-origin iframe, and surfaces
-// control hand-off through the existing socket-emit + ack pattern the rest
-// of PartyContext uses.
-export default function RemoteBrowser({ session, isHost }: { session: PartySession; isHost?: boolean }) {
+// Renders the party's shared Neko browser embed — Neko's own chrome (header,
+// members, chat, menu) is stripped via ?embed=1 so only the video + input
+// surface shows; Watchparty's own floating cameras and chat sit on top of it,
+// same as the watch screen. The heavy lifting (auth, container lifecycle,
+// proxying) all lives server-side — this page just mints a viewer session,
+// drops in the same-origin iframe, and surfaces control hand-off through the
+// existing socket-emit + ack pattern the rest of PartyContext uses.
+export default function RemoteBrowser({
+  session, isHost, cameraProps, lk, layoutMode, setLayout = () => {},
+  chatOpen, openChat = () => {}, closeChat = () => {}, chatRipple = 0, phone,
+}: {
+  session: PartySession
+  isHost?: boolean
+  cameraProps?: CameraProps
+  lk?: LiveKitState
+  layoutMode?: 'float' | 'dock'
+  setLayout?: (mode: 'float' | 'dock') => void
+  chatOpen?: boolean
+  openChat?: (focus?: boolean) => void
+  closeChat?: () => void
+  chatRipple?: number
+  phone?: boolean
+}) {
   const party = useParty()
   const { socket } = useSocket()
   const { controllerUserId, getControl, requestControl, assignControl, revokeControl, stopBrowser } = party
@@ -86,6 +109,9 @@ export default function RemoteBrowser({ session, isHost }: { session: PartySessi
     if (res.error) flash(res.error)
   }
 
+  const showCameraGrid = !!cameraProps && layoutMode === 'float'
+  const showDock = !!cameraProps && !phone && layoutMode === 'dock'
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000' }}>
       {status === 'loading' && (
@@ -113,12 +139,35 @@ export default function RemoteBrowser({ session, isHost }: { session: PartySessi
       )}
 
       {status === 'ready' && (
-        <iframe
-          src="/neko/"
-          title="Shared browser"
-          allow="autoplay; clipboard-read; clipboard-write; fullscreen"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
-        />
+        <div style={{ position: 'absolute', inset: 0, marginLeft: showDock ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
+          <iframe
+            src="/neko/?embed=1"
+            title="Shared browser"
+            allow="autoplay; clipboard-read; clipboard-write; fullscreen"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
+          />
+          {showCameraGrid && <CameraGrid {...cameraProps!} />}
+        </div>
+      )}
+
+      {showDock && (
+        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 210, zIndex: Z.cameraStrip }}>
+          <Dock {...cameraProps!} />
+        </div>
+      )}
+
+      {/* Chat: same behavior as the watch screen — dismissible slide-over sheet
+          with a scrim on phones, docked panel on desktop. */}
+      {chatOpen && (
+        phone
+          ? (
+            <>
+              <div onClick={(e) => { e.stopPropagation(); closeChat() }}
+                style={{ position: 'absolute', inset: 0, zIndex: Z.chatScrim, background: 'rgba(4,5,8,.5)', animation: 'scrimIn .2s ease both' }} />
+              <ChatSheet />
+            </>
+          )
+          : <Chat top={76} />
       )}
 
       {/* Control bar: controller status, request/assign/revoke, stop. */}
@@ -141,8 +190,24 @@ export default function RemoteBrowser({ session, isHost }: { session: PartySessi
 
         <div style={{ flex: 1 }} />
 
+        {cameraProps && !phone && (
+          <Chip onClick={() => setLayout(layoutMode === 'float' ? 'dock' : 'float')}>
+            {layoutMode === 'float' ? 'Dock cameras' : 'Float cameras'}
+          </Chip>
+        )}
+        <Chip onClick={() => (chatOpen ? closeChat() : openChat())}>{chatOpen ? 'Close chat' : 'Chat'}</Chip>
+
         {canStop && <Chip onClick={onStop} danger>Stop browser</Chip>}
       </div>
+
+      {/* Notification ripple from the right edge, same treatment as the watch
+          screen — a quick visual nudge when a chat message lands while closed. */}
+      {chatRipple > 0 && !chatOpen && (
+        <div key={chatRipple}
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, zIndex: Z.chatEdge, pointerEvents: 'none',
+            background: 'var(--text)', transformOrigin: 'right',
+            animation: 'edgeRipple .9s ease-out forwards' }} />
+      )}
 
       {actionMsg && (
         <div style={{
