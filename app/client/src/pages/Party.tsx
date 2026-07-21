@@ -24,8 +24,8 @@ import RemoteBrowser from './RemoteBrowser'
 import type { PartySession, SubtitlePreferences } from '../types'
 import { apiJson, stringField } from '../types/guards'
 
-type LiveKitState = ReturnType<typeof useLiveKit>
-type CameraProps = {
+export type LiveKitState = ReturnType<typeof useLiveKit>
+export type CameraProps = {
   localParticipant: LiveKitParticipantView | null
   participants: LiveKitParticipantView[]
   isHost: boolean
@@ -145,7 +145,14 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   // Takes priority over the lobby/watching split — mutually exclusive with
   // both (the server rejects media mutation while a browser is active).
   if (session.activity === 'remote-browser') {
-    return <RemoteBrowser session={session} isHost={isHost} />
+    return (
+      <RemoteBrowser
+        session={session} isHost={isHost} cameraProps={cameraProps} lk={lk}
+        layoutMode={layoutMode} setLayout={setLayout}
+        chatOpen={chatOpen} openChat={openChat} closeChat={closeChat} chatRipple={chatRipple}
+        phone={phone}
+      />
+    )
   }
 
   // ── LOBBY: everyone browses the library together, no title yet ───────────
@@ -647,7 +654,7 @@ function RotateHint() {
 
 // Phone chat as a right-side slide-over sheet. Wraps the existing <Chat> so all
 // chat behavior (alerts, focus, send, Esc) is preserved; only the framing differs.
-function ChatSheet() {
+export function ChatSheet() {
   return (
     <div onClick={(e) => e.stopPropagation()} style={{
       position: 'absolute', zIndex: Z.chat,
