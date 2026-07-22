@@ -242,7 +242,18 @@ httpServer.on('upgrade', (req, socket, head) => {
   if (req.url && req.url.startsWith('/neko')) {
     sessionMiddleware(req, upgradeFakeRes(), () => {
       const decision = authorizeNekoUpgrade(req)
-      if (!decision.ok) return destroyUpgrade(socket, decision.status)
+      if (!decision.ok) {
+        return destroyUpgrade(socket, decision.status)
+      }
+      // http-proxy (which http-proxy-middleware wraps) prepends the proxy
+      // target's own path onto req.url (prependPath, default true). For the
+      // plain HTTP case Express's app.use('/neko', ...) already strips the
+      // '/neko' mount prefix from req.url before the proxy sees it, so that
+      // prepend recreates exactly one '/neko'. A raw 'upgrade' event never
+      // goes through Express routing, so req.url still has '/neko' on it —
+      // strip it here the same way, or the target's own '/neko' path
+      // (NEKO_INTERNAL_URL includes the prefix) gets doubled and Neko 404s.
+      req.url = req.url.replace(/^\/neko/, '') || '/'
       nekoProxy.upgrade(req, socket, head)
     })
   }

@@ -39,3 +39,6 @@ secrets/
 
 # A0 spike throwaway probes
 /scratch/
+
+# Local Neko demo override (enables feature + demo secrets)
+docker-compose.override.yml
