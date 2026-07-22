@@ -17,15 +17,22 @@ const BOOTSTRAP_API_PATHS = new Set([
 ])
 
 export function isAllowedNekoRequest(pathname, searchParams) {
+  const isWs = pathname === '/neko/api/ws'
   if (searchParams) {
-    for (const key of ['usr', 'pwd', 'token']) {
+    // usr/pwd are the Neko-password-in-URL vector (the bundled client's own
+    // auth) and are never legitimate through our proxy. `token` IS legitimate
+    // on the ws endpoint only — that's our own client's scoped, revocable
+    // per-user session token (server/session/auth.go getToken: cookie ->
+    // Bearer -> ?token=), not the shared Neko password.
+    for (const key of ['usr', 'pwd']) {
       if (searchParams.has(key)) return false
     }
+    if (!isWs && searchParams.has('token')) return false
   }
   if (pathname === '/neko' || pathname === '/neko/') return true
   if (/^\/neko\/(js|css)\//.test(pathname)) return true
   if (/^\/neko\/(favicon[^/]*|apple-touch-icon[^/]*|site\.webmanifest|safari-pinned-tab\.svg)$/.test(pathname)) return true
-  if (pathname === '/neko/api/ws') return true
+  if (isWs) return true
   if (BOOTSTRAP_API_PATHS.has(pathname)) return true
   return false // includes /neko/metrics, /neko/api/profile, /neko/api/room/control*, legacy /neko/ws
 }

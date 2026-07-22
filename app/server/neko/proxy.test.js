@@ -27,11 +27,19 @@ test('allow-list: metrics, profile, room control, legacy ws are denied', () => {
   }
 })
 
-test('allow-list: usr/pwd/token query params deny even an otherwise-allowed path', () => {
-  for (const q of ['usr=a', 'pwd=b', 'token=c']) {
+test('allow-list: usr/pwd query params deny even an otherwise-allowed path', () => {
+  for (const q of ['usr=a', 'pwd=b']) {
     const { pathname, searchParams } = url(`/neko/api/ws?${q}`)
     assert.equal(isAllowedNekoRequest(pathname, searchParams), false, q)
   }
+})
+
+test('allow-list: token query param is allowed ONLY on the ws endpoint (our client\'s own session token)', () => {
+  const ws = url('/neko/api/ws?token=abc')
+  assert.equal(isAllowedNekoRequest(ws.pathname, ws.searchParams), true)
+
+  const other = url('/neko/js/app.js?token=abc')
+  assert.equal(isAllowedNekoRequest(other.pathname, other.searchParams), false)
 })
 
 function makeDeps({ leaseState = 'active', partyId = 'p1', member = true } = {}) {
