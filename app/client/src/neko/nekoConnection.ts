@@ -3,6 +3,16 @@
 // protocol directly instead of embedding Neko's bundled Vue client so we can
 // authenticate with our own per-user session token (?token=) rather than the
 // bundled client's ?password=&username= URL params.
+//
+// NOTE: the vendored neko/client/ tree is v2.5.0 (legacy protocol) — its
+// base.ts never sends a request to trigger media. The actual server we run
+// is v3, whose signalRequest handler (server/internal/websocket/handler/
+// signal.go) only creates the WebRTC peer and sends signal/provide once it
+// receives `signal/request` from the client. We send that ourselves right
+// after system/init, using the v3 wire shape (server/pkg/types/message
+// SignalRequest: {video:{disabled?,selector?,auto?}, audio:{disabled?}}) —
+// all fields optional, so an empty object per side takes the server's
+// defaults (first available video stream, audio enabled).
 
 const OPCODE = {
   MOVE: 0x01,
@@ -17,6 +27,7 @@ const EVENT = {
   SIGNAL_ANSWER: 'signal/answer',
   SIGNAL_PROVIDE: 'signal/provide',
   SIGNAL_CANDIDATE: 'signal/candidate',
+  SIGNAL_REQUEST: 'signal/request',
   CLIENT_HEARTBEAT: 'client/heartbeat',
   SCREEN_RESOLUTION: 'screen/resolution',
 } as const
@@ -46,10 +57,6 @@ interface SignalAnswerPayload {
   sdp: string
 }
 
-interface SignalCandidatePayload {
-  data: string
-}
-
 export interface NekoConnectionOptions {
   wsUrl: string
   token: string
@@ -66,7 +73,7 @@ export class NekoConnection {
   private peer?: RTCPeerConnection
   private channel?: RTCDataChannel
   private connectTimeout?: number
-  private candidates: RTCIceCandidate[] = []
+  private candidates: RTCIceCandidateInit[] = []
   private iceState: RTCIceConnectionState = 'disconnected'
   private closed = false
 
@@ -190,7 +197,9 @@ export class NekoConnection {
     } catch {
       return
     }
-    const { event, ...payload } = msg
+    // Server envelope is {event, payload:{...}} (types.WebSocketMessage), not
+    // a flat object — the real fields live under the nested `payload` key.
+    const { event, payload } = msg
 
     switch (event) {
       case EVENT.SYSTEM_INIT: {
@@ -199,6 +208,9 @@ export class NekoConnection {
           if (this.wsHeartbeat) clearInterval(this.wsHeartbeat)
           this.wsHeartbeat = window.setInterval(() => this.sendMessage(EVENT.CLIENT_HEARTBEAT), heartbeat_interval * 1000)
         }
+        // v3 only creates the WebRTC peer and sends signal/provide once we
+        // ask for it — request the default video/audio stream now.
+        this.sendMessage(EVENT.SIGNAL_REQUEST, { video: {}, audio: {}, auto: false })
         break
       }
       case EVENT.SIGNAL_PROVIDE: {
@@ -218,8 +230,10 @@ export class NekoConnection {
         break
       }
       case EVENT.SIGNAL_CANDIDATE: {
-        const { data } = payload as SignalCandidatePayload
-        const candidate: RTCIceCandidate = JSON.parse(data)
+        // SignalCandidate embeds webrtc.ICECandidateInit directly (Go struct
+        // embedding) — the candidate fields are the payload itself, not a
+        // JSON-stringified `data` wrapper.
+        const candidate = payload as RTCIceCandidateInit
         if (this.peer) {
           try { await this.peer.addIceCandidate(candidate) } catch {}
         } else {
@@ -239,7 +253,9 @@ export class NekoConnection {
 
   private sendMessage(event: string, payload?: any) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
-    this.ws.send(JSON.stringify({ event, ...payload }))
+    // Server decodes {event, payload} (types.WebSocketMessage) — payload must
+    // be nested, not spread flat onto the envelope.
+    this.ws.send(JSON.stringify({ event, payload }))
   }
 
   private async createPeer(lite: boolean, servers: RTCIceServer[]) {
@@ -277,15 +293,14 @@ export class NekoConnection {
 
     this.peer.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
       if (!event.candidate || !this.ws) return
-      const init = event.candidate.toJSON()
-      this.ws.send(JSON.stringify({ event: EVENT.SIGNAL_CANDIDATE, data: JSON.stringify(init) }))
+      this.sendMessage(EVENT.SIGNAL_CANDIDATE, event.candidate.toJSON())
     }
 
     this.peer.onnegotiationneeded = async () => {
       if (!this.peer || !this.ws) return
       const d = await this.peer.createOffer()
       await this.peer.setLocalDescription(d)
-      this.ws.send(JSON.stringify({ event: EVENT.SIGNAL_OFFER, sdp: d.sdp }))
+      this.sendMessage(EVENT.SIGNAL_OFFER, { sdp: d.sdp })
     }
 
     this.channel = this.peer.createDataChannel('data')
@@ -308,7 +323,7 @@ export class NekoConnection {
     d.sdp = d.sdp?.replace(/(stereo=1;)?useinbandfec=1/, 'useinbandfec=1;stereo=1')
     await this.peer.setLocalDescription(d)
 
-    this.ws.send(JSON.stringify({ event: EVENT.SIGNAL_ANSWER, sdp: d.sdp }))
+    this.sendMessage(EVENT.SIGNAL_ANSWER, { sdp: d.sdp })
   }
 
   private handleDisconnected = (err?: Error) => {
