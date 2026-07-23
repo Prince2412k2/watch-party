@@ -7,10 +7,9 @@ import type { GuacamoleKeyboardInterface } from '../neko/guacamoleKeyboard'
 const FALLBACK_RESOLUTION: ScreenResolution = { width: 1280, height: 720 }
 
 export default function NekoScreen({
-  wsUrl, token, canControl, onError,
+  wsUrl, canControl, onError,
 }: {
   wsUrl: string
-  token: string
   canControl?: boolean
   onError?: (err: Error) => void
 }) {
@@ -24,7 +23,6 @@ export default function NekoScreen({
   useEffect(() => {
     const conn = new NekoConnection({
       wsUrl,
-      token,
       onStream: (stream) => {
         if (videoRef.current) videoRef.current.srcObject = stream
         setHasStream(true)
@@ -41,7 +39,7 @@ export default function NekoScreen({
       setHasStream(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsUrl, token])
+  }, [wsUrl])
 
   useEffect(() => {
     if (!canControl) return

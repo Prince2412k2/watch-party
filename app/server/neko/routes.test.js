@@ -187,7 +187,7 @@ test('no lease at all -> 409', async () => {
   assert.equal(res.statusCode, 409)
 })
 
-test('member of active-lease party -> 200 with cookie+token relayed and secret-free body', async () => {
+test('member of active-lease party -> 200 with cookie relayed and secret-free body', async () => {
   const sess = makeSession()
   const deps = makeDeps({ partyId: sess.id, hasHost: true, hostSessionId: 'neko-sess-1' })
   const app = fakeApp()
@@ -198,11 +198,12 @@ test('member of active-lease party -> 200 with cookie+token relayed and secret-f
   assert.equal(res.statusCode, 200)
   assert.equal(res.body.wsUrl, process.env.NEKO_PUBLIC_WS)
   assert.equal(res.body.controllerUserId, 'controller-user')
-  // The per-user Neko session token IS meant to reach this user's client —
-  // it's what the custom client authenticates the WS with.
-  assert.equal(res.body.token, 'sess-token-1')
   assert.match(res.headers['Set-Cookie'], /Path=\/neko/)
+  // Auth is the HttpOnly cookie only — the per-user Neko session token must
+  // NEVER reach the client via the response body (that would defeat the
+  // point of using an HttpOnly cookie in the first place).
   const json = JSON.stringify(res.body)
+  assert.doesNotMatch(json, /token/i)
   assert.doesNotMatch(json, /password/i)
   assert.doesNotMatch(json, /apiToken/i)
   assert.doesNotMatch(json, /leaseId/i)

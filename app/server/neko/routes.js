@@ -105,11 +105,15 @@ export function registerNekoRoutes(app, io, { admin = defaultAdmin, lease = defa
     }
 
     try {
-      const { cookie, token, controllerUserId } = await broker.mintSession(sess.id, activeLease.leaseId, userId)
+      const { cookie, controllerUserId } = await broker.mintSession(sess.id, activeLease.leaseId, userId)
       const isSecureRequest = req.secure === true || req.headers?.['x-forwarded-proto'] === 'https'
       const scoped = scopeCookieToNeko(cookie, { secure: isSecureRequest })
       if (scoped) res.setHeader('Set-Cookie', scoped)
-      res.json({ wsUrl: nekoConfig().publicWs, token, controllerUserId })
+      // The HttpOnly cookie is the sole auth mechanism for the WS handshake -
+      // the browser attaches it automatically (same-origin). No token is ever
+      // exposed to page JS: it never appears in a fetch response body, React
+      // state, or a URL, so it can't leak via logs, error reporters, or XSS.
+      res.json({ wsUrl: nekoConfig().publicWs, controllerUserId })
     } catch (err) {
       console.error('browser session broker', err.message)
       res.status(502).json({ error: 'could not start browser session' })

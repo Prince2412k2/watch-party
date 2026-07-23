@@ -1,8 +1,11 @@
 // Framework-agnostic Neko WS+WebRTC client, ported from
 // neko/client/src/neko/base.ts + index.ts (heartbeat wiring). We speak the
 // protocol directly instead of embedding Neko's bundled Vue client so we can
-// authenticate with our own per-user session token (?token=) rather than the
-// bundled client's ?password=&username= URL params.
+// authenticate via the HttpOnly NEKO_SESSION cookie the backend broker
+// relays onto our own origin, rather than the bundled client's
+// ?usr=&pwd=/?token= URL params. The browser attaches the cookie
+// automatically to the same-origin WS handshake, so no token or password
+// ever touches page JS, a URL, or React state.
 //
 // NOTE: the vendored neko/client/ tree is v2.5.0 (legacy protocol) — its
 // base.ts never sends a request to trigger media. The actual server we run
@@ -59,7 +62,6 @@ interface SignalAnswerPayload {
 
 export interface NekoConnectionOptions {
   wsUrl: string
-  token: string
   onStream?: (stream: MediaStream) => void
   onResolution?: (resolution: ScreenResolution) => void
   onConnected?: () => void
@@ -96,8 +98,9 @@ export class NekoConnection {
   connect() {
     if (this.socketOpen) return
 
-    const url = `${this.opts.wsUrl}?token=${encodeURIComponent(this.opts.token)}`
-    this.ws = new WebSocket(url)
+    // No ?token= - the browser attaches the HttpOnly NEKO_SESSION cookie to
+    // this same-origin WS handshake automatically.
+    this.ws = new WebSocket(this.opts.wsUrl)
     this.ws.onmessage = this.onMessage
     this.ws.onerror = () => {}
     this.ws.onclose = () => this.handleDisconnected(new Error('websocket closed'))

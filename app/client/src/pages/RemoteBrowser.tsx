@@ -16,13 +16,14 @@ import type { PartySession } from '../types'
 import { apiJson, stringField } from '../types/guards'
 
 // Renders the party's shared Neko browser via our own client (NekoScreen)
-// speaking Neko's WS+WebRTC protocol directly, authenticated with a per-user
-// session token — not Neko's bundled client (which only supports
-// URL-password auth). Watchparty's own floating cameras and chat sit on top
-// of it, same as the watch screen. The heavy lifting (auth, container
-// lifecycle, proxying) all lives server-side — this page just mints a
-// viewer session + token, and surfaces control hand-off through the
-// existing socket-emit + ack pattern the rest of PartyContext uses.
+// speaking Neko's WS+WebRTC protocol directly, authenticated by the HttpOnly
+// NEKO_SESSION cookie the broker call below sets on our own origin — not
+// Neko's bundled client (which only supports URL-password auth), and not a
+// token exposed to page JS. Watchparty's own floating cameras and chat sit
+// on top of it, same as the watch screen. The heavy lifting (auth, container
+// lifecycle, proxying) all lives server-side — this page just mints the
+// viewer session and surfaces control hand-off through the existing
+// socket-emit + ack pattern the rest of PartyContext uses.
 export default function RemoteBrowser({
   session, isHost, cameraProps, lk, layoutMode, setLayout = () => {},
   chatOpen, openChat = () => {}, closeChat = () => {}, chatRipple = 0, phone,
@@ -46,7 +47,6 @@ export default function RemoteBrowser({
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [actionMsg, setActionMsg] = useState<string | null>(null)
-  const [token, setToken] = useState<string | null>(null)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -66,11 +66,11 @@ export default function RemoteBrowser({
         }
         return apiJson(r)
       })
-      .then((body) => {
+      .then(() => {
         if (cancelled) return
-        const sessionToken = stringField(body, 'token')
-        if (!sessionToken) throw new Error('shared browser session response was missing a token')
-        setToken(sessionToken)
+        // The response sets the HttpOnly NEKO_SESSION cookie (credentials:
+        // 'include' above ensures the browser stores it) - nothing else
+        // needed from the body to open the WS connection.
         setStatus('ready')
       })
       .catch((err) => {
@@ -149,11 +149,10 @@ export default function RemoteBrowser({
         </div>
       )}
 
-      {status === 'ready' && token && (
+      {status === 'ready' && (
         <div style={{ position: 'absolute', inset: 0, marginLeft: showDock ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
           <NekoScreen
             wsUrl={`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/neko/api/ws`}
-            token={token}
             canControl={!!user && controllerUserId === user.userId}
             onError={(err) => { setError(err.message); setStatus('error') }}
           />
