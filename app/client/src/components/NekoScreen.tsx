@@ -87,10 +87,17 @@ export default function NekoScreen({
 
       const fracX = Math.min(1, Math.max(0, (e.clientX - offsetX) / contentWidth))
       const fracY = Math.min(1, Math.max(0, (e.clientY - offsetY) / contentHeight))
-      return {
-        x: Math.round(fracX * w),
-        y: Math.round(fracY * h),
-      }
+      const result = { x: Math.round(fracX * w), y: Math.round(fracY * h) }
+      // eslint-disable-next-line no-console
+      console.log('[neko pointer debug]', {
+        clientX: e.clientX, clientY: e.clientY,
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        video: { videoW, videoH },
+        content: { offsetX, offsetY, contentWidth, contentHeight },
+        target: { w, h },
+        result,
+      })
+      return result
     }
 
     function onMouseMove(e: MouseEvent) {
@@ -105,10 +112,25 @@ export default function NekoScreen({
       connectionRef.current?.sendData('mouseup', { key: e.button + 1 })
     }
     let wheelThrottle = false
+    // The server (xorg.c XScroll) fires ONE discrete X11 wheel-button click
+    // per unit of delta (`for i in 0..abs(delta)`), not a pixel amount — so
+    // clamping to +/-32767 let a normal 100+ pixel wheel tick fire 100+
+    // clicks instantly. Match the reference client's default clamp (+/-10)
+    // and its deltaMode normalization (some browsers report scroll in lines
+    // rather than pixels; WHEEL_LINE_HEIGHT scales those up before clamping
+    // to the same range pixel deltas use).
+    const WHEEL_LINE_HEIGHT = 19
+    const SCROLL_CLAMP = 10
     function onWheel(e: WheelEvent) {
       e.preventDefault()
-      const x = Math.max(-32767, Math.min(32767, e.deltaX))
-      const y = Math.max(-32767, Math.min(32767, e.deltaY))
+      let dx = e.deltaX
+      let dy = e.deltaY
+      if (e.deltaMode !== 0) {
+        dx *= WHEEL_LINE_HEIGHT
+        dy *= WHEEL_LINE_HEIGHT
+      }
+      const x = Math.max(-SCROLL_CLAMP, Math.min(SCROLL_CLAMP, dx))
+      const y = Math.max(-SCROLL_CLAMP, Math.min(SCROLL_CLAMP, dy))
       if (!wheelThrottle) {
         wheelThrottle = true
         connectionRef.current?.sendData('wheel', { x, y })
