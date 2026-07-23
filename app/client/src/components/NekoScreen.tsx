@@ -59,12 +59,37 @@ export default function NekoScreen({
     }
     keyboard.listenTo(overlay)
 
+    // The <video> uses object-fit:contain, so unless its aspect ratio exactly
+    // matches the overlay's, the rendered picture is letterboxed (bars on the
+    // sides or top/bottom) and doesn't fill the full overlay rect. Mapping
+    // pointer coords against the overlay's raw bounding rect (ignoring the
+    // bars) produces a mismatch that's zero at the center and grows toward
+    // the edges — exactly the drift symptom this fixes. Compute the actual
+    // displayed video rect within the overlay first, then map against that.
     function pointerPos(e: MouseEvent) {
       const rect = overlay!.getBoundingClientRect()
       const { width: w, height: h } = resolutionRef.current
+      const video = videoRef.current
+      const videoW = video?.videoWidth || w
+      const videoH = video?.videoHeight || h
+
+      const containerRatio = rect.width / rect.height
+      const videoRatio = videoW / videoH
+      let contentWidth = rect.width
+      let contentHeight = rect.height
+      if (videoRatio > containerRatio) {
+        contentHeight = rect.width / videoRatio
+      } else {
+        contentWidth = rect.height * videoRatio
+      }
+      const offsetX = rect.left + (rect.width - contentWidth) / 2
+      const offsetY = rect.top + (rect.height - contentHeight) / 2
+
+      const fracX = Math.min(1, Math.max(0, (e.clientX - offsetX) / contentWidth))
+      const fracY = Math.min(1, Math.max(0, (e.clientY - offsetY) / contentHeight))
       return {
-        x: Math.round((w / rect.width) * (e.clientX - rect.left)),
-        y: Math.round((h / rect.height) * (e.clientY - rect.top)),
+        x: Math.round(fracX * w),
+        y: Math.round(fracY * h),
       }
     }
 
