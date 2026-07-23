@@ -386,6 +386,9 @@ io.on('connection', (socket) => {
     ack?.({ status: 'waiting' })
     // Only notify the host on a genuinely new request (avoids duplicate prompts)
     if (added) io.to(sess.hostSocketId).emit('party:waiting', { userId, name })
+    // A repeated join may be recovering from a dropped notification. Re-send
+    // the canonical waiting list without producing another toast.
+    io.to(sess.hostSocketId).emit('party:state', publicSession(sess))
   })
 
   // party:approve ───────────────────────────────────────────────────────────

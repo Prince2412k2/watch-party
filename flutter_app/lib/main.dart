@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -129,4 +130,14 @@ Future<void> main() async {
       child: const WatchpartyApp(),
     ),
   );
+
+  if (container.read(authProvider).isAuthenticated) {
+    unawaited(() async {
+      try {
+        await container.read(partyProvider.notifier).resume();
+      } catch (_) {
+        // Authentication can still be valid while the socket endpoint is down.
+      }
+    }());
+  }
 }

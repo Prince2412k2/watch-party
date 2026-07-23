@@ -1,0 +1,28 @@
+# LOCAL demo override — auto-merged by `docker compose` (no flag needed).
+# Enables the Neko remote-browser feature for local testing on http://localhost:3001.
+# NOT for production (recreate is a no-op → no isolation between parties; demo secrets).
+# Delete this file to return to the gated-off default.
+services:
+  watchparty:
+    environment:
+      - NEKO_ENABLED=true
+      - NEKO_RECREATE_MODE=noop
+      - NEKO_INTERNAL_URL=http://neko:8080/neko
+      - NEKO_PUBLIC_WS=/neko
+      - NEKO_API_TOKEN=local-demo-api-token-0001
+      - NEKO_USER_PASSWORD=neko-demo-password-01
+      - NEKO_USERNAME_SECRET=local-demo-username-secret-000
+      - NEKO_IDLE_TIMEOUT_MS=300000
+
+  neko:
+    environment:
+      - NEKO_SESSION_API_TOKEN=local-demo-api-token-0001
+      - NEKO_MEMBER_PROVIDER=multiuser
+      - NEKO_MEMBER_MULTIUSER_USER_PASSWORD=neko-demo-password-01
+      - NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD=admin-demo-password-1
+      - NEKO_SESSION_COOKIE_ENABLED=true
+      - NEKO_SERVER_PATH_PREFIX=/neko
+      - NEKO_WEBRTC_NAT1TO1=127.0.0.1
+      - NEKO_WEBRTC_EPR=56000-56100
+      - NEKO_WEBRTC_ICELITE=1
+      - NEKO_DESKTOP_SCREEN=1280x720@30

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
@@ -25,7 +27,10 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   final Ref _ref;
   final List<void Function()> _unsubs = [];
+  StreamSubscription<bool>? _connectionSubscription;
   bool _subscribed = false;
+  bool _recoveringConnection = false;
+  String? _pendingPartyId;
 
   SocketClient get _socket => _ref.read(socketClientProvider);
   String? get _myUserId => _ref.read(currentUserIdProvider);
@@ -74,6 +79,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   void clear() {
     state = null;
+    _pendingPartyId = null;
     _playback = null;
     _subtitlePreferences = SubtitlePreferences.defaults;
     _ref.read(partyWaitingProvider.notifier).clear();
@@ -88,6 +94,11 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   void _subscribe() {
     _subscribed = true;
     final socket = _socket;
+    _connectionSubscription = socket.connectionState.listen((connected) {
+      if (connected && (state != null || _pendingPartyId != null)) {
+        unawaited(_recoverAfterReconnect());
+      }
+    });
     _unsubs.add(
       socket.on(ServerEvent.partyState, (data) {
         if (data is Map) _applySession(Map<String, dynamic>.from(data));
@@ -108,6 +119,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     );
     _unsubs.add(
       socket.on(ServerEvent.partyApproved, (data) {
+        _pendingPartyId = null;
         if (data is Map && data['session'] is Map) {
           _applySession(Map<String, dynamic>.from(data['session'] as Map));
         }
@@ -176,7 +188,45 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       u();
     }
     _unsubs.clear();
+    _connectionSubscription?.cancel();
+    _connectionSubscription = null;
     _subscribed = false;
+  }
+
+  Future<void> _recoverAfterReconnect() async {
+    if (_recoveringConnection) return;
+    _recoveringConnection = true;
+    try {
+      final pendingPartyId = _pendingPartyId;
+      if (pendingPartyId != null) {
+        final resp = await _socket
+            .emitWithAck(ClientEvent.partyJoin, {'partyId': pendingPartyId})
+            .timeout(const Duration(seconds: 5));
+        if (resp is Map &&
+            resp['status'] == 'joined' &&
+            resp['session'] is Map) {
+          _pendingPartyId = null;
+          _applySession(Map<String, dynamic>.from(resp['session'] as Map));
+          await _postJoinSetup();
+        }
+        return;
+      }
+
+      final resp = await _socket
+          .emitWithAck(ClientEvent.partyResume)
+          .timeout(const Duration(seconds: 5));
+      if (resp is Map && resp['session'] is Map) {
+        _applySession(Map<String, dynamic>.from(resp['session'] as Map));
+      } else {
+        await _leaveLocal();
+      }
+    } on TimeoutException {
+      // A later Socket.IO reconnect will retry with a fresh acknowledgement.
+    } catch (_) {
+      // The connection lifecycle will trigger another attempt after recovery.
+    } finally {
+      _recoveringConnection = false;
+    }
   }
 
   /// Map the server's `publicSession` shape (`app/server/session.js`) onto the
@@ -308,6 +358,18 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   }
 
   // ── Create / join ─────────────────────────────────────────────────────────
+  /// Restores a server-side party after an app restart.
+  Future<bool> resume() async {
+    await _ensureConnected();
+    final resp = await _socket
+        .emitWithAck(ClientEvent.partyResume)
+        .timeout(const Duration(seconds: 5));
+    if (resp is! Map || resp['session'] is! Map) return false;
+    _applySession(Map<String, dynamic>.from(resp['session'] as Map));
+    await _postJoinSetup();
+    return true;
+  }
+
   /// Creates a party (optionally pre-selecting media). Returns the new
   /// `partyId`. Throws a [String] error message from the server ack on failure.
   Future<String> create({
@@ -341,10 +403,13 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     if (resp is Map && resp['error'] != null) throw resp['error'].toString();
     final status = (resp as Map)['status']?.toString() ?? 'waiting';
     if (status == 'joined') {
+      _pendingPartyId = null;
       if (resp['session'] is Map) {
         _applySession(Map<String, dynamic>.from(resp['session'] as Map));
       }
       await _postJoinSetup();
+    } else {
+      _pendingPartyId = partyId;
     }
     return status;
   }
@@ -515,6 +580,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   }
 
   Future<void> _leaveLocal() async {
+    _pendingPartyId = null;
     final engine = _ref.read(syncEngineProvider);
     await engine.detach();
     if (engine is SyncEngineImpl) engine.isHost = false;
