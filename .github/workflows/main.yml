@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      force_desktop:
+        description: Build the desktop apps even if flutter_app did not change
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,6 +23,47 @@ env:
   SERVER_BUILDS_PATH: ${{ vars.DESKTOP_BUILDS_PATH || '/opt/watch-party/builds/desktop' }}
 
 jobs:
+  # The desktop apps only need rebuilding when the Flutter sources (or this
+  # workflow) change — a server-only push must not spend three runners on them.
+  changes:
+    name: Detect desktop changes
+    runs-on: ubuntu-latest
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Filter paths
+        id: filter
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          FORCE: ${{ inputs.force_desktop }}
+        run: |
+          set -euo pipefail
+          if [ "$FORCE" = "true" ] || [ "${GITHUB_EVENT_NAME}" != "push" ]; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "Forced desktop build."
+            exit 0
+          fi
+          # First push to the branch, or history rewritten — no usable base.
+          if [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "No usable base commit — building desktop."
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+          echo "Changed files:"; echo "$changed"
+          if grep -qE '^(flutter_app/|\.github/workflows/main\.yml$)' <<<"$changed"; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "desktop=false" >> "$GITHUB_OUTPUT"
+            echo "No Flutter changes — skipping desktop builds."
+          fi
+
   deploy:
     name: Deploy server
     runs-on: ubuntu-latest
@@ -44,6 +91,8 @@ jobs:
   macos:
     name: Build macOS DMG
     runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -94,6 +143,8 @@ jobs:
   linux:
     name: Build Linux AppImage
     runs-on: ubuntu-22.04
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -135,6 +186,8 @@ jobs:
   windows:
     name: Build Windows installer
     runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -213,7 +266,8 @@ jobs:
 
   publish-desktop:
     name: Publish desktop downloads
-    needs: [macos, linux, windows]
+    needs: [changes, macos, linux, windows]
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
