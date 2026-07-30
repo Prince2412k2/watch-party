@@ -774,6 +774,15 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
   const focusAfterMove = useRef(false)
   const wheelLocked = useRef(false)
   const wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Hover is only trusted once the pointer has actually MOVED. Scrolling the
+  // rail with the arrow buttons or the keyboard slides posters under a
+  // stationary cursor, and the tile that happens to land there must not claim
+  // the ambient wash until the user moves the mouse (or scrolls) again.
+  const hoverLive = useRef(false)
+  const edgeTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  // The edge-scroll interval outlives the render that started it, so it steps
+  // through a ref instead of capturing a stale `move`.
+  const moveRef = useRef<(direction: number) => void>(() => {})
   const [selected, setSelected] = useState(0)
   const [edges, setEdges] = useState({ left: false, right: false })
   const count = items?.length ?? 0
@@ -817,6 +826,7 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
 
   useEffect(() => () => {
     if (wheelTimer.current) clearTimeout(wheelTimer.current)
+    if (edgeTimer.current) clearInterval(edgeTimer.current)
   }, [])
 
   useEffect(() => {
@@ -833,6 +843,7 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
         rail.scrollBy({ left: delta })
         return
       }
+      hoverLive.current = true
       if (wheelLocked.current) return
       wheelLocked.current = true
       setSelected(index => {
@@ -843,11 +854,47 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
       if (wheelTimer.current) clearTimeout(wheelTimer.current)
       wheelTimer.current = setTimeout(() => { wheelLocked.current = false }, 140)
     }
+
+    const stopEdgeScroll = () => {
+      if (!edgeTimer.current) return
+      clearInterval(edgeTimer.current)
+      edgeTimer.current = null
+    }
+    // Parking the pointer in the outer EDGE_ZONE of the rail keeps stepping the
+    // selection that way, so a long shelf can be walked without clicking.
+    const EDGE_ZONE = 56
+    const EDGE_INTERVAL = 260
+    const handlePointerMove = (event: PointerEvent) => {
+      hoverLive.current = true
+      const box = rail.getBoundingClientRect()
+      const direction = event.clientX < box.left + EDGE_ZONE ? -1
+        : event.clientX > box.right - EDGE_ZONE ? 1
+        : 0
+      if (!direction) return stopEdgeScroll()
+      if (edgeTimer.current) return
+      // `move` distrusts hover (it is how the buttons work); edge-scrolling IS
+      // a pointer gesture, so re-arm it after every step.
+      const step = () => {
+        moveRef.current(direction)
+        hoverLive.current = true
+      }
+      step()
+      edgeTimer.current = setInterval(step, EDGE_INTERVAL)
+    }
+
     rail.addEventListener('wheel', handleWheel, { passive: false })
-    return () => rail.removeEventListener('wheel', handleWheel)
+    rail.addEventListener('pointermove', handlePointerMove)
+    rail.addEventListener('pointerleave', stopEdgeScroll)
+    return () => {
+      rail.removeEventListener('wheel', handleWheel)
+      rail.removeEventListener('pointermove', handlePointerMove)
+      rail.removeEventListener('pointerleave', stopEdgeScroll)
+      stopEdgeScroll()
+    }
   }, [mobile, count, items])
 
   const move = (direction: number, focus = false) => {
+    hoverLive.current = false
     if (mobile || !items) {
       railRef.current?.scrollBy({ left: direction * (railRef.current.clientWidth * .72), behavior: 'smooth' })
       return
@@ -861,6 +908,8 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
       return next
     })
   }
+  moveRef.current = move
+
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
@@ -877,26 +926,28 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
         style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 118 : 150}px, 1fr))` }}>
         {items ? items.map((item, index) => (
           <WallPoster key={item.Id} item={item} onClick={() => onOpen?.(item)} selected={index === selected}
-            tabIndex={mobile || index === selected ? 0 : -1} index={index} onSelect={() => setSelected(index)} />
+            tabIndex={mobile || index === selected ? 0 : -1} index={index} onSelect={() => setSelected(index)}
+            onHover={() => { if (hoverLive.current) setBalancedPoster(item.Id) }} />
         )) : children}
       </div>
     </div>
   )
 }
-function WallPoster({ item, onClick, selected, tabIndex, index, onSelect }: { item: LibraryItem; onClick: () => void; selected: boolean; tabIndex: number; index: number; onSelect: () => void }) {
+function WallPoster({ item, onClick, selected, tabIndex, index, onSelect, onHover }: { item: LibraryItem; onClick: () => void; selected: boolean; tabIndex: number; index: number; onSelect: () => void; onHover: () => void }) {
   const badge = item.Type === 'Season' ? `S${item.IndexNumber}` : null
   return <div className={selected ? 'is-selected' : ''} style={{ width: '100%' }}><PosterCardFluid item={item} onClick={onClick} badge={badge}
-    selected={selected} tabIndex={tabIndex} index={index} onSelect={onSelect} /></div>
+    selected={selected} tabIndex={tabIndex} index={index} onSelect={onSelect} onHover={onHover} /></div>
 }
 // Poster that fills its grid cell width (rail cards are fixed 170px).
-function PosterCardFluid({ item, onClick, badge, selected, tabIndex, index, onSelect }: { item: LibraryItem; onClick: () => void; badge?: string | null; selected: boolean; tabIndex: number; index: number; onSelect: () => void }) {
+function PosterCardFluid({ item, onClick, badge, selected, tabIndex, index, onSelect, onHover }: { item: LibraryItem; onClick: () => void; badge?: string | null; selected: boolean; tabIndex: number; index: number; onSelect: () => void; onHover?: () => void }) {
   const rating = item.CommunityRating
   const filledStars = rating == null ? 0 : Math.round(rating / 2)
   const isSeries = item.Type === 'Series'
   const epCount = isSeries ? (item.ChildCount ?? item.RecursiveItemCount) : null
   const fullyWatched = item.UserData?.Played
   return (
-    <button className="library-poster-card" onClick={onClick} onFocus={() => { onSelect(); setBalancedPoster(item.Id) }} onMouseEnter={() => setBalancedPoster(item.Id)}
+    <button className="library-poster-card" onClick={onClick} onFocus={() => { onSelect(); setBalancedPoster(item.Id) }}
+      onMouseEnter={() => (onHover ? onHover() : setBalancedPoster(item.Id))}
       role="option" aria-selected={selected} tabIndex={tabIndex} data-poster-index={index} aria-label={item.Name}>
       <div className="library-poster-art">
         <Img id={item.Id} type="Primary" alt={item.Name}
