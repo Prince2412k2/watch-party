@@ -821,11 +821,18 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
 
   useEffect(() => {
     const rail = railRef.current
-    if (!rail || mobile || !items) return
+    if (!rail || mobile) return
     const handleWheel = (event: WheelEvent) => {
-      const delta = Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+      const horizontal = Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+      const delta = horizontal ? event.deltaX : event.deltaY
       if (!delta) return
+      // Always swallow the gesture: a sideways trackpad swipe that reaches an
+      // ancestor scrolls the whole shell (or triggers Chrome's back-swipe).
       event.preventDefault()
+      if (!items) {
+        rail.scrollBy({ left: delta })
+        return
+      }
       if (wheelLocked.current) return
       wheelLocked.current = true
       setSelected(index => {
@@ -1066,7 +1073,7 @@ function Details({ itemId, onWatch, onOpen: _onOpen, onBack }: { itemId: string;
           )}
 
           {!isSeries && cast.length > 0 ? <div className="library-detail-cast">
-            {cast.slice(0, mobile ? 4 : 6).map(person => <StagePerson key={person.Id + (person.Role || '')} person={person} />)}
+            {cast.slice(0, mobile ? 4 : 14).map(person => <StagePerson key={person.Id + (person.Role || '')} person={person} />)}
           </div> : null}
         </div>
 
