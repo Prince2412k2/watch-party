@@ -10,6 +10,10 @@ import '../theme.dart';
 /// A focusable horizontal poster shelf with one selected title. Pointer scroll,
 /// dragging, and arrow keys all update the same selection model.
 class PosterShelf extends StatefulWidget {
+  /// How much the selected card is scaled up. [PosterCard] reads this to decode
+  /// its artwork for the largest size it will actually be painted at.
+  static const double selectionScale = 1.1;
+
   const PosterShelf({
     super.key,
     required this.title,
@@ -230,7 +234,7 @@ class _PosterShelfState extends State<PosterShelf> {
                   child: Semantics(
                     selected: selected,
                     child: AnimatedScale(
-                      scale: selected ? 1.1 : 1,
+                      scale: selected ? PosterShelf.selectionScale : 1,
                       alignment: Alignment.bottomCenter,
                       duration: const Duration(milliseconds: 240),
                       curve: Curves.easeOutCubic,
