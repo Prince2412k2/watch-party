@@ -113,6 +113,7 @@ Map<String, dynamic> _session({
   List<Map<String, dynamic>> guests = const [],
   Map<String, dynamic>? playback,
   Map<String, dynamic>? subtitlePreferences,
+  List<Map<String, dynamic>> waiting = const [],
 }) => {
   'id': 'party-1',
   'hostId': hostId,
@@ -125,7 +126,7 @@ Map<String, dynamic> _session({
   'guests': guests,
   'schedule': {},
   'browse': {'stack': []},
-  'waiting': [],
+  'waiting': waiting,
   'playback': playback,
   'subtitlePreferences': subtitlePreferences,
 };
@@ -275,6 +276,79 @@ void main() {
       final engine = container.read(syncEngineProvider) as SyncEngineImpl;
       expect(engine.isHost, isTrue);
       expect(engine.canControl, isTrue);
+    },
+  );
+
+  test('resume restores a host party and its waiting requests', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyResume) {
+        return {
+          'session': _session(
+            hostId: 'host1',
+            waiting: const [
+              {'userId': 'guest1', 'name': 'Guest'},
+            ],
+          ),
+        };
+      }
+      return {'ok': true};
+    });
+
+    final resumed = await container.read(partyProvider.notifier).resume();
+
+    expect(resumed, isTrue);
+    expect(container.read(partyProvider)?.hostId, 'host1');
+    expect(container.read(partyWaitingProvider).single.userId, 'guest1');
+  });
+
+  test('socket reconnect refreshes the host waiting snapshot', () async {
+    var waiting = const <Map<String, dynamic>>[];
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+      }
+      if (event == ClientEvent.partyResume) {
+        return {'session': _session(hostId: 'host1', waiting: waiting)};
+      }
+      return {'ok': true};
+    });
+    final notifier = container.read(partyProvider.notifier);
+    await notifier.create();
+    waiting = const [
+      {'userId': 'guest1', 'name': 'Guest'},
+    ];
+
+    await socket.disconnect();
+    await socket.connect();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(container.read(partyWaitingProvider).single.userId, 'guest1');
+    expect(
+      socket.emitted.where((entry) => entry.$1 == ClientEvent.partyResume),
+      isNotEmpty,
+    );
+  });
+
+  test(
+    'waiting guest repeats join with its new socket after reconnect',
+    () async {
+      var joinCount = 0;
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin) {
+          joinCount++;
+          return {'status': 'waiting'};
+        }
+        return {'ok': true};
+      });
+      final notifier = container.read(partyProvider.notifier);
+      await notifier.join('party-1');
+
+      await socket.disconnect();
+      await socket.connect();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(joinCount, 2);
+      expect(socket.emitted.last.$2, {'partyId': 'party-1'});
     },
   );
 
