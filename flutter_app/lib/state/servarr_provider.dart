@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/config.dart';
 import '../data/api_client.dart';
 import 'providers.dart';
 
@@ -12,6 +13,23 @@ import 'providers.dart';
 /// shows) and folds in the acquire flow — one-tap grab-or-remove "request",
 /// release picker, season chooser, options + manual source — while the
 /// Downloads screen watches the enriched download queue and the failing-queue.
+
+/// The API origin, for turning a same-origin proxy path (what the server now
+/// sends for every piece of servarr artwork — see `posterUrlFromImage` /
+/// `shapeImages` in `app/server/servarr/arr.js`) into an absolute URL, the
+/// same convention as `_absoluteImage` in `show_source.dart`. Kept as a
+/// module-level variable rather than threaded through every constructor:
+/// these wrapper classes are built straight from raw JSON in more than one
+/// place, and every provider below that touches `apiClientProvider` keeps it
+/// current, which covers every path that reaches a poster/backdrop in
+/// practice.
+String _servarrApiBase = AppConfig.apiBase;
+void _bindServarrApi(ApiClient api) => _servarrApiBase = api.baseUrl;
+
+String? _absoluteImage(String? url) {
+  if (url == null || url.isEmpty) return null;
+  return url.startsWith('/') ? '$_servarrApiBase$url' : url;
+}
 
 enum ServarrKind { movie, series }
 
@@ -53,8 +71,10 @@ class ServarrTitle {
     return images.isEmpty ? const [] : images.cast<Map<String, dynamic>>();
   }
 
-  /// Best poster URL out of `images`: a not-yet-added lookup only has a public
-  /// `remoteUrl`; `url` (the instance-local path) only resolves once added.
+  /// Best poster URL out of `images`. The server never hands back a raw
+  /// third-party CDN URL (it would carry the session cookie to it) — every
+  /// entry's `remoteUrl` is already a same-origin proxy path, or null when
+  /// there's no usable art.
   String? get posterUrl {
     final list = _images;
     if (list.isEmpty) return null;
@@ -62,8 +82,7 @@ class ServarrTitle {
       (i) => i['coverType'] == 'poster',
       orElse: () => list.first,
     );
-    final url = poster['remoteUrl'] ?? poster['url'];
-    return url is String && url.isNotEmpty ? url : null;
+    return _absoluteImage(poster['remoteUrl'] as String?);
   }
 
   /// Wide fanart/backdrop for the detail hero; falls back to the poster.
@@ -77,9 +96,8 @@ class ServarrTitle {
         orElse: () => const <String, dynamic>{},
       ),
     );
-    final url = fan['remoteUrl'] ?? fan['url'];
-    if (url is String && url.isNotEmpty) return url;
-    return posterUrl;
+    final url = _absoluteImage(fan['remoteUrl'] as String?);
+    return url ?? posterUrl;
   }
 
   /// A single 0–10 rating out of the varied ratings shapes the catalog
@@ -221,6 +239,7 @@ class ServarrDiscover {
 final servarrDiscoverProvider =
     FutureProvider.family.autoDispose<ServarrDiscover, ServarrKind>((ref, kind) async {
   final api = ref.watch(apiClientProvider);
+  _bindServarrApi(api);
   dynamic data;
   try {
     data = await api.servarrGet('${kind.service}/discover', query: {'page': 1});
@@ -245,7 +264,9 @@ final servarrSearchProvider = FutureProvider.family.autoDispose<
     List<ServarrTitle>, ({ServarrKind kind, String query})>((ref, request) async {
   final query = request.query.trim();
   if (query.isEmpty) return const [];
-  final data = await ref.watch(apiClientProvider).servarrGet(
+  final api = ref.watch(apiClientProvider);
+  _bindServarrApi(api);
+  final data = await api.servarrGet(
     '${request.kind.service}/search',
     query: {'term': query},
   );
@@ -400,7 +421,7 @@ class ServarrDownload {
   String get sceneName => (raw['name'] ?? '').toString();
   String get name => (raw['displayTitle'] ?? raw['name'] ?? '').toString();
   String? get subtitle => raw['subtitle'] as String?;
-  String? get posterUrl => raw['posterUrl'] as String?;
+  String? get posterUrl => _absoluteImage(raw['posterUrl'] as String?);
   String? get kind => raw['kind'] as String?;
   String get torrentState => (raw['state'] ?? '').toString();
   double get progress => ((raw['progress'] ?? 0) as num).toDouble();
@@ -456,6 +477,7 @@ class ServarrDownloadsSnapshot {
 final servarrDownloadsPollProvider =
     StreamProvider.autoDispose<ServarrDownloadsSnapshot>((ref) {
   final api = ref.watch(apiClientProvider);
+  _bindServarrApi(api);
   final controller = StreamController<ServarrDownloadsSnapshot>();
   var snapshot = const ServarrDownloadsSnapshot();
 
@@ -497,7 +519,7 @@ class ServarrDownloadDetail {
   String? get kind => raw['kind'] as String?;
   String? get title => raw['title'] as String?;
   String? get subtitle => raw['subtitle'] as String?;
-  String? get posterUrl => raw['posterUrl'] as String?;
+  String? get posterUrl => _absoluteImage(raw['posterUrl'] as String?);
   String? get overview => raw['overview'] as String?;
   List<String> get genres =>
       ((raw['genres'] as List?) ?? const []).map((e) => e.toString()).toList();
@@ -512,6 +534,7 @@ class ServarrDownloadDetail {
 final servarrDownloadDetailProvider =
     FutureProvider.family.autoDispose<ServarrDownloadDetail?, String>((ref, hash) async {
   final api = ref.watch(apiClientProvider);
+  _bindServarrApi(api);
   try {
     final data =
         await api.servarrGet('downloads/${Uri.encodeComponent(hash)}/detail');

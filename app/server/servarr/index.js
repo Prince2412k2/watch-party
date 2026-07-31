@@ -15,6 +15,7 @@ import {
   curatedPopular, CURATED_MOVIES, CURATED_SERIES,
   enrichTorrents, pickPosterImage, arrImageFetch,
   parseReleaseName, seasonEpisodeLabel, posterUrlFromImage, arrRating,
+  remoteImageFetch, shapeImages,
 } from './arr.js'
 import * as qbit from './qbittorrent.js'
 import { tmdbDiscover, tmdbImage, tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
@@ -52,7 +53,7 @@ const shapeMovieLookup = (m) => ({
   titleSlug: m.titleSlug, overview: m.overview, runtime: m.runtime,
   genres: Array.isArray(m.genres) ? m.genres : [], ratings: m.ratings ?? null,
   certification: m.certification ?? null, studio: m.studio ?? null,
-  images: m.images, hasFile: !!m.hasFile, monitored: !!m.monitored, id: m.id ?? null,
+  images: shapeImages('radarr', m.images), hasFile: !!m.hasFile, monitored: !!m.monitored, id: m.id ?? null,
 })
 const shapeMovie = (m) => ({
   id: m.id, tmdbId: m.tmdbId, title: m.title, year: m.year, hasFile: !!m.hasFile,
@@ -96,7 +97,7 @@ const shapeSeriesLookup = (s) => ({
   titleSlug: s.titleSlug, overview: s.overview, network: s.network,
   genres: Array.isArray(s.genres) ? s.genres : [], ratings: s.ratings ?? null,
   runtime: s.runtime ?? null, certification: s.certification ?? null, status: s.status ?? null,
-  images: s.images, seasonCount: s.seasons?.length ?? s.seasonCount, id: s.id ?? null,
+  images: shapeImages('sonarr', s.images), seasonCount: s.seasons?.length ?? s.seasonCount, id: s.id ?? null,
   // Additive: the season list drives the client's per-season download chooser.
   seasons: Array.isArray(s.seasons) ? s.seasons.map(shapeSeason) : [],
 })
@@ -221,9 +222,9 @@ function getQueueCtx() {
 
 // Resolve a poster for an "unknown" download the *arr queue couldn't map to a
 // movie/series (still fetching torrent metadata, or a manual grab): look the
-// parsed title up in Radarr/Sonarr and cache its public remoteUrl. The lookup runs
-// in the BACKGROUND — a poll is never blocked by a live metadata lookup; the
-// poster fills in on a later poll once cached. Returns the cached URL (or null).
+// parsed title up in Radarr/Sonarr and cache its proxied poster URL. The lookup
+// runs in the BACKGROUND — a poll is never blocked by a live metadata lookup;
+// the poster fills in on a later poll once cached. Returns the cached URL (or null).
 function getCachedPoster(service, title) {
   const norm = normTitleKey(title)
   if (norm.length < 2) return null
@@ -236,7 +237,9 @@ function getCachedPoster(service, title) {
     Promise.resolve(lookup(title))
       .then((arr) => {
         const poster = pickPosterImage((Array.isArray(arr) ? arr[0] : null)?.images)
-        const url = poster?.remoteUrl && /^https?:\/\//i.test(poster.remoteUrl) ? poster.remoteUrl : null
+        // Same proxy path as everywhere else — never cache (or hand back) the
+        // bare CDN URL.
+        const url = posterUrlFromImage(service, poster)
         posterCache.set(key, { at: Date.now(), url })
       })
       .catch(() => posterCache.set(key, { at: Date.now(), url: null }))
@@ -1143,6 +1146,23 @@ export function registerServarrRoutes(app) {
     }
   })
 
+  // Same-origin proxy for Radarr/Sonarr poster/backdrop art (image.remoteUrl),
+  // mirroring tmdb-image above. `url` is re-validated against the artwork host
+  // allow-list inside remoteImageFetch — this route never trusts that a URL
+  // reaching it already came from posterUrlFromImage/shapeImages.
+  app.get('/api/servarr/remote-image', requireAuth, async (req, res) => {
+    const url = (req.query.url || '').toString()
+    try {
+      const { buffer, contentType } = await remoteImageFetch(url)
+      res.set('Content-Type', contentType)
+      res.set('Cache-Control', 'public, max-age=604800, immutable')
+      return res.send(buffer)
+    } catch (err) {
+      res.set('Cache-Control', 'public, max-age=3600')
+      return res.status(err?.status === 400 ? 400 : 404).end()
+    }
+  })
+
   app.get('/api/servarr/sonarr/episodes', requireAuth, async (req, res) => {
     const seasonNumber = Number(req.query.seasonNumber)
     if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
@@ -1489,8 +1509,9 @@ export function registerServarrRoutes(app) {
   // Rich detail for a single active download (the download-detail view). Resolves
   // the matched movie/series by queue downloadId==hash, or by the same parsed-name
   // catalog lookup the enriched list uses for unknown items. Key-safe: any poster
-  // is a public remoteUrl or the /api/servarr/image proxy — the key never reaches
-  // the client. Graceful: an unresolved item still returns the parsed release name.
+  // is the /api/servarr/remote-image or /api/servarr/image proxy, never a raw
+  // upstream URL or the api key. Graceful: an unresolved item still returns the
+  // parsed release name.
   app.get('/api/servarr/downloads/:hash/detail', requireAuth, async (req, res) => {
     if (!ensureConfigured('qbittorrent', res)) return
     const hash = String(req.params.hash || '').trim().toLowerCase()
