@@ -58,7 +58,7 @@ class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
   final _season = TextEditingController();
   final _episode = TextEditingController();
 
-  late bool _magnetMode = widget.magnetFirst;
+  bool _magnetMode = true;
   PlatformFile? _torrent;
   bool _submitting = false;
   String? _error;
@@ -141,27 +141,6 @@ class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
     final id = existing['id'];
     if (id is int) return id;
     throw Exception('Could not prepare this title in the library.');
-  }
-
-  /// Shell the series into Sonarr just enough to own the manual download. The
-  /// server route is the same resolver the release picker uses, so a series that
-  /// is already there is found rather than duplicated.
-  Future<int> _resolveSeriesId(ApiClient api) async {
-    final meta = await ref.read(servarrMetaProvider(ServarrKind.series).future);
-    if (meta == null) {
-      throw ApiException('sonarr/resolve', 503, 'Sonarr is not configured.');
-    }
-    final res = await api.servarrPost('sonarr/resolve', body: {
-      'series': widget.seriesRaw,
-      'qualityProfileId': meta.qualityProfileId,
-      'languageProfileId': meta.languageProfileId,
-      'rootFolderPath': meta.rootFolderPath,
-    });
-    final id = (res is Map ? res['seriesId'] : null) as int?;
-    if (id == null) {
-      throw ApiException('sonarr/resolve', 502, 'Sonarr did not return a series.');
-    }
-    return id;
   }
 
   Future<void> _submit() async {
@@ -443,7 +422,7 @@ class _ScopedManualSourceDialogState
       TextEditingController(text: widget.scopeTitle);
   final _magnet = TextEditingController();
 
-  bool _magnetMode = true;
+  late bool _magnetMode = widget.magnetFirst;
   PlatformFile? _torrent;
   bool _submitting = false;
   String? _error;
@@ -482,6 +461,27 @@ class _ScopedManualSourceDialogState
       _torrent = file;
       _error = null;
     });
+  }
+
+  /// Shell the series into Sonarr just enough to own the manual download. The
+  /// server route is the same resolver the release picker uses, so a series that
+  /// is already there is found rather than duplicated.
+  Future<int> _resolveSeriesId(ApiClient api) async {
+    final meta = await ref.read(servarrMetaProvider(ServarrKind.series).future);
+    if (meta == null) {
+      throw ApiException('sonarr/resolve', 503, 'Sonarr is not configured.');
+    }
+    final res = await api.servarrPost('sonarr/resolve', body: {
+      'series': widget.seriesRaw,
+      'qualityProfileId': meta.qualityProfileId,
+      'languageProfileId': meta.languageProfileId,
+      'rootFolderPath': meta.rootFolderPath,
+    });
+    final id = (res is Map ? res['seriesId'] : null) as int?;
+    if (id == null) {
+      throw ApiException('sonarr/resolve', 502, 'Sonarr did not return a series.');
+    }
+    return id;
   }
 
   Future<void> _submit() async {
