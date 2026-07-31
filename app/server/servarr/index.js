@@ -1334,6 +1334,22 @@ export function registerServarrRoutes(app) {
     }
   })
 
+  // Resolve (or shell in) the Sonarr series for a title the user is acting on,
+  // and hand back its id. The manual magnet/torrent path needs a real targetId
+  // to attribute the download to, and a Discover series has none until it
+  // exists in Sonarr — without this, "paste a magnet" is dead exactly when the
+  // indexers came up empty, which is the case it exists for (FR-019).
+  app.post('/api/servarr/sonarr/resolve', requireAuth, async (req, res) => {
+    if (!ensureConfigured('sonarr', res)) return
+    try {
+      const { seriesId, freshlyAdded } = await resolveSonarrSeriesId(req.body || {})
+      return res.json({ seriesId, freshlyAdded })
+    } catch (err) {
+      if (err?.badRequest) return res.status(400).json({ error: err.message })
+      return fail(res, 'sonarr/resolve', err)
+    }
+  })
+
   app.get('/api/servarr/sonarr/queue', requireAuth, async (_req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     try {

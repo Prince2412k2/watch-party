@@ -1,26 +1,25 @@
-import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/api_client.dart';
 import '../../state/providers.dart';
 import '../../state/servarr_provider.dart';
+import '../../state/show_source.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/download_poster.dart';
+import 'servarr_manual_source.dart';
 import 'servarr_options_dialog.dart';
 import 'servarr_release_picker.dart';
-import 'servarr_season_chooser.dart';
+import 'show_stage.dart';
 
 /// Full-page Discover title detail (mirrors `FindDownload.tsx`'s `DetailView`):
 /// a blurred backdrop hero with a theme wash, the 2:3 poster, MOVIE/SERIES
 /// eyebrow, large title, rating + genres, mono info line, the acquire action(s),
 /// and the overview. Movies get one-tap Download + Options + Release picker +
-/// Add source + Remove; series get the season chooser. Rendered in-page by
-/// [ServarrScreen] (the bottom nav + profile stay visible), so [onBack] just
-/// clears the selection.
+/// Add source + Remove; a series instead renders the unified [ShowStage]
+/// (US-3/FR-012) — see [build]. Rendered in-page by [ServarrScreen] (the
+/// bottom nav + profile stay visible), so [onBack] just clears the selection.
 class ServarrDetailView extends ConsumerWidget {
   const ServarrDetailView({
     super.key,
@@ -40,6 +39,20 @@ class ServarrDetailView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // A series gets the unified show stage (US-3/FR-012) instead of this
+    // screen's own backdrop/poster/season-chooser layout below — Download
+    // takes the place of Watch now. Movies are untouched past this point.
+    if (_isSeries) {
+      return ShowStage(
+        show: ShowRef(
+          kind: ShowSourceKind.discover,
+          id: '${item.tvdbId ?? ''}',
+        ),
+        onBack: onBack,
+        onWatch: null,
+      );
+    }
+
     final wp = context.wp;
     ref.watch(servarrRequestsProvider); // rebuild on request-state change
     final notifier = ref.read(servarrRequestsProvider.notifier);
@@ -130,31 +143,27 @@ class ServarrDetailView extends ConsumerWidget {
                                 ),
                               ],
                               const SizedBox(height: 22),
-                              if (_isSeries)
-                                ServarrSeasonChooser(
-                                  item: item,
-                                  onWholeSeriesFallback: () =>
-                                      notifier.request(item, kind),
-                                )
-                              else
-                                _MovieActions(
-                                  item: item,
-                                  torrent: torrent,
-                                  active: active,
-                                  pct: pct,
-                                  downloading: downloading,
-                                  searching: searching,
-                                  monitoring: monitoring,
-                                  noRelease: noRelease,
-                                  searchFailed: searchFailed,
-                                  state: state,
-                                  onDownload: () => notifier.request(item, kind),
-                                  onOptions: () => _openOptions(context, ref),
-                                  onPickRelease: () =>
-                                      _openReleasePicker(context, ref),
-                                  onAddSource: () => _openManual(context, ref),
-                                  onRemove: () => _remove(context, ref),
-                                ),
+                              // Series never reach here — build() returns the
+                              // show stage for them above — so this is always
+                              // the movie action row.
+                              _MovieActions(
+                                item: item,
+                                torrent: torrent,
+                                active: active,
+                                pct: pct,
+                                downloading: downloading,
+                                searching: searching,
+                                monitoring: monitoring,
+                                noRelease: noRelease,
+                                searchFailed: searchFailed,
+                                state: state,
+                                onDownload: () => notifier.request(item, kind),
+                                onOptions: () => _openOptions(context, ref),
+                                onPickRelease: () =>
+                                    _openReleasePicker(context, ref),
+                                onAddSource: () => _openManual(context, ref),
+                                onRemove: () => _remove(context, ref),
+                              ),
                               if (!_isSeries && !downloading && !searching) ...[
                                 const SizedBox(height: 12),
                                 AppButton(
@@ -697,442 +706,5 @@ class _BackButton extends StatelessWidget {
   }
 }
 
-// ── Manual source dialog (magnet / .torrent) ────────────────────────────────
-
-/// Submit a magnet link or a `.torrent` file for a title (mirrors
-/// `FindDownload.tsx`'s `ManualSourceDialog`). Adds the title to Radarr/Sonarr
-/// first if needed (resolveTargetId), then POSTs `/manual/magnet` (JSON) or
-/// uploads the raw `.torrent` body via `ApiClient.manualTorrentUpload`
-/// (`application/x-bittorrent`, ≤2 MiB).
-Future<void> showServarrManualSourceDialog(
-  BuildContext context, {
-  required ServarrTitle item,
-  required ServarrKind kind,
-  required VoidCallback onSubmitted,
-}) {
-  return showDialog<void>(
-    context: context,
-    barrierColor: Colors.black.withValues(alpha: 0.7),
-    builder: (_) =>
-        _ManualSourceDialog(item: item, kind: kind, onSubmitted: onSubmitted),
-  );
-}
-
-class _ManualSourceDialog extends ConsumerStatefulWidget {
-  const _ManualSourceDialog({
-    required this.item,
-    required this.kind,
-    required this.onSubmitted,
-  });
-  final ServarrTitle item;
-  final ServarrKind kind;
-  final VoidCallback onSubmitted;
-
-  @override
-  ConsumerState<_ManualSourceDialog> createState() =>
-      _ManualSourceDialogState();
-}
-
-class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
-  late final TextEditingController _title = TextEditingController(
-    text: widget.kind == ServarrKind.movie
-        ? [widget.item.title, widget.item.year]
-            .where((e) => e != null && e.toString().isNotEmpty)
-            .join('.')
-        : widget.item.title,
-  );
-  final _magnet = TextEditingController();
-  final _season = TextEditingController();
-  final _episode = TextEditingController();
-
-  bool _magnetMode = true;
-  PlatformFile? _torrent;
-  bool _submitting = false;
-  String? _error;
-  bool _ok = false;
-
-  bool get _isSeries => widget.kind == ServarrKind.series;
-  String get _service => widget.kind.service;
-
-  @override
-  void dispose() {
-    _title.dispose();
-    _magnet.dispose();
-    _season.dispose();
-    _episode.dispose();
-    super.dispose();
-  }
-
-  bool get _canSubmit =>
-      _title.text.trim().isNotEmpty &&
-      (_magnetMode ? _magnet.text.trim().isNotEmpty : _torrent != null) &&
-      !_submitting &&
-      !_ok;
-
-  Future<void> _pickTorrent() async {
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['torrent'],
-      withData: true,
-    );
-    final file = picked?.files.single;
-    if (file == null) return;
-    if (file.size > maxTorrentBytes) {
-      setState(() {
-        _torrent = null;
-        _error = 'Torrent files must be 2 MiB or smaller.';
-      });
-      return;
-    }
-    setState(() {
-      _torrent = file;
-      _error = null;
-    });
-  }
-
-  /// Resolve the Radarr/Sonarr id to attach the source to, adding the title
-  /// (monitor, no search) if it isn't in the library yet.
-  Future<int> _resolveTargetId() async {
-    final api = ref.read(apiClientProvider);
-    if (widget.item.id != null && widget.item.id! > 0) return widget.item.id!;
-    final meta = await ref.read(servarrMetaProvider(widget.kind).future);
-    if (meta == null) throw Exception('Download options are unavailable.');
-    final body = widget.kind == ServarrKind.movie
-        ? {
-            'movie': widget.item.raw,
-            'qualityProfileId': meta.qualityProfileId,
-            'rootFolderPath': meta.rootFolderPath,
-            'monitor': true,
-            'searchNow': false,
-          }
-        : {
-            'series': widget.item.raw,
-            'qualityProfileId': meta.qualityProfileId,
-            'rootFolderPath': meta.rootFolderPath,
-            'languageProfileId': meta.languageProfileId,
-            'monitor': true,
-            'searchNow': false,
-          };
-    final added = await api.servarrPost('$_service/add', body: body);
-    if (added is Map && added['id'] is int) return added['id'] as int;
-
-    final library = await api.servarrGet(
-      '$_service/${widget.kind == ServarrKind.movie ? 'movies' : 'series'}',
-    );
-    final existing = (library as List).cast<Map<String, dynamic>>().firstWhere(
-      (c) => widget.kind == ServarrKind.movie
-          ? c['tmdbId'] == widget.item.tmdbId
-          : c['tvdbId'] == widget.item.tvdbId,
-      orElse: () => const {},
-    );
-    final id = existing['id'];
-    if (id is int) return id;
-    throw Exception('Could not prepare this title in the library.');
-  }
-
-  Future<void> _submit() async {
-    if (!_canSubmit) return;
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
-    try {
-      final api = ref.read(apiClientProvider);
-      final targetId = await _resolveTargetId();
-      final seasonNumber =
-          _isSeries && _season.text.isNotEmpty ? int.tryParse(_season.text) : null;
-      final episodeNumber = _isSeries &&
-              _season.text.isNotEmpty &&
-              _episode.text.isNotEmpty
-          ? int.tryParse(_episode.text)
-          : null;
-
-      if (_magnetMode) {
-        await api.servarrPost('manual/magnet', body: {
-          'service': _service,
-          'targetId': targetId,
-          'title': _title.text.trim(),
-          'magnet': _magnet.text.trim(),
-          if (seasonNumber != null) 'seasonNumber': seasonNumber,
-          if (episodeNumber != null) 'episodeNumber': episodeNumber,
-        });
-      } else {
-        final file = _torrent!;
-        final bytes = file.bytes ?? await File(file.path!).readAsBytes();
-        await api.manualTorrentUpload(
-          bytes,
-          service: _service,
-          targetId: '$targetId',
-          title: _title.text.trim(),
-          seasonNumber: seasonNumber,
-          episodeNumber: episodeNumber,
-        );
-      }
-      if (!mounted) return;
-      setState(() {
-        _ok = true;
-        _submitting = false;
-      });
-      widget.onSubmitted();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Could not submit this source.';
-        _submitting = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return ServarrDialogShell(
-      maxWidth: 560,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ServarrDialogHeader(
-            eyebrow: 'MANUAL SOURCE',
-            title: 'Add a source for ${widget.item.title}',
-            onClose: () => Navigator.of(context).pop(),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          // Mode toggle.
-          Row(
-            children: [
-              _ModeTab(
-                label: 'Magnet link',
-                selected: _magnetMode,
-                onTap: () => setState(() {
-                  _magnetMode = true;
-                  _error = null;
-                }),
-              ),
-              const SizedBox(width: AppSpacing.sm),
-              _ModeTab(
-                label: '.torrent file',
-                selected: !_magnetMode,
-                onTap: () => setState(() {
-                  _magnetMode = false;
-                  _error = null;
-                }),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          _label('Release title'),
-          _TextField(
-            controller: _title,
-            hint: _isSeries
-                ? 'Series.Title.S01E01.1080p.WEB-DL'
-                : 'Movie.Title.2026.1080p.WEB-DL',
-            mono: true,
-            onChanged: (_) => setState(() {}),
-          ),
-          if (_isSeries) ...[
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('Season (optional)'),
-                      _TextField(
-                        controller: _season,
-                        hint: '',
-                        mono: true,
-                        number: true,
-                        onChanged: (v) => setState(() {
-                          if (v.isEmpty) _episode.clear();
-                        }),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('Episode (optional)'),
-                      _TextField(
-                        controller: _episode,
-                        hint: '',
-                        mono: true,
-                        number: true,
-                        enabled: _season.text.isNotEmpty,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: AppSpacing.md),
-          if (_magnetMode) ...[
-            _label('Magnet URI'),
-            _TextField(
-              controller: _magnet,
-              hint: 'magnet:?xt=urn:btih:…',
-              mono: true,
-              maxLines: 4,
-              onChanged: (_) => setState(() {}),
-            ),
-          ] else ...[
-            _label('Torrent file (maximum 2 MiB)'),
-            Row(
-              children: [
-                AppButton(
-                  label: _torrent == null ? 'Choose file' : 'Change file',
-                  icon: Icons.attach_file,
-                  variant: AppButtonVariant.secondary,
-                  onPressed: _pickTorrent,
-                ),
-                const SizedBox(width: AppSpacing.md),
-                if (_torrent != null)
-                  Expanded(
-                    child: Text(
-                      _torrent!.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: AppSpacing.md),
-            ServarrNotice(icon: Icons.error_outline, text: _error!),
-          ],
-          if (_ok) ...[
-            const SizedBox(height: AppSpacing.md),
-            const ServarrNotice(
-              icon: Icons.check,
-              text: 'Source submitted to Radarr/Sonarr for validation.',
-              error: false,
-            ),
-          ],
-          const SizedBox(height: AppSpacing.lg),
-          AppButton(
-            label: _submitting
-                ? 'Submitting…'
-                : _ok
-                    ? 'Submitted'
-                    : 'Submit source',
-            icon: _ok ? Icons.check : Icons.add,
-            busy: _submitting,
-            expand: true,
-            variant: _ok ? AppButtonVariant.secondary : AppButtonVariant.primary,
-            onPressed: _canSubmit ? _submit : null,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: context.wp.dim,
-          ),
-        ),
-      );
-}
-
-class _ModeTab extends StatelessWidget {
-  const _ModeTab({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return InkWell(
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-        decoration: BoxDecoration(
-          color: selected ? wp.accent : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-          border: Border.all(color: selected ? Colors.transparent : wp.line2),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13.5,
-            fontWeight: FontWeight.w700,
-            color: selected ? wp.onAccent : wp.dim,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TextField extends StatelessWidget {
-  const _TextField({
-    required this.controller,
-    required this.hint,
-    this.mono = false,
-    this.number = false,
-    this.maxLines = 1,
-    this.enabled = true,
-    this.onChanged,
-  });
-  final TextEditingController controller;
-  final String hint;
-  final bool mono;
-  final bool number;
-  final int maxLines;
-  final bool enabled;
-  final ValueChanged<String>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return TextField(
-      controller: controller,
-      enabled: enabled,
-      maxLines: maxLines,
-      keyboardType: number ? TextInputType.number : null,
-      onChanged: onChanged,
-      style: (mono ? AppTheme.mono : AppTheme.label).copyWith(
-        color: wp.text,
-        fontSize: 13,
-      ),
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: TextStyle(color: wp.faint, fontSize: 13),
-        filled: true,
-        fillColor: wp.surface2,
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radius),
-          borderSide: BorderSide(color: wp.line2),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radius),
-          borderSide: BorderSide(color: wp.text.withValues(alpha: 0.4)),
-        ),
-        disabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radius),
-          borderSide: BorderSide(color: wp.line),
-        ),
-      ),
-    );
-  }
-}
+// Manual-source dialog (magnet / .torrent) moved to servarr_manual_source.dart
+// so the show stage can reuse it — see [showServarrManualSourceDialog] there.
