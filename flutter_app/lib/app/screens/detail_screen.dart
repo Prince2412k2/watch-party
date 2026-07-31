@@ -68,28 +68,13 @@ class DetailScreen extends ConsumerWidget {
               itemId: itemId,
               onBack: () =>
                   context.canPop() ? context.pop() : context.go('/movies'),
-              onWatch: (playItem, tracks) async {
-                final party = ref.read(partyProvider);
-                if (party != null) {
-                  final notifier = ref.read(partyProvider.notifier);
-                  if (notifier.canControl) {
-                    await notifier.selectMedia(
-                      playItem.id,
-                      audioStreamIndex: tracks.audioStreamIndex,
-                      subtitleStreamIndex: tracks.subtitleStreamIndex,
-                    );
-                  }
-                  if (context.mounted) context.go('/party/${party.id}');
-                  return;
-                }
-                await Navigator.of(context).push(
-                  _playerRouteFor(
-                    itemId: playItem.id,
-                    audioStreamIndex: tracks.audioStreamIndex,
-                    subtitleStreamIndex: tracks.subtitleStreamIndex,
-                  ),
-                );
-              },
+              onWatch: (playItem, tracks) => startPlayback(
+                context,
+                ref,
+                itemId: playItem.id,
+                audioStreamIndex: tracks.audioStreamIndex,
+                subtitleStreamIndex: tracks.subtitleStreamIndex,
+              ),
             ),
           ),
           const Positioned(right: 22, bottom: 18, child: PopcornControl()),
@@ -144,6 +129,40 @@ class _GuestOfflineDetailBody extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Start playing a library item the way the detail screen does: into the party
+/// when one is active and this client may drive it, otherwise the solo player
+/// pushed onto the current navigator — so back returns to wherever playback
+/// started rather than a route default. Public because the show stage launches
+/// playback too and must not re-derive the party check.
+Future<void> startPlayback(
+  BuildContext context,
+  WidgetRef ref, {
+  required String itemId,
+  int? audioStreamIndex,
+  int? subtitleStreamIndex,
+}) async {
+  final party = ref.read(partyProvider);
+  if (party != null) {
+    final notifier = ref.read(partyProvider.notifier);
+    if (notifier.canControl) {
+      await notifier.selectMedia(
+        itemId,
+        audioStreamIndex: audioStreamIndex,
+        subtitleStreamIndex: subtitleStreamIndex,
+      );
+    }
+    if (context.mounted) context.go('/party/${party.id}');
+    return;
+  }
+  await Navigator.of(context).push(
+    _playerRouteFor(
+      itemId: itemId,
+      audioStreamIndex: audioStreamIndex,
+      subtitleStreamIndex: subtitleStreamIndex,
+    ),
+  );
 }
 
 /// Fade transition into the solo player (per the redesign's motion system).
