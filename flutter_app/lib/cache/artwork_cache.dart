@@ -74,10 +74,17 @@ class ArtworkCache {
     }
 
     try {
-      final fresh = await _inflight.putIfAbsent(
+      final pending = _inflight.putIfAbsent(
         url,
         () => _fetchAndStore(url, file),
       );
+      // The shared future outlives this subscription: when the only listener is
+      // disposed mid-fetch (an episode card scrolled out of view), a failure has
+      // no awaiter left and escapes as an unhandled zone error — hundreds of
+      // them for a series whose stills 404. ignore() attaches an error listener
+      // so that can't happen; our own await below still sees the error.
+      pending.ignore();
+      final fresh = await pending;
       if (cached == null || !listEquals(cached, fresh)) {
         _remember(url, fresh);
         yield fresh;
