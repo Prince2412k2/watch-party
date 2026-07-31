@@ -13,7 +13,7 @@ import {
   radarr, sonarr, prowlarr, bazarr, arrPing,
   radarrAddPayload, sonarrAddPayload, pickBestRelease,
   curatedPopular, CURATED_MOVIES, CURATED_SERIES,
-  enrichTorrents, pickPosterImage, arrImageFetch,
+  enrichTorrents, pickPosterImage, arrImageFetch, remoteImageFetch,
   parseReleaseName, seasonEpisodeLabel, posterUrlFromImage, arrRating,
 } from './arr.js'
 import * as qbit from './qbittorrent.js'
@@ -1347,6 +1347,25 @@ export function registerServarrRoutes(app) {
     } catch (err) {
       if (err?.badRequest) return res.status(400).json({ error: err.message })
       return fail(res, 'sonarr/resolve', err)
+    }
+  })
+
+  // Same-origin proxy for Radarr/Sonarr poster/backdrop art (image.remoteUrl).
+  // The client must never fetch the CDN directly: its HTTP client carries the
+  // session cookie, so an absolute third-party URL leaks it. `url` is
+  // re-validated against the artwork host allow-list inside remoteImageFetch —
+  // this route never trusts that a URL reaching it already came from
+  // posterUrlFromImage/shapeImages.
+  app.get('/api/servarr/remote-image', requireAuth, async (req, res) => {
+    const url = (req.query.url || '').toString()
+    try {
+      const { buffer, contentType } = await remoteImageFetch(url)
+      res.set('Content-Type', contentType)
+      res.set('Cache-Control', 'public, max-age=604800, immutable')
+      return res.send(buffer)
+    } catch (err) {
+      res.set('Cache-Control', 'public, max-age=3600')
+      return res.status(err?.status === 400 ? 400 : 404).end()
     }
   })
 
