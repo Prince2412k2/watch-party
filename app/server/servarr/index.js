@@ -9,6 +9,7 @@ import express from 'express'
 import { requireAuth } from '../auth.js'
 import { serviceConfig, configuredMap, SERVICES } from './config.js'
 import {
+  arrFetch,
   radarr, sonarr, prowlarr, bazarr, arrPing,
   radarrAddPayload, sonarrAddPayload, pickBestRelease,
   curatedPopular, CURATED_MOVIES, CURATED_SERIES,
@@ -16,7 +17,7 @@ import {
   parseReleaseName, seasonEpisodeLabel, posterUrlFromImage, arrRating,
 } from './arr.js'
 import * as qbit from './qbittorrent.js'
-import { tmdbDiscover } from './tmdb.js'
+import { tmdbDiscover, tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
 import {
   MAX_TORRENT_BYTES, parseMagnet, parseManualSubmission,
   storeTorrent, takeTorrent, torrentCallbackUrl,
@@ -71,7 +72,26 @@ const shapeSeason = (s) => ({
   episodeCount: s.statistics?.episodeCount ?? null,
   totalEpisodeCount: s.statistics?.totalEpisodeCount ?? null,
 })
+// One episode, in the shape the show stage's episode row consumes. Deliberately
+// identical to what tmdbSeasonEpisodes emits so the UI never branches on source:
+// only `episodeId` and `hasFile` carry more truth here, because Sonarr knows the
+// series and TMDB doesn't.
+const shapeEpisode = (e) => ({
+  episodeId: e.id,
+  episodeNumber: e.episodeNumber,
+  name: e.title || null,
+  overview: e.overview || null,
+  still: posterUrlFromImage('sonarr', (Array.isArray(e.images) ? e.images : [])
+    .find((i) => i && i.coverType === 'screenshot')),
+  airDate: e.airDateUtc || e.airDate || null,
+  runtime: e.runtime ?? null,
+  rating: null,
+  hasFile: !!e.hasFile,
+  monitored: !!e.monitored,
+})
 const shapeSeriesLookup = (s) => ({
+  // tmdbId lets the episode row fall back to TMDB without a second round trip.
+  tmdbId: s.tmdbId ?? null,
   tvdbId: s.tvdbId, imdbId: s.imdbId, title: s.title, year: s.year,
   titleSlug: s.titleSlug, overview: s.overview, network: s.network,
   genres: Array.isArray(s.genres) ? s.genres : [], ratings: s.ratings ?? null,
@@ -525,6 +545,64 @@ async function sonarrMonitorSeasons(seriesId, wantedSet, { settle = false } = {}
     full = check
   }
   return full
+}
+
+// Resolve the Sonarr seriesId for a request that may reference a series which is
+// not in the library yet, adding a monitor-nothing shell when it isn't. Sonarr's
+// interactive release search is only addressable by seriesId, so browsing a
+// Discover series and asking for its releases needs the shell first. The shell
+// is unmonitored and unsearched: it exists so Sonarr can talk about the series,
+// not so it starts grabbing things. Returns { seriesId, freshlyAdded }.
+async function resolveSonarrSeriesId({ seriesId, series, qualityProfileId, languageProfileId, rootFolderPath }) {
+  const given = seriesId == null ? null : Number(seriesId)
+  if (given != null && Number.isInteger(given) && given > 0) {
+    return { seriesId: given, freshlyAdded: false }
+  }
+  if (!series?.tvdbId || !qualityProfileId || !rootFolderPath) {
+    throw Object.assign(
+      new Error('series (with tvdbId) + qualityProfileId + rootFolderPath, or a seriesId, required'),
+      { badRequest: true },
+    )
+  }
+  try {
+    const added = await sonarr.add(sonarrAddPayload(series, {
+      qualityProfileId, languageProfileId, rootFolderPath, monitor: false, searchNow: false,
+    }))
+    return { seriesId: added.id, freshlyAdded: true }
+  } catch (err) {
+    // Already present → use the library entry. We did not create it, so nothing
+    // downstream may remove it.
+    if (err?.status === 400 && /already|exist/i.test(err.body || '')) {
+      const lib = await sonarr.library()
+      const found = (Array.isArray(lib) ? lib : []).find((x) => x.tvdbId === series.tvdbId)
+      if (found) return { seriesId: found.id, freshlyAdded: false }
+    }
+    throw err
+  }
+}
+
+// Sonarr addresses an episode release search by episodeId, which the client has
+// no way to know — it works in season/episode numbers. Translate.
+async function sonarrEpisodeId(seriesId, seasonNumber, episodeNumber) {
+  const all = await sonarr.episodes(seriesId)
+  const match = (Array.isArray(all) ? all : []).find(
+    (e) => e.seasonNumber === Number(seasonNumber) && e.episodeNumber === Number(episodeNumber),
+  )
+  return match ?? null
+}
+
+// Grabbing a release for a season/episode Sonarr is not monitoring leaves the
+// import unclaimed, so monitor the target first. Season scope reuses the
+// season-monitor round-trip; episode scope flips the single episode.
+async function sonarrMonitorTarget(seriesId, seasonNumber, episode) {
+  if (episode) {
+    await arrFetch('sonarr', '/api/v3/episode/monitor', {
+      method: 'PUT',
+      body: { episodeIds: [episode.id], monitored: true },
+    })
+    return
+  }
+  await sonarrMonitorSeasons(seriesId, new Set([Number(seasonNumber)]))
 }
 
 export function registerServarrRoutes(app) {
@@ -1040,6 +1118,189 @@ export function registerServarrRoutes(app) {
     } catch (err) {
       return fail(res, 'sonarr/request-season', err)
     }
+  })
+
+  // ── Sonarr: episode data, interactive releases, grab ────────────────────────
+
+  // Episodes of one season, for the show stage's episode row. Two sources, one
+  // shape: a series in the library answers from Sonarr (real episode ids, real
+  // file state), one we are only browsing answers from TMDB. Neither writes.
+  app.get('/api/servarr/sonarr/episodes', requireAuth, async (req, res) => {
+    const seasonNumber = Number(req.query.seasonNumber)
+    if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
+      return res.status(400).json({ error: 'seasonNumber required' })
+    }
+    const seriesId = req.query.seriesId == null ? null : Number(req.query.seriesId)
+
+    // In the library → Sonarr knows which episodes exist on disk.
+    if (seriesId != null && Number.isInteger(seriesId) && seriesId > 0) {
+      if (!ensureConfigured('sonarr', res)) return
+      try {
+        const all = await sonarr.episodes(seriesId)
+        const episodes = (Array.isArray(all) ? all : [])
+          .filter((e) => e.seasonNumber === seasonNumber)
+          .sort((a, b) => a.episodeNumber - b.episodeNumber)
+          .map(shapeEpisode)
+        return res.json({ source: 'sonarr', seasonNumber, episodes })
+      } catch (err) { return fail(res, 'sonarr/episodes', err) }
+    }
+
+    // Browsing only → TMDB. tmdbId is preferred; a tvdbId (what Sonarr's lookup
+    // always carries) is resolved through TMDB's external-id lookup.
+    try {
+      let tmdbId = req.query.tmdbId == null ? null : Number(req.query.tmdbId)
+      if (!tmdbId && req.query.tvdbId) {
+        tmdbId = await tmdbSeriesIdFromTvdb(Number(req.query.tvdbId))
+      }
+      if (!tmdbId) return res.status(404).json({ error: 'no episode source for this series' })
+      const season = await tmdbSeasonEpisodes(tmdbId, seasonNumber)
+      return res.json({
+        source: 'tmdb',
+        seasonNumber: season.seasonNumber,
+        seasonPoster: season.poster,
+        episodes: season.episodes.map((e) => ({ ...e, hasFile: false, episodeId: null })),
+      })
+    } catch (err) { return fail(res, 'sonarr/episodes/tmdb', err) }
+  })
+
+  // Interactive release search at one of Sonarr's two scopes: a whole season
+  // (omit episodeNumber) or a single episode. Mirrors radarr/releases — same
+  // response shape, same createdByPicker contract for the cancel path.
+  app.post('/api/servarr/sonarr/releases', requireAuth, async (req, res) => {
+    if (!ensureConfigured('sonarr', res)) return
+    const seasonNumber = Number(req.body?.seasonNumber)
+    if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
+      return res.status(400).json({ error: 'seasonNumber required' })
+    }
+    const episodeNumber = req.body?.episodeNumber == null ? null : Number(req.body.episodeNumber)
+
+    let seriesId
+    let createdByPicker
+    try {
+      const resolved = await resolveSonarrSeriesId(req.body || {})
+      seriesId = resolved.seriesId
+      createdByPicker = resolved.freshlyAdded
+    } catch (err) {
+      if (err?.badRequest) return res.status(400).json({ error: err.message })
+      return fail(res, 'sonarr/releases/add', err)
+    }
+
+    let episode = null
+    if (episodeNumber != null) {
+      try {
+        episode = await sonarrEpisodeId(seriesId, seasonNumber, episodeNumber)
+      } catch (err) { return fail(res, 'sonarr/releases/episode', err) }
+      if (!episode) {
+        return res.status(404).json({ error: `S${seasonNumber}E${episodeNumber} not found on this series` })
+      }
+    }
+
+    try {
+      const releases = await sonarr.releaseSearch(
+        episode ? { episodeId: episode.id } : { seriesId, seasonNumber },
+      )
+      return res.json({
+        seriesId, createdByPicker, searchFailed: false,
+        episodeId: episode?.id ?? null,
+        releases: shapeReleases(releases),
+      })
+    } catch (searchErr) {
+      // A failed search is reported, never silently retried or left pending —
+      // the client must be able to reach a terminal state.
+      console.error('servarr/sonarr/releases search', searchErr?.message || searchErr)
+      return res.json({
+        seriesId, createdByPicker, searchFailed: true,
+        episodeId: episode?.id ?? null,
+        releases: [],
+      })
+    }
+  })
+
+  // Grab one chosen release. The target is monitored first so Sonarr claims the
+  // import instead of leaving it in the queue unmatched.
+  app.post('/api/servarr/sonarr/grab', requireAuth, async (req, res) => {
+    if (!ensureConfigured('sonarr', res)) return
+    const { guid, indexerId } = req.body || {}
+    if (!guid || indexerId == null) return res.status(400).json({ error: 'guid and indexerId required' })
+    const seriesId = Number(req.body?.seriesId)
+    const seasonNumber = Number(req.body?.seasonNumber)
+    if (!Number.isInteger(seriesId) || !Number.isInteger(seasonNumber)) {
+      return res.status(400).json({ error: 'seriesId and seasonNumber required' })
+    }
+    const episodeNumber = req.body?.episodeNumber == null ? null : Number(req.body.episodeNumber)
+
+    try {
+      const episode = episodeNumber == null
+        ? null
+        : await sonarrEpisodeId(seriesId, seasonNumber, episodeNumber)
+      if (episodeNumber != null && !episode) {
+        return res.status(404).json({ error: `S${seasonNumber}E${episodeNumber} not found on this series` })
+      }
+      await sonarrMonitorTarget(seriesId, seasonNumber, episode)
+      await sonarr.grabRelease({ guid, indexerId })
+      return res.json({ outcome: 'grabbed', seriesId, seasonNumber, episodeNumber })
+    } catch (err) { return fail(res, 'sonarr/grab', err) }
+  })
+
+  // One season, unattended: take the best acceptable season release, and where
+  // there is none, fall back to the best release for each missing episode. This
+  // is the primitive the client loops over for "download whole show", so the
+  // response says which route the season actually took.
+  app.post('/api/servarr/sonarr/auto-season', requireAuth, async (req, res) => {
+    if (!ensureConfigured('sonarr', res)) return
+    const seasonNumber = Number(req.body?.seasonNumber)
+    if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
+      return res.status(400).json({ error: 'seasonNumber required' })
+    }
+
+    let seriesId
+    try {
+      ({ seriesId } = await resolveSonarrSeriesId(req.body || {}))
+    } catch (err) {
+      if (err?.badRequest) return res.status(400).json({ error: err.message })
+      return fail(res, 'sonarr/auto-season/add', err)
+    }
+
+    try {
+      await sonarrMonitorSeasons(seriesId, new Set([seasonNumber]))
+
+      // 1) Season pack.
+      const seasonReleases = await sonarr.releaseSearch({ seriesId, seasonNumber })
+        .catch((err) => {
+          console.error('servarr/sonarr/auto-season season search', err?.message || err)
+          return null
+        })
+      const pack = pickBestRelease(seasonReleases)
+      if (pack) {
+        await sonarr.grabRelease({ guid: pack.guid, indexerId: pack.indexerId })
+        return res.json({ seriesId, seasonNumber, route: 'season', grabbed: 1, missing: [] })
+      }
+
+      // 2) No usable pack → per episode, skipping what is already on disk.
+      const all = await sonarr.episodes(seriesId)
+      const wanted = (Array.isArray(all) ? all : [])
+        .filter((e) => e.seasonNumber === seasonNumber && !e.hasFile)
+        .sort((a, b) => a.episodeNumber - b.episodeNumber)
+
+      const missing = []
+      let grabbed = 0
+      for (const episode of wanted) {
+        try {
+          const best = pickBestRelease(await sonarr.releaseSearch({ episodeId: episode.id }))
+          if (!best) { missing.push(episode.episodeNumber); continue }
+          await sonarr.grabRelease({ guid: best.guid, indexerId: best.indexerId })
+          grabbed += 1
+        } catch (err) {
+          console.error('servarr/sonarr/auto-season episode', episode.episodeNumber, err?.message || err)
+          missing.push(episode.episodeNumber)
+        }
+      }
+      return res.json({
+        seriesId, seasonNumber,
+        route: grabbed > 0 ? 'episodes' : 'none',
+        grabbed, missing,
+      })
+    } catch (err) { return fail(res, 'sonarr/auto-season', err) }
   })
 
   app.get('/api/servarr/sonarr/queue', requireAuth, async (_req, res) => {
