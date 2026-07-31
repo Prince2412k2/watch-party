@@ -1,15 +1,22 @@
 // ── Native-desktop stream endpoint — see docs/native/PLAN.md §4.3 ──────────
 // The Tauri app (mpv + the multi-part downloader) runs OUTSIDE the browser's
 // cookie jar, so it can't hit the normal session-authenticated routes. This
-// hands out a short-lived signed URL instead: `stream-url` requires the normal
-// session (proves "this user is logged in right now"), then mints an HMAC
-// token binding {itemId, purpose, exp}. `file` validates that token and proxies
-// the ORIGINAL Jellyfin file (no transcode) with Range passthrough, using the
-// server-held per-user Jellyfin token captured at mint time — never the
-// client's session cookie.
+// hands out a short-lived URL instead: `stream-url` requires the normal
+// session (proves "this user is logged in right now"), then mints a token
+// that is just an opaque, unguessable id — the {itemId, jellyfinToken, ...}
+// payload it stands for stays server-side in `tokenStore`, keyed by that id.
+// `file` looks the id up (and never accepts one it didn't mint itself, or one
+// that's expired) and proxies the ORIGINAL Jellyfin file (no transcode) with
+// Range passthrough, using the server-held per-user Jellyfin token captured
+// at mint time — never the client's session cookie, and never anything that
+// reaches the URL. This matches the invariant `stripApiKey` (library.js) and
+// `getJellyfin` enforce everywhere else: the Jellyfin token never goes to the
+// client, full stop — a base64-decodable JWT-style token would have broken it,
+// since query strings land in reverse-proxy logs, mpv history, and the
+// downloader's persisted job state.
 //
-// STATUS: contract, signing/verification, AND the Jellyfin byte-range proxy
-// are all real (agent N3). Streams straight through without buffering so many
+// STATUS: contract, mint/verify, AND the Jellyfin byte-range proxy are all
+// real (agent N3). Streams straight through without buffering so many
 // concurrent Range requests against the same token (the multi-part
 // downloader) each get their own independent upstream connection.
 import crypto from 'crypto'
@@ -64,24 +71,70 @@ async function fetchUpstreamWithRetry(target, headers) {
   throw lastErr
 }
 
-function sign(payload, secret) {
-  const body = JSON.stringify(payload)
-  const b64 = Buffer.from(body).toString('base64url')
-  const mac = crypto.createHmac('sha256', secret).update(b64).digest('base64url')
-  return `${b64}.${mac}`
+// Capability store: the URL only ever carries a randomBytes(32) id, never the
+// payload. Bounded two ways so it can sit at the 48h download TTL without
+// growing without bound: a periodic sweep drops expired entries, and a hard
+// cap evicts the oldest (by mint order) if a caller somehow mints faster than
+// the sweep can keep up. A restart empties this map, invalidating every
+// outstanding token — for `stream` tokens that's indistinguishable from
+// letting a 6h token expire early; for an in-flight `download`, the Flutter
+// downloader already treats a stale/rejected token as a normal pause/resume
+// case (see `resume()` in flutter_app/lib/download/downloader.dart, which
+// re-mints via `stream-url` before resuming), so it degrades to "resume the
+// download" rather than losing progress.
+const MAX_TOKENS = 10_000
+const SWEEP_INTERVAL_MS = 15 * 60 * 1000
+const tokenStore = new Map()
+let sweepTimer = null
+
+function sweepExpiredTokens() {
+  const now = Date.now()
+  for (const [id, entry] of tokenStore) {
+    if (entry.exp <= now) tokenStore.delete(id)
+  }
 }
 
-function verify(token, secret) {
+function startSweep() {
+  if (sweepTimer) return
+  sweepTimer = setInterval(sweepExpiredTokens, SWEEP_INTERVAL_MS)
+  sweepTimer.unref() // don't hold the process open just to sweep a map
+}
+
+export function mint(payload, secret) {
+  if (tokenStore.size >= MAX_TOKENS) {
+    sweepExpiredTokens()
+    if (tokenStore.size >= MAX_TOKENS) {
+      // Still full after sweeping — drop the oldest mint rather than grow
+      // further. Map iterates in insertion order, so this is a cheap FIFO.
+      tokenStore.delete(tokenStore.keys().next().value)
+    }
+  }
+  const id = crypto.randomBytes(32).toString('base64url')
+  tokenStore.set(id, { payload, exp: payload.exp })
+  // The mac binds the id to this server (so a token from a stale/different
+  // process can't collide with a freshly generated id) — the id's 256 bits
+  // of entropy is what actually makes the token unguessable, the mac is
+  // defense in depth.
+  const mac = crypto.createHmac('sha256', secret).update(id).digest('base64url')
+  return `${id}.${mac}`
+}
+
+export function verify(token, secret) {
   if (typeof token !== 'string' || !token.includes('.')) return null
-  const [b64, mac] = token.split('.')
-  const expected = crypto.createHmac('sha256', secret).update(b64).digest('base64url')
+  const [id, mac] = token.split('.')
+  if (!id || !mac) return null
+  const expected = crypto.createHmac('sha256', secret).update(id).digest('base64url')
   // timing-safe compare
   const a = Buffer.from(mac)
   const b = Buffer.from(expected)
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
-  const payload = JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'))
-  if (typeof payload.exp !== 'number' || Date.now() > payload.exp) return null
-  return payload
+  const entry = tokenStore.get(id)
+  if (!entry) return null
+  if (typeof entry.exp !== 'number' || Date.now() > entry.exp) {
+    tokenStore.delete(id)
+    return null
+  }
+  return entry.payload
 }
 
 // Headers we pass straight through from Jellyfin's response to the client,
@@ -107,8 +160,10 @@ export function registerNativeRoutes(app) {
     return
   }
 
+  startSweep()
+
   // Requires the normal session — this is the ONE place a cookie is checked.
-  // Everything downstream (the `file` route) trusts the signed token instead.
+  // Everything downstream (the `file` route) trusts the minted token instead.
   app.get('/api/library/native/stream-url/:itemId', requireAuth, (req, res) => {
     const { itemId } = req.params
     const purpose = req.query.purpose === 'download' ? 'download' : 'stream'
@@ -117,7 +172,7 @@ export function registerNativeRoutes(app) {
       : itemId
     const { baseUrl, token: jellyfinToken, userId } = getJellyfin(req)
     const exp = Date.now() + TTL_MS[purpose]
-    const token = sign({ itemId, mediaSourceId, purpose, userId, jellyfinToken, baseUrl, exp }, secret)
+    const token = mint({ itemId, mediaSourceId, purpose, userId, jellyfinToken, baseUrl, exp }, secret)
     const url = `${req.protocol}://${req.get('host')}/api/library/native/file?token=${encodeURIComponent(token)}`
     res.json({ url, expiresAt: exp })
   })
