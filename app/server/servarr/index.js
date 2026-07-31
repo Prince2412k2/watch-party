@@ -1303,6 +1303,37 @@ export function registerServarrRoutes(app) {
     } catch (err) { return fail(res, 'sonarr/auto-season', err) }
   })
 
+  // Drop a browsing-only shell when the picker closes without a grab. Mirrors
+  // radarr/releases/cancel: only entries THIS picker created, only when the
+  // series still has no files and nothing in the queue, and always best-effort —
+  // a cleanup failure is never surfaced (one stray unmonitored series beats a
+  // wrongly-deleted one).
+  app.post('/api/servarr/sonarr/releases/cancel', requireAuth, async (req, res) => {
+    if (!ensureConfigured('sonarr', res)) return
+    const seriesId = Number(req.body?.seriesId)
+    if (!Number.isFinite(seriesId)) return res.status(400).json({ error: 'seriesId required' })
+    if (req.body?.createdByPicker !== true) return res.json({ ok: true, removed: false })
+
+    try {
+      const series = await sonarr.get(seriesId)
+      if ((series?.statistics?.sizeOnDisk ?? 0) > 0 || (series?.statistics?.episodeFileCount ?? 0) > 0) {
+        return res.json({ ok: true, removed: false })
+      }
+      let inQueue = false
+      try {
+        const q = await sonarr.queue()
+        inQueue = (Array.isArray(q?.records) ? q.records : []).some((r) => r.seriesId === seriesId)
+      } catch { /* best-effort; the file check above still guards */ }
+      if (inQueue) return res.json({ ok: true, removed: false })
+
+      await sonarr.remove(seriesId, { deleteFiles: false, addImportExclusion: false })
+      return res.json({ ok: true, removed: true })
+    } catch (err) {
+      console.error('servarr/sonarr/releases/cancel', err?.message || err)
+      return res.json({ ok: true, removed: false })
+    }
+  })
+
   app.get('/api/servarr/sonarr/queue', requireAuth, async (_req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     try {
