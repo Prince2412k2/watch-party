@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../state/show_source.dart';
 import '../state/state.dart';
+import '../ui/ui.dart';
 import '../ui/motion.dart';
 import 'screens/app_shell.dart';
 import 'screens/home_screen.dart';
@@ -15,6 +17,7 @@ import 'screens/offline_screen.dart';
 import 'screens/servarr_screen.dart';
 import 'screens/servarr_queue_screen.dart';
 import 'screens/party_screen.dart';
+import 'screens/show_stage.dart';
 
 /// The root Navigator's key. Exposed because some app-wide affordances resolve a
 /// below-router context via `rootNavigatorKey.currentContext` (e.g. the party
@@ -127,12 +130,14 @@ GoRouter buildRouter(WidgetRef ref) {
       ),
 
       // Title detail is full-window too (leads into the player) — same
-      // fade-through. Movie + show detail (W2a rebuild it in place).
+      // fade-through. Movie + episode detail keep [DetailScreen]; a series
+      // renders the unified [ShowStage] instead (US-3/FR-012) — see
+      // [_LibraryDetailRoute].
       GoRoute(
         path: '${Routes.detail}/:id',
         pageBuilder: (_, state) => fadeThroughPage(
           key: state.pageKey,
-          child: DetailScreen(itemId: state.pathParameters['id']!),
+          child: _LibraryDetailRoute(itemId: state.pathParameters['id']!),
         ),
       ),
 
@@ -216,4 +221,52 @@ GoRouter buildRouter(WidgetRef ref) {
     errorBuilder: (_, state) =>
         Scaffold(body: Center(child: Text('No route for ${state.uri}'))),
   );
+}
+
+/// `/detail/:id` dispatch (US-3/FR-012, "one show screen, two purposes"): an
+/// authenticated SERIES renders the unified [ShowStage] in place of the
+/// classic season-selector stage; a MOVIE, an EPISODE, a guest, or an
+/// item whose type hasn't resolved yet all fall through to the existing
+/// [DetailScreen] unchanged — it already owns the guest offline-browse path,
+/// the loading skeleton, and the error state, so none of that is duplicated
+/// here.
+class _LibraryDetailRoute extends ConsumerWidget {
+  const _LibraryDetailRoute({required this.itemId});
+  final String itemId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isAuthenticated = ref.watch(
+      authProvider.select((s) => s.isAuthenticated),
+    );
+    final isSeries =
+        isAuthenticated &&
+        ref.watch(itemDetailProvider(itemId)).valueOrNull?.type == 'Series';
+    if (!isSeries) return DetailScreen(itemId: itemId);
+
+    final wp = context.wp;
+    return Scaffold(
+      backgroundColor: wp.bg,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: ShowStage(
+              show: ShowRef(kind: ShowSourceKind.library, id: itemId),
+              onBack: () =>
+                  context.canPop() ? context.pop() : context.go(Routes.movies),
+              // Same launcher the detail screen uses, so playback is
+              // party-aware and pushed in place — back lands on the show
+              // stage instead of a route default.
+              onWatch: (episode) {
+                final jellyfinId = episode.jellyfinId;
+                if (jellyfinId == null) return;
+                startPlayback(context, ref, itemId: jellyfinId);
+              },
+            ),
+          ),
+          const Positioned(right: 22, bottom: 18, child: PopcornControl()),
+        ],
+      ),
+    );
+  }
 }
