@@ -10,7 +10,7 @@ process.env.PARTY_DB_PATH = databasePath
 const {
   createSession, deleteSession, persistSession, randomConnectedGuest,
   transferHost, reclaimOriginalHost, validateSyncCommand, authorizeSyncCommand,
-  beginMediaGeneration, applyStallReport,
+  beginMediaGeneration, applyStallReport, publicSession, approveGuest, addToWaiting,
   validateSubtitlePreferences, DEFAULT_SUBTITLE_PREFERENCES,
 } = await import('./session.js')
 const { loadParty } = await import('./party-store.js')
@@ -179,5 +179,57 @@ test('host transfer persists ownership and original host can reclaim it', () => 
     assert.equal(sess.guests.some(guest => guest.userId === 'guest'), true)
     assert.equal(loadParty(sess.id).hostId, 'owner')
     assert.equal(reclaimOriginalHost(sess, {}), false)
+  } finally { deleteSession(sess.id) }
+})
+
+// Regression coverage for the guest/waiting Jellyfin-token leak: publicSession
+// used to strip only top-level hostToken and forward guests/waiting verbatim,
+// so every member's own bearer token rode along on every party:state emit.
+test('publicSession strips every member token — host, approved guest, and waiting user', () => {
+  const sess = createSession({
+    hostId: 'host', hostName: 'Host', hostToken: 'host-secret-token',
+    hostDeviceId: 'host-device', hostSocketId: 'host-socket',
+  })
+  try {
+    addToWaiting(sess, {
+      userId: 'guest', name: 'Guest', socketId: 'guest-socket',
+      token: 'guest-secret-token', deviceId: 'guest-device',
+    })
+    approveGuest(sess, 'guest')
+    addToWaiting(sess, {
+      userId: 'waiter', name: 'Waiter', socketId: 'waiter-socket',
+      token: 'waiter-secret-token', deviceId: 'waiter-device',
+    })
+
+    const pub = publicSession(sess)
+    const json = JSON.stringify(pub)
+    assert.equal(json.includes('host-secret-token'), false)
+    assert.equal(json.includes('guest-secret-token'), false)
+    assert.equal(json.includes('waiter-secret-token'), false)
+    // Sanity: stripping tokens didn't also strip the fields the clients need
+    assert.equal(json.includes('Guest'), true)
+    assert.equal(json.includes('Waiter'), true)
+
+    for (const guest of pub.guests) assert.deepEqual(Object.keys(guest).sort(), ['name', 'userId'])
+    for (const w of pub.waiting) assert.deepEqual(Object.keys(w).sort(), ['name', 'userId'])
+  } finally { deleteSession(sess.id) }
+})
+
+test('publicSession strips tokens after a host transfer demotes the old host into guests', () => {
+  const sess = createSession({
+    hostId: 'owner', hostName: 'Owner', hostToken: 'owner-secret-token',
+    hostDeviceId: 'owner-device', hostSocketId: 'owner-socket',
+  })
+  try {
+    sess.guests.push({
+      userId: 'newhost', name: 'NewHost', token: 'newhost-old-token',
+      deviceId: 'newhost-device', socketId: 'newhost-socket', joinedAt: 1,
+    })
+    assert.equal(transferHost(sess, 'newhost', 'newhost-socket', 'newhost-secret-token'), true)
+
+    const json = JSON.stringify(publicSession(sess))
+    assert.equal(json.includes('owner-secret-token'), false)   // demoted host's old token
+    assert.equal(json.includes('newhost-old-token'), false)    // promoted guest's pre-transfer token
+    assert.equal(json.includes('newhost-secret-token'), false) // new hostToken issued at transfer
   } finally { deleteSession(sess.id) }
 })
