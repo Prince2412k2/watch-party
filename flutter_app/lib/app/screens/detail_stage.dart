@@ -702,7 +702,9 @@ class _CastStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    final cast = people.where((p) => p.type == 'Actor').take(6).toList();
+    // Was capped at 6, which silently hid most of a cast; the strip already
+    // scrolls horizontally, so the extra entries are reachable.
+    final cast = people.where((p) => p.type == 'Actor').take(14).toList();
     if (cast.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: 44,
