@@ -219,6 +219,20 @@ export const sonarr = {
   // normal API timeout is plenty (unlike Radarr's blocking interactive search).
   command: (body) => arrFetch('sonarr', '/api/v3/command', { method: 'POST', body }),
   episodes: (seriesId) => arrFetch('sonarr', '/api/v3/episode', { query: { seriesId } }),
+  // Live interactive release search, the same endpoint Sonarr's own interactive
+  // search uses. Two scopes, and they are the only two Sonarr offers: a season
+  // (seriesId + seasonNumber, which finds season packs AND single episodes of
+  // that season) and one episode (episodeId). There is no series-wide scope —
+  // every broader request is built by iterating these two.
+  releaseSearch: ({ seriesId, seasonNumber, episodeId }, timeoutMs = RELEASE_SEARCH_TIMEOUT_MS) =>
+    arrFetch('sonarr', '/api/v3/release', {
+      query: episodeId != null ? { episodeId } : { seriesId, seasonNumber },
+      timeoutMs,
+    }),
+  // Hand a chosen release to the download client. guid+indexerId reference the
+  // release Sonarr just cached from releaseSearch above.
+  grabRelease: ({ guid, indexerId }, timeoutMs = GRAB_TIMEOUT_MS) =>
+    arrFetch('sonarr', '/api/v3/release', { method: 'POST', body: { guid, indexerId }, timeoutMs }),
   pushRelease: (release, timeoutMs = GRAB_TIMEOUT_MS) =>
     arrFetch('sonarr', '/api/v3/release/push', { method: 'POST', body: release, timeoutMs }),
   // includeSeries/includeEpisode embed the matched `series` (title/images) and

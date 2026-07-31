@@ -7,19 +7,166 @@ import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
 import 'servarr_options_dialog.dart';
 
-/// Release picker (movies only — the Sonarr/series picker is out of scope, so
-/// series use the season chooser). Mirrors `FindDownload.tsx`'s `ReleasePicker`,
-/// including the `createdByPicker` cleanup lifecycle that keeps the Radarr DB
-/// clean:
-///   open  → POST /radarr/releases (adds the title monitored+no-search if it
-///           isn't in Radarr yet, then runs the live interactive search)
-///   grab  → POST /radarr/grab     (hand the release to the client, KEEP entry)
-///   close → POST /radarr/releases/cancel (remove ONLY an entry this picker
+/// Release picker. One widget, three scopes — a movie, a season, or a single
+/// episode — because the interactive-search lifecycle is identical for all of
+/// them and only the request bodies differ. Mirrors `FindDownload.tsx`'s
+/// `ReleasePicker`, including the `createdByPicker` cleanup that keeps the *arr
+/// databases clean:
+///   open  → POST <service>/releases (adds a browsing-only entry when the title
+///           isn't in the library yet, then runs the live interactive search)
+///   grab  → POST <service>/grab     (hand the release to the client, KEEP entry)
+///   close → POST <service>/releases/cancel (remove ONLY an entry this picker
 ///           created — fires on every close/unmount path exactly once, and
 ///           never after a successful grab).
+///
+/// Sonarr has no series-wide scope: a season search covers season packs and the
+/// season's individual episodes, and an episode search covers one episode. Every
+/// broader request (download the whole show) iterates those two server-side.
+sealed class ReleaseTarget {
+  const ReleaseTarget();
+
+  String get eyebrow;
+  String get title;
+  String get service;
+
+  String get releasesPath => '$service/releases';
+  String get grabPath => '$service/grab';
+  String get cancelPath => '$service/releases/cancel';
+
+  /// Key the server returns the library id under, and the one the cancel path
+  /// sends back.
+  String get idKey;
+
+  /// True when the title is already in the library, so no browsing-only entry
+  /// has to be created.
+  bool get isInLibrary;
+
+  /// Body for the releases call. [existingId] is set when the picker already
+  /// resolved an id on a previous attempt (a retry must not add a second entry).
+  /// [meta] is the quality-profile/root-folder pair, needed only for a title
+  /// that is not in the library yet.
+  Map<String, dynamic> releasesBody({int? existingId, ServarrMeta? meta});
+
+  /// Extra fields the grab needs beyond guid/indexerId.
+  Map<String, dynamic> grabBody({required int? id});
+
+  /// Which meta to fetch, or null when this target can never need one.
+  ServarrKind? get metaKind;
+}
+
+class MovieReleaseTarget extends ReleaseTarget {
+  const MovieReleaseTarget(this.item);
+  final ServarrTitle item;
+
+  @override
+  String get eyebrow => 'CHOOSE A RELEASE';
+  @override
+  String get title => item.title;
+  @override
+  String get service => 'radarr';
+  @override
+  String get idKey => 'movieId';
+  @override
+  bool get isInLibrary => item.isAdded;
+  @override
+  ServarrKind? get metaKind => ServarrKind.movie;
+
+  @override
+  Map<String, dynamic> releasesBody({int? existingId, ServarrMeta? meta}) {
+    if (existingId != null) return {'movieId': existingId};
+    if (item.isAdded) return {'movieId': item.id};
+    return {
+      'movie': item.raw,
+      'qualityProfileId': meta?.qualityProfileId,
+      'rootFolderPath': meta?.rootFolderPath,
+    };
+  }
+
+  @override
+  Map<String, dynamic> grabBody({required int? id}) => {'movieId': id};
+}
+
+/// A season (episodeNumber null) or one episode of a series.
+class SeriesReleaseTarget extends ReleaseTarget {
+  const SeriesReleaseTarget({
+    required this.seriesTitle,
+    required this.seasonNumber,
+    this.episodeNumber,
+    this.episodeName,
+    this.seriesId,
+    this.seriesRaw,
+  }) : assert(
+         seriesId != null || seriesRaw != null,
+         'a series id or a lookup payload is required to search releases',
+       );
+
+  final String seriesTitle;
+  final int seasonNumber;
+  final int? episodeNumber;
+  final String? episodeName;
+
+  /// Sonarr id, when the series is already in the library.
+  final int? seriesId;
+
+  /// Raw lookup payload, for a series that has to be shelled in first.
+  final Map<String, dynamic>? seriesRaw;
+
+  String get _scopeLabel => episodeNumber == null
+      ? 'SEASON $seasonNumber'
+      : 'S${seasonNumber}E$episodeNumber${episodeName == null ? '' : ' · $episodeName'}';
+
+  @override
+  String get eyebrow => 'CHOOSE A RELEASE · $_scopeLabel';
+  @override
+  String get title => seriesTitle;
+  @override
+  String get service => 'sonarr';
+  @override
+  String get idKey => 'seriesId';
+  @override
+  bool get isInLibrary => seriesId != null;
+  @override
+  ServarrKind? get metaKind => ServarrKind.series;
+
+  @override
+  Map<String, dynamic> releasesBody({int? existingId, ServarrMeta? meta}) => {
+    'seasonNumber': seasonNumber,
+    if (episodeNumber != null) 'episodeNumber': episodeNumber,
+    if (existingId != null)
+      'seriesId': existingId
+    else if (seriesId != null)
+      'seriesId': seriesId
+    else ...{
+      'series': seriesRaw,
+      'qualityProfileId': meta?.qualityProfileId,
+      'languageProfileId': meta?.languageProfileId,
+      'rootFolderPath': meta?.rootFolderPath,
+    },
+  };
+
+  @override
+  Map<String, dynamic> grabBody({required int? id}) => {
+    'seriesId': id,
+    'seasonNumber': seasonNumber,
+    if (episodeNumber != null) 'episodeNumber': episodeNumber,
+  };
+}
+
 Future<void> showServarrReleasePicker(
   BuildContext context, {
   required ServarrTitle item,
+  required VoidCallback onGrabbed,
+  required VoidCallback onManual,
+}) => showReleasePicker(
+  context,
+  target: MovieReleaseTarget(item),
+  onGrabbed: onGrabbed,
+  onManual: onManual,
+);
+
+Future<void> showReleasePicker(
+  BuildContext context, {
+  required ReleaseTarget target,
   required VoidCallback onGrabbed,
   required VoidCallback onManual,
 }) {
@@ -27,7 +174,7 @@ Future<void> showServarrReleasePicker(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.66),
     builder: (_) =>
-        _ReleasePicker(item: item, onGrabbed: onGrabbed, onManual: onManual),
+        _ReleasePicker(target: target, onGrabbed: onGrabbed, onManual: onManual),
   );
 }
 
@@ -49,22 +196,24 @@ class _Release {
 
 class _ReleaseData {
   _ReleaseData({
-    required this.movieId,
+    required this.id,
     this.createdByPicker,
     this.searchFailed,
     this.releases = const [],
   });
-  final int? movieId;
+
+  /// movieId or seriesId, depending on the target.
+  final int? id;
   final bool? createdByPicker;
   final bool? searchFailed;
   final List<_Release> releases;
 
-  static _ReleaseData parse(dynamic value) {
-    if (value is! Map || value['movieId'] is! int) {
-      return _ReleaseData(movieId: null);
+  static _ReleaseData parse(dynamic value, String idKey) {
+    if (value is! Map || value[idKey] is! int) {
+      return _ReleaseData(id: null);
     }
     return _ReleaseData(
-      movieId: value['movieId'] as int?,
+      id: value[idKey] as int?,
       createdByPicker: value['createdByPicker'] as bool?,
       searchFailed: value['searchFailed'] as bool?,
       releases: ((value['releases'] as List?) ?? const [])
@@ -78,11 +227,11 @@ class _ReleaseData {
 
 class _ReleasePicker extends ConsumerStatefulWidget {
   const _ReleasePicker({
-    required this.item,
+    required this.target,
     required this.onGrabbed,
     required this.onManual,
   });
-  final ServarrTitle item;
+  final ReleaseTarget target;
   final VoidCallback onGrabbed;
   final VoidCallback onManual;
 
@@ -102,7 +251,7 @@ class _ReleasePickerState extends ConsumerState<_ReleasePicker> {
   // picker created is cancelled at most once and never after a grab.
   bool _settled = false;
   bool _disposed = false;
-  int? _movieId;
+  int? _libraryId;
   bool _createdByPicker = false;
 
   // Cached so the cleanup path can cancel without touching `ref` during dispose.
@@ -124,16 +273,16 @@ class _ReleasePickerState extends ConsumerState<_ReleasePicker> {
   void _cleanup() {
     if (_settled) return;
     _settled = true;
-    if (_createdByPicker && _movieId != null) {
-      _cancel(_movieId!);
+    if (_createdByPicker && _libraryId != null) {
+      _cancel(_libraryId!);
     }
   }
 
-  void _cancel(int movieId) {
+  void _cancel(int id) {
     // Fire-and-forget; the server re-checks the entry is fileless + unqueued.
     _api
-        .servarrPost('radarr/releases/cancel',
-            body: {'movieId': movieId, 'createdByPicker': true})
+        .servarrPost(widget.target.cancelPath,
+            body: {widget.target.idKey: id, 'createdByPicker': true})
         .catchError((_) => null);
   }
 
@@ -144,37 +293,31 @@ class _ReleasePickerState extends ConsumerState<_ReleasePicker> {
       _grabError = null;
     });
     try {
-      final api = _api;
-      final existing = _movieId;
-      var createdByPicker = _createdByPicker;
-      Object body;
-      if (existing != null) {
-        body = {'movieId': existing};
-      } else if (widget.item.isAdded) {
-        body = {'movieId': widget.item.id};
-        createdByPicker = false;
-      } else {
-        final meta = await ref.read(servarrMetaProvider(ServarrKind.movie).future);
+      final target = widget.target;
+      final existing = _libraryId;
+      // Meta is only needed to create a browsing-only entry; skip the fetch when
+      // we already have an id or the title is in the library.
+      ServarrMeta? meta;
+      if (existing == null && !target.isInLibrary && target.metaKind != null) {
+        meta = await ref.read(servarrMetaProvider(target.metaKind!).future);
         if (meta == null) throw Exception('meta');
-        body = {
-          'movie': widget.item.raw,
-          'qualityProfileId': meta.qualityProfileId,
-          'rootFolderPath': meta.rootFolderPath,
-        };
       }
-      final res = await api.servarrPost('radarr/releases', body: body);
-      final data = _ReleaseData.parse(res);
-      // A passed movieId reports createdByPicker:false, but we keep our own flag
-      // so a retried browse still cleans up on close.
+      final res = await _api.servarrPost(
+        target.releasesPath,
+        body: target.releasesBody(existingId: existing, meta: meta),
+      );
+      final data = _ReleaseData.parse(res, target.idKey);
+      // A passed id reports createdByPicker:false, but we keep our own flag so a
+      // retried browse still cleans up on close.
       final resolvedCreated =
-          existing != null ? createdByPicker : (data.createdByPicker ?? false);
+          existing != null ? _createdByPicker : (data.createdByPicker ?? false);
       if (_disposed) {
         // Unmounted mid-search — still remove an entry we just created.
-        if (resolvedCreated && data.movieId != null) _cancel(data.movieId!);
+        if (resolvedCreated && data.id != null) _cancel(data.id!);
         return;
       }
       setState(() {
-        _movieId = data.movieId;
+        _libraryId = data.id;
         _createdByPicker = resolvedCreated;
         _settled = false;
         _data = data;
@@ -196,8 +339,8 @@ class _ReleasePickerState extends ConsumerState<_ReleasePicker> {
       _grabError = null;
     });
     try {
-      await _api.servarrPost('radarr/grab', body: {
-        'movieId': _movieId,
+      await _api.servarrPost(widget.target.grabPath, body: {
+        ...widget.target.grabBody(id: _libraryId),
         'guid': rel.guid,
         'indexerId': rel.indexerId,
       });
@@ -229,8 +372,8 @@ class _ReleasePickerState extends ConsumerState<_ReleasePicker> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ServarrDialogHeader(
-            eyebrow: 'CHOOSE A RELEASE',
-            title: widget.item.title,
+            eyebrow: widget.target.eyebrow,
+            title: widget.target.title,
             onClose: () => Navigator.of(context).pop(),
           ),
           const SizedBox(height: AppSpacing.lg),
