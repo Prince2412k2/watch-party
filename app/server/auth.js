@@ -68,6 +68,19 @@ export function requireAuth(req, res, next) {
   next()
 }
 
+// Destructive servarr operations — deleting a title and its files, wiping the
+// download client — are gated on the Jellyfin account's own administrator flag,
+// which login already captures. Adding, searching, and downloading stay open to
+// every signed-in member: the point of the app is that anyone in the house can
+// ask for a title. Only the irreversible half is restricted.
+export function requireAdmin(req, res, next) {
+  if (!req.session.jellyfin) return res.status(401).json({ error: 'not authenticated' })
+  if (!req.session.jellyfin.isAdmin) {
+    return res.status(403).json({ error: 'this action requires a Jellyfin administrator account' })
+  }
+  next()
+}
+
 export function getJellyfin(req) {
   const j = req.session.jellyfin
   return { baseUrl: process.env.JELLYFIN_URL, token: j.accessToken, userId: j.userId, deviceId: j.deviceId }
