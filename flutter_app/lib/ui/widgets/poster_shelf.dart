@@ -54,6 +54,19 @@ class _PosterShelfState extends State<PosterShelf> {
   var _programmaticScroll = false;
   DateTime? _lastWheelMove;
 
+  // Hover is only trusted once the pointer has actually MOVED. Stepping the
+  // shelf with the wheel or the arrow keys slides cards under a stationary
+  // cursor, and whichever card lands there must not steal the selection until
+  // the user moves the mouse again.
+  var _hoverLive = false;
+  Offset? _lastPointer;
+
+  // Parking the pointer near either end keeps stepping that way, so a long
+  // shelf can be walked without clicking or dragging.
+  Timer? _edgeTimer;
+  static const _edgeZone = 56.0;
+  static const _edgeInterval = Duration(milliseconds: 260);
+
   double get _stride => widget.itemWidth + widget.spacing;
 
   @override
@@ -107,10 +120,12 @@ class _PosterShelfState extends State<PosterShelf> {
     bool animate = true,
     bool scroll = true,
     bool playSound = true,
+    bool fromPointer = false,
   }) {
     if (widget.itemCount == 0) return;
     final next = index.clamp(0, widget.itemCount - 1);
     if (next == _selectedIndex) return;
+    if (!fromPointer) _hoverLive = false;
     setState(() => _selectedIndex = next);
     widget.onSelectionChanged?.call(next);
     if (playSound) _playMovementSound();
@@ -168,10 +183,38 @@ class _PosterShelfState extends State<PosterShelf> {
     if (delta.abs() < 2) return;
     _lastWheelMove = now;
     _select(_selectedIndex + (delta > 0 ? 1 : -1));
+    _hoverLive = true;
+  }
+
+  void _stopEdgeScroll() {
+    _edgeTimer?.cancel();
+    _edgeTimer = null;
+  }
+
+  void _onHover(PointerHoverEvent event) {
+    // Flutter re-delivers hover events when content moves under a still cursor,
+    // so compare positions rather than trusting the event itself.
+    final moved = _lastPointer == null || (event.position - _lastPointer!).distance > 2;
+    _lastPointer = event.position;
+    if (moved) _hoverLive = true;
+
+    if (!_controller.hasClients) return;
+    final railWidth = _controller.position.viewportDimension;
+    final x = event.localPosition.dx;
+    final direction = x < _edgeZone ? -1 : (x > railWidth - _edgeZone ? 1 : 0);
+    if (direction == 0) return _stopEdgeScroll();
+    if (_edgeTimer != null) return;
+    void step() {
+      _select(_selectedIndex + direction, fromPointer: true);
+      _hoverLive = true;
+    }
+    step();
+    _edgeTimer = Timer.periodic(_edgeInterval, (_) => step());
   }
 
   @override
   void dispose() {
+    _stopEdgeScroll();
     _controller
       ..removeListener(_onScroll)
       ..dispose();
@@ -195,57 +238,67 @@ class _PosterShelfState extends State<PosterShelf> {
       focusNode: _focusNode,
       autofocus: widget.autofocus,
       onKeyEvent: _onKeyEvent,
-      child: Listener(
-        onPointerDown: (_) => _focusNode.requestFocus(),
-        onPointerSignal: _onPointerSignal,
-        child: SizedBox(
-          height: _railHeight,
-          child: ShaderMask(
-            blendMode: BlendMode.dstIn,
-            shaderCallback: (bounds) => LinearGradient(
-              colors: [
-                _canScrollLeft ? Colors.transparent : Colors.black,
-                Colors.black,
-                Colors.black,
-                _canScrollRight ? Colors.transparent : Colors.black,
-              ],
-              stops: const [0, 0.035, 0.965, 1],
-            ).createShader(bounds),
-            child: ListView.separated(
-              controller: _controller,
-              scrollDirection: Axis.horizontal,
-              clipBehavior: Clip.hardEdge,
-              padding: EdgeInsets.only(
-                left: widget.leftInset,
-                right: 40,
-                top: 24,
-                bottom: 30,
-              ),
-              itemCount: widget.itemCount,
-              separatorBuilder: (_, _) => SizedBox(width: widget.spacing),
-              itemBuilder: (context, index) {
-                final selected = index == _selectedIndex;
-                return MouseRegion(
-                  key: ValueKey('poster-shelf-item-$index'),
-                  onEnter: (_) {
-                    _focusNode.requestFocus();
-                    _select(index, scroll: false, playSound: false);
-                  },
-                  child: Semantics(
-                    selected: selected,
-                    child: AnimatedScale(
-                      scale: selected ? PosterShelf.selectionScale : 1,
-                      alignment: Alignment.bottomCenter,
-                      duration: const Duration(milliseconds: 240),
-                      curve: Curves.easeOutCubic,
-                      child: Align(
-                        alignment: Alignment.bottomLeft,
-                        child: widget.itemBuilder(context, index),
+      child: MouseRegion(
+        onHover: _onHover,
+        onExit: (_) => _stopEdgeScroll(),
+        child: Listener(
+          onPointerDown: (_) => _focusNode.requestFocus(),
+          onPointerSignal: _onPointerSignal,
+          child: SizedBox(
+            height: _railHeight,
+            child: ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (bounds) => LinearGradient(
+                colors: [
+                  _canScrollLeft ? Colors.transparent : Colors.black,
+                  Colors.black,
+                  Colors.black,
+                  _canScrollRight ? Colors.transparent : Colors.black,
+                ],
+                stops: const [0, 0.035, 0.965, 1],
+              ).createShader(bounds),
+              child: ListView.separated(
+                controller: _controller,
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.hardEdge,
+                padding: EdgeInsets.only(
+                  left: widget.leftInset,
+                  right: 40,
+                  top: 24,
+                  bottom: 30,
+                ),
+                itemCount: widget.itemCount,
+                separatorBuilder: (_, _) => SizedBox(width: widget.spacing),
+                itemBuilder: (context, index) {
+                  final selected = index == _selectedIndex;
+                  return MouseRegion(
+                    key: ValueKey('poster-shelf-item-$index'),
+                    onEnter: (_) {
+                      if (!_hoverLive) return;
+                      _focusNode.requestFocus();
+                      _select(
+                        index,
+                        scroll: false,
+                        playSound: false,
+                        fromPointer: true,
+                      );
+                    },
+                    child: Semantics(
+                      selected: selected,
+                      child: AnimatedScale(
+                        scale: selected ? PosterShelf.selectionScale : 1,
+                        alignment: Alignment.bottomCenter,
+                        duration: const Duration(milliseconds: 240),
+                        curve: Curves.easeOutCubic,
+                        child: Align(
+                          alignment: Alignment.bottomLeft,
+                          child: widget.itemBuilder(context, index),
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           ),
         ),
