@@ -17,7 +17,7 @@ import {
   parseReleaseName, seasonEpisodeLabel, posterUrlFromImage, arrRating,
 } from './arr.js'
 import * as qbit from './qbittorrent.js'
-import { tmdbDiscover, tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
+import { tmdbDiscover, tmdbImage, tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
 import {
   MAX_TORRENT_BYTES, parseMagnet, parseManualSubmission,
   storeTorrent, takeTorrent, torrentCallbackUrl,
@@ -1125,6 +1125,24 @@ export function registerServarrRoutes(app) {
   // Episodes of one season, for the show stage's episode row. Two sources, one
   // shape: a series in the library answers from Sonarr (real episode ids, real
   // file state), one we are only browsing answers from TMDB. Neither writes.
+  // Same-origin proxy for TMDB artwork (episode stills, season posters). The
+  // client must never fetch the CDN directly: its HTTP client carries the
+  // session cookie, and a 404 here is cached negatively so a missing still is
+  // not re-requested on every rebuild.
+  app.get('/api/servarr/tmdb-image', requireAuth, async (req, res) => {
+    const size = (req.query.size || 'w780').toString()
+    const path = (req.query.path || '').toString()
+    try {
+      const { buffer, contentType } = await tmdbImage(path, size)
+      res.set('Content-Type', contentType)
+      res.set('Cache-Control', 'public, max-age=604800, immutable')
+      return res.send(buffer)
+    } catch (err) {
+      res.set('Cache-Control', 'public, max-age=3600')
+      return res.status(err?.status === 400 ? 400 : 404).end()
+    }
+  })
+
   app.get('/api/servarr/sonarr/episodes', requireAuth, async (req, res) => {
     const seasonNumber = Number(req.query.seasonNumber)
     if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
