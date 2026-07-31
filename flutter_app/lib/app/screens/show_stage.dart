@@ -715,25 +715,49 @@ class _SeasonSelector extends StatelessWidget {
   final List<int> seasons;
   final int? activeSeason;
 
+  /// Opacity falls 33% per step away from the selection, so the third neighbour
+  /// is already gone — the list reads as a wheel with the selected season at its
+  /// centre rather than a scrolling column with a highlight.
+  static const _fadePerStep = 0.33;
+
+  /// How many rows either side are worth building at all (the rest are
+  /// invisible by the rule above).
+  static const _visibleSteps = 3;
+
   @override
   Widget build(BuildContext context) {
+    final active = activeSeason;
+    final centre = active == null ? 0 : seasons.indexOf(active);
+    if (centre < 0) return const SizedBox.shrink();
+
+    // Rendering a window centred on the selection keeps it optically fixed
+    // without a scroll controller chasing it.
+    final first = (centre - _visibleSteps).clamp(0, seasons.length - 1);
+    final last = (centre + _visibleSteps).clamp(0, seasons.length - 1);
+
     return Align(
-      alignment: Alignment.topRight,
+      alignment: Alignment.centerRight,
       child: Padding(
         padding: const EdgeInsets.only(right: 40),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 230),
+          constraints: const BoxConstraints(maxWidth: 260),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (final n in seasons)
-                _SeasonButton(
-                  label: n == 0 ? 'Specials' : 'Season $n',
-                  active: n == activeSeason,
-                  onTap: () => state._pickSeason(n),
-                  onSecondaryTap: (pos) =>
-                      _showScopeMenu(context, pos, info, seasonNumber: n),
+              for (var i = first; i <= last; i++)
+                _SeasonRow(
+                  key: ValueKey(seasons[i]),
+                  label: seasons[i] == 0 ? 'Specials' : 'Season ${seasons[i]}',
+                  distance: (i - centre).abs(),
+                  fade: 1 - _fadePerStep * (i - centre).abs(),
+                  onTap: () => state._pickSeason(seasons[i]),
+                  onSecondaryTap: (pos) => _showScopeMenu(
+                    context,
+                    pos,
+                    info,
+                    seasonNumber: seasons[i],
+                  ),
                 ),
             ],
           ),
@@ -743,53 +767,78 @@ class _SeasonSelector extends StatelessWidget {
   }
 }
 
-class _SeasonButton extends StatelessWidget {
-  const _SeasonButton({
+class _SeasonRow extends StatelessWidget {
+  const _SeasonRow({
+    super.key,
     required this.label,
-    required this.active,
+    required this.distance,
+    required this.fade,
     required this.onTap,
     required this.onSecondaryTap,
   });
+
   final String label;
-  final bool active;
+  final int distance;
+  final double fade;
   final VoidCallback onTap;
   final void Function(Offset globalPosition) onSecondaryTap;
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    return GestureDetector(
-      onSecondaryTapUp: (d) => onSecondaryTap(d.globalPosition),
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 40),
-          alignment: Alignment.centerRight,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    color: active ? wp.text : wp.faint,
-                    fontSize: active ? 18 : 15,
-                    fontWeight: FontWeight.w600,
+    final selected = distance == 0;
+    final opacity = fade.clamp(0.0, 1.0);
+    // Type scale rather than a Transform: scaling text blurs it, and the rows
+    // need to reflow so the column stays tight as the selection moves.
+    final size = selected ? 26.0 : (19.0 - distance * 2).clamp(12.0, 19.0);
+
+    return IgnorePointer(
+      ignoring: opacity < 0.05,
+      child: AnimatedOpacity(
+        duration: AppMotion.hover,
+        curve: AppMotion.standard,
+        opacity: opacity,
+        child: GestureDetector(
+          onSecondaryTapUp: (d) => onSecondaryTap(d.globalPosition),
+          child: InkWell(
+            onTap: onTap,
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: selected ? 7 : 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: AnimatedDefaultTextStyle(
+                      duration: AppMotion.hover,
+                      curve: AppMotion.standard,
+                      style: TextStyle(
+                        color: wp.text,
+                        fontSize: size,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w600,
+                        height: 1.1,
+                      ),
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 13),
+                  AnimatedContainer(
+                    duration: AppMotion.hover,
+                    curve: AppMotion.standard,
+                    width: selected ? 40 : 22,
+                    height: 1,
+                    color: wp.text,
+                  ),
+                ],
               ),
-              const SizedBox(width: 13),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: active ? 34 : 22,
-                height: 1,
-                color: active ? wp.text : wp.faint,
-              ),
-            ],
+            ),
           ),
         ),
       ),
