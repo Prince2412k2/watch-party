@@ -6,7 +6,7 @@
 // or crash. Wired into app/server/index.js via registerServarrRoutes(app).
 
 import express from 'express'
-import { requireAuth } from '../auth.js'
+import { requireAuth, requireAdmin } from '../auth.js'
 import { serviceConfig, configuredMap, SERVICES } from './config.js'
 import {
   arrFetch,
@@ -893,7 +893,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'radarr/queue', err) }
   })
 
-  app.delete('/api/servarr/radarr/queue/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/radarr/queue/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -910,7 +910,7 @@ export function registerServarrRoutes(app) {
   // addImportExclusion so Radarr can't silently re-grab it on the next RSS
   // sync / automatic search (the actual bug being fixed: a movie deleted only
   // from qBittorrent stayed monitored in Radarr and kept coming back).
-  app.delete('/api/servarr/radarr/movie/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/radarr/movie/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -953,7 +953,7 @@ export function registerServarrRoutes(app) {
   // Same fix as radarr/movie/delete above, for series: removes the Sonarr
   // record (+files by default) and excludes it so it can't silently re-add
   // itself on the next automatic search.
-  app.delete('/api/servarr/sonarr/series/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/sonarr/series/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -1378,7 +1378,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'sonarr/queue', err) }
   })
 
-  app.delete('/api/servarr/sonarr/queue/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/sonarr/queue/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -1551,7 +1551,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'qbittorrent/resume', err) }
   })
 
-  app.post('/api/servarr/qbittorrent/delete', requireAuth, async (req, res) => {
+  app.post('/api/servarr/qbittorrent/delete', requireAdmin, async (req, res) => {
     if (!ensureConfigured('qbittorrent', res)) return
     const hashes = (req.body?.hashes || '').toString().trim()
     if (!hashes) return res.status(400).json({ error: 'hashes required' })
