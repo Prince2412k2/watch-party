@@ -1,9 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../palette.dart';
 import '../theme.dart';
 import '../tokens.dart';
 import 'authed_image.dart';
+import 'poster_shelf.dart';
 
 /// A library poster tile — the shelf primitive.
 ///
@@ -54,8 +57,28 @@ class PosterCard extends StatefulWidget {
   State<PosterCard> createState() => _PosterCardState();
 }
 
+const double _emphasisScale = 1.035;
+
 class _PosterCardState extends State<PosterCard> {
   bool _hover = false;
+
+
+  /// Source width to decode the artwork at.
+  ///
+  /// Decoding at `width * dpr` left every poster upscaled and soft, for two
+  /// reasons. The art box is taller than the 2:3 poster it holds, so
+  /// `BoxFit.cover` scales the source to the box HEIGHT and crops the sides —
+  /// filling it takes `boxHeight * 2/3` source pixels, not `width`. On top of
+  /// that the shelf scales the selected card by [PosterShelf.selectionScale]
+  /// and [emphasized] adds [_emphasisScale]. Decode for the largest size the
+  /// card is ever painted at.
+  int _decodeWidth(BuildContext context) {
+    const sourceAspect = 2 / 3;
+    final boxHeight = widget.width / widget.aspectRatio;
+    final cover = math.max(widget.width, boxHeight * sourceAspect);
+    final scale = PosterShelf.selectionScale * _emphasisScale;
+    return (cover * scale * MediaQuery.devicePixelRatioOf(context)).ceil();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -72,9 +95,8 @@ class _PosterCardState extends State<PosterCard> {
               AuthedNetworkImage(
                 widget.imageUrl!,
                 fit: BoxFit.cover,
-                cacheWidth:
-                    (widget.width * MediaQuery.devicePixelRatioOf(context))
-                        .round(),
+                filterQuality: FilterQuality.medium,
+                cacheWidth: _decodeWidth(context),
                 errorBuilder: (_, _, _) => const _PosterFallback(),
               )
             else
@@ -113,7 +135,7 @@ class _PosterCardState extends State<PosterCard> {
 
     if (widget.emphasized) {
       poster = Transform.scale(
-        scale: 1.035,
+        scale: _emphasisScale,
         alignment: Alignment.bottomLeft,
         child: poster,
       );

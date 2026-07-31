@@ -19,6 +19,7 @@ class AuthedNetworkImage extends ConsumerStatefulWidget {
     this.url, {
     super.key,
     this.fit,
+    this.filterQuality,
     this.cacheWidth,
     this.cacheHeight,
     this.errorBuilder,
@@ -27,6 +28,7 @@ class AuthedNetworkImage extends ConsumerStatefulWidget {
 
   final String url;
   final BoxFit? fit;
+  final FilterQuality? filterQuality;
   final int? cacheWidth;
   final int? cacheHeight;
   final ImageErrorWidgetBuilder? errorBuilder;
@@ -92,6 +94,7 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
         return Image.memory(
           _bytes!,
           fit: widget.fit,
+          filterQuality: widget.filterQuality ?? FilterQuality.medium,
           cacheWidth: widget.cacheWidth,
           cacheHeight: widget.cacheHeight,
           gaplessPlayback: true,
@@ -112,6 +115,7 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
     return Image.network(
       widget.url,
       fit: widget.fit,
+      filterQuality: widget.filterQuality ?? FilterQuality.medium,
       cacheWidth: widget.cacheWidth,
       cacheHeight: widget.cacheHeight,
       errorBuilder: widget.errorBuilder,

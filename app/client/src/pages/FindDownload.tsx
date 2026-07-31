@@ -180,7 +180,7 @@ const discoverCache: Partial<Record<Service, Promise<DiscoverData>>> = {}
 function loadDiscover(service: Service): Promise<DiscoverData> {
   if (discoverCache[service]) return discoverCache[service]
   const p = jget(`/api/servarr/${service}/discover?page=1`)
-    .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
+    .then((r) => (r.ok ? apiJson(r) : Promise.reject(Object.assign(new Error(`discover -> ${r.status}`), { status: r.status }))))
     .then((d: unknown) => {
       const data = d as { source?: string; items?: CatalogItem[] } | null
       const val = { source: data?.source || 'curated', items: Array.isArray(data?.items) ? data.items : [] }
@@ -395,6 +395,13 @@ export default function Browse() {
   )
 }
 
+function discoverEmptyReason(status: number, service: Service): string {
+  if (status === 503) return `Discover needs ${service === 'radarr' ? 'Radarr' : 'Sonarr'} and a TMDB API key configured on the server.`
+  if (status === 502 || status === 504) return 'Discover could not reach TMDB. Try again in a moment.'
+  if (status === 200) return 'TMDB returned trending titles, but none of them could be matched in your catalog.'
+  return 'This row is unavailable right now.'
+}
+
 /* ── Discover / "popular" rail — shown when there's no active search query ────
  * Fetches the server discover feed (genuine import-list source when the admin
  * has one configured, otherwise a curated seed run through the real catalog
@@ -408,20 +415,25 @@ function PopularRail({ mobile, kind, torrents, stateFor, onOpen, onDownload }: {
   onOpen: (item: CatalogItem) => void; onDownload: (item: CatalogItem) => void
 }) {
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
-  const [state, setState] = useState<{ loading: boolean; error: boolean; items: CatalogItem[]; source: string }>({ loading: true, error: false, items: [], source: 'curated' })
+  const [state, setState] = useState<{ loading: boolean; status: number; items: CatalogItem[]; source: string }>({ loading: true, status: 0, items: [], source: 'curated' })
 
   useEffect(() => {
     let cancel = false
-    setState((s) => ({ ...s, loading: true, error: false }))
+    setState((s) => ({ ...s, loading: true, status: 0 }))
     loadDiscover(service)
-      .then((d) => { if (!cancel) setState({ loading: false, error: false, items: d.items, source: d.source }) })
-      .catch(() => { if (!cancel) setState({ loading: false, error: true, items: [], source: 'curated' }) })
+      .then((d) => { if (!cancel) setState({ loading: false, status: 200, items: d.items, source: d.source }) })
+      .catch((e: { status?: number }) => { if (!cancel) setState({ loading: false, status: e?.status || 0, items: [], source: 'curated' }) })
     return () => { cancel = true }
   }, [service])
 
   if (state.loading) return <ResultsSkeleton mobile={mobile} />
-  if (state.error || state.items.length === 0) return (
-    <section className="discover-row-empty"><h2>{kind === 'movie' ? 'Movies' : 'Shows'}</h2><p>This row is unavailable right now.</p></section>
+  // Say WHY the row is empty — a missing TMDB_API_KEY / unconfigured *arr and a
+  // dead upstream used to collapse into one unactionable sentence.
+  if (state.status !== 200 || state.items.length === 0) return (
+    <section className="discover-row-empty">
+      <h2>{kind === 'movie' ? 'Movies' : 'Shows'}</h2>
+      <p>{discoverEmptyReason(state.status, service)}</p>
+    </section>
   )
 
   const label = state.source === 'tmdb_trending' ? 'Trending this week' : 'Discover'
