@@ -4,8 +4,49 @@ import { NotConfiguredError } from './arr.js'
 const TMDB_ORIGIN = 'https://api.themoviedb.org'
 // Public image CDN — no key, no auth, so the client loads these directly. Sized
 // once here rather than letting every caller invent its own width.
-const TMDB_IMAGE_ORIGIN = 'https://image.tmdb.org/t/p'
-const image = (path, size) => (path ? `${TMDB_IMAGE_ORIGIN}/${size}${path}` : null)
+export const TMDB_IMAGE_ORIGIN = 'https://image.tmdb.org/t/p'
+
+// Artwork is handed to the client as a SAME-ORIGIN proxy path, never the CDN URL
+// directly. The app fetches artwork through its authenticated dio client, so an
+// absolute third-party URL would ship the session cookie to themoviedb.org — and
+// on Linux it fails the TLS handshake outright (the bundled Dart runtime has no
+// local issuer for that chain). Proxying keeps both problems server-side.
+const image = (path, size) =>
+  (path ? `/api/servarr/tmdb-image?size=${size}&path=${encodeURIComponent(path)}` : null)
+
+export const TMDB_IMAGE_SIZES = new Set(['w300', 'w500', 'w780', 'w1280', 'original'])
+
+// Fetch one TMDB image server-side for the proxy route. No api key is involved —
+// the image CDN is public — so this is a plain pass-through with a bounded timeout.
+export async function tmdbImage(path, size) {
+  if (!TMDB_IMAGE_SIZES.has(size)) {
+    throw Object.assign(new Error('bad size'), { status: 400, upstream: true })
+  }
+  if (!/^\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(path)) {
+    throw Object.assign(new Error('bad path'), { status: 400, upstream: true })
+  }
+
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+  try {
+    const res = await fetch(`${TMDB_IMAGE_ORIGIN}/${size}${path}`, { signal: ctrl.signal })
+    if (!res.ok) {
+      throw Object.assign(new Error(`tmdb image -> ${res.status}`), {
+        status: res.status, upstream: true,
+      })
+    }
+    return {
+      buffer: Buffer.from(await res.arrayBuffer()),
+      contentType: res.headers.get('content-type') || 'image/jpeg',
+    }
+  } catch (err) {
+    if (err?.upstream) throw err
+    const message = err.name === 'AbortError' ? 'tmdb image timed out' : 'tmdb unreachable'
+    throw Object.assign(new Error(message), { status: 504, upstream: true })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 const TIMEOUT_MS = 8000
 
 export async function tmdbDiscover(kind, page) {
