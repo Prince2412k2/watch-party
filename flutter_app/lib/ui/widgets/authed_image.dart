@@ -111,7 +111,13 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
           ) ??
           const SizedBox.expand();
     }
-    final cookie = client is DioApiClient ? client.cookieHeader : null;
+    // This branch only runs when no artwork cache is installed, which never
+    // happens in production (main.dart always builds one) — but if it ever
+    // did, the cookie must still never follow the url to a third-party host.
+    // Mirrors the same-origin check in ApiClient.downloadDesktopArtifact.
+    final cookie = client is DioApiClient && _isSameOrigin(widget.url, client.baseUrl)
+        ? client.cookieHeader
+        : null;
     return Image.network(
       widget.url,
       fit: widget.fit,
@@ -123,4 +129,20 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
       headers: cookie == null ? null : {'Cookie': cookie},
     );
   }
+}
+
+/// True when `url` is either a relative path (resolves against the API
+/// origin by definition) or an absolute URL on the exact same
+/// scheme+host+port as [baseUrl]. Anything else is a third-party host the
+/// session cookie must never reach.
+bool _isSameOrigin(String url, String baseUrl) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return false;
+  if (!uri.hasScheme && !uri.hasAuthority) return true;
+  final base = Uri.tryParse(baseUrl);
+  if (base == null) return false;
+  return uri.hasScheme &&
+      uri.scheme == base.scheme &&
+      uri.host == base.host &&
+      uri.port == base.port;
 }

@@ -349,18 +349,123 @@ export async function curatedPopular(lookupFn, titles, idKey) {
 // The proxy route that key-adds local /MediaCover images (see index.js).
 const IMAGE_PROXY_BASE = '/api/servarr/image'
 
-// Turn an *arr image object into a browser-loadable URL WITHOUT exposing the api
-// key: prefer the public remoteUrl (TMDb/TVDB https the browser loads directly);
-// if only a local /MediaCover/... path exists, route it through the key-adding
-// image proxy. Anything else → null (client shows a placeholder).
+// ── Remote artwork proxy ──────────────────────────────────────────────────────
+// Radarr/Sonarr echo posters/backdrops/fanart as an absolute https URL on the
+// metadata provider's own CDN. The app's HTTP client is authenticated (it
+// carries the session cookie on every request), so handing it that URL
+// directly would ship the cookie to a third party. This proxies the fetch
+// server-side instead — same trick as tmdb.js's tmdbImage, generalized to the
+// other CDNs Radarr/Sonarr actually use. A fixed host allow-list keeps it from
+// becoming an open (SSRF-able) proxy; see remoteImageFetch for the rest of the
+// hardening.
+const REMOTE_IMAGE_PROXY_BASE = '/api/servarr/remote-image'
+const REMOTE_IMAGE_TIMEOUT_MS = 8000
+const REMOTE_IMAGE_MAX_BYTES = 12 * 1024 * 1024 // a poster/backdrop is a few hundred KB; this is headroom, not a target
+export const REMOTE_IMAGE_ALLOWED_HOSTS = new Set([
+  'image.tmdb.org',        // Radarr movie art (and TMDB proper, see tmdb.js)
+  'artworks.thetvdb.com',  // Sonarr series art (TheTVDB)
+  'assets.fanart.tv',      // Sonarr/Radarr fanart, when TheTVDB/TMDB have none
+  'fanart.tv',
+])
+
+// Parse + validate a candidate artwork URL. Every check runs against the
+// PARSED URL object, never the raw string, so encoding tricks or embedded
+// userinfo can't smuggle a different host past the allow-list check. Returns
+// the parsed URL on success, or null.
+function validRemoteImageUrl(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl) return null
+  let url
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'https:') return null
+  if (url.username || url.password) return null
+  if (url.port) return null
+  const host = url.hostname
+  // The allow-list is hostnames only, but reject IP literals explicitly too —
+  // belt and suspenders against a host check that gets loosened later.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':') || host === 'localhost') return null
+  if (!REMOTE_IMAGE_ALLOWED_HOSTS.has(host)) return null
+  return url
+}
+
+// Turn an *arr image's remoteUrl into the same-origin proxy path the client
+// fetches instead of the bare CDN URL. Returns null when the URL doesn't pass
+// validation — callers fall back to another image source rather than leak it.
+export function remoteImageProxyUrl(rawUrl) {
+  const url = validRemoteImageUrl(rawUrl)
+  return url ? `${REMOTE_IMAGE_PROXY_BASE}?url=${encodeURIComponent(url.toString())}` : null
+}
+
+// Fetch one piece of remote artwork server-side for the /remote-image route.
+// Re-validates `rawUrl` itself (a request can carry any query string, not just
+// one this server minted) — never trust that a URL reaching here already went
+// through remoteImageProxyUrl. Redirects are NOT followed: `fetch` follows them
+// by default, which would let an allow-listed host 302 the request anywhere —
+// a clean bypass of the allow-list if missed, so a redirect response is simply
+// treated as a failure. Response size is capped so a misbehaving upstream can't
+// be used to exhaust memory through this proxy.
+export async function remoteImageFetch(rawUrl) {
+  const url = validRemoteImageUrl(rawUrl)
+  if (!url) throw Object.assign(new Error('bad remote image url'), { status: 400, upstream: true })
+
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), REMOTE_IMAGE_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, redirect: 'manual' })
+    if (res.status >= 300 && res.status < 400) {
+      throw Object.assign(new Error('remote image redirected'), { status: 502, upstream: true })
+    }
+    if (!res.ok) {
+      throw Object.assign(new Error(`remote image -> ${res.status}`), { status: res.status, upstream: true })
+    }
+    const declaredLength = Number(res.headers.get('content-length') || 0)
+    if (declaredLength > REMOTE_IMAGE_MAX_BYTES) {
+      throw Object.assign(new Error('remote image too large'), { status: 502, upstream: true })
+    }
+    const buffer = Buffer.from(await res.arrayBuffer())
+    // content-length can be absent or simply wrong — the real cap is on the
+    // bytes actually received.
+    if (buffer.length > REMOTE_IMAGE_MAX_BYTES) {
+      throw Object.assign(new Error('remote image too large'), { status: 502, upstream: true })
+    }
+    return { buffer, contentType: res.headers.get('content-type') || 'image/jpeg' }
+  } catch (err) {
+    if (err?.upstream) throw err
+    const message = err.name === 'AbortError' ? 'remote image timed out' : 'remote image unreachable'
+    throw Object.assign(new Error(message), { status: 504, upstream: true })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Turn an *arr image object into a browser-loadable URL WITHOUT exposing the
+// api key (or the upstream CDN URL): prefer the public remoteUrl, proxied
+// same-origin (see remoteImageProxyUrl); if only a local /MediaCover/... path
+// exists, route it through the key-adding image proxy. Anything else → null
+// (client shows a placeholder).
 export function posterUrlFromImage(service, image) {
   if (!image) return null
-  if (typeof image.remoteUrl === 'string' && /^https?:\/\//i.test(image.remoteUrl)) return image.remoteUrl
+  const proxied = remoteImageProxyUrl(image.remoteUrl)
+  if (proxied) return proxied
   const local = image.url
   if (typeof local === 'string' && local.startsWith('/MediaCover/')) {
     return `${IMAGE_PROXY_BASE}?service=${encodeURIComponent(service)}&path=${encodeURIComponent(local)}`
   }
   return null
+}
+
+// Reshape an *arr images[] array for the client: same coverType, but remoteUrl
+// replaced by the same-origin proxy path (or dropped if it doesn't validate)
+// and the local instance path removed entirely — the client has no api key to
+// use it with anyway. Used by shapeMovieLookup/shapeSeriesLookup so a raw
+// remoteUrl never reaches the client through the images[] passthrough either.
+export function shapeImages(service, images) {
+  return (Array.isArray(images) ? images : [])
+    .filter((i) => i && i.coverType)
+    .map((i) => ({ coverType: i.coverType, remoteUrl: posterUrlFromImage(service, i) }))
 }
 
 // Pick the best cover from an *arr images[] array — poster first, fanart as a
