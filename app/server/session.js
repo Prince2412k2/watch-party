@@ -284,13 +284,34 @@ export function isMember(session, userId) {
   return session.hostId === userId || session.guests.some(g => g.userId === userId)
 }
 
+// Guests and waiting users each carry their own live Jellyfin token
+// (socketId/deviceId too) for server-side use — never forward the raw record.
+function publicMember({ userId, name }) {
+  return { userId, name }
+}
+
+// Explicit allow-list, not a deny-list: session gains internal/secret fields
+// over time (hostToken, per-member tokens, timers, telemetry, …) and a
+// deny-list silently ships every one of them to clients by default. Naming
+// only what the web and Flutter clients actually consume means a new secret
+// field is safe-by-default instead of a future leak.
 export function publicSession(session) {
-  const {
-    hostToken, hostDisconnectTimer, approved,
-    stalled, intent, pos, playT0, effPlaying, _stallTimer, reports, seenCommandIds,
-    ...pub
-  } = session
-  return { ...pub, stallFallback: [...session.stallFallback] }
+  return {
+    id: session.id,
+    hostId: session.hostId,
+    hostName: session.hostName,
+    stage: session.stage,
+    mediaItemId: session.mediaItemId,
+    mediaSourceId: session.mediaSourceId,
+    playback: session.playback,
+    subtitlePreferences: session.subtitlePreferences,
+    browse: session.browse,
+    guests: session.guests.map(publicMember),
+    waiting: session.waiting.map(publicMember),
+    collaborativeControl: session.collaborativeControl,
+    syncMode: session.syncMode,
+    schedule: session.schedule,
+  }
 }
 
 export function validateSyncCommand(payload = {}) {
