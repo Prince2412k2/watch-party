@@ -74,6 +74,10 @@ flutter:
     - assets/popcorn.png
     - assets/watch_party.lottie
     - assets/fonts/
+    # Tray icons. Windows' shell wants an .ico; the others take the PNG. These
+    # were previously referenced in code but never declared here (or present),
+    # so tray setup threw and the app hid to a tray that did not exist.
+    - assets/icons/
 
   fonts:
     - family: CircularXX

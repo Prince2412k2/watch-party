@@ -35,6 +35,12 @@ class DesktopLifecycle with WindowListener, TrayListener {
   static final DesktopLifecycle instance = DesktopLifecycle._();
 
   bool _quitting = false;
+
+  /// Whether the tray icon AND its menu are actually up. Close-to-tray is only
+  /// safe when there is a visible way back: a user who closes the window with no
+  /// tray icon and no Quit menu has a running, invisible app they can only kill
+  /// from the task manager — while it still holds the camera and mic.
+  bool _trayReady = false;
   SharedPreferences? _prefs;
 
   /// Invoked before the window hides to the tray AND before an explicit quit.
@@ -97,15 +103,17 @@ class DesktopLifecycle with WindowListener, TrayListener {
       if (_prefs!.getBool(_kWindowMaximized) ?? false) {
         await windowManager.maximize();
       }
-      // Close-to-tray: we intercept the window-close request ourselves
-      // instead of letting it quit the process (see onWindowClose below).
-      await windowManager.setPreventClose(true);
       await windowManager.show();
       await windowManager.focus();
     });
 
     windowManager.addListener(this);
+    // Order matters: the tray has to exist before we start intercepting close
+    // requests, or a failure here leaves the window un-closable-but-hidden.
     await _initTray();
+    if (_trayReady) {
+      await windowManager.setPreventClose(true);
+    }
   }
 
   Size _restoredSize() {
@@ -120,7 +128,12 @@ class DesktopLifecycle with WindowListener, TrayListener {
     // The app must still launch when a platform package omits the optional tray
     // icon. Previously this threw before runApp(), leaving a black window.
     try {
-      await trayManager.setIcon('assets/icons/tray_icon.png');
+      // Windows' shell tray wants an .ico; the other platforms take the PNG.
+      await trayManager.setIcon(
+        Platform.isWindows
+            ? 'assets/icons/tray_icon.ico'
+            : 'assets/icons/tray_icon.png',
+      );
     } catch (_) {
       return;
     }
@@ -138,6 +151,8 @@ class DesktopLifecycle with WindowListener, TrayListener {
         ],
       ),
     );
+    // Only now is hiding to the tray recoverable.
+    _trayReady = true;
   }
 
   Future<void> _persistBounds() async {
@@ -158,12 +173,21 @@ class DesktopLifecycle with WindowListener, TrayListener {
       await windowManager.destroy();
       return;
     }
-    // Hide instead of exiting: the process keeps running in the tray until
-    // "Quit" is chosen explicitly. Release capture, playback and downloads
-    // first — from the user's point of view the app is closed, so nothing may
-    // keep using the camera, the mic, or the network.
+    // Release capture, playback and downloads first — from the user's point of
+    // view the app is closed, so nothing may keep using the camera, the mic, or
+    // the network.
     await _releaseResources();
     await _persistBounds();
+    if (!_trayReady) {
+      // No tray to come back from: quit for real rather than becoming an
+      // invisible process the user can only end from the task manager.
+      _quitting = true;
+      await windowManager.setPreventClose(false);
+      await windowManager.destroy();
+      exit(0);
+    }
+    // Hide instead of exiting: the process keeps running in the tray until
+    // "Quit" is chosen explicitly.
     await windowManager.hide();
   }
 
