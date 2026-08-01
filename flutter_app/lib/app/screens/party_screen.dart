@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -545,10 +546,15 @@ class _WatchChrome extends ConsumerWidget {
 
     return SafeArea(
       child: Padding(
+        // macOS puts the traffic lights in the top-left of the content area, so
+        // this row clears them by dropping BELOW the caption strip rather than
+        // insetting into it — insetting left pushed Back into the middle of the
+        // window, next to the lights instead of out of their way. Windows keeps
+        // the trailing inset, since its caption controls are on the right.
         padding: EdgeInsets.only(
-          left: 14 + desktopLeadingControlInset,
+          left: 14,
           right: 14 + desktopTrailingControlInset,
-          top: 10,
+          top: 10 + (Platform.isMacOS ? integratedDesktopChromeHeight : 0),
           bottom: 10,
         ),
         child: Row(
@@ -556,7 +562,7 @@ class _WatchChrome extends ConsumerWidget {
             _AvIconButton(
               icon: Icons.arrow_back,
               tooltip: 'Back',
-              danger: true,
+              scrim: true,
               onTap: onBack,
             ),
             const Spacer(),
@@ -608,6 +614,10 @@ class _WatchChrome extends ConsumerWidget {
 /// A flat, boxless, monochrome player-chrome icon button (`Player.tsx`
 /// `IconBtn`): no box/border/fill; glyph rests at 62% near-white, brightens to
 /// full near-white on hover / when [active], and is red when [danger].
+///
+/// [scrim] backs the glyph with a dark disc: a bare icon sitting over full-bleed
+/// video is legible or invisible depending on the frame behind it, which is not
+/// a coin-flip worth taking for the control that leaves the party.
 class _AvIconButton extends StatefulWidget {
   const _AvIconButton({
     required this.icon,
@@ -616,6 +626,7 @@ class _AvIconButton extends StatefulWidget {
     this.active = false,
     this.danger = false,
     this.busy = false,
+    this.scrim = false,
   });
 
   final IconData icon;
@@ -624,6 +635,7 @@ class _AvIconButton extends StatefulWidget {
   final bool active;
   final bool danger;
   final bool busy;
+  final bool scrim;
 
   static const Color _rest = Color(0x9EF4F4F5); // rgba(244,244,245,.62)
   static const Color _bright = Color(0xFFF4F4F5);
@@ -664,7 +676,18 @@ class _AvIconButtonState extends State<_AvIconButton> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.busy ? null : widget.onTap,
-          child: SizedBox(width: 34, height: 34, child: Center(child: glyph)),
+          child: widget.scrim
+              ? Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0x9917181B),
+                    border: Border.all(color: AppColors.line2),
+                  ),
+                  child: Center(child: glyph),
+                )
+              : SizedBox(width: 34, height: 34, child: Center(child: glyph)),
         ),
       ),
     );
