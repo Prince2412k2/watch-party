@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { Readable } from 'node:stream'
 
 import { requireAuth, getJellyfin } from './auth.js'
 import {
@@ -12,7 +13,38 @@ import {
 // also accepted. Anything else is rejected before it reaches an internal URL.
 const JELLYFIN_ID = /^[0-9a-f]{32}$/i
 const JELLYFIN_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const isJellyfinId = (v) => typeof v === 'string' && (JELLYFIN_ID.test(v) || JELLYFIN_GUID.test(v))
+export const isJellyfinId = (v) => typeof v === 'string' && (JELLYFIN_ID.test(v) || JELLYFIN_GUID.test(v))
+
+// The only shapes our own HLS URLs ever produce: `Videos/<real item id>/<one
+// or more filename-shaped segments>` (playlist name, or `hls1/<rendition>/N.ts`
+// segment/key names). Segment-by-segment matching — rather than a character
+// class applied to the whole string — is what keeps `.`/`..` out: a class like
+// `[A-Za-z0-9._-/]+` happily matches "..", and fetch()'s URL parsing then
+// collapses those dot-segments before the request leaves this process, so the
+// class alone doesn't stop traversal.
+const HLS_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/
+export function isSafeHlsPath(rest) {
+  if (typeof rest !== 'string') return false
+  const segments = rest.split('/')
+  if (segments.length < 3 || segments[0] !== 'Videos') return false
+  if (!isJellyfinId(segments[1])) return false
+  return segments.slice(2).every(seg => seg !== '.' && seg !== '..' && HLS_PATH_SEGMENT.test(seg))
+}
+
+// Stream an upstream fetch() Response body straight through instead of
+// buffering it in memory first — HLS segments at this app's ABR ceiling
+// (MaxStreamingBitrate 20000000) are multi-megabyte, and buffering every
+// concurrent request would pin memory linearly with no cap. Callers must set
+// status/headers BEFORE calling this: once the pipe starts writing, headers
+// are already on the wire, so a mid-stream upstream error can only destroy
+// the response, never redo it with a different status.
+function pipeUpstream(req, res, upstream) {
+  if (!upstream.body) return res.end()
+  const nodeStream = Readable.fromWeb(upstream.body)
+  nodeStream.on('error', () => res.destroy())
+  req.on('close', () => nodeStream.destroy())
+  nodeStream.pipe(res)
+}
 const responseCache = new Map()
 
 async function sendCachedJson(req, res, key, maxAgeSeconds, load) {
@@ -104,10 +136,11 @@ export function registerLibraryRoutes(app) {
       if (!upstream.ok) return res.status(upstream.status).end()
       res.set('Content-Type', upstream.headers.get('content-type') || 'image/jpeg')
       res.set('Cache-Control', 'private, max-age=86400')
-      res.send(Buffer.from(await upstream.arrayBuffer()))
+      pipeUpstream(req, res, upstream)
     } catch (err) {
       console.error('library/trickplay-sheet', err.message)
-      res.status(502).end()
+      if (!res.headersSent) res.status(502).end()
+      else res.destroy()
     }
   })
 
@@ -136,9 +169,11 @@ export function registerLibraryRoutes(app) {
   // Recently added, optionally scoped to a library view
   app.get('/api/library/latest', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
+    const { parentId } = req.query
+    if (parentId != null && !isJellyfinId(parentId)) return res.status(400).end()
     try {
-      await sendCachedJson(req, res, `latest:${req.query.parentId ?? ''}`, 120, async () => {
-        const data = await getLatest(token, userId, req.query.parentId)
+      await sendCachedJson(req, res, `latest:${parentId ?? ''}`, 120, async () => {
+        const data = await getLatest(token, userId, parentId)
         return Array.isArray(data) ? data : (data.Items ?? [])
       })
     } catch (err) {
@@ -150,6 +185,7 @@ export function registerLibraryRoutes(app) {
   // Full item detail (overview, genres, rating) for the hero banner
   app.get('/api/library/item/:id', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
+    if (!isJellyfinId(req.params.id)) return res.status(400).end()
     try {
       await sendCachedJson(req, res, `item:${req.params.id}`, 300, () =>
         getItemDetail(token, userId, req.params.id))
@@ -162,9 +198,11 @@ export function registerLibraryRoutes(app) {
   app.post('/api/library/playback-info/:id', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
     const { id } = req.params
+    const { mediaSourceId } = req.body ?? {}
+    if (!isJellyfinId(id) || (mediaSourceId != null && !isJellyfinId(mediaSourceId))) return res.status(400).end()
     try {
       const response = await getPlaybackInfo(token, userId, id, {
-        mediaSourceId: req.body?.mediaSourceId,
+        mediaSourceId,
         audioStreamIndex: Number.isInteger(req.body?.audioStreamIndex) ? req.body.audioStreamIndex : undefined,
         subtitleStreamIndex: Number.isInteger(req.body?.subtitleStreamIndex) ? req.body.subtitleStreamIndex : undefined,
         playSessionId: req.body?.playSessionId,
@@ -182,9 +220,11 @@ export function registerLibraryRoutes(app) {
 
   app.get('/api/library/items', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
+    const { parentId } = req.query
+    if (parentId != null && !isJellyfinId(parentId)) return res.status(400).end()
     try {
-      await sendCachedJson(req, res, `items:${req.query.parentId ?? ''}`, 120, async () => {
-        const data = await getItems(token, userId, req.query.parentId ? { ParentId: req.query.parentId } : {})
+      await sendCachedJson(req, res, `items:${parentId ?? ''}`, 120, async () => {
+        const data = await getItems(token, userId, parentId ? { ParentId: parentId } : {})
         return data.Items ?? []
       })
     } catch (err) {
@@ -195,6 +235,7 @@ export function registerLibraryRoutes(app) {
 
   app.get('/api/library/items/:id/children', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
+    if (!isJellyfinId(req.params.id)) return res.status(400).end()
     try {
       await sendCachedJson(req, res, `children:${req.params.id}`, 300, async () => {
         const data = await getItemChildren(token, userId, req.params.id)
@@ -220,12 +261,12 @@ export function registerLibraryRoutes(app) {
         res.set('Cache-Control', 'public, max-age=3600')
         return res.status(upstream.status).end()
       }
-      const buf = Buffer.from(await upstream.arrayBuffer())
       res.set('Content-Type', upstream.headers.get('content-type') || 'image/jpeg')
       res.set('Cache-Control', 'public, max-age=86400')
-      res.send(buf)
+      pipeUpstream(req, res, upstream)
     } catch (err) {
-      res.status(502).end()
+      if (!res.headersSent) res.status(502).end()
+      else res.destroy()
     }
   })
 
@@ -236,7 +277,8 @@ export function registerLibraryRoutes(app) {
   app.get('/api/library/hls-url', requireAuth, (req, res) => {
     const { token, userId } = getJellyfin(req)
     const { itemId, mediaSourceId, audioStreamIndex, subtitleStreamIndex, playSessionId, maxBitrate, abr } = req.query
-    if (!itemId) return res.status(400).json({ error: 'itemId required' })
+    if (!isJellyfinId(itemId)) return res.status(400).json({ error: 'itemId required' })
+    if (mediaSourceId != null && !isJellyfinId(mediaSourceId)) return res.status(400).json({ error: 'invalid mediaSourceId' })
     const parsedAudio = audioStreamIndex != null && audioStreamIndex !== '' ? parseInt(audioStreamIndex, 10) : undefined
     const parsedSubtitle = subtitleStreamIndex != null && subtitleStreamIndex !== '' ? parseInt(subtitleStreamIndex, 10) : undefined
     ;(async () => {
@@ -272,7 +314,7 @@ export function registerLibraryRoutes(app) {
     const { token } = getJellyfin(req)
     const rest = req.params[0] || ''
     // Only ever proxy the Jellyfin video paths our own URLs produce.
-    if (!/^Videos\/[A-Za-z0-9._\-/]+$/.test(rest)) return res.status(400).end()
+    if (!isSafeHlsPath(rest)) return res.status(400).end()
 
     const search = new URLSearchParams()
     for (const [k, v] of Object.entries(req.query)) {
@@ -297,16 +339,18 @@ export function registerLibraryRoutes(app) {
         return res.send(body)
       }
 
-      // Binary segment/key: forward status + range-related headers verbatim.
+      // Binary segment/key: forward status + range-related headers verbatim,
+      // then stream the body through rather than buffering it (segments at
+      // this app's ABR ceiling run multi-megabyte).
       res.status(upstream.status)
       for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range', 'cache-control']) {
         const val = upstream.headers.get(h)
         if (val) res.set(h, val)
       }
-      const buf = Buffer.from(await upstream.arrayBuffer())
-      res.send(buf)
+      pipeUpstream(req, res, upstream)
     } catch (err) {
-      res.status(502).end()
+      if (!res.headersSent) res.status(502).end()
+      else res.destroy()
     }
   })
 }

@@ -167,6 +167,45 @@ Future<File> updateArtifactDestination(
   return File('${updates.path}${Platform.pathSeparator}${artifact.filename}');
 }
 
+/// The installed `.app` bundle containing [executablePath].
+///
+/// `Platform.resolvedExecutable` inside a bundle is
+/// `…/Watchparty.app/Contents/MacOS/Watchparty`, so the bundle is three levels
+/// up. Returns null when the layout isn't a bundle (a bare binary from
+/// `flutter run`), which is the signal to fall back to a manual install rather
+/// than guess at a path and delete the wrong thing.
+String? macAppBundlePath(String executablePath) {
+  final parts = executablePath.split('/');
+  final macos = parts.length - 2;
+  if (macos < 1) return null;
+  if (parts[macos] != 'MacOS' || parts[macos - 1] != 'Contents') return null;
+  final bundle = parts.sublist(0, macos - 1).join('/');
+  return bundle.endsWith('.app') ? bundle : null;
+}
+
+/// Shell script that swaps the bundle once THIS process has exited.
+///
+/// The running app cannot replace its own bundle while it holds it open, so the
+/// same trick the Windows installer uses applies here: hand the work to a
+/// detached process that waits for our pid to disappear. Quarantine is stripped
+/// from the staged copy because the DMG it came out of is flagged as downloaded;
+/// the bytes were already verified against the release's SHA-256 before we got
+/// here, so the flag would only block an update the user explicitly asked for.
+String macSwapScript({
+  required int pid,
+  required String stagedApp,
+  required String installedApp,
+}) => '''
+#!/bin/sh
+set -e
+while kill -0 $pid 2>/dev/null; do sleep 0.2; done
+/usr/bin/xattr -dr com.apple.quarantine '$stagedApp' 2>/dev/null || true
+/bin/rm -rf '$installedApp'
+/usr/bin/ditto '$stagedApp' '$installedApp'
+/bin/rm -rf '$stagedApp'
+/usr/bin/open '$installedApp'
+''';
+
 Future<bool> canWriteUpdateBeside(String executablePath) async {
   final parent = File(executablePath).parent;
   final probe = File(
@@ -359,9 +398,75 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
       return;
     }
 
+    await _applyMacVerified(file);
+  }
+
+  /// Mount the verified DMG, stage the new bundle, and let a detached script
+  /// swap it in once we exit. Falls back to revealing the DMG whenever any step
+  /// can't be done safely — a failed self-update must leave the working install
+  /// alone, not half-replaced.
+  Future<void> _applyMacVerified(File dmg) async {
+    final installed = macAppBundlePath(Platform.resolvedExecutable);
+    String? mountPoint;
+    try {
+      if (installed == null) return _revealMacDmg(dmg, 'this build is not an app bundle');
+
+      final attach = await Process.run('hdiutil', [
+        'attach', dmg.path, '-nobrowse', '-readonly', '-mountrandom', '/tmp',
+      ]);
+      if (attach.exitCode != 0) return _revealMacDmg(dmg, 'the disk image would not mount');
+      mountPoint = _mountPointFrom(attach.stdout.toString());
+      if (mountPoint == null) return _revealMacDmg(dmg, 'the mounted image had no volume');
+
+      final source = await Directory(mountPoint)
+          .list()
+          .where((e) => e.path.endsWith('.app'))
+          .cast<FileSystemEntity?>()
+          .firstWhere((e) => e != null, orElse: () => null);
+      if (source == null) return _revealMacDmg(dmg, 'the disk image had no app in it');
+
+      // Stage beside the install so the swap is a local move, and so a failure
+      // here happens before anything touches the working copy.
+      final staged = '${(await getApplicationSupportDirectory()).path}/updates/Watchparty-new.app';
+      await Directory(staged).parent.create(recursive: true);
+      final ditto = await Process.run('ditto', [source.path, staged]);
+      if (ditto.exitCode != 0) return _revealMacDmg(dmg, 'the new app could not be staged');
+
+      final script = File('${(await getTemporaryDirectory()).path}/watchparty-update.sh');
+      await script.writeAsString(macSwapScript(
+        pid: pid,
+        stagedApp: staged,
+        installedApp: installed,
+      ));
+      await Process.run('chmod', ['+x', script.path]);
+      await Process.start('/bin/sh', [script.path], mode: ProcessStartMode.detached);
+      await DesktopLifecycle.instance.quitForUpdate();
+    } catch (error) {
+      await _revealMacDmg(dmg, '$error');
+    } finally {
+      if (mountPoint != null) {
+        await Process.run('hdiutil', ['detach', mountPoint, '-quiet']).catchError((_) =>
+            ProcessResult(0, 0, '', ''));
+      }
+    }
+  }
+
+  /// hdiutil prints a tab-separated table; the mount point is the last field of
+  /// the line that has one.
+  static String? _mountPointFrom(String attachOutput) {
+    for (final line in attachOutput.split('\n')) {
+      final fields = line.split('\t').where((f) => f.trim().isNotEmpty).toList();
+      if (fields.length >= 2 && fields.last.trim().startsWith('/')) {
+        return fields.last.trim();
+      }
+    }
+    return null;
+  }
+
+  Future<void> _revealMacDmg(File dmg, String why) async {
     var opened = true;
     try {
-      final result = await Process.run('open', [file.path]);
+      final result = await Process.run('open', [dmg.path]);
       opened = result.exitCode == 0;
     } catch (_) {
       opened = false;
@@ -370,8 +475,8 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
       status: UpdateStatus.manualInstall,
       progress: 1,
       message: opened
-          ? 'Verified DMG opened. Quit Watchparty, then drag the new app to Applications to replace it.'
-          : 'Verified DMG saved to ${file.path}. Open it, quit Watchparty, then drag the new app to Applications.',
+          ? 'Verified DMG opened ($why). Quit Watchparty, then drag the new app to Applications.'
+          : 'Verified DMG saved to ${dmg.path} ($why). Open it, quit Watchparty, then drag the new app to Applications.',
     );
   }
 }

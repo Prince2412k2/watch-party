@@ -74,10 +74,17 @@ class ArtworkCache {
     }
 
     try {
-      final fresh = await _inflight.putIfAbsent(
+      final pending = _inflight.putIfAbsent(
         url,
         () => _fetchAndStore(url, file),
       );
+      // The shared future outlives this subscription: when the only listener is
+      // disposed mid-fetch (an episode card scrolled out of view), a failure has
+      // no awaiter left and escapes as an unhandled zone error — hundreds of
+      // them for a series whose stills 404. ignore() attaches an error listener
+      // so that can't happen; our own await below still sees the error.
+      pending.ignore();
+      final fresh = await pending;
       if (cached == null || !listEquals(cached, fresh)) {
         _remember(url, fresh);
         yield fresh;
@@ -99,6 +106,17 @@ class ArtworkCache {
   }
 
   Future<Uint8List> _fetch(String url) async {
+    // `_dio` is the app's authenticated client — it carries the session
+    // cookie on every request. The server now only ever hands the client a
+    // relative same-origin proxy path for artwork (never a raw third-party
+    // CDN URL — see posterUrlFromImage/shapeImages in arr.js), so a URL that
+    // doesn't resolve to our own origin has no business here. Refuse it
+    // outright rather than fetching it unauthenticated: the point isn't to
+    // degrade gracefully, it's that this client must never be handed such a
+    // URL in the first place.
+    if (!_isSameOrigin(url)) {
+      throw StateError('Refusing to fetch cross-origin artwork: $url');
+    }
     final response = await _dio.get<List<int>>(
       url,
       options: Options(responseType: ResponseType.bytes),
@@ -107,6 +125,19 @@ class ArtworkCache {
       throw StateError('Artwork request failed: HTTP ${response.statusCode}');
     }
     return Uint8List.fromList(response.data!);
+  }
+
+  /// A relative path resolves against `_dio`'s own baseUrl by definition; an
+  /// absolute URL must match it exactly (scheme + host + port).
+  bool _isSameOrigin(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    if (!uri.hasScheme && !uri.hasAuthority) return true;
+    final base = Uri.tryParse(_dio.options.baseUrl);
+    if (base == null) return false;
+    return uri.scheme == base.scheme &&
+        uri.host == base.host &&
+        uri.port == base.port;
   }
 
   void _remember(String url, Uint8List bytes) {

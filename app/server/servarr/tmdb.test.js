@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
+import { tmdbImage, tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
 
 const realFetch = globalThis.fetch
 
@@ -47,13 +47,15 @@ test('tmdbSeasonEpisodes maps a season into the episode-row shape', async (t) =>
   const season = await tmdbSeasonEpisodes(2710, 1)
 
   assert.equal(season.seasonNumber, 1)
-  assert.equal(season.poster, 'https://image.tmdb.org/t/p/w780/season1.jpg')
+  // Same-origin proxy path, never the CDN: the app's HTTP client carries the
+  // session cookie and would leak it to themoviedb.org.
+  assert.equal(season.poster, '/api/servarr/tmdb-image?size=w780&path=%2Fseason1.jpg')
   assert.equal(season.episodes.length, 2)
   assert.deepEqual(season.episodes[0], {
     episodeNumber: 1,
     name: 'Pilot',
     overview: 'It begins.',
-    still: 'https://image.tmdb.org/t/p/w780/e1.jpg',
+    still: '/api/servarr/tmdb-image?size=w780&path=%2Fe1.jpg',
     airDate: '2013-09-17',
     runtime: 23,
     rating: 7.6,
@@ -100,4 +102,38 @@ test('tmdbSeriesIdFromTvdb resolves the first tv result, or null', async (t) => 
 
   stubFetch({})
   assert.equal(await tmdbSeriesIdFromTvdb(1), null)
+})
+
+test('tmdbImage rejects a bad size or a path that is not a plain filename', async () => {
+  for (const bad of ['w999', '', 'original/../..']) {
+    await assert.rejects(() => tmdbImage('/e1.jpg', bad), (err) => {
+      assert.equal(err.status, 400)
+      return true
+    })
+  }
+  // Path traversal, bare names, query smuggling, and absolute URLs must not
+  // reach the CDN.
+  for (const bad of ['/../secret', 'e1.jpg', '/e1.jpg?x=1', 'https://evil/x.jpg', '/']) {
+    await assert.rejects(() => tmdbImage(bad, 'w780'), (err) => {
+      assert.equal(err.status, 400)
+      return true
+    })
+  }
+})
+
+test('tmdbImage passes the bytes through with the upstream content type', async (t) => {
+  const outer = globalThis.fetch
+  t.after(() => { globalThis.fetch = outer })
+  globalThis.fetch = async (url) => {
+    assert.equal(url, 'https://image.tmdb.org/t/p/w780/e1.jpg')
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new TextEncoder().encode('JPEGBYTES').buffer,
+      headers: new Map([['content-type', 'image/jpeg']]),
+    }
+  }
+  const out = await tmdbImage('/e1.jpg', 'w780')
+  assert.equal(out.contentType, 'image/jpeg')
+  assert.equal(out.buffer.toString(), 'JPEGBYTES')
 })

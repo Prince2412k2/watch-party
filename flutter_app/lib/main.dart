@@ -31,12 +31,6 @@ Future<void> main() async {
   // Initialize libmpv (media_kit) once, before any player is created (E4 uses it).
   MediaKit.ensureInitialized();
 
-  // E10 (packaging): window-state restore, tray icon, and close-to-tray on
-  // desktop. Must run before the first frame; no-op on unsupported platforms.
-  if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-    await DesktopLifecycle.instance.init();
-  }
-
   // Backend-agnostic: the origin is chosen at runtime (the user pastes a
   // server URL) and persisted in SharedPreferences. Read it before building
   // the clients so they start pointed at the right server; null means "not
@@ -104,13 +98,28 @@ Future<void> main() async {
     ],
   );
 
-  // Pause playback when the window hides to the tray: close-to-tray keeps the
-  // process (and libmpv) alive, so without this, audio keeps playing from a
-  // window the user thinks they closed.
+  // Closing the window exits the process, but not before releasing what the user
+  // expects to stop: the LiveKit room (camera and mic), playback, and in-flight
+  // transfers. Each step is independent and best-effort — one failure must not
+  // skip the rest — and the camera/mic release is ordered first because it is
+  // the one with a privacy cost.
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-    DesktopLifecycle.instance.onBeforeHide = () {
-      container.read(playerControllerProvider).pause();
+    DesktopLifecycle.instance.onShutdown = () async {
+      try {
+        await container.read(livekitProvider.notifier).leave();
+      } catch (_) {}
+      try {
+        await container.read(playerControllerProvider).pause();
+      } catch (_) {}
+      try {
+        await container.read(downloaderProvider).pauseAllActive();
+      } catch (_) {}
     };
+
+    // Only NOW start intercepting close: init() sets preventClose, and a close
+    // arriving before the handler above exists would exit without releasing
+    // anything.
+    await DesktopLifecycle.instance.init();
   }
 
   // Restore a persisted session (GET /api/auth/me) before the first frame, so

@@ -6,18 +6,18 @@
 // or crash. Wired into app/server/index.js via registerServarrRoutes(app).
 
 import express from 'express'
-import { requireAuth } from '../auth.js'
+import { requireAuth, requireAdmin } from '../auth.js'
 import { serviceConfig, configuredMap, SERVICES } from './config.js'
 import {
   arrFetch,
   radarr, sonarr, prowlarr, bazarr, arrPing,
   radarrAddPayload, sonarrAddPayload, pickBestRelease,
   curatedPopular, CURATED_MOVIES, CURATED_SERIES,
-  enrichTorrents, pickPosterImage, arrImageFetch,
+  enrichTorrents, pickPosterImage, arrImageFetch, remoteImageFetch,
   parseReleaseName, seasonEpisodeLabel, posterUrlFromImage, arrRating,
 } from './arr.js'
 import * as qbit from './qbittorrent.js'
-import { tmdbDiscover, tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
+import { tmdbDiscover, tmdbImage, tmdbSeasonEpisodes, tmdbSeriesIdFromTvdb } from './tmdb.js'
 import {
   MAX_TORRENT_BYTES, parseMagnet, parseManualSubmission,
   storeTorrent, takeTorrent, torrentCallbackUrl,
@@ -893,7 +893,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'radarr/queue', err) }
   })
 
-  app.delete('/api/servarr/radarr/queue/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/radarr/queue/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -910,7 +910,7 @@ export function registerServarrRoutes(app) {
   // addImportExclusion so Radarr can't silently re-grab it on the next RSS
   // sync / automatic search (the actual bug being fixed: a movie deleted only
   // from qBittorrent stayed monitored in Radarr and kept coming back).
-  app.delete('/api/servarr/radarr/movie/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/radarr/movie/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -953,7 +953,7 @@ export function registerServarrRoutes(app) {
   // Same fix as radarr/movie/delete above, for series: removes the Sonarr
   // record (+files by default) and excludes it so it can't silently re-add
   // itself on the next automatic search.
-  app.delete('/api/servarr/sonarr/series/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/sonarr/series/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -1125,6 +1125,24 @@ export function registerServarrRoutes(app) {
   // Episodes of one season, for the show stage's episode row. Two sources, one
   // shape: a series in the library answers from Sonarr (real episode ids, real
   // file state), one we are only browsing answers from TMDB. Neither writes.
+  // Same-origin proxy for TMDB artwork (episode stills, season posters). The
+  // client must never fetch the CDN directly: its HTTP client carries the
+  // session cookie, and a 404 here is cached negatively so a missing still is
+  // not re-requested on every rebuild.
+  app.get('/api/servarr/tmdb-image', requireAuth, async (req, res) => {
+    const size = (req.query.size || 'w780').toString()
+    const path = (req.query.path || '').toString()
+    try {
+      const { buffer, contentType } = await tmdbImage(path, size)
+      res.set('Content-Type', contentType)
+      res.set('Cache-Control', 'public, max-age=604800, immutable')
+      return res.send(buffer)
+    } catch (err) {
+      res.set('Cache-Control', 'public, max-age=3600')
+      return res.status(err?.status === 400 ? 400 : 404).end()
+    }
+  })
+
   app.get('/api/servarr/sonarr/episodes', requireAuth, async (req, res) => {
     const seasonNumber = Number(req.query.seasonNumber)
     if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
@@ -1350,6 +1368,25 @@ export function registerServarrRoutes(app) {
     }
   })
 
+  // Same-origin proxy for Radarr/Sonarr poster/backdrop art (image.remoteUrl).
+  // The client must never fetch the CDN directly: its HTTP client carries the
+  // session cookie, so an absolute third-party URL leaks it. `url` is
+  // re-validated against the artwork host allow-list inside remoteImageFetch —
+  // this route never trusts that a URL reaching it already came from
+  // posterUrlFromImage/shapeImages.
+  app.get('/api/servarr/remote-image', requireAuth, async (req, res) => {
+    const url = (req.query.url || '').toString()
+    try {
+      const { buffer, contentType } = await remoteImageFetch(url)
+      res.set('Content-Type', contentType)
+      res.set('Cache-Control', 'public, max-age=604800, immutable')
+      return res.send(buffer)
+    } catch (err) {
+      res.set('Cache-Control', 'public, max-age=3600')
+      return res.status(err?.status === 400 ? 400 : 404).end()
+    }
+  })
+
   app.get('/api/servarr/sonarr/queue', requireAuth, async (_req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     try {
@@ -1359,7 +1396,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'sonarr/queue', err) }
   })
 
-  app.delete('/api/servarr/sonarr/queue/:id', requireAuth, async (req, res) => {
+  app.delete('/api/servarr/sonarr/queue/:id', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const id = Number(req.params.id)
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' })
@@ -1532,7 +1569,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'qbittorrent/resume', err) }
   })
 
-  app.post('/api/servarr/qbittorrent/delete', requireAuth, async (req, res) => {
+  app.post('/api/servarr/qbittorrent/delete', requireAdmin, async (req, res) => {
     if (!ensureConfigured('qbittorrent', res)) return
     const hashes = (req.body?.hashes || '').toString().trim()
     if (!hashes) return res.status(400).json({ error: 'hashes required' })
