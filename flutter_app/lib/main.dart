@@ -31,12 +31,6 @@ Future<void> main() async {
   // Initialize libmpv (media_kit) once, before any player is created (E4 uses it).
   MediaKit.ensureInitialized();
 
-  // E10 (packaging): window-state restore, tray icon, and close-to-tray on
-  // desktop. Must run before the first frame; no-op on unsupported platforms.
-  if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-    await DesktopLifecycle.instance.init();
-  }
-
   // Backend-agnostic: the origin is chosen at runtime (the user pastes a
   // server URL) and persisted in SharedPreferences. Read it before building
   // the clients so they start pointed at the right server; null means "not
@@ -123,6 +117,12 @@ Future<void> main() async {
         await container.read(downloaderProvider).pauseAllActive();
       } catch (_) {}
     };
+
+    // Only NOW enable close-to-tray. init() sets preventClose, so doing it
+    // before the handler above exists leaves a window where closing hides the
+    // app with no teardown — and if anything in between threw, that became the
+    // permanent state: a hidden app still holding the camera and mic.
+    await DesktopLifecycle.instance.init();
   }
 
   // Restore a persisted session (GET /api/auth/me) before the first frame, so
