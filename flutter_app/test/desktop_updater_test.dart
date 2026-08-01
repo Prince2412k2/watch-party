@@ -63,4 +63,48 @@ void main() {
     );
     expect(await file.parent.exists(), isTrue);
   });
+
+
+  group('macOS self-update', () {
+    test('macAppBundlePath finds the bundle from the executable inside it', () {
+      expect(
+        macAppBundlePath('/Applications/Watchparty.app/Contents/MacOS/Watchparty'),
+        '/Applications/Watchparty.app',
+      );
+    });
+
+    test('macAppBundlePath returns null for anything that is not a bundle', () {
+      // A bare `flutter run` binary, or an unexpected layout: better to fall back
+      // to a manual install than delete the wrong directory.
+      for (final path in <String>[
+        '/home/p/build/linux/x64/release/bundle/watchparty',
+        '/Applications/Watchparty.app/Contents/Frameworks/x',
+        '/usr/local/bin/watchparty',
+        'watchparty',
+        '',
+      ]) {
+        expect(macAppBundlePath(path), isNull, reason: path);
+      }
+    });
+
+    test('macSwapScript waits for the pid, then replaces and relaunches', () {
+      final script = macSwapScript(
+        pid: 4242,
+        stagedApp: '/tmp/updates/Watchparty-new.app',
+        installedApp: '/Applications/Watchparty.app',
+      );
+      // Order is the whole correctness argument: nothing may touch the installed
+      // bundle until this process is gone.
+      final waitAt = script.indexOf('kill -0 4242');
+      final removeAt = script.indexOf('rm -rf');
+      final dittoAt = script.indexOf('ditto');
+      final openAt = script.indexOf('open');
+      expect(waitAt, greaterThan(-1));
+      expect(waitAt, lessThan(removeAt));
+      expect(removeAt, lessThan(dittoAt));
+      expect(dittoAt, lessThan(openAt));
+      expect(script, contains("'/Applications/Watchparty.app'"));
+      expect(script, contains('xattr -dr com.apple.quarantine'));
+    });
+  });
 }
