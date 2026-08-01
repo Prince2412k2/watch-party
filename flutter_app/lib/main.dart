@@ -104,12 +104,24 @@ Future<void> main() async {
     ],
   );
 
-  // Pause playback when the window hides to the tray: close-to-tray keeps the
-  // process (and libmpv) alive, so without this, audio keeps playing from a
-  // window the user thinks they closed.
+  // Close-to-tray keeps the process alive, so closing the window must release
+  // everything the user believes went with it. Playback would keep making sound;
+  // the LiveKit room would hold the camera and mic open, leaving an OS capture
+  // indicator lit for an app that looks closed; downloads would keep consuming
+  // bandwidth. Each step is independent and best-effort — one failure must not
+  // skip the rest, and the camera/mic release is ordered first because it is the
+  // one with a privacy cost.
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-    DesktopLifecycle.instance.onBeforeHide = () {
-      container.read(playerControllerProvider).pause();
+    DesktopLifecycle.instance.onBeforeHide = () async {
+      try {
+        await container.read(livekitProvider.notifier).leave();
+      } catch (_) {}
+      try {
+        await container.read(playerControllerProvider).pause();
+      } catch (_) {}
+      try {
+        await container.read(downloaderProvider).pauseAllActive();
+      } catch (_) {}
     };
   }
 
