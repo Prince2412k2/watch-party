@@ -30,7 +30,6 @@ import { registerLiveKitRoutes } from './livekit.js'
 import { registerServarrRoutes } from './servarr/index.js'
 import { registerDesktopBuildRoutes } from './desktop-builds.js'
 import { refreshPlayback } from './playback.js'
-import { isLiveKitUpgradePath, authorizeLiveKitUpgrade, createLiveKitTokenVerifier } from './livekit-upgrade-auth.js'
 import {
   createSession, getSession, deleteSession,
   findSessionBySocket, findSessionForMember, findSessionByHost,
@@ -152,53 +151,10 @@ const livekitProxy = createProxyMiddleware({
   pathRewrite: { '^/livekit': '' },
 })
 app.use('/livekit', requireAuth, livekitProxy)
-
-// requireAuth above only runs for the HTTP 'request' event — a raw WebSocket
-// 'upgrade' skips the whole Express stack, so it needs its own gate here or
-// it's a straight, unauthenticated line into the internal LiveKit service.
-const livekitTokenVerifier = createLiveKitTokenVerifier(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET)
-
-function rejectUpgrade(socket, code) {
-  const reason = code === 403 ? 'Forbidden' : 'Unauthorized'
-  try { socket.write(`HTTP/1.1 ${code} ${reason}\r\nConnection: close\r\n\r\n`) } catch {}
-  socket.destroy()
-}
-
-// Minimal stand-in for http.ServerResponse so sessionMiddleware (which reads
-// res.setHeader/writeHead/end) can run against a raw upgrade request. Mirrors
-// engine.io's own WebSocketResponse (node_modules/engine.io/build/server.js),
-// which socket.io already relies on to do exactly this for io.engine.use(sessionMiddleware).
-class UpgradeResponse {
-  constructor() { this._headers = {} }
-  setHeader(name, value) { this._headers[name] = value }
-  getHeader(name) { return this._headers[name] }
-  removeHeader(name) { delete this._headers[name] }
-  write() {}
-  writeHead() {}
-  end() {}
-}
-
-// Proxy the WebSocket upgrade for /livekit only; socket.io owns /socket.io
-// upgrades on the same httpServer and never reaches this listener because of
-// the path filter below (both listeners see every 'upgrade' event — this one
-// just ignores what isn't its path, same as it did before this fix).
+// Proxy the WebSocket upgrade for /livekit only. socket.io owns /socket.io
+// upgrades on the same server; the path filter keeps the two from colliding.
 httpServer.on('upgrade', (req, socket, head) => {
-  let pathname, accessToken
-  try {
-    const parsed = new URL(req.url, 'http://localhost')
-    pathname = parsed.pathname
-    accessToken = parsed.searchParams.get('access_token')
-  } catch {
-    return // not a well-formed request line — nothing here claims it
-  }
-  if (!isLiveKitUpgradePath(pathname)) return
-
-  sessionMiddleware(req, new UpgradeResponse(), (err) => {
-    if (err) { console.error('livekit upgrade session error:', err.message); return rejectUpgrade(socket, 401) }
-    authorizeLiveKitUpgrade({ session: req.session, accessToken, tokenVerifier: livekitTokenVerifier })
-      .then((ok) => { ok ? livekitProxy.upgrade(req, socket, head) : rejectUpgrade(socket, 401) })
-      .catch((err) => { console.error('livekit upgrade auth error:', err.message); rejectUpgrade(socket, 401) })
-  })
+  if (req.url && req.url.startsWith('/livekit')) livekitProxy.upgrade(req, socket, head)
 })
 
 app.use(express.json())
