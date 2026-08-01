@@ -37,16 +37,33 @@ class DesktopLifecycle with WindowListener, TrayListener {
   bool _quitting = false;
   SharedPreferences? _prefs;
 
-  /// Invoked just before the window hides to the tray. The process (and libmpv)
-  /// keeps running when close-to-tray hides the window, so callers use this to
-  /// pause media playback — otherwise audio keeps playing from a window the
-  /// user believes they closed. Set from `main.dart` once the providers exist.
-  void Function()? onBeforeHide;
+  /// Invoked before the window hides to the tray AND before an explicit quit.
+  /// The process keeps running when close-to-tray hides the window, so anything
+  /// the user believes they closed has to be released here: media playback (the
+  /// audio would keep going), the LiveKit room (the camera and mic would stay
+  /// live — an active capture indicator on a closed app), and in-flight
+  /// downloads (they would keep eating bandwidth). Set from `main.dart` once the
+  /// providers exist.
+  Future<void> Function()? onBeforeHide;
+
+  /// Runs [onBeforeHide] without letting a failure strand the window. Teardown
+  /// is best-effort by nature — a hung provider must not leave the user with a
+  /// window that refuses to close.
+  Future<void> _releaseResources() async {
+    final release = onBeforeHide;
+    if (release == null) return;
+    try {
+      await release().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Nothing actionable at teardown; the window closes regardless.
+    }
+  }
 
   /// Fully exits even though ordinary window close requests hide to tray.
   Future<void> quitForUpdate() async {
     _quitting = true;
     try {
+      await _releaseResources();
       await _persistBounds();
       await trayManager.destroy();
       await windowManager.setPreventClose(false);
@@ -141,10 +158,11 @@ class DesktopLifecycle with WindowListener, TrayListener {
       await windowManager.destroy();
       return;
     }
-    // Hide instead of exiting: the process (and any in-flight downloads)
-    // keeps running in the tray until "Quit" is chosen explicitly. Pause
-    // playback first so audio doesn't keep going in the hidden window.
-    onBeforeHide?.call();
+    // Hide instead of exiting: the process keeps running in the tray until
+    // "Quit" is chosen explicitly. Release capture, playback and downloads
+    // first — from the user's point of view the app is closed, so nothing may
+    // keep using the camera, the mic, or the network.
+    await _releaseResources();
     await _persistBounds();
     await windowManager.hide();
   }
@@ -172,6 +190,7 @@ class DesktopLifecycle with WindowListener, TrayListener {
         break;
       case 'quit':
         _quitting = true;
+        await _releaseResources();
         await _persistBounds();
         await trayManager.destroy();
         await windowManager.destroy();
