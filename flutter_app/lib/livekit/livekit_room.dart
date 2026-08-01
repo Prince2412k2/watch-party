@@ -374,12 +374,29 @@ class LiveKitRoomService {
     _room = null;
     _listener?.dispose();
     _listener = null;
-    if (room != null) {
-      try {
-        await room.disconnect();
-      } catch (_) {
-        // best-effort
+    if (room == null) return;
+    // Stop capture explicitly before disconnecting. `room.disconnect()` is
+    // documented to unpublish local tracks, but the camera/mic indicator going
+    // dark is a privacy guarantee we should not delegate: if the disconnect
+    // throws or the SDK leaves a track live, the device stays hot. Disabling
+    // first makes the release independent of how disconnect behaves.
+    final lp = room.localParticipant;
+    if (lp != null) {
+      for (final release in [
+        () => lp.setCameraEnabled(false),
+        () => lp.setMicrophoneEnabled(false),
+      ]) {
+        try {
+          await release();
+        } catch (_) {
+          // Keep going — a failure on one device must not skip the other.
+        }
       }
+    }
+    try {
+      await room.disconnect();
+    } catch (_) {
+      // best-effort
     }
   }
 

@@ -129,6 +129,29 @@ class Downloader {
     );
   }
 
+  /// Pause every task that is still in flight, and report how many were
+  /// paused. Used when the window closes: a download the user believes stopped
+  /// must not keep consuming their bandwidth from the tray.
+  Future<int> pauseAllActive() async {
+    final records = await _fd.database.allRecords(group: group);
+    var paused = 0;
+    for (final record in records) {
+      if (record.status != TaskStatus.running &&
+          record.status != TaskStatus.enqueued) {
+        continue;
+      }
+      final task = record.task;
+      if (task is! DownloadTask) continue;
+      try {
+        if (await _fd.pause(task)) paused++;
+      } catch (_) {
+        // Best-effort: one uncooperative task must not block the rest of the
+        // teardown (the window is closing either way).
+      }
+    }
+    return paused;
+  }
+
   Future<bool> pause(String taskId) async {
     final record = await _fd.database.recordForId(taskId);
     final task = record?.task;

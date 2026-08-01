@@ -21,13 +21,18 @@ void main() {
         ..add(responseBytes)
         ..close();
     });
-    final url = 'http://${server.address.host}:${server.port}/poster';
+    // ArtworkCache now refuses to fetch anything off the authenticated dio's
+    // own origin (it must never carry the session cookie to a third-party
+    // host) — so the test dio needs a baseUrl matching the test server, same
+    // as the real app's dio matches the configured backend.
+    final base = 'http://${server.address.host}:${server.port}';
+    const url = '/poster';
 
-    final first = ArtworkCache(Dio(), directory: directory);
+    final first = ArtworkCache(Dio(BaseOptions(baseUrl: base)), directory: directory);
     expect(await first.load(url).single, responseBytes);
 
     responseBytes = <int>[4, 5, 6];
-    final afterRestart = ArtworkCache(Dio(), directory: directory);
+    final afterRestart = ArtworkCache(Dio(BaseOptions(baseUrl: base)), directory: directory);
     final emissions = await afterRestart.load(url).toList();
 
     expect(emissions, [
@@ -56,7 +61,7 @@ void main() {
       });
       final base = 'http://${server.address.host}:${server.port}';
       final cache = ArtworkCache(
-        Dio(),
+        Dio(BaseOptions(baseUrl: base)),
         directory: directory,
         maxMemoryBytes: 3,
       );
