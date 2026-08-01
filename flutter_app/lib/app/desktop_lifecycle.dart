@@ -1,6 +1,14 @@
-// E10 — desktop packaging concerns: window-state persistence and
-// close-to-tray. Kept in its own file so the only touch point in `main.dart`
-// is a single `await DesktopLifecycle.instance.init()` call.
+// E10 — desktop packaging concerns: window-state persistence and an orderly
+// shutdown. Kept in its own file so the only touch point in `main.dart` is a
+// single `await DesktopLifecycle.instance.init()` call.
+//
+// Closing the window QUITS. There is no close-to-tray and no tray icon: the
+// process used to survive a close so downloads could continue, but it also kept
+// the LiveKit room — and therefore the camera and mic — alive behind a window
+// the user believed was gone. Nothing is left that needs a resident process, so
+// the close request is intercepted only long enough to release devices, pause
+// transfers and persist bounds, then the process exits. Downloads resume from
+// their byte offsets on the next launch.
 //
 // Single-instance enforcement is NOT handled here: on Linux it's done
 // natively (linux/runner/my_application.cc uses GApplication's D-Bus
@@ -15,7 +23,6 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart' show Offset, Size;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 const _kWindowX = 'desktop.window.x';
@@ -27,36 +34,26 @@ const _kWindowMaximized = 'desktop.window.maximized';
 const _defaultSize = Size(1280, 720);
 const _minSize = Size(960, 600);
 
-/// Restores persisted window bounds, sets the min-size, and installs a
-/// close-to-tray handler + a Show/Quit tray menu. Call once during startup,
-/// before `runApp`.
-class DesktopLifecycle with WindowListener, TrayListener {
+/// Restores persisted window bounds, sets the min-size, and turns a window
+/// close into an orderly process exit. Call once during startup, before
+/// `runApp`.
+class DesktopLifecycle with WindowListener {
   DesktopLifecycle._();
   static final DesktopLifecycle instance = DesktopLifecycle._();
 
   bool _quitting = false;
-
-  /// Whether the tray icon AND its menu are actually up. Close-to-tray is only
-  /// safe when there is a visible way back: a user who closes the window with no
-  /// tray icon and no Quit menu has a running, invisible app they can only kill
-  /// from the task manager — while it still holds the camera and mic.
-  bool _trayReady = false;
   SharedPreferences? _prefs;
 
-  /// Invoked before the window hides to the tray AND before an explicit quit.
-  /// The process keeps running when close-to-tray hides the window, so anything
-  /// the user believes they closed has to be released here: media playback (the
-  /// audio would keep going), the LiveKit room (the camera and mic would stay
-  /// live — an active capture indicator on a closed app), and in-flight
-  /// downloads (they would keep eating bandwidth). Set from `main.dart` once the
-  /// providers exist.
-  Future<void> Function()? onBeforeHide;
+  /// Invoked once, before the process exits: release the LiveKit room (the
+  /// camera and mic), stop playback, and pause transfers. Set from `main.dart`
+  /// once the providers exist.
+  Future<void> Function()? onShutdown;
 
-  /// Runs [onBeforeHide] without letting a failure strand the window. Teardown
-  /// is best-effort by nature — a hung provider must not leave the user with a
+  /// Runs [onShutdown] without letting a failure block the exit. Teardown is
+  /// best-effort by nature — a hung provider must not leave the user with a
   /// window that refuses to close.
   Future<void> _releaseResources() async {
-    final release = onBeforeHide;
+    final release = onShutdown;
     if (release == null) return;
     try {
       await release().timeout(const Duration(seconds: 3));
@@ -65,13 +62,15 @@ class DesktopLifecycle with WindowListener, TrayListener {
     }
   }
 
-  /// Fully exits even though ordinary window close requests hide to tray.
-  Future<void> quitForUpdate() async {
+  /// Same orderly exit as a window close, for the updater's restart.
+  Future<void> quitForUpdate() => _shutdown();
+
+  Future<void> _shutdown() async {
+    if (_quitting) return;
     _quitting = true;
     try {
       await _releaseResources();
       await _persistBounds();
-      await trayManager.destroy();
       await windowManager.setPreventClose(false);
       await windowManager.destroy();
     } finally {
@@ -108,12 +107,9 @@ class DesktopLifecycle with WindowListener, TrayListener {
     });
 
     windowManager.addListener(this);
-    // Order matters: the tray has to exist before we start intercepting close
-    // requests, or a failure here leaves the window un-closable-but-hidden.
-    await _initTray();
-    if (_trayReady) {
-      await windowManager.setPreventClose(true);
-    }
+    // Intercept the close request — not to keep the process alive, but so the
+    // teardown in onWindowClose gets to run before the process exits.
+    await windowManager.setPreventClose(true);
   }
 
   Size _restoredSize() {
@@ -121,38 +117,6 @@ class DesktopLifecycle with WindowListener, TrayListener {
     final h = _prefs?.getDouble(_kWindowH);
     if (w != null && h != null) return Size(w, h);
     return _defaultSize;
-  }
-
-  Future<void> _initTray() async {
-    trayManager.addListener(this);
-    // The app must still launch when a platform package omits the optional tray
-    // icon. Previously this threw before runApp(), leaving a black window.
-    try {
-      // Windows' shell tray wants an .ico; the other platforms take the PNG.
-      await trayManager.setIcon(
-        Platform.isWindows
-            ? 'assets/icons/tray_icon.ico'
-            : 'assets/icons/tray_icon.png',
-      );
-    } catch (_) {
-      return;
-    }
-    if (!Platform.isLinux) {
-      // tray_manager's Linux (libayatana-appindicator) backend doesn't
-      // implement setToolTip — only setIcon/setTitle/setContextMenu/destroy.
-      await trayManager.setToolTip('Watchparty');
-    }
-    await trayManager.setContextMenu(
-      Menu(
-        items: [
-          MenuItem(key: 'show', label: 'Show Watchparty'),
-          MenuItem.separator(),
-          MenuItem(key: 'quit', label: 'Quit'),
-        ],
-      ),
-    );
-    // Only now is hiding to the tray recoverable.
-    _trayReady = true;
   }
 
   Future<void> _persistBounds() async {
@@ -168,57 +132,11 @@ class DesktopLifecycle with WindowListener, TrayListener {
   // --- WindowListener ---
 
   @override
-  void onWindowClose() async {
-    if (_quitting) {
-      await windowManager.destroy();
-      return;
-    }
-    // Release capture, playback and downloads first — from the user's point of
-    // view the app is closed, so nothing may keep using the camera, the mic, or
-    // the network.
-    await _releaseResources();
-    await _persistBounds();
-    if (!_trayReady) {
-      // No tray to come back from: quit for real rather than becoming an
-      // invisible process the user can only end from the task manager.
-      _quitting = true;
-      await windowManager.setPreventClose(false);
-      await windowManager.destroy();
-      exit(0);
-    }
-    // Hide instead of exiting: the process keeps running in the tray until
-    // "Quit" is chosen explicitly.
-    await windowManager.hide();
-  }
+  void onWindowClose() => _shutdown();
 
   @override
   void onWindowMoved() => _persistBounds();
 
   @override
   void onWindowResized() => _persistBounds();
-
-  // --- TrayListener ---
-
-  @override
-  void onTrayIconMouseDown() {
-    windowManager.show();
-    windowManager.focus();
-  }
-
-  @override
-  void onTrayMenuItemClick(MenuItem menuItem) async {
-    switch (menuItem.key) {
-      case 'show':
-        await windowManager.show();
-        await windowManager.focus();
-        break;
-      case 'quit':
-        _quitting = true;
-        await _releaseResources();
-        await _persistBounds();
-        await trayManager.destroy();
-        await windowManager.destroy();
-        exit(0);
-    }
-  }
 }

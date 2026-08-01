@@ -51,7 +51,6 @@ dependencies:
   json_annotation: ^4.9.0
   logging: ^1.3.0
   window_manager: ^0.5.2
-  tray_manager: ^0.5.3
   flutter_skill: ^0.9.36
   lottie: ^3.5.1
 
@@ -74,10 +73,6 @@ flutter:
     - assets/popcorn.png
     - assets/watch_party.lottie
     - assets/fonts/
-    # Tray icons. Windows' shell wants an .ico; the others take the PNG. These
-    # were previously referenced in code but never declared here (or present),
-    # so tray setup threw and the app hid to a tray that did not exist.
-    - assets/icons/
 
   fonts:
     - family: CircularXX
