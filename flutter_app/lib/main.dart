@@ -98,15 +98,13 @@ Future<void> main() async {
     ],
   );
 
-  // Close-to-tray keeps the process alive, so closing the window must release
-  // everything the user believes went with it. Playback would keep making sound;
-  // the LiveKit room would hold the camera and mic open, leaving an OS capture
-  // indicator lit for an app that looks closed; downloads would keep consuming
-  // bandwidth. Each step is independent and best-effort — one failure must not
-  // skip the rest, and the camera/mic release is ordered first because it is the
-  // one with a privacy cost.
+  // Closing the window exits the process, but not before releasing what the user
+  // expects to stop: the LiveKit room (camera and mic), playback, and in-flight
+  // transfers. Each step is independent and best-effort — one failure must not
+  // skip the rest — and the camera/mic release is ordered first because it is
+  // the one with a privacy cost.
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-    DesktopLifecycle.instance.onBeforeHide = () async {
+    DesktopLifecycle.instance.onShutdown = () async {
       try {
         await container.read(livekitProvider.notifier).leave();
       } catch (_) {}
@@ -118,10 +116,9 @@ Future<void> main() async {
       } catch (_) {}
     };
 
-    // Only NOW enable close-to-tray. init() sets preventClose, so doing it
-    // before the handler above exists leaves a window where closing hides the
-    // app with no teardown — and if anything in between threw, that became the
-    // permanent state: a hidden app still holding the camera and mic.
+    // Only NOW start intercepting close: init() sets preventClose, and a close
+    // arriving before the handler above exists would exit without releasing
+    // anything.
     await DesktopLifecycle.instance.init();
   }
 
