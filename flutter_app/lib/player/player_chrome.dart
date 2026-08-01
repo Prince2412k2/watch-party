@@ -165,6 +165,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
   @override
   void initState() {
     super.initState();
+    FocusManager.instance.addListener(_onGlobalFocusChange);
     final c = widget.controller;
     _position = c.positionNow;
     _duration = c.durationNow;
@@ -400,12 +401,24 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
   @override
   void dispose() {
+    FocusManager.instance.removeListener(_onGlobalFocusChange);
     _idleTimer?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
     _focusNode.dispose();
     super.dispose();
+  }
+
+  /// Re-anchor the keymap when focus is left nowhere useful — the widget that
+  /// held it was disposed (an overlay closing), or focus fell back to a bare
+  /// scope. Without this the player keeps rendering but answers no keys, and the
+  /// platform beeps at every one. Deliberately narrow: a live focus on any real
+  /// widget, including another button or a text field, is left alone.
+  void _onGlobalFocusChange() {
+    final pf = FocusManager.instance.primaryFocus;
+    final stranded = pf == null || pf.context == null || pf is FocusScopeNode;
+    if (stranded) _reclaimKeyboard();
   }
 
   void _scheduleIdle() {
@@ -798,6 +811,20 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _wake();
   }
 
+  /// Take keyboard focus back unless the user is typing (party chat lives
+  /// outside this subtree and must keep its keystrokes).
+  void _reclaimKeyboard() {
+    if (!mounted || !_focusNode.canRequestFocus || _focusNode.hasPrimaryFocus) {
+      return;
+    }
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        focused.findAncestorStateOfType<EditableTextState>() != null) {
+      return;
+    }
+    _focusNode.requestFocus();
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     // Push-to-talk releases on key up — independent of playback-control rights.
     if (event is KeyUpEvent) {
@@ -875,7 +902,16 @@ class _PlayerChromeState extends State<PlayerChrome> {
         onHover: (_) => _wake(),
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onTap: _wake,
+          onTap: () {
+            _wake();
+            // Re-anchor the keymap. autofocus only fires once, at mount: after
+            // focus moves to an overlay (the settings menu) or the window loses
+            // and regains it, primary focus can land outside this subtree and
+            // every keystroke becomes unhandled — the shortcuts silently stop
+            // working and macOS rings the alert bell at each one. Clicking the
+            // stage is the natural "give me the player back" gesture.
+            _reclaimKeyboard();
+          },
           child: Stack(
             fit: StackFit.expand,
             children: [
