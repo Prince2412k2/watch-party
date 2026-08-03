@@ -179,12 +179,13 @@ function DownloadingCard({ torrent }: { torrent: TorrentRecord }) {
         }}>
           <DlPoster src={torrent.posterUrl} kind={torrent.kind} w={54} />
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 5, ...TYPE.meta, fontSize: 10, color: T.brand }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.brand, animation: 'pulse 1.6s ease-in-out infinite' }} />
-              DOWNLOADING
+            {/* Rail is already titled "Downloading now" — the dot alone carries
+                the live cue per card, no need to repeat the word. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.brand, flexShrink: 0, animation: 'pulse 1.6s ease-in-out infinite' }} />
+              <div style={{ ...TYPE.body, fontWeight: 700, color: T.text, minWidth: 0, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{title}</div>
             </div>
-            <div style={{ ...TYPE.body, fontWeight: 700, color: T.text, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{title}</div>
-            {torrent.subtitle && <div style={{ fontFamily: MONO, fontSize: 11, color: T.faint, marginTop: 2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{torrent.subtitle}</div>}
+            {torrent.subtitle && <div style={{ fontFamily: MONO, fontSize: 11, color: T.faint, marginTop: 4, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{torrent.subtitle}</div>}
             <div style={{ marginTop: 'auto', paddingTop: 10 }}>
               <div style={{ height: 6, borderRadius: 999, background: 'rgba(255,255,255,.1)', overflow: 'hidden' }}>
                 <div style={{ width: `${pct}%`, height: '100%', borderRadius: 999, background: T.text, transition: 'width .4s' }} />
@@ -523,6 +524,15 @@ export default function Home() {
   const views = home?.views ?? []
   const nothing = !loading && !error && !resume.length && !latest.length && !nextUp.length && !views.length && !arriving.length
 
+  // "Continue watching" and "Next up" answer the same question — what do I
+  // watch now — so they're one rail, not two stacked back to back. Resume
+  // items (already in progress) lead; next-up items that aren't also mid-watch
+  // fill in after. StillCard only draws a progress bar when it has a played
+  // percentage, so next-up entries fall in cleanly with no false progress.
+  const upNext = resume.length || nextUp.length
+    ? [...resume, ...nextUp.filter(n => !resume.some(r => r.Id === n.Id))]
+    : []
+
   // gentle staggered rise, contiguous over whichever rails actually render
   let idx = 0
   const rise = () => ({ animation: `up .5s ${EASE} both`, animationDelay: `${(idx++) * 0.05}s` })
@@ -548,9 +558,9 @@ export default function Home() {
         {error && !home && <ErrorNote onRetry={() => setReload(n => n + 1)} />}
         {nothing && <EmptyState onStart={openJoin} />}
 
-        {resume.length > 0 && (
-          <Rail title="Continue watching" count={resume.length} style={rise()}>
-            {resume.map(it => <StillCard key={it.Id} item={it} onOpen={setDetail} progress />)}
+        {upNext.length > 0 && (
+          <Rail title="Continue watching" count={upNext.length} style={rise()}>
+            {upNext.map(it => <StillCard key={it.Id} item={it} onOpen={setDetail} progress />)}
           </Rail>
         )}
         {latest.length > 0 && (
@@ -563,13 +573,8 @@ export default function Home() {
             {arriving.map(t => <DownloadingCard key={t.hash} torrent={t} />)}
           </Rail>
         )}
-        {nextUp.length > 0 && (
-          <Rail title="Next up" count={nextUp.length} style={rise()}>
-            {nextUp.map(it => <StillCard key={it.Id} item={it} onOpen={setDetail} />)}
-          </Rail>
-        )}
         {views.length > 0 && (
-          <Rail title="Libraries" count={views.length} style={rise()}>
+          <Rail title="Libraries" count={views.length} style={{ ...rise(), marginTop: SP.lg }}>
             {views.map(v => <ViewCard key={v.Id} view={v} onOpen={setDetail} />)}
           </Rail>
         )}

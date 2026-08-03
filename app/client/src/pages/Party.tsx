@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from 'react'
+import { Rnd } from 'react-rnd'
 import { useParty } from '../context/PartyContext'
 import { useSocket } from '../hooks/useSocket'
 import { useLiveKit } from '../hooks/useLiveKit'
@@ -617,9 +618,22 @@ function ChatSheet() {
   )
 }
 
-// Phone camera strip: a single horizontal row of compact tiles, bottom-anchored
-// just above the control bar, dismissed via the bar's camera toggle. Respects
-// the Phase-2.1 hide-self flag (localParticipant is dropped upstream).
+const CAM_POPUP_DEFAULT_W = 196
+const CAM_POPUP_DEFAULT_H = 116
+const CAM_POPUP_MARGIN = 10
+const CAM_POPUP_MIN_W = 132
+const CAM_POPUP_MIN_H = 76
+
+// Phone camera popup: the "pop-up screen of people" the redesign asked for —
+// a single floating, draggable, resizable window (react-rnd, same library the
+// desktop CameraGrid already uses) instead of a strip pinned full-width above
+// the bar. One <Rnd> frame holds every tile so multiple participants still
+// read as ONE floating element; inside, tiles lay out as a compact horizontal
+// mini-strip (this is a small-group watch party, not a conferencing grid) that
+// scrolls if more people join than fit — the user can just resize the frame
+// wider/taller instead. Dismissed via the bar's camera toggle exactly as
+// before (camStripOpen/onToggleCamStrip — unchanged contract). Respects the
+// Phase-2.1 hide-self flag (localParticipant is dropped upstream).
 function MobileCameraStrip({
   localParticipant, participants = [], isHost, removedCameras = new Set(), onRemove = () => {}, hideSelf, visible,
 }: {
@@ -638,32 +652,86 @@ function MobileCameraStrip({
   ]
     // Bug 5: only tiles for cameras that are actually ON (no avatar placeholders).
     .filter(p => !!p.videoTrack)
+
+  const boundsRef = useRef<HTMLDivElement | null>(null)
+  const [defaultFrame, setDefaultFrame] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+
+  // Compute a sensible default position/size once, from the ACTUAL measured
+  // bounds box below (which already excludes the safe areas and the bar) —
+  // not a guess from window size — so the popup never opens overlapping the
+  // bar or off a notch/home-indicator edge. Default corner: bottom-right. The
+  // top-left (room code chip) and top-right (chat/host/leave cluster) corners
+  // are already spoken for; bottom-right sits over the movie but clear of
+  // both. Local, uncontrolled state — no persistence across sessions, and a
+  // remount (closing and reopening the popup) just recomputes this again.
+  useLayoutEffect(() => {
+    const el = boundsRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const width = Math.min(CAM_POPUP_DEFAULT_W, Math.max(CAM_POPUP_MIN_W, rect.width - CAM_POPUP_MARGIN * 2))
+    const height = Math.min(CAM_POPUP_DEFAULT_H, Math.max(CAM_POPUP_MIN_H, rect.height - CAM_POPUP_MARGIN * 2))
+    setDefaultFrame({
+      width, height,
+      x: Math.max(0, rect.width - width - CAM_POPUP_MARGIN),
+      y: Math.max(0, rect.height - height - CAM_POPUP_MARGIN),
+    })
+  }, [])
+
   return (
-    <div onClick={(e) => e.stopPropagation()} style={{
+    <div ref={boundsRef} style={{
       position: 'absolute', zIndex: Z.cameraStrip,
-      left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
-      // Sit above the bottom control bar when chrome is shown; slide down to the
-      // safe-area edge when it hides. Clearance derives from the bar's REAL
-      // measured height (published as --watch-bar-h by MobileBottomBar) so it
-      // tracks any change to the bar's contents: bar bottom is (--sa-b + 8px),
-      // plus the bar height, plus an 8px gap above it. Falls back to 56px (→ the
-      // old 72px total) before the bar has measured.
+      top: 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
+      // Same clearance the old strip used: sit above the bottom bar when chrome
+      // is shown; drop to the safe-area edge when it hides. Clearance derives
+      // from the bar's REAL measured height (published as --watch-bar-h by
+      // MobileBottomBar) so it tracks any change to the bar's contents. This is
+      // the drag/resize BOUNDS box (react-rnd's bounds="parent" reads this
+      // element's real rect) — the frame itself can be parked anywhere inside
+      // it, but never dragged/resized outside it.
       bottom: visible ? 'calc(var(--sa-b) + 8px + var(--watch-bar-h, 56px) + 8px)' : 'calc(var(--sa-b) + 8px)',
       transition: 'bottom .25s cubic-bezier(.2,0,.1,1)',
-      display: 'flex', gap: 8, overflowX: 'auto', padding: 2, pointerEvents: 'auto',
+      pointerEvents: 'none',
     }}>
-      {all.length === 0 && (
-        <div style={{ ...glass('light'), borderRadius: 12, padding: '10px 14px', fontSize: 12.5, color: 'rgba(255,255,255,.6)' }}>No cameras</div>
+      {defaultFrame && (
+        <Rnd
+          default={defaultFrame}
+          bounds="parent"
+          minWidth={CAM_POPUP_MIN_W}
+          minHeight={CAM_POPUP_MIN_H}
+          style={{ pointerEvents: 'auto' }}
+          onClick={(e: MouseEvent) => e.stopPropagation()}
+        >
+          <div style={{
+            width: '100%', height: '100%', borderRadius: 16, overflow: 'hidden', position: 'relative',
+            background: 'rgba(10,10,14,.72)', border: '1px solid rgba(255,255,255,.16)',
+            boxShadow: '0 12px 32px rgba(0,0,0,.5)',
+            animation: 'in .2s cubic-bezier(.2,0,.1,1) both',
+          }}>
+            {all.length === 0 && (
+              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 12.5, color: 'rgba(255,255,255,.55)' }}>No cameras</div>
+            )}
+            <div style={{ width: '100%', height: '100%', display: 'flex', gap: 6, padding: 6, overflowX: 'auto', overflowY: 'hidden' }}>
+              {all.map(p => (
+                <div key={p.identity} style={{
+                  position: 'relative', height: '100%', flexShrink: 0,
+                  width: all.length === 1 ? '100%' : undefined,
+                  aspectRatio: all.length === 1 ? undefined : '4/3',
+                  minWidth: all.length === 1 ? undefined : 64,
+                  borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(255,255,255,.16)',
+                }}>
+                  <CameraTile participant={p} isLocal={p.isLocal} isHost={isHost} onRemove={() => onRemove(p.identity)} />
+                </div>
+              ))}
+            </div>
+            {/* Drag affordance — same corner-dots hint the desktop CameraGrid's
+                per-tile Rnd frames use. Purely visual, non-interactive; the
+                frame itself is draggable from anywhere on it. */}
+            <div aria-hidden style={{ position: 'absolute', top: 7, left: 8, display: 'flex', gap: 3, pointerEvents: 'none' }}>
+              {[0, 1, 2].map(k => <div key={k} style={{ width: 3, height: 3, borderRadius: '50%', background: 'rgba(255,255,255,.5)' }} />)}
+            </div>
+          </div>
+        </Rnd>
       )}
-      {all.map(p => (
-        <div key={p.identity} style={{
-          position: 'relative', width: 108, aspectRatio: '4/3', flexShrink: 0,
-          borderRadius: 13, overflow: 'hidden', border: '1px solid rgba(255,255,255,.18)',
-          boxShadow: '0 8px 24px rgba(0,0,0,.45)',
-        }}>
-          <CameraTile participant={p} isLocal={p.isLocal} isHost={isHost} onRemove={() => onRemove(p.identity)} />
-        </div>
-      ))}
     </div>
   )
 }
