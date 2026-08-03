@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { T } from './theme'
 import { ShellContext } from './shellContext'
@@ -30,6 +30,28 @@ export default function MobileApp({ path }: { path?: string } = {}) {
   const { key, el, tab } = screenFor(path)
 
   const ctx = useMemo(() => ({ openJoin: () => setJoinOpen(true), path }), [path])
+
+  // `--app-vh` hardens `.mobile-shell`'s `100dvh` against iOS cases where the
+  // CSS unit under-reports the real visible height (standalone/home-screen
+  // mode, or a residual gap left after the keyboard dismisses) — see
+  // styles.css's `.mobile-shell` comment. `visualViewport` is preferred over
+  // `innerHeight` since it tracks the actually-visible area, which is exactly
+  // what's unreliable here.
+  useEffect(() => {
+    const set = () => {
+      const h = window.visualViewport?.height ?? window.innerHeight
+      document.documentElement.style.setProperty('--app-vh', `${h}px`)
+    }
+    set()
+    window.visualViewport?.addEventListener('resize', set)
+    window.addEventListener('resize', set)
+    window.addEventListener('orientationchange', set)
+    return () => {
+      window.visualViewport?.removeEventListener('resize', set)
+      window.removeEventListener('resize', set)
+      window.removeEventListener('orientationchange', set)
+    }
+  }, [])
 
   return (
     <ShellContext.Provider value={ctx}>

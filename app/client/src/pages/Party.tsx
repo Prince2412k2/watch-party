@@ -223,8 +223,11 @@ function WatchView({
   // Phase B). Drives the button icon, orientation lock, and the control-layer poke.
   const [immersive, setImmersive] = useState(false)
   const [ripple, setRipple] = useState(0)
-  // Cameras start collapsed on phones so they never cover the movie by default.
-  const [camStripOpen, setCamStripOpen] = useState(false)
+  // Shown whenever there's a camera actually worth looking at — mine or a
+  // remote participant's — instead of a separate manual show/hide toggle.
+  // That toggle used to mean turning your camera on and SEEING it were two
+  // different taps; this makes "camera on" the only action needed.
+  const camStripOpen = lk.camOn || lk.participants.some(p => !!p.videoTrack)
 
   // ── Audio interaction model ──────────────────────────────────────────────
   // Default-mute-on-movie-start: WatchView mounts exactly when the session
@@ -460,7 +463,7 @@ function WatchView({
           hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
           onOpenChat={() => openChat(true)} layoutMode={layoutMode}
           visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
-          phone={phone} camStripOpen={camStripOpen} onToggleCamStrip={() => setCamStripOpen(o => !o)}
+          phone={phone} camStripOpen={camStripOpen}
           seekBridgeRef={seekBridgeRef}
         />
         {/* Desktop camera layouts */}
@@ -631,8 +634,11 @@ const CAM_POPUP_MIN_H = 76
 // read as ONE floating element; inside, tiles lay out as a compact horizontal
 // mini-strip (this is a small-group watch party, not a conferencing grid) that
 // scrolls if more people join than fit — the user can just resize the frame
-// wider/taller instead. Dismissed via the bar's camera toggle exactly as
-// before (camStripOpen/onToggleCamStrip — unchanged contract). Respects the
+// wider/taller instead. `camStripOpen` is no longer a manual toggle: it's
+// derived from whether there's a camera actually on (mine or a remote
+// participant's), so turning your camera on is the only tap needed to see it
+// — a separate show/hide button used to make that a two-step action, which
+// read as "I have to turn on my camera from two places." Respects the
 // Phase-2.1 hide-self flag (localParticipant is dropped upstream).
 function MobileCameraStrip({
   localParticipant, participants = [], isHost, removedCameras = new Set(), onRemove = () => {}, hideSelf, visible,

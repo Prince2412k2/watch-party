@@ -34,8 +34,11 @@ export default function Login({ onSuccess }: { onSuccess?: () => void } = {}) {
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--text)', overflow: 'hidden' }}>
       <div style={{ width: 380, maxWidth: '90vw', padding: '48px 36px', borderRadius: 16, background: 'var(--surface)', border: '1px solid var(--line)' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-.01em', color: 'var(--text)', marginBottom: 44, textAlign: 'center' }}>
-          Watchparty
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginBottom: 44 }}>
+          <img src="/icon.svg" alt="" width={40} height={40} style={{ display: 'block' }} />
+          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-.01em', color: 'var(--text)' }}>
+            Watchparty
+          </div>
         </div>
 
         <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-.02em', lineHeight: 1.15, marginBottom: 8 }}>
