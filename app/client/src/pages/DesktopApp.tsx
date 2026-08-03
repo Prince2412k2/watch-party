@@ -36,8 +36,11 @@ export default function DesktopApp() {
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--text)', overflow: 'auto' }}>
       <div style={{ width: 480, maxWidth: '90vw', padding: '48px 36px' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-.01em', marginBottom: 36, textAlign: 'center' }}>
-          Watchparty
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginBottom: 36 }}>
+          <img src="/icon.svg" alt="" width={40} height={40} style={{ display: 'block' }} />
+          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-.01em' }}>
+            Watchparty
+          </div>
         </div>
 
         <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-.02em', lineHeight: 1.15, marginBottom: 8 }}>
