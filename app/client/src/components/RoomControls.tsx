@@ -17,6 +17,7 @@ function initials(name = '') {
  */
 export default function RoomControls({
   stage, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false,
+  layoutMode, onToggleLayout, hideSelf, onToggleHideSelf,
 }: {
   stage?: string
   top?: number
@@ -24,6 +25,10 @@ export default function RoomControls({
   phone?: boolean
   onOpenChat?: () => void
   chatOpen?: boolean
+  layoutMode?: 'float' | 'dock'
+  onToggleLayout?: () => void
+  hideSelf?: boolean
+  onToggleHideSelf?: () => void
 } = {}) {
   const party = useParty()
   const {
@@ -126,19 +131,28 @@ export default function RoomControls({
         </button>
       </div>
 
-      {/* Desktop opens this menu with a right click anywhere on the player.
-          Phones keep the visible control because they have no context click. */}
-      {phone ? <div style={{ position: 'absolute', top: 'calc(var(--sa-t) + 8px)', right: 'calc(var(--sa-r) + 8px)', zIndex: 40, display: 'flex', alignItems: 'center', gap: 8, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transform: visible ? 'translateY(0)' : 'translateY(-6px)', transition: 'opacity .25s, transform .25s' }}>
+      {/* Top-right room cluster: chat + the watch-party menu. Rendered on BOTH
+          desktop and phone now. Desktop used to reach this menu only via a right
+          click on the player, which nobody could discover; the right-click
+          shortcut is still wired above for anyone used to it. */}
+      <div style={{
+        position: 'absolute',
+        top: phone ? 'calc(var(--sa-t) + 8px)' : top,
+        right: phone ? 'calc(var(--sa-r) + 8px)' : 14,
+        zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 6,
+        opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none',
+        transform: visible ? 'translateY(0)' : 'translateY(-6px)', transition: 'opacity .25s, transform .25s',
+      }}>
         {watching && onOpenChat ? (
-          <button onClick={(event) => { event.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: 44, height: 44, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+          <button onClick={(event) => { event.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: phone ? 44 : 38, height: phone ? 44 : 38, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
+            <svg width={phone ? 19 : 18} height={phone ? 19 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
           </button>
         ) : null}
-        <button onClick={(event) => { event.stopPropagation(); setOpen(value => !value) }} title="Watch party" aria-label="Watch party" aria-expanded={open} style={{ position: 'relative', minWidth: 52, height: 52, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, borderRadius: 18, border: '1px solid rgba(255,255,255,.14)', color: '#f5f4f0', background: '#202126', boxShadow: '0 15px 38px rgba(0,0,0,.38)', cursor: 'pointer' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
-          {waiting.length > 0 ? <span style={{ position: 'absolute', top: -5, right: -5, minWidth: 20, height: 20, padding: '0 5px', borderRadius: 10, display: 'grid', placeItems: 'center', color: '#fff', background: 'var(--red)', fontSize: 10, fontWeight: 800 }}>{waiting.length}</span> : null}
+        <button onClick={(event) => { event.stopPropagation(); setOpen(value => !value) }} title="Watch party" aria-label="Watch party" aria-expanded={open} style={{ position: 'relative', minWidth: phone ? 52 : 38, height: phone ? 52 : 38, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, borderRadius: phone ? 18 : 10, border: phone ? '1px solid rgba(255,255,255,.14)' : 'none', color: phone ? '#f5f4f0' : 'var(--text2)', background: phone ? '#202126' : 'transparent', boxShadow: phone ? '0 15px 38px rgba(0,0,0,.38)' : 'none', cursor: 'pointer' }}>
+          <svg width={phone ? 20 : 18} height={phone ? 20 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+          {waiting.length > 0 ? <span style={{ position: 'absolute', top: -5, right: -5, minWidth: phone ? 20 : 17, height: phone ? 20 : 17, padding: '0 5px', borderRadius: 10, display: 'grid', placeItems: 'center', color: '#fff', background: 'var(--red)', fontSize: 10, fontWeight: 800 }}>{waiting.length}</span> : null}
         </button>
-      </div> : null}
+      </div>
 
       {/* Join-request sidebar (host only) — stays visible; it's a notification */}
       {isHost && waiting.length > 0 && (
@@ -210,6 +224,39 @@ export default function RoomControls({
                   <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--text)', display: 'block' }} />
                 </button>
               </div> : null}
+
+              {/* Personal camera-view preferences. Local-only and available to
+                  everyone (not host-gated) — they moved here when the player's
+                  bottom bar was pared back to the essentials. */}
+              {watching && (onToggleHideSelf || onToggleLayout) ? (
+                <div style={{ padding: '16px 0 4px', borderTop: '1px solid var(--stroke)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text3)' }}>My camera view</div>
+                  {onToggleHideSelf ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14.5, fontWeight: 600 }}>Hide my own camera</div>
+                        <div style={{ fontSize: 12.5, color: 'var(--text3)', marginTop: 2 }}>Others still see you — this only drops your own tile</div>
+                      </div>
+                      <button onClick={onToggleHideSelf} style={{ width: 44, height: 26, borderRadius: 13, border: '1px solid var(--stroke2)', cursor: 'pointer', padding: 3, flexShrink: 0, background: hideSelf ? 'var(--stroke2)' : 'transparent', transition: 'background .2s', display: 'flex', alignItems: 'center', justifyContent: hideSelf ? 'flex-end' : 'flex-start' }}>
+                        <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--text)', display: 'block' }} />
+                      </button>
+                    </div>
+                  ) : null}
+                  {onToggleLayout && !phone ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14.5, fontWeight: 600 }}>Camera layout</div>
+                        <div style={{ fontSize: 12.5, color: 'var(--text3)', marginTop: 2 }}>
+                          {layoutMode === 'dock' ? 'Docked in a column beside the video' : 'Floating over the video, drag anywhere'}
+                        </div>
+                      </div>
+                      <button onClick={onToggleLayout} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: 9, border: '1px solid var(--stroke2)', background: 'var(--glass2)', color: 'var(--text)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+                        {layoutMode === 'dock' ? 'Float' : 'Dock'}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               {watching && isHost && (
                 <div style={{ padding: '16px 0 4px', borderTop: '1px solid var(--stroke)' }}>

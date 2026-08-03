@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, useCallback, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState, useCallback, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
 import { createPlayer } from '@videojs/react'
 import { VideoSkin, videoFeatures } from '@videojs/react/video'
 import { HlsVideo } from '@videojs/react/media/hls-video'
 import '@videojs/react/video/skin.css'
 import { useSyncPlay } from '../hooks/useSyncPlay'
-import { useWideBar } from '../hooks/useIsMobile'
 import { Z } from '../watchLayers'
 import { createTransportIntent } from '../sync/transportIntent'
 import { isBuffered } from '../sync/bufferSeek'
@@ -38,7 +37,14 @@ export interface PlayerTrack { index: number; displayTitle?: string; title?: str
 export interface PlayerPlayback { mediaSourceId?: string | null; audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
 export interface PlayerProps {
   hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
-  onToggleMic?: VoidCallback; onToggleCam?: VoidCallback; micOn?: boolean; camOn?: boolean; talking?: boolean; onTalkStart?: VoidCallback; onTalkEnd?: VoidCallback
+  onToggleMic?: VoidCallback; onToggleCam?: VoidCallback; micOn?: boolean; camOn?: boolean
+  // Purely-local display toggle: "hide every camera tile from MY screen". Owned
+  // by WatchView (Party.tsx); it is never published to the room, so the eye
+  // button below is available to guests as well as controllers.
+  hideAllFeeds?: boolean; onToggleHideAllFeeds?: VoidCallback
+  // onOpenChat / onToggleLayout / layoutMode / hideSelf / onToggleHideSelf are
+  // no longer rendered by the redesigned web bars, but NativePlayer (the Tauri
+  // docked chrome row) still consumes every one of them — do not drop them.
   onToggleLayout?: VoidCallback; onOpenChat?: VoidCallback; layoutMode?: 'float' | 'dock'; hideSelf?: boolean; onToggleHideSelf?: VoidCallback
   visible?: boolean; immersive?: boolean; enterImmersive?: VoidCallback; exitImmersive?: VoidCallback; phone?: boolean; camStripOpen?: boolean
   seekBridgeRef?: SeekBridgeRef; onSetPlaybackTracks?: (tracks: TrackSelection) => void
@@ -128,7 +134,7 @@ function useSubtitlePreferences(videoRef?: RefObject<HTMLVideoElement | null>, c
 export default function Player({
   hlsUrl, playback, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
   onToggleMic, onToggleCam, micOn, camOn,
-  talking, onTalkStart, onTalkEnd,
+  hideAllFeeds, onToggleHideAllFeeds,
   onToggleLayout, onOpenChat, layoutMode,
   hideSelf, onToggleHideSelf,
   visible = true, immersive, enterImmersive, exitImmersive,
@@ -171,7 +177,7 @@ export default function Player({
         hlsUrl={hlsUrl} isHost={isHost} collaborativeControl={collaborativeControl}
         syncMode={syncMode} onStruggle={onStruggle} canControl={canControl}
         onToggleMic={onToggleMic} onToggleCam={onToggleCam} micOn={micOn} camOn={camOn}
-        talking={talking} onToggleLayout={onToggleLayout} onOpenChat={onOpenChat} layoutMode={layoutMode}
+        onToggleLayout={onToggleLayout} onOpenChat={onOpenChat} layoutMode={layoutMode}
         hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
         immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
         phone={phone} camStripOpen={camStripOpen}
@@ -224,26 +230,24 @@ export default function Player({
             canManageMedia={Boolean(isHost)}
             canControl={canControl} localPhase={localPhase}
             micOn={micOn} camOn={camOn}
-            talking={talking} onTalkStart={onTalkStart} onTalkEnd={onTalkEnd}
             onToggleMic={onToggleMic} onToggleCam={onToggleCam}
-            onToggleLayout={onToggleLayout} layoutMode={layoutMode}
-            hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
+            hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
             visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
           />
         ) : (
           <>
-            {/* Quiet top-of-stage row: only meaningful while chrome is visible.
-                Room-essential toggles only — no labels, no boxes. */}
-            <TopBar
-              visible={visible} onOpenChat={onOpenChat}
-              micOn={micOn} camOn={camOn} onToggleMic={onToggleMic} onToggleCam={onToggleCam}
-              talking={talking} hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-              onToggleLayout={onToggleLayout} layoutMode={layoutMode}
-            />
+            {/* The primary transport on desktop: one big knob over the middle of
+                the frame. Controllers only — a guest gets no transport at all,
+                just the "Host controls playback" hint in the bar. Deliberately
+                NOT rendered on phones, where the surface owns single-tap
+                (chrome) and double-tap (±10s) gestures a center knob would
+                fight; phones keep play/pause in the bar instead. */}
+            {canControl && <CenterTransport visible={visible} localPhase={localPhase} />}
 
-            {/* One control row, pinned bottom, over the single allowed black-alpha
-                scrim. Read-only for guests (no thumb, no pointer events on the
-                scrubber) — canControl gates interactivity throughout. */}
+            {/* Scrubber row + one control row, pinned bottom, over the single
+                allowed black-alpha scrim. Read-only for guests (no thumb, no
+                pointer events on the scrubber) — canControl gates
+                interactivity throughout. */}
             <DesktopControlBar
               mediaItemId={mediaItemId}
               mediaElementRef={videoRef}
@@ -255,7 +259,9 @@ export default function Player({
               visible={visible} canControl={canControl}
               immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
               userMuted={userMuted} onToggleMuted={toggleMuted}
-              localPhase={localPhase}
+              micOn={micOn} camOn={camOn}
+              onToggleMic={onToggleMic} onToggleCam={onToggleCam}
+              hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
             />
           </>
         )}
@@ -280,7 +286,7 @@ export default function Player({
 //      below the video stage — never overlapping it
 function NativePlayer({
   hlsUrl, isHost, collaborativeControl, syncMode, onStruggle, canControl,
-  onToggleMic, onToggleCam, micOn, camOn, talking,
+  onToggleMic, onToggleCam, micOn, camOn,
   onToggleLayout, onOpenChat, layoutMode,
   hideSelf, onToggleHideSelf,
   immersive, enterImmersive, exitImmersive,
@@ -423,7 +429,7 @@ function NativePlayer({
           </IconBtn>
         )}
         {onToggleMic && (
-          <IconBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn} active={talking}>
+          <IconBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn}>
             {micOn
               ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
               : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
@@ -831,54 +837,6 @@ function IconBtn({ onClick, title, active, danger, size = 34, children, style }:
   )
 }
 
-// Quiet top-of-stage row (desktop). Only renders content while chrome is
-// visible; fades with it. No title/back affordance is wired here — Player
-// isn't handed a title or a back handler, only room-essential toggles.
-function TopBar({ visible, onOpenChat, micOn, camOn, onToggleMic, onToggleCam, talking, hideSelf, onToggleHideSelf, onToggleLayout, layoutMode }: PlayerProps = {}) {
-  return (
-    <div style={{
-      position: 'absolute', top: 0, left: 0, right: 0, zIndex: Z.controlBar,
-      display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
-      padding: '10px 14px',
-      opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
-    }}>
-      {onOpenChat && (
-        <IconBtn onClick={onOpenChat} title="Chat">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M21 11.5a8.4 8.4 0 0 1-1.1 4.2L21 20l-4.3-1a8.4 8.4 0 1 1 4.3-7.5Z"/></svg>
-        </IconBtn>
-      )}
-      {onToggleMic && (
-        <IconBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn} active={talking}>
-          {micOn
-            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
-            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
-        </IconBtn>
-      )}
-      {onToggleCam && (
-        <IconBtn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
-          {camOn
-            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
-            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
-        </IconBtn>
-      )}
-      {onToggleHideSelf && (
-        <IconBtn onClick={onToggleHideSelf} active={hideSelf} title={hideSelf ? 'Show my camera to me' : 'Hide my camera from me'}>
-          {hideSelf
-            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
-            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
-        </IconBtn>
-      )}
-      {onToggleLayout && (
-        <IconBtn onClick={onToggleLayout} title="Camera layout">
-          {layoutMode === 'float'
-            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><rect x="13" y="12" width="6" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
-            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="6" height="18" rx="1.5"/><rect x="11" y="3" width="10" height="18" rx="1.5"/></svg>}
-        </IconBtn>
-      )}
-    </div>
-  )
-}
-
 // Host restores audio after autoplay-with-sound was blocked. Flat, no glass,
 // no color — a plain dim pill that brightens on hover.
 function RestoreSoundPrompt({ onClick }: { onClick?: VoidCallback } = {}) {
@@ -911,35 +869,109 @@ function UnmuteButton({ onClick }: { onClick?: VoidCallback } = {}) {
   )
 }
 
-// Hold-T-to-talk hint / live "Talking…" state, shown above the AV cluster.
-// Neutral — no green. Active state = brighter + a plain white pulse dot, per
-// the "active = brightness, not color" rule.
-function PTTHint({ talking, muted }: { talking?: boolean; muted?: boolean } = {}) {
-  if (!talking && !muted) return null
+// ── Desktop centre transport ─────────────────────────────────────────────────
+// The big play/pause knob over the middle of the frame — the primary transport
+// on the web desktop player (the bottom row carries no play button any more).
+// Rendered only for controllers, so a guest sees an unobstructed frame and gets
+// the "Host controls playback" hint in the bar instead.
+//
+// Authoring is unchanged from the button it replaces: dispatch `watch:transport`
+// and let SyncBridge's own handler do requestPlay/requestPause under
+// holdApplying. `localPhase` keeps the glyph honest — useSyncPlay pauses the
+// element itself while catching up/buffering, and without this guard the knob
+// would flip to "Play" even though shared intent is still "playing" (and a tap
+// would author a spurious play).
+function CenterTransport({ visible, localPhase = 'ready' }: { visible?: boolean; localPhase?: LocalPhase } = {}) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
+  const [paused, setPaused] = useState(true)
+
+  useEffect(() => {
+    if (!media) return
+    const sync = () => setPaused(!!media.paused && localPhase === 'ready')
+    sync()
+    media.addEventListener('play', sync)
+    media.addEventListener('pause', sync)
+    return () => { media.removeEventListener('play', sync); media.removeEventListener('pause', sync) }
+  }, [media, localPhase])
+
+  const togglePlay = () => window.dispatchEvent(new CustomEvent('watch:transport', { detail: { kind: paused ? 'play' : 'pause' } }))
+
   return (
+    // The wrapper spans the whole stage but is pointer-events:none, so only the
+    // knob is clickable and the video surface below keeps its own gestures.
     <div style={{
-      display: 'inline-flex', alignItems: 'center', gap: 7,
-      padding: '5px 11px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-      background: 'rgba(0,0,0,.5)', color: talking ? '#f4f4f5' : 'rgba(244,244,245,.62)',
-      transition: 'color .15s',
+      position: 'absolute', inset: 0, zIndex: Z.controlBar, display: 'grid', placeItems: 'center',
+      opacity: visible ? 1 : 0, transition: 'opacity .25s', pointerEvents: 'none',
     }}>
-      {talking ? (
-        <>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f4f4f5', animation: 'pulse 1.2s ease-in-out infinite' }} />
-          Talking…
-        </>
-      ) : (
-        <>
-          <kbd style={{
-            fontFamily: 'inherit', fontSize: 11, fontWeight: 700, lineHeight: 1,
-            padding: '2px 6px', borderRadius: 5, background: 'rgba(255,255,255,.1)',
-            border: '1px solid rgba(255,255,255,.14)',
-          }}>T</kbd>
-          Hold to talk
-        </>
-      )}
+      <button
+        onClick={(e) => { e.stopPropagation(); togglePlay() }}
+        title={paused ? 'Play (Space)' : 'Pause (Space)'} aria-label={paused ? 'Play' : 'Pause'}
+        style={{
+          width: 78, height: 78, borderRadius: '50%', border: 'none',
+          display: 'grid', placeItems: 'center', cursor: 'pointer',
+          background: 'rgba(0,0,0,.42)', color: '#f4f4f5',
+          pointerEvents: visible ? 'auto' : 'none',
+          transition: 'background-color .15s, transform .12s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(0,0,0,.62)'; e.currentTarget.style.transform = 'scale(1.05)' }}
+        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(0,0,0,.42)'; e.currentTarget.style.transform = 'scale(1)' }}
+      >
+        {paused
+          ? <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 3 }}><path d="M8 5v14l11-7z"/></svg>
+          : <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
+      </button>
     </div>
   )
+}
+
+// ── The three feed controls shared by both web bars ──────────────────────────
+// hide-all-feeds, camera, mic — in that order, dead centre of the bottom row on
+// desktop and on phones. `Btn` is the host bar's own button shell (IconBtn on
+// desktop, the 44px-touch-target BarBtn on phones) so each bar keeps its own
+// hit-area rules while the glyph set and wiring stay in one place.
+//
+// None of the three is gated on canControl: they're room/display controls, not
+// playback, so a guest gets all of them. Hide-all-feeds in particular is purely
+// local — it hides every camera tile from THIS screen only.
+type FeedControlProps = Pick<PlayerProps, 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds'>
+function FeedControls({ Btn, glyph, micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds }: FeedControlProps & { Btn: ComponentType<ButtonProps>; glyph: number }) {
+  return (
+    <>
+      {onToggleHideAllFeeds && (
+        <Btn onClick={onToggleHideAllFeeds} active={hideAllFeeds} title={hideAllFeeds ? 'Show camera feeds' : 'Hide camera feeds'}>
+          {hideAllFeeds
+            ? <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
+            : <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
+        </Btn>
+      )}
+      {onToggleCam && (
+        <Btn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
+          {camOn
+            ? <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
+            : <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
+        </Btn>
+      )}
+      {onToggleMic && (
+        <Btn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn}>
+          {micOn
+            ? <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
+            : <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
+        </Btn>
+      )}
+    </>
+  )
+}
+
+// Gear glyph — one copy, used by both bars' settings button.
+function GearGlyph({ size }: { size: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+}
+
+// Fullscreen enter/exit glyph — one copy, used by both bars.
+function FullscreenGlyph({ size, immersive }: { size: number; immersive?: boolean }) {
+  return immersive
+    ? <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
+    : <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>
 }
 
 // ── ABR level control via hls.js (Phase 1.2) ────────────────────────────────
@@ -1384,12 +1416,15 @@ function HostControlsHint() {
   )
 }
 
-// Hover-reveal volume slider. Desktop only, purely local (media.volume) —
-// independent of the shared `userMuted` flag, which callers still flip via
-// the mute icon.
+// Mute icon + volume slider as one left-aligned unit. Desktop only. The slider
+// is always shown now (it used to hover-reveal from 0 width) so the left cluster
+// reads as a single control instead of a glyph that grows a tail on hover.
+//
+// Volume is purely local (media.volume) and — like the mute toggle itself — is
+// deliberately NOT gated on canControl: audio is independent of playback-control
+// permission, so a guest can unmute and set their own level.
 function VolumeControl({ userMuted, onToggleMuted }: { userMuted?: boolean; onToggleMuted?: VoidCallback } = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
-  const [open, setOpen] = useState(false)
   const [volume, setVolume] = useState(1)
 
   useEffect(() => {
@@ -1399,40 +1434,47 @@ function VolumeControl({ userMuted, onToggleMuted }: { userMuted?: boolean; onTo
 
   const muted = userMuted || volume === 0
   return (
-    <div
-      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}
-      style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-    >
-      <IconBtn onClick={onToggleMuted} title={muted ? 'Unmute' : 'Mute'}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+      <IconBtn onClick={onToggleMuted} title={muted ? 'Unmute (M)' : 'Mute (M)'}>
         {muted
           ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M23 9l-6 6M17 9l6 6"/></svg>
           : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 6a9 9 0 0 1 0 12"/></svg>}
       </IconBtn>
-      <div style={{ width: open ? 70 : 0, overflow: 'hidden', transition: 'width .18s' }}>
-        <input
-          type="range" min={0} max={1} step={0.01} value={userMuted ? 0 : volume}
-          onChange={(e) => {
-            const v = Number(e.target.value)
-            setVolume(v)
-            if (media) media.volume = v
-            if (v > 0 && userMuted) onToggleMuted?.()
-            if (v === 0 && !userMuted) onToggleMuted?.()
-          }}
-          style={{ width: 64, accentColor: '#f4f4f5', height: 16, cursor: 'pointer' }}
-        />
-      </div>
+      <input
+        type="range" min={0} max={1} step={0.01} value={userMuted ? 0 : volume}
+        aria-label="Volume"
+        onChange={(e) => {
+          const v = Number(e.target.value)
+          setVolume(v)
+          if (media) media.volume = v
+          if (v > 0 && userMuted) onToggleMuted?.()
+          if (v === 0 && !userMuted) onToggleMuted?.()
+        }}
+        style={{ width: 76, accentColor: '#f4f4f5', height: 16, cursor: 'pointer' }}
+      />
     </div>
   )
 }
 
-// ── Desktop control row ──────────────────────────────────────────────────────
-// The single pinned-bottom row: play/pause, current time, scrubber, duration,
-// volume, settings, fullscreen — over the one allowed black-alpha scrim. No
-// box, no border around the row itself.
-interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'talking' | 'onTalkStart' | 'onTalkEnd' | 'onToggleMic' | 'onToggleCam' | 'onToggleLayout' | 'layoutMode' | 'hideSelf' | 'onToggleHideSelf'> {
+// ── Desktop control chrome ───────────────────────────────────────────────────
+// Two stacked rows over the one allowed black-alpha scrim, no box or border
+// around either:
+//   1. a full-width scrubber, edge to edge of the bar
+//   2. one control row in three clusters — left: mute + volume slider + a
+//      compact mono `current / total`; centre: hide-feeds, camera, mic;
+//      right: gear, fullscreen
+// Play/pause is NOT here any more: on desktop it's the big CenterTransport knob
+// over the middle of the frame. Guests get no transport at all, and the
+// "Host controls playback" hint sits in the left cluster instead.
+interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds'> {
   mediaElementRef?: RefObject<HTMLVideoElement | null>; canControl?: boolean; canManageMedia?: boolean; userMuted?: boolean; onToggleMuted?: VoidCallback; localPhase?: LocalPhase
 }
-function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlaybackTracks, subtitlePreferences: canonicalSubtitlePreferences, onSetSubtitlePreferences, visible, canControl, canManageMedia, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase = 'ready' }: ControlBarProps = {}) {
+function DesktopControlBar({
+  mediaItemId, playback, mediaElementRef, onSetPlaybackTracks,
+  subtitlePreferences: canonicalSubtitlePreferences, onSetSubtitlePreferences,
+  visible, canControl, canManageMedia, immersive, enterImmersive, exitImmersive,
+  userMuted, onToggleMuted, micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds,
+}: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
   const audioTrack = useAudioTrack(media, playback)
@@ -1440,21 +1482,6 @@ function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlayba
   const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences, mediaItemId)
   const { cur, dur } = useMediaClock(media)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [paused, setPaused] = useState(true)
-
-  useEffect(() => {
-    if (!media) return
-    const sync = () => setPaused(!!media.paused && localPhase === 'ready')
-    sync()
-    media.addEventListener('play', sync)
-    media.addEventListener('pause', sync)
-    return () => { media.removeEventListener('play', sync); media.removeEventListener('pause', sync) }
-  }, [media, localPhase])
-
-  const togglePlay = () => {
-    if (!canControl) return
-    window.dispatchEvent(new CustomEvent('watch:transport', { detail: { kind: paused ? 'play' : 'pause' } }))
-  }
 
   // Menus never auto-hide: force the row visible while settings is open, even
   // if the idle timer (owned by the party frame) has already faded `visible`.
@@ -1467,42 +1494,55 @@ function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlayba
     }}>
       {/* The one allowed gradient: a neutral black-alpha legibility scrim. */}
       <div aria-hidden style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, height: 120,
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: 140,
         background: 'linear-gradient(0deg, rgba(0,0,0,.8), transparent)',
         pointerEvents: 'none',
       }} />
       <div style={{
-        position: 'relative', display: 'flex', alignItems: 'center', gap: 12,
-        padding: '0 18px 14px',
+        position: 'relative', display: 'flex', flexDirection: 'column', gap: 2,
+        padding: '0 18px 12px',
       }}>
-        <IconBtn onClick={togglePlay} title={paused ? 'Play' : 'Pause'} active size={36}>
-          {paused
-            ? <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            : <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
-        </IconBtn>
-
-        <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#f4f4f5', minWidth: 40, flexShrink: 0 }}>{fmtClock(cur)}</span>
-
-        <Scrubber canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId} />
-
-        <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', minWidth: 40, flexShrink: 0 }}>{fmtClock(dur)}</span>
-
-        {!canControl && <HostControlsHint />}
-
-        <VolumeControl userMuted={userMuted} onToggleMuted={onToggleMuted} />
-
-        <div style={{ position: 'relative' }}>
-          <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </IconBtn>
-          {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
+        {/* Row 1 — the scrubber, spanning the full width of the bar. The row
+            wrapper is a flex ROW on purpose: Scrubber sizes itself with
+            `flex: 1`, which would resolve against the column axis (and collapse
+            its height to 0) if it were a direct child of the column above. */}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <Scrubber canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId} />
         </div>
 
-        <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
-          {immersive
-            ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
-            : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>}
-        </IconBtn>
+        {/* Row 2 — three clusters. A 1fr/auto/1fr grid so the centre trio is
+            truly centred in the bar regardless of how wide the side clusters
+            grow (long durations, the guest hint). */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <VolumeControl userMuted={userMuted} onToggleMuted={onToggleMuted} />
+            <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+              <span style={{ color: '#f4f4f5' }}>{fmtClock(cur)}</span> / {fmtClock(dur)}
+            </span>
+            {!canControl && <HostControlsHint />}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <FeedControls
+              Btn={IconBtn} glyph={18}
+              micOn={micOn} camOn={camOn} onToggleMic={onToggleMic} onToggleCam={onToggleCam}
+              hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
+            />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+            <div style={{ position: 'relative' }}>
+              <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
+                <GearGlyph size={18} />
+              </IconBtn>
+              {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
+            </div>
+
+            <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
+              <FullscreenGlyph size={18} immersive={immersive} />
+            </IconBtn>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -1510,15 +1550,20 @@ function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlayba
 
 // ── Mobile consolidated bottom bar ───────────────────────────────────────────
 // One flat bar pinned to the bottom (clear of the home-indicator via safe-area),
-// over the same black-alpha scrim as the desktop row. It carries a PRIMARY
-// cluster that is always one tap away — transport (host-only play/pause, or a
-// lock glyph for guests), mic, cam, and fullscreen — plus the SECONDARY
-// controls (push-to-talk, hide-self, camera-strip toggle, quality/settings). On
-// short/narrow phones (< 820px, see `useWideBar`) the secondary set collapses
-// behind a "⋯" overflow popover so nothing clips or horizontally scrolls at
-// e.g. 740×360; on roomy phones (≥ 820px, e.g. 844-wide landscape) they inline
-// back into the bar. Fullscreen is NEVER in the overflow. Fades with the
-// auto-hide `visible` layer. Touch targets are 44px with ≥8px gaps.
+// over the same black-alpha scrim as the desktop row, and the same philosophy as
+// the desktop chrome: a draggable timeline row on top, then ONE control row in
+// three clusters — left: play/pause (a lock glyph for guests); centre:
+// hide-feeds, camera, mic; right: gear, fullscreen.
+//
+// Six controls fit a narrow phone directly, so the old `useWideBar` split (a
+// primary cluster plus a "⋯" overflow popover below 820px) is gone along with
+// push-to-talk and the hide-self toggle it used to hold.
+//
+// Phones deliberately keep play/pause IN THE BAR rather than getting desktop's
+// big CenterTransport knob: the video surface already binds single-tap (toggle
+// chrome) and double-tap (±10s seek) in WatchView, and a centre button would
+// fight both. Fades with the auto-hide `visible` layer. Touch targets are 44px
+// with ≥8px gaps.
 function MobileBottomBar({
   mediaItemId,
   playback,
@@ -1527,8 +1572,8 @@ function MobileBottomBar({
   subtitlePreferences: canonicalSubtitlePreferences,
   onSetSubtitlePreferences,
   canManageMedia,
-  canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
-  hideSelf, onToggleHideSelf, visible, immersive, enterImmersive, exitImmersive,
+  canControl, localPhase, micOn, camOn, onToggleMic, onToggleCam,
+  hideAllFeeds, onToggleHideAllFeeds, visible, immersive, enterImmersive, exitImmersive,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
@@ -1536,9 +1581,7 @@ function MobileBottomBar({
   const subtitlePreferences = useSubtitlePreferences(mediaElementRef, canonicalSubtitlePreferences, onSetSubtitlePreferences)
   const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences, mediaItemId)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [moreOpen, setMoreOpen] = useState(false)
   const [paused, setPaused] = useState(true)
-  const wide = useWideBar()
   const barRef = useRef<HTMLDivElement | null>(null)
 
   // Reflect real play/pause state on the transport button — but only while
@@ -1568,9 +1611,6 @@ function MobileBottomBar({
     return () => { ro.disconnect(); document.documentElement.style.removeProperty('--watch-bar-h') }
   }, [])
 
-  // Roomy phones inline everything — close any open overflow so it can't linger.
-  useEffect(() => { if (wide) setMoreOpen(false) }, [wide])
-
   const togglePlay = () => {
     if (!media || !canControl) return
     // Use the same localPhase-aware `paused` the button renders from, not raw
@@ -1579,33 +1619,9 @@ function MobileBottomBar({
     // redundant/confusing 'play'.
     window.dispatchEvent(new CustomEvent('watch:transport', { detail: { kind: paused ? 'play' : 'pause' } }))
   }
-  const closeMore = () => setMoreOpen(false)
 
-  // Secondary controls — identical wiring whether inlined (wide) or in the
-  // overflow popover (narrow). Tap-action (hide-self) also closes the popover
-  // on selection; talk (press-and-hold) and settings (opens a submenu) keep it
-  // open. The camera-popup show/hide toggle that used to live here is gone —
-  // the popup now opens automatically off camOn/remote-camera state instead.
-  const talkControl = <TalkBtn key="talk" talking={talking} onStart={onTalkStart} onStop={onTalkEnd} />
-  const hideSelfControl = onToggleHideSelf ? (
-    <BarBtn key="hide" onClick={() => { onToggleHideSelf(); closeMore() }} active={hideSelf} title={hideSelf ? 'Show my camera to me' : 'Hide my camera from me'}>
-      {hideSelf
-        ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
-        : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
-    </BarBtn>
-  ) : null
-  const settingsControl = (
-    <div key="settings" style={{ position: 'relative' }}>
-      <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      </BarBtn>
-      {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
-    </div>
-  )
-  const secondary = [talkControl, hideSelfControl, settingsControl].filter(Boolean)
-
-  // Menus never auto-hide: keep the bar visible while settings/overflow is open.
-  const shown = visible || settingsOpen || moreOpen
+  // Menus never auto-hide: keep the bar visible while settings is open.
+  const shown = visible || settingsOpen
 
   return (
     <div className="watch-skin" style={{
@@ -1625,85 +1641,62 @@ function MobileBottomBar({
         position: 'relative',
         display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 6px 2px',
       }}>
-        {/* Read-only timeline row (bug 6): everyone on a phone sees position /
-            progress / duration here. The skin's own scrubber is hidden on phones
-            (watch-skin--nobar); controllers still scrub via double-tap-seek. */}
+        {/* Timeline row: everyone on a phone sees position / progress / duration
+            here. The skin's own scrubber is hidden on phones (watch-skin--nobar);
+            controllers can drag this one directly, or double-tap-seek. */}
         <div style={{ padding: '2px 6px 0' }}>
           <MobileTimelineRow canControl={canControl} />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
-        {/* Transport: play/pause for controllers, lock glyph for guests */}
-        {canControl ? (
-          <BarBtn onClick={togglePlay} title={paused ? 'Play' : 'Pause'} primary>
-            {paused
-              ? <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-              : <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
-          </BarBtn>
-        ) : (
-          <div title="Host controls playback" style={{
-            width: 44, height: 44, borderRadius: 14, display: 'grid', placeItems: 'center',
-            color: 'rgba(244,244,245,.62)', flexShrink: 0,
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-          </div>
-        )}
-
-        {/* PRIMARY call cluster (mic + cam) — always in the bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center' }}>
-          <BarBtn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn} active={talking}>
-            {micOn
-              ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
-              : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
-          </BarBtn>
-          <BarBtn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
-            {camOn
-              ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
-              : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
-          </BarBtn>
-          {/* Roomy phones (≥820px): inline the secondary controls right here. */}
-          {wide && secondary}
-        </div>
-
-        {/* PRIMARY tail: fullscreen (never in overflow) + the "⋯" more button on
-            narrow phones. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {/* PRIMARY fullscreen: reads the single `immersive` state and calls the
-              enter/exit callbacks owned by WatchView. On iPhone this triggers the
-              CSS faux-fullscreen that KEEPS the whole party (chat, cameras, PTT,
-              room code) — it is NOT the native video player. Kept as a primary,
-              one-tap action; it is intentionally NOT placed in the overflow. */}
-          <BarBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen' : 'Full screen'}>
-            {immersive
-              ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
-              : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>}
-          </BarBtn>
-
-          {/* Overflow "⋯": secondary controls for narrow phones. Anchored to the
-              bar, dismisses on outside tap / selection, sits above the bar. */}
-          {!wide && (
-            <div style={{ position: 'relative' }}>
-              <BarBtn onClick={() => setMoreOpen(o => !o)} active={moreOpen} title="More controls">
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        {/* The one control row — three clusters, centre trio truly centred via
+            a 1fr/auto/1fr grid so it doesn't drift with the side clusters. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 8 }}>
+          {/* Left — transport: play/pause for controllers, lock glyph for
+              guests. Phones keep transport in the bar (see the component
+              comment) rather than getting desktop's centre knob. */}
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {canControl ? (
+              <BarBtn onClick={togglePlay} title={paused ? 'Play' : 'Pause'} primary>
+                {paused
+                  ? <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                  : <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
               </BarBtn>
-              {moreOpen && (
-                <>
-                  {/* Outside-tap dismiss. stopPropagation so tapping it doesn't
-                      also toggle chrome via the surface tap handler. */}
-                  <div onClick={(e) => { e.stopPropagation(); closeMore() }} style={{ position: 'fixed', inset: 0, zIndex: Z.controlBar }} />
-                  <div onClick={(e) => e.stopPropagation()} style={{
-                    backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
-                    position: 'absolute', bottom: 'calc(100% + 10px)', right: 0, zIndex: Z.controlBar + 1,
-                    display: 'flex', alignItems: 'center', gap: 8, padding: 8, borderRadius: 12,
-                    animation: 'up .18s ease both',
-                  }}>
-                    {secondary}
-                  </div>
-                </>
-              )}
+            ) : (
+              <div title="Host controls playback" style={{
+                width: 44, height: 44, borderRadius: 14, display: 'grid', placeItems: 'center',
+                color: 'rgba(244,244,245,.62)', flexShrink: 0,
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+              </div>
+            )}
+          </div>
+
+          {/* Centre — the same three feed controls as the desktop bar. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FeedControls
+              Btn={BarBtn} glyph={19}
+              micOn={micOn} camOn={camOn} onToggleMic={onToggleMic} onToggleCam={onToggleCam}
+              hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
+            />
+          </div>
+
+          {/* Right — gear (the unchanged SettingsMenu) + fullscreen. */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+            <div style={{ position: 'relative' }}>
+              <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
+                <GearGlyph size={19} />
+              </BarBtn>
+              {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
             </div>
-          )}
-          {/* SEAM — secondary "expand video only" (chrome-free) native FS, DEMOTED.
+
+            {/* Fullscreen: reads the single `immersive` state and calls the
+                enter/exit callbacks owned by WatchView. On iPhone this triggers
+                the CSS faux-fullscreen that KEEPS the whole party (chat,
+                cameras, room code) — it is NOT the native video player. */}
+            <BarBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen' : 'Full screen'}>
+              <FullscreenGlyph size={19} immersive={immersive} />
+            </BarBtn>
+            {/* SEAM — secondary "expand video only" (chrome-free) native FS, DEMOTED.
               iPhone Safari can play the bare <video> fullscreen via
               video.webkitEnterFullscreen(), but that throws away every overlay
               (the whole point of a watch PARTY), so it is intentionally NOT the
@@ -1713,27 +1706,86 @@ function MobileBottomBar({
               calls video.webkitEnterFullscreen(). Left as a commented seam for now
               because reaching the element through the videojs skin cleanly is
               disproportionate to the value — see PHONE-UX-PLAN §2.2/§4 Phase B. */}
-        </div>
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
-// Compact read-only mono time row for the mobile bar — time / scrubber / time,
-// matching the desktop scrubber but sized for the touch bar. Read-only, same
-// as the desktop guest scrubber (mobile transport is via double-tap-seek).
+// Compact mono time row for the mobile bar — time / scrubber / time, matching
+// the desktop scrubber but sized for the touch bar.
+// Draggable for controllers (canControl) — same direct media.currentTime
+// mutation the desktop Scrubber uses (see that component's own comment): the
+// seeking/seeked -> requestSeek listener that authors the room lives on the
+// media element itself, in SyncBridge, not inside either scrubber component,
+// so dragging this bar authors the shared timeline exactly the same way
+// dragging the desktop one does. Read-only for guests, same as before — no
+// pointer handling attached at all when canControl is false.
 function MobileTimelineRow({ canControl }: { canControl?: boolean } = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const { cur, dur, buf } = useMediaClock(media)
+  const [dragging, setDragging] = useState(false)
+  const trackRef = useRef<HTMLDivElement | null>(null)
+  const dragCleanupRef = useRef<VoidCallback | null>(null)
+
+  useEffect(() => () => dragCleanupRef.current?.(), [])
+
   const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
   const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
+  const barH = dragging ? 6 : 4
+
+  const ratioFromEvent = (e: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
+    const el = trackRef.current
+    if (!el) return 0
+    const r = el.getBoundingClientRect()
+    return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
+  }
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!canControl || !media) return
+    e.stopPropagation()
+    setDragging(true)
+    const seekTo = (ev: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
+      const dur2 = media.duration || 0
+      media.currentTime = ratioFromEvent(ev) * dur2
+    }
+    seekTo(e)
+    const move = (ev: PointerEvent) => seekTo(ev)
+    const up = () => {
+      setDragging(false)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      dragCleanupRef.current = null
+    }
+    dragCleanupRef.current?.()
+    dragCleanupRef.current = up
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up, { once: true })
+    window.addEventListener('pointercancel', up, { once: true })
+  }
+
   return (
     <div aria-label="Playback progress" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
       <span style={{ fontFamily: MONO_F, fontSize: 11, fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right', color: '#f4f4f5', flexShrink: 0 }}>{fmtClock(cur)}</span>
-      <div style={{ position: 'relative', flex: 1, height: 4, borderRadius: 999, overflow: 'hidden', background: 'rgba(255,255,255,.14)' }}>
-        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${bufPct}%`, background: 'rgba(255,255,255,.28)' }} />
-        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${pct}%`, background: '#f4f4f5' }} />
+      <div
+        ref={trackRef}
+        onPointerDown={onPointerDown}
+        // A completed tap here is a separate `click` event, not something
+        // stopping propagation of pointerdown prevents — same guard every
+        // other bar control (BarBtn, the overflow menu) already uses so a
+        // seek-tap doesn't also bubble up and toggle chrome / register as
+        // half of a double-tap-seek on the surface below.
+        onClick={(e) => e.stopPropagation()}
+        // Extra invisible hit-area (24px tall) around the thin visual bar —
+        // a 4px-tall track is not a reasonable touch target on its own.
+        style={{ position: 'relative', flex: 1, height: 24, display: 'flex', alignItems: 'center', touchAction: canControl ? 'none' : undefined }}
+      >
+        <div style={{ position: 'relative', width: '100%', height: barH, borderRadius: 999, overflow: 'hidden', background: 'rgba(255,255,255,.14)', transition: 'height .12s ease' }}>
+          <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${bufPct}%`, background: 'rgba(255,255,255,.28)' }} />
+          <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${pct}%`, background: '#f4f4f5' }} />
+        </div>
       </div>
       <span style={{ fontFamily: MONO_F, fontSize: 11, fontVariantNumeric: 'tabular-nums', minWidth: 36, color: 'rgba(244,244,245,.62)', flexShrink: 0 }}>{fmtClock(dur)}</span>
       {!canControl && <span style={{ fontSize: 10.5, color: 'rgba(244,244,245,.36)', flexShrink: 0 }}>Host controls</span>}
@@ -1755,33 +1807,6 @@ function BarBtn({ onClick, title, active, danger, primary, children }: ButtonPro
       onTouchStart={e => e.currentTarget.style.transform = 'scale(.94)'}
       onTouchEnd={e => e.currentTarget.style.transform = 'scale(1)'}>
       {children}
-    </button>
-  )
-}
-
-// Mobile press-and-hold talk button. Uses pointer events (covers touch + mouse)
-// so pointerup/cancel/leave all release — the mic can't stay open if the finger
-// slides off. touchAction:none stops the hold from scrolling the bar. Active
-// state (currently talking) is brightness only — near-white fill, never a
-// color highlight. No-op if the user already manually unmuted (the PTT hook
-// swallows start() in that case).
-function TalkBtn({ talking, onStart, onStop }: { talking?: boolean; onStart?: VoidCallback; onStop?: VoidCallback } = {}) {
-  const down = (e: ReactPointerEvent<HTMLButtonElement>) => { e.stopPropagation(); e.preventDefault(); onStart?.() }
-  const up = (e: ReactPointerEvent<HTMLButtonElement>) => { e.stopPropagation(); onStop?.() }
-  return (
-    <button
-      title="Hold to talk" aria-label="Hold to talk"
-      onPointerDown={down} onPointerUp={up} onPointerCancel={up} onPointerLeave={up} onLostPointerCapture={up}
-      onContextMenu={(e) => e.preventDefault()}
-      style={{
-        width: 44, height: 44, flexShrink: 0, borderRadius: 12, border: 'none', display: 'grid', placeItems: 'center',
-        cursor: 'pointer', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
-        color: talking ? '#0a0a0b' : '#f4f4f5',
-        background: talking ? '#f4f4f5' : 'rgba(255,255,255,.14)',
-        transition: 'background-color .12s, transform .12s',
-        transform: talking ? 'scale(.94)' : 'scale(1)',
-      }}>
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
     </button>
   )
 }
