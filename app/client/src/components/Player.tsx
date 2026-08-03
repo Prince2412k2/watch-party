@@ -1686,7 +1686,7 @@ function MobileBottomBar({
               <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
                 <GearGlyph size={19} />
               </BarBtn>
-              {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
+              {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} compact />}
             </div>
 
             {/* Fullscreen: reads the single `immersive` state and calls the
@@ -1813,12 +1813,85 @@ function BarBtn({ onClick, title, active, danger, primary, children }: ButtonPro
 
 // ── Settings — two-level menu that scales to many tracks (search + scroll) ────
 // Flat solid surface, hairline border, radius 12 — no blur, no gradient.
+
+// Density scale for the gear menu. `regular` is the verbatim desktop sizing —
+// nothing here is reachable without passing `compact`, so DesktopControlBar
+// renders pixel-identically to before. `compact` is what MobileBottomBar passes:
+// a phone is held ~30cm from the eye and the landscape viewport is only ~400px
+// tall, so type, padding, width and the panel's own max height all come down.
+//
+// Two numbers deliberately go UP on phone, because MOBILE-SPEC §5.3/§5.4 are
+// hard constraints that outrank "make it smaller":
+//   · text inputs and <select> stay at 16px — below that iOS zooms the field on
+//     focus and the whole page shifts (the styles.css `pointer: coarse` rule
+//     can't save us, an inline fontSize beats a stylesheet).
+//   · every tappable row/button gets minHeight 44 on phone.
+// So "scale down" here means type, padding, panel width and panel height — the
+// per-row hit boxes stay finger-sized.
+interface MenuScale {
+  width: number; radius: number; bottom: number; right: number; maxHeight: string; maxWidth?: string
+  listPad: string; mainPad: string
+  navPad: string; navFont: number; navValFont: number; navValMax: number; navGap: number; navChev: number
+  optPad: string; optFont: number; optGap: number; optTick: number
+  headPad: string; headBtn: number; headGlyph: number; headFont: number; headGap: number
+  searchPad: number; inputPad: string; inputFont: number; inputRadius: number
+  rowMin?: number
+  setPad: string; setLabel: number; setValue: number; setGap: number
+  selPad: string; selFont: number
+  btnPad: string; btnFont: number; btnRadius: number; noteFont: number; hintFont: number
+  emptyPad: string; emptyFont: number
+  footPad: number
+}
+const MENU_REGULAR: MenuScale = {
+  width: 292, radius: 12, bottom: 52, right: 0, maxHeight: '70vh',
+  listPad: '6px 0', mainPad: '6px 0',
+  navPad: '12px 14px', navFont: 13.5, navValFont: 12.5, navValMax: 130, navGap: 12, navChev: 14,
+  optPad: '10px 14px', optFont: 13, optGap: 10, optTick: 15,
+  headPad: '11px 12px', headBtn: 26, headGlyph: 14, headFont: 11, headGap: 8,
+  searchPad: 10, inputPad: '9px 12px', inputFont: 13, inputRadius: 9,
+  setPad: '10px 14px', setLabel: 12.5, setValue: 11.5, setGap: 8,
+  selPad: '8px 10px', selFont: 12.5,
+  btnPad: '9px 12px', btnFont: 13, btnRadius: 9, noteFont: 11.5, hintFont: 11,
+  emptyPad: '8px 14px', emptyFont: 12.5,
+  footPad: 12,
+}
+const MENU_COMPACT: MenuScale = {
+  width: 232, radius: 10, bottom: 50,
+  // Right-aligned to the bar's own right edge rather than to the gear button:
+  // the gear is followed by the (unconditional) 44px fullscreen button plus the
+  // row's 8px gap, so -52 lines the panel up with the end of the bar and buys
+  // 52px of horizontal room instead of hanging off the gear.
+  right: -52,
+  // Fit the space that actually exists ABOVE the bar instead of a bare 70vh.
+  // 76 = bar offset (8) + bar padding (2) + button (44) + menu gap (6) + 16px of
+  // clearance under the notch; --app-vh is the visualViewport height MobileApp
+  // publishes, falling back to dvh when the party route is mounted outside it.
+  // The 248 cap keeps the popover under ~2/3 of a 402px landscape screen — the
+  // lists inside scroll, the panel itself never overflows the viewport.
+  maxHeight: 'min(248px, calc(var(--app-vh, 100dvh) - var(--sa-t, 0px) - var(--sa-b, 0px) - 76px))',
+  maxWidth: 'calc(100vw - var(--sa-l, 0px) - var(--sa-r, 0px) - 28px)',
+  listPad: '3px 0', mainPad: '4px 0',
+  navPad: '5px 10px', navFont: 12, navValFont: 11, navValMax: 96, navGap: 8, navChev: 12,
+  optPad: '5px 10px', optFont: 11.5, optGap: 8, optTick: 13,
+  headPad: '2px 6px 2px 2px', headBtn: 44, headGlyph: 15, headFont: 10, headGap: 6,
+  searchPad: 6, inputPad: '8px 10px', inputFont: 16, inputRadius: 8,
+  rowMin: 44,
+  setPad: '6px 10px', setLabel: 11, setValue: 10.5, setGap: 5,
+  selPad: '6px 8px', selFont: 16,
+  btnPad: '9px 12px', btnFont: 12, btnRadius: 8, noteFont: 10.5, hintFont: 10,
+  emptyPad: '6px 10px', emptyFont: 11,
+  footPad: 6,
+}
+
 interface SettingsMenuProps {
   playback?: PlayerPlayback; mediaItemId?: string; quality: QualityState; canManageMedia?: boolean
   onSetPlaybackTracks?: (tracks: TrackSelection) => void; onChooseAudio?: (jellyfinIndex: number) => void; onChooseSubtitle?: (jellyfinIndex: number | null) => void
   subtitlePreferences?: SubtitlePreferences; onUpdateSubtitlePreferences?: (patch: Partial<SubtitlePreferences>) => void; onResetSubtitlePreferences?: VoidCallback; onClose?: VoidCallback
+  /** Phone density (MobileBottomBar). Omitted/false keeps the desktop scale. */
+  compact?: boolean
 }
-function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, subtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES, onUpdateSubtitlePreferences, onResetSubtitlePreferences, onClose }: SettingsMenuProps) {
+function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, subtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES, onUpdateSubtitlePreferences, onResetSubtitlePreferences, onClose, compact = false }: SettingsMenuProps) {
+  const S = compact ? MENU_COMPACT : MENU_REGULAR
   const [view, setView] = useState<'main' | 'quality' | 'subs' | 'subtitleStyle' | 'audio'>('main')
   const [q, setQ] = useState('')
   const [uploadingSub, setUploadingSub] = useState(false)
@@ -1890,52 +1963,53 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
 
   const panel: CSSProperties = {
     backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
-    position: 'absolute', bottom: 52, right: 0, zIndex: 31, width: 292, maxHeight: '70vh',
-    display: 'flex', flexDirection: 'column', borderRadius: 12, overflow: 'hidden', color: '#f4f4f5',
+    position: 'absolute', bottom: S.bottom, right: S.right, zIndex: 31, width: S.width, maxHeight: S.maxHeight,
+    ...(S.maxWidth ? { maxWidth: S.maxWidth } : {}),
+    display: 'flex', flexDirection: 'column', borderRadius: S.radius, overflow: 'hidden', color: '#f4f4f5',
     animation: 'up .18s ease both',
   }
   const navRow = (label: string, value: string, onClick: VoidCallback) => (
-    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', padding: '12px 14px', border: 'none', cursor: 'pointer', background: 'transparent', color: '#f4f4f5', fontSize: 13.5, fontWeight: 500, textAlign: 'left' }}>
+    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: S.navGap, width: '100%', ...(S.rowMin ? { minHeight: S.rowMin } : {}), padding: S.navPad, border: 'none', cursor: 'pointer', background: 'transparent', color: '#f4f4f5', fontSize: S.navFont, fontWeight: 500, textAlign: 'left' }}>
       <span>{label}</span>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(244,244,245,.62)', fontSize: 12.5, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(244,244,245,.62)', fontSize: S.navValFont, maxWidth: S.navValMax, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {value}
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6" /></svg>
+        <svg width={S.navChev} height={S.navChev} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6" /></svg>
       </span>
     </button>
   )
   const optRow = (label: string, active: boolean, onClick: VoidCallback, key: string | number, disabled = false) => (
-    <button key={key} disabled={disabled} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', border: 'none', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .55 : 1, background: active ? 'rgba(255,255,255,.06)' : 'transparent', color: active ? '#f4f4f5' : 'rgba(244,244,245,.62)', fontSize: 13, fontWeight: active ? 600 : 500, textAlign: 'left' }}>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" style={{ opacity: active ? 1 : 0, flexShrink: 0 }}><path d="M20 6 9 17l-5-5" /></svg>
+    <button key={key} disabled={disabled} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: S.optGap, width: '100%', ...(S.rowMin ? { minHeight: S.rowMin } : {}), padding: S.optPad, border: 'none', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .55 : 1, background: active ? 'rgba(255,255,255,.06)' : 'transparent', color: active ? '#f4f4f5' : 'rgba(244,244,245,.62)', fontSize: S.optFont, fontWeight: active ? 600 : 500, textAlign: 'left' }}>
+      <svg width={S.optTick} height={S.optTick} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" style={{ opacity: active ? 1 : 0, flexShrink: 0 }}><path d="M20 6 9 17l-5-5" /></svg>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   )
   const subHeader = (title: string) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 12px', borderBottom: '1px solid rgba(255,255,255,.08)', flexShrink: 0 }}>
-      <button onClick={() => setView('main')} style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.06)', color: '#f4f4f5', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="m15 18-6-6 6-6" /></svg>
+    <div style={{ display: 'flex', alignItems: 'center', gap: S.headGap, padding: S.headPad, borderBottom: '1px solid rgba(255,255,255,.08)', flexShrink: 0 }}>
+      <button onClick={() => setView('main')} style={{ width: S.headBtn, height: S.headBtn, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.06)', color: '#f4f4f5', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
+        <svg width={S.headGlyph} height={S.headGlyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="m15 18-6-6 6-6" /></svg>
       </button>
-      <span style={{ fontFamily: MONO_F, fontSize: 11, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(244,244,245,.62)' }}>{title}</span>
+      <span style={{ fontFamily: MONO_F, fontSize: S.headFont, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(244,244,245,.62)' }}>{title}</span>
     </div>
   )
   const searchBox = (
-    <div style={{ padding: 10, flexShrink: 0 }}>
+    <div style={{ padding: S.searchPad, flexShrink: 0 }}>
       <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" autoFocus
-        style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', color: '#f4f4f5', fontSize: 13, outline: 'none' }} />
+        style={{ width: '100%', padding: S.inputPad, borderRadius: S.inputRadius, border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', color: '#f4f4f5', fontSize: S.inputFont, outline: 'none' }} />
     </div>
   )
   const filtered = (arr: PlayerTrack[]) => arr.filter((t, i) => trackName(t, i).toLowerCase().includes(q.toLowerCase()))
   const settingRow = (label: string, value: ReactNode, control: ReactNode) => (
-    <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8, fontSize: 12.5 }}>
+    <div style={{ padding: S.setPad, borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: S.setGap, fontSize: S.setLabel }}>
         <span style={{ color: 'rgba(244,244,245,.62)' }}>{label}</span>
-        <span style={{ color: '#f4f4f5', fontFamily: MONO_F, fontSize: 11.5 }}>{value}</span>
+        <span style={{ color: '#f4f4f5', fontFamily: MONO_F, fontSize: S.setValue }}>{value}</span>
       </div>
       {control}
     </div>
   )
   const selectStyle: CSSProperties = {
-    width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,.1)',
-    background: '#1d1d20', color: '#f4f4f5', fontSize: 12.5,
+    width: '100%', padding: S.selPad, borderRadius: 8, border: '1px solid rgba(255,255,255,.1)',
+    background: '#1d1d20', color: '#f4f4f5', fontSize: S.selFont,
   }
   const rangeStyle: CSSProperties = { width: '100%', accentColor: '#f4f4f5', cursor: 'pointer' }
 
@@ -1944,7 +2018,7 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
       <div style={panel}>
         {view === 'main' && (
-          <div style={{ padding: '6px 0' }}>
+          <div style={{ padding: S.mainPad }}>
             {navRow('Quality', curQuality, () => setView('quality'))}
             {navRow('Subtitles', curSub, () => setView('subs'))}
             {audioStreams.length > 1 && navRow('Audio', curAudio, () => setView('audio'))}
@@ -1954,8 +2028,8 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
         {view === 'quality' && (
           <>
             {subHeader('Quality')}
-            <div style={{ overflowY: 'auto', padding: '6px 0' }}>
-              {!hasLevels && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(244,244,245,.36)' }}>Loading available qualities…</div>}
+            <div style={{ overflowY: 'auto', padding: S.listPad }}>
+              {!hasLevels && <div style={{ padding: S.emptyPad, fontSize: S.emptyFont, color: 'rgba(244,244,245,.36)' }}>Loading available qualities…</div>}
               {/* Auto = real ABR (bandwidth-driven). Shows the level currently playing. */}
               {optRow(autoLabel, quality.selected === -1, () => { quality.choose(-1); setView('main') }, 'auto')}
               {/* Real variant rungs reported by hls.js, highest bitrate first */}
@@ -1970,24 +2044,24 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
         {view === 'subs' && (
           <>
             {subHeader('Subtitles')}
-            <div style={{ borderBottom: '1px solid rgba(255,255,255,.08)', padding: '6px 0' }}>
+            <div style={{ borderBottom: '1px solid rgba(255,255,255,.08)', padding: S.listPad }}>
               {navRow('Appearance & timing', `${subtitlePreferences.delayMs > 0 ? '+' : ''}${subtitlePreferences.delayMs} ms`, () => setView('subtitleStyle'))}
             </div>
             {subtitleStreams.length > 8 && searchBox}
-            <div style={{ overflowY: 'auto', padding: '6px 0' }}>
+            <div style={{ overflowY: 'auto', padding: S.listPad }}>
               {optRow('Off', selectedSubtitleIndex == null || selectedSubtitleIndex < 0, () => chooseSub(null), 'off', !canManageMedia)}
-              {subtitleStreams.length === 0 && <div style={{ padding: '8px 14px', fontSize: 12.5, color: 'rgba(244,244,245,.36)' }}>None available in this stream</div>}
+              {subtitleStreams.length === 0 && <div style={{ padding: S.emptyPad, fontSize: S.emptyFont, color: 'rgba(244,244,245,.36)' }}>None available in this stream</div>}
               {filtered(subtitleStreams).map((t, i) => optRow(trackName(t, i), selectedSubtitleIndex === t.index, () => chooseSub(t.index), t.index, !canManageMedia))}
-              <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 6, padding: '10px 14px 6px' }}>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 6, padding: S.optPad }}>
                 <input ref={uploadInputRef} type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden
                   onChange={(e) => uploadSubtitle(e.target.files?.[0])} />
                 <button disabled={uploadingSub || !mediaItemId || !canManageMedia} onClick={() => uploadInputRef.current?.click()} style={{
-                  width: '100%', padding: '9px 12px', borderRadius: 9, cursor: uploadingSub ? 'wait' : 'pointer',
+                  width: '100%', padding: S.btnPad, borderRadius: S.btnRadius, cursor: uploadingSub ? 'wait' : 'pointer',
                   border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.06)',
-                  color: '#f4f4f5', fontSize: 13, fontWeight: 600, opacity: (mediaItemId && canManageMedia) ? 1 : .45,
+                  color: '#f4f4f5', fontSize: S.btnFont, fontWeight: 600, opacity: (mediaItemId && canManageMedia) ? 1 : .45,
                 }}>{uploadingSub ? 'Uploading…' : 'Upload subtitle file'}</button>
-                {uploadError && <div role="alert" style={{ color: '#e0655e', fontSize: 11.5, marginTop: 7 }}>{uploadError}</div>}
-                <div style={{ color: 'rgba(244,244,245,.36)', fontSize: 11, marginTop: 6 }}>SRT or WebVTT · 5 MB max</div>
+                {uploadError && <div role="alert" style={{ color: '#e0655e', fontSize: S.noteFont, marginTop: 7 }}>{uploadError}</div>}
+                <div style={{ color: 'rgba(244,244,245,.36)', fontSize: S.hintFont, marginTop: 6 }}>SRT or WebVTT · 5 MB max</div>
               </div>
             </div>
           </>
@@ -2015,8 +2089,8 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
                 <select disabled={!canManageMedia} aria-label="Subtitle position" value={subtitlePreferences.verticalPosition} onChange={e => onUpdateSubtitlePreferences?.({ verticalPosition: e.target.value as SubtitlePreferences['verticalPosition'] })} style={selectStyle}>
                   <option value="bottom">Bottom</option><option value="middle">Middle</option><option value="top">Top</option>
                 </select>)}
-              <div style={{ padding: 12 }}>
-                <button disabled={!canManageMedia} onClick={onResetSubtitlePreferences} style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,.1)', background: 'transparent', color: 'rgba(244,244,245,.62)', cursor: 'pointer', fontSize: 12.5 }}>Reset subtitle settings</button>
+              <div style={{ padding: S.footPad }}>
+                <button disabled={!canManageMedia} onClick={onResetSubtitlePreferences} style={{ width: '100%', padding: S.btnPad, borderRadius: S.btnRadius, border: '1px solid rgba(255,255,255,.1)', background: 'transparent', color: 'rgba(244,244,245,.62)', cursor: 'pointer', fontSize: S.btnFont }}>Reset subtitle settings</button>
               </div>
             </div>
           </>
@@ -2026,7 +2100,7 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
           <>
             {subHeader('Audio')}
             {audioStreams.length > 8 && searchBox}
-            <div style={{ overflowY: 'auto', padding: '6px 0' }}>
+            <div style={{ overflowY: 'auto', padding: S.listPad }}>
               {filtered(audioStreams).map((t, i) => optRow(trackName(t, i), selectedAudioIndex === t.index, () => chooseAudio(t.index), t.index, !canManageMedia))}
             </div>
           </>
