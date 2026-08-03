@@ -186,9 +186,15 @@ export function Sidebar({
       padding: mobile ? '12px 8px' : '22px 16px',
       background: C.bg, borderRight: `1px solid ${C.line}`,
     }}>
-      {!mobile && (
-        <div style={{ display: 'flex', alignItems: 'center', padding: '2px 8px 22px', cursor: 'pointer' }}
+      {mobile ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '2px 0 18px', cursor: 'pointer' }}
           onClick={() => navigate('/library')}>
+          <img src="/icon.svg" alt="Watchparty" width={26} height={26} style={{ display: 'block' }} />
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '2px 8px 22px', cursor: 'pointer' }}
+          onClick={() => navigate('/library')}>
+          <img src="/icon.svg" alt="" width={22} height={22} style={{ display: 'block', flexShrink: 0 }} />
           <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-.01em' }}>Watchparty</span>
         </div>
       )}

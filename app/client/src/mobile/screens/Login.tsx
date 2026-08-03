@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { useAuth } from '../../context/AuthContext'
-import { T, TYPE, R, EASE, AVATAR_BG } from '../theme'
+import { T, TYPE, R, EASE } from '../theme'
 import { Icon, Ic } from '../ui/Icon'
 
 /**
@@ -70,14 +70,7 @@ export default function Login() {
         position: 'relative', width: '100%', maxWidth: 400, margin: '0 auto',
         display: 'flex', flexDirection: 'column', alignItems: 'center', animation: 'up .5s ease both',
       }}>
-        {/* app-tile mark — flat solid surface, no glow */}
-        <div style={{
-          width: 76, height: 76, borderRadius: 22, background: AVATAR_BG,
-          border: `1px solid ${T.line2}`,
-          display: 'grid', placeItems: 'center', marginBottom: 22,
-        }}>
-          <Icon path={Ic.play} size={34} fill={T.text} stroke="none" />
-        </div>
+        <img src="/icon.svg" alt="Watchparty" width={76} height={76} style={{ display: 'block', marginBottom: 22 }} />
 
         <div style={{ ...TYPE.meta, letterSpacing: '.3em', color: T.dim, marginBottom: 16 }}>Watchparty</div>
         <h1 style={{ ...TYPE.display, color: T.text, textAlign: 'center', marginBottom: 8 }}>Welcome back</h1>

@@ -667,10 +667,18 @@ media-player, media-player:focus, media-player:focus-visible,
 /* App shell — fixed to the DYNAMIC viewport (100dvh) so the collapsing URL bar
    never shifts layout. Anchored top/left/right (NOT `inset:0`, which would use
    the layout viewport height) with an explicit dvh height. The shell itself
-   never scrolls; a single inner region does. */
+   never scrolls; a single inner region does.
+   `--app-vh` (set in JS, see MobileApp.jsx) overrides the bare unit when
+   present: iOS has documented cases where `dvh` under-reports the actual
+   visible height — standalone (home-screen-installed) mode, or not fully recovering
+   after the keyboard dismisses — leaving dead space below the shell that the
+   fixed-position tab bar still sits above rather than at the real bottom
+   edge. `dvh` remains the value until JS's first measurement lands, and the
+   fallback if JS never runs at all. */
 .mobile-shell {
   position: fixed; top: 0; left: 0; right: 0;
   height: 100dvh;
+  height: var(--app-vh, 100dvh);
   overflow: hidden;
   display: flex; flex-direction: column;
   background: #0b0d10;

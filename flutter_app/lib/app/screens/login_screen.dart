@@ -8,8 +8,9 @@ import '../../ui/ui.dart';
 /// Login (W2b owns). Jellyfin username/password against the real
 /// [DioApiClient]; matches the redesigned web login
 /// (`app/client/src/pages/Login.tsx`): a full-viewport centered stage holding a
-/// single 380 card — "Watchparty" wordmark, "Welcome back" / "Sign in with your
-/// Jellyfin account", uppercase-mono field captions, error box, Sign-in pill.
+/// single 380 card — reel mark + "Watchparty" wordmark, "Welcome back" / "Sign
+/// in with your Jellyfin account", uppercase-mono field captions, error box,
+/// Sign-in pill.
 /// Theme-aware via `context.wp` so it reads correctly in Light/Balanced/Dark.
 ///
 /// Backend-agnostic: a small gear in the top-right corner opens a dialog to
@@ -103,6 +104,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      Image.asset('assets/logo.png', width: 40, height: 40),
+                      const SizedBox(height: 10),
                       Text(
                         'Watchparty',
                         textAlign: TextAlign.center,

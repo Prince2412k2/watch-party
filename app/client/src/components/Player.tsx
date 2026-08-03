@@ -40,7 +40,7 @@ export interface PlayerProps {
   hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
   onToggleMic?: VoidCallback; onToggleCam?: VoidCallback; micOn?: boolean; camOn?: boolean; talking?: boolean; onTalkStart?: VoidCallback; onTalkEnd?: VoidCallback
   onToggleLayout?: VoidCallback; onOpenChat?: VoidCallback; layoutMode?: 'float' | 'dock'; hideSelf?: boolean; onToggleHideSelf?: VoidCallback
-  visible?: boolean; immersive?: boolean; enterImmersive?: VoidCallback; exitImmersive?: VoidCallback; phone?: boolean; camStripOpen?: boolean; onToggleCamStrip?: VoidCallback
+  visible?: boolean; immersive?: boolean; enterImmersive?: VoidCallback; exitImmersive?: VoidCallback; phone?: boolean; camStripOpen?: boolean
   seekBridgeRef?: SeekBridgeRef; onSetPlaybackTracks?: (tracks: TrackSelection) => void
   subtitlePreferences?: SubtitlePreferences; onSetSubtitlePreferences?: (preferences: SubtitlePreferences) => void
 }
@@ -132,7 +132,7 @@ export default function Player({
   onToggleLayout, onOpenChat, layoutMode,
   hideSelf, onToggleHideSelf,
   visible = true, immersive, enterImmersive, exitImmersive,
-  phone = false, camStripOpen, onToggleCamStrip, seekBridgeRef, onSetPlaybackTracks, subtitlePreferences, onSetSubtitlePreferences,
+  phone = false, camStripOpen, seekBridgeRef, onSetPlaybackTracks, subtitlePreferences, onSetSubtitlePreferences,
 }: PlayerProps = {}) {
   const canControl = Boolean(isHost || collaborativeControl)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -174,7 +174,7 @@ export default function Player({
         talking={talking} onToggleLayout={onToggleLayout} onOpenChat={onOpenChat} layoutMode={layoutMode}
         hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
         immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
-        phone={phone} camStripOpen={camStripOpen} onToggleCamStrip={onToggleCamStrip}
+        phone={phone} camStripOpen={camStripOpen}
         seekBridgeRef={seekBridgeRef}
       />
     )
@@ -228,7 +228,6 @@ export default function Player({
             onToggleMic={onToggleMic} onToggleCam={onToggleCam}
             onToggleLayout={onToggleLayout} layoutMode={layoutMode}
             hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-            camStripOpen={camStripOpen} onToggleCamStrip={onToggleCamStrip}
             visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
           />
         ) : (
@@ -285,7 +284,7 @@ function NativePlayer({
   onToggleLayout, onOpenChat, layoutMode,
   hideSelf, onToggleHideSelf,
   immersive, enterImmersive, exitImmersive,
-  phone, camStripOpen, onToggleCamStrip, seekBridgeRef,
+  phone, camStripOpen, seekBridgeRef,
 }: PlayerProps & { canControl?: boolean } = {}) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   // One MpvBackend per mounted native player, torn down on unmount — mirrors
@@ -442,13 +441,6 @@ function NativePlayer({
             {hideSelf
               ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
               : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
-          </IconBtn>
-        )}
-        {onToggleCamStrip && (
-          <IconBtn onClick={onToggleCamStrip} active={camStripOpen} title={camStripOpen ? 'Hide cameras' : 'Show cameras'}>
-            {camStripOpen
-              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="8" width="5" height="8" rx="1"/><rect x="9.5" y="8" width="5" height="8" rx="1"/><rect x="16" y="8" width="5" height="8" rx="1"/></svg>
-              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m2 2 20 20M3 8h1m4.5 0H14m2 0h5v8h-1M3 8v8h9"/></svg>}
           </IconBtn>
         )}
         {onToggleLayout && (
@@ -1437,7 +1429,7 @@ function VolumeControl({ userMuted, onToggleMuted }: { userMuted?: boolean; onTo
 // The single pinned-bottom row: play/pause, current time, scrubber, duration,
 // volume, settings, fullscreen — over the one allowed black-alpha scrim. No
 // box, no border around the row itself.
-interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'talking' | 'onTalkStart' | 'onTalkEnd' | 'onToggleMic' | 'onToggleCam' | 'onToggleLayout' | 'layoutMode' | 'hideSelf' | 'onToggleHideSelf' | 'camStripOpen' | 'onToggleCamStrip'> {
+interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'talking' | 'onTalkStart' | 'onTalkEnd' | 'onToggleMic' | 'onToggleCam' | 'onToggleLayout' | 'layoutMode' | 'hideSelf' | 'onToggleHideSelf'> {
   mediaElementRef?: RefObject<HTMLVideoElement | null>; canControl?: boolean; canManageMedia?: boolean; userMuted?: boolean; onToggleMuted?: VoidCallback; localPhase?: LocalPhase
 }
 function DesktopControlBar({ mediaItemId, playback, mediaElementRef, onSetPlaybackTracks, subtitlePreferences: canonicalSubtitlePreferences, onSetSubtitlePreferences, visible, canControl, canManageMedia, immersive, enterImmersive, exitImmersive, userMuted, onToggleMuted, localPhase = 'ready' }: ControlBarProps = {}) {
@@ -1536,7 +1528,7 @@ function MobileBottomBar({
   onSetSubtitlePreferences,
   canManageMedia,
   canControl, localPhase, micOn, camOn, talking, onTalkStart, onTalkEnd, onToggleMic, onToggleCam, onToggleLayout, layoutMode,
-  hideSelf, onToggleHideSelf, camStripOpen, onToggleCamStrip, visible, immersive, enterImmersive, exitImmersive,
+  hideSelf, onToggleHideSelf, visible, immersive, enterImmersive, exitImmersive,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
@@ -1590,9 +1582,10 @@ function MobileBottomBar({
   const closeMore = () => setMoreOpen(false)
 
   // Secondary controls — identical wiring whether inlined (wide) or in the
-  // overflow popover (narrow). Tap-actions (hide-self, camera strip) also close
-  // the popover on selection; talk (press-and-hold) and settings (opens a
-  // submenu) keep it open.
+  // overflow popover (narrow). Tap-action (hide-self) also closes the popover
+  // on selection; talk (press-and-hold) and settings (opens a submenu) keep it
+  // open. The camera-popup show/hide toggle that used to live here is gone —
+  // the popup now opens automatically off camOn/remote-camera state instead.
   const talkControl = <TalkBtn key="talk" talking={talking} onStart={onTalkStart} onStop={onTalkEnd} />
   const hideSelfControl = onToggleHideSelf ? (
     <BarBtn key="hide" onClick={() => { onToggleHideSelf(); closeMore() }} active={hideSelf} title={hideSelf ? 'Show my camera to me' : 'Hide my camera from me'}>
@@ -1601,13 +1594,6 @@ function MobileBottomBar({
         : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
     </BarBtn>
   ) : null
-  const camStripControl = (
-    <BarBtn key="camstrip" onClick={() => { onToggleCamStrip?.(); closeMore() }} active={camStripOpen} title={camStripOpen ? 'Hide cameras' : 'Show cameras'}>
-      {camStripOpen
-        ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="3" y="8" width="5" height="8" rx="1"/><rect x="9.5" y="8" width="5" height="8" rx="1"/><rect x="16" y="8" width="5" height="8" rx="1"/></svg>
-        : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M3 8h1m4.5 0H14m2 0h5v8h-1M3 8v8h9"/></svg>}
-    </BarBtn>
-  )
   const settingsControl = (
     <div key="settings" style={{ position: 'relative' }}>
       <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
@@ -1616,7 +1602,7 @@ function MobileBottomBar({
       {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
-  const secondary = [talkControl, hideSelfControl, camStripControl, settingsControl].filter(Boolean)
+  const secondary = [talkControl, hideSelfControl, settingsControl].filter(Boolean)
 
   // Menus never auto-hide: keep the bar visible while settings/overflow is open.
   const shown = visible || settingsOpen || moreOpen
