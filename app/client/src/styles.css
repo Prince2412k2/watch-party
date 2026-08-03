@@ -699,3 +699,31 @@ media-player, media-player:focus, media-player:focus-visible,
 /* Rails scroll by swipe; hide their scrollbar (arrows are forbidden on phone). */
 .mob-rail { scrollbar-width: none; }
 .mob-rail::-webkit-scrollbar { display: none; }
+
+/* ── Library (party-lobby "browse together") — phone catalog grid ───────────
+   pages/Library.tsx adds `.mob-lib-grid` to `.library-poster-wall` only when
+   its own `mobile` boolean is true, so this is double-gated (pointer:coarse +
+   a class only the phone tree ever renders) and never touches the desktop
+   ".library-poster-wall" rule above. Turns the desktop/tablet endless
+   horizontal rail (built for mouse-wheel + keyboard paging) into a real
+   2-column vertical grid — fewer, bigger posters instead of a same-density
+   strip that just scrolls sideways forever on a thumb. */
+@media (pointer: coarse) {
+  .library-poster-wall.mob-lib-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    overflow: visible !important;
+    scroll-snap-type: none !important;
+    padding: 2px 0 8px !important;
+    margin: 0 !important;
+  }
+  .library-poster-wall.mob-lib-grid > * {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: unset !important;
+  }
+  .library-poster-wall.mob-lib-grid .library-poster-skeleton {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}

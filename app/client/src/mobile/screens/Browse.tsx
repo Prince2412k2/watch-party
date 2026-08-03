@@ -5,8 +5,9 @@ import { navigate } from '../../router'
 import { useTorrents, isPausedState } from '../../hooks/useTorrents'
 import { T, SANS, MONO, R, EASE, TYPE, SP } from '../theme'
 import { Icon, Ic } from '../ui/Icon'
+import { Rail, RailItem } from '../ui/Rail'
 import { Sheet } from '../ui/Sheet'
-import { PosterSkeleton } from '../ui/Skeleton'
+import { PosterSkeleton, RailSkeleton } from '../ui/Skeleton'
 import { apiJson, arrayOf, isRecord } from '../../types/guards'
 
 /**
@@ -521,6 +522,14 @@ const SUGGESTED = {
   movie: ['Inception', 'Dune', 'Parasite', 'Oppenheimer', 'The Matrix'],
   series: ['Breaking Bad', 'The Last of Us', 'Severance', 'Chernobyl', 'Arcane'],
 }
+const POPULAR_CARD_W = 132
+
+// Before a search, this used to render the full poster grid — the same dense
+// layout as actual results — so the screen felt like it was showing you a
+// second results page before you'd typed anything. A single swipeable rail
+// (same primitive Home uses for its shelves) reads as a lighter "here are some
+// suggestions" nudge instead, and reserves the grid treatment for the thing
+// the user actually asked for: their search.
 function PopularSection({ kind, torrents, stateFor, onOpen, onPick }: Omit<GridProps, 'results'> & { onPick: (term: string) => void }) {
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
   const [state, setState] = useState<{ loading: boolean; error: boolean; items: CatalogItem[]; source: string }>({ loading: true, error: false, items: [], source: 'curated' })
@@ -534,18 +543,25 @@ function PopularSection({ kind, torrents, stateFor, onOpen, onPick }: Omit<GridP
     return () => { cancel = true }
   }, [service])
 
-  if (state.loading) return <SkeletonGrid />
+  if (state.loading) return <div style={{ marginLeft: -16, marginRight: -16 }}><RailSkeleton count={6} w={POPULAR_CARD_W} /></div>
   if (state.error || state.items.length === 0) return <SuggestedSearches kind={kind} onPick={onPick} />
 
   const label = state.source === 'importlist' ? 'Popular right now' : 'Popular picks'
   return (
-    <div style={{ animation: 'up .4s ease both' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: SP.md }}>
-        <h2 style={{ ...TYPE.title, color: T.text, margin: 0 }}>{label}</h2>
-        <span style={{ fontFamily: MONO, fontSize: 11.5, color: T.faint, letterSpacing: '.06em' }}>{kind === 'movie' ? 'MOVIES' : 'SERIES'}</span>
-      </div>
-      <Grid results={state.items} kind={kind} torrents={torrents} stateFor={stateFor} onOpen={onOpen} />
-    </div>
+    <Rail
+      style={{ marginLeft: -16, marginRight: -16, animation: 'up .4s ease both' }}
+      padX={16}
+      title={<>
+        {label}
+        <span style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 600, color: T.faint, letterSpacing: '.06em' }}>{kind === 'movie' ? 'MOVIES' : 'SERIES'}</span>
+      </>}
+    >
+      {state.items.map((r, i) => (
+        <RailItem key={(r.tmdbId || r.tvdbId || r.titleSlug || i) + ''} style={{ width: POPULAR_CARD_W }}>
+          <Card r={r} kind={kind} state={stateFor(r)} torrent={matchTorrent(r.title, torrents)} onOpen={() => onOpen(r)} />
+        </RailItem>
+      ))}
+    </Rail>
   )
 }
 function SuggestedSearches({ kind, onPick }: { kind: Kind; onPick: (term: string) => void }) {
@@ -607,21 +623,18 @@ function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }: {
         </div>
       </div>
 
-      {/* Rating + genres */}
-      {(rating != null || genres.length > 0) && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8, fontSize: 14, fontWeight: 600 }}>
+      {/* Rating, genres, and the year/runtime/cert facts used to live in two
+          stacked rows — one glance's worth of metadata split across two lines
+          just reads as more "stuff" on screen. One wrapping row instead. */}
+      {(rating != null || genres.length > 0 || infoLine.length > 0) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
           {rating != null && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: T.text }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: T.text, fontSize: 14, fontWeight: 600 }}>
               <Icon path={Ic.star} size={15} fill="#f5c518" stroke="none" />{rating.toFixed(1)}
             </span>
           )}
-          {genres.slice(0, 3).map((g) => <span key={g} style={{ color: T.dim }}>{g}</span>)}
-        </div>
-      )}
-
-      {infoLine.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14, fontFamily: MONO, fontSize: 12, color: T.dim }}>
-          {infoLine.map((v, i) => <span key={i}>{v}</span>)}
+          {genres.slice(0, 2).map((g) => <span key={g} style={{ color: T.dim, fontSize: 14, fontWeight: 600 }}>{g}</span>)}
+          {infoLine.map((v, i) => <span key={i} style={{ fontFamily: MONO, fontSize: 12, color: T.dim }}>{v}</span>)}
         </div>
       )}
 
