@@ -1,19 +1,14 @@
 import { useEffect, useState } from 'react'
-import QRCode from 'qrcode'
 import { useParty } from '../context/PartyContext'
 import { navigate } from '../router'
 import type { PartyUser } from '../types'
-
-const MONO = "'JetBrains Mono', ui-monospace, monospace"
-function initials(name = '') {
-  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
-}
+import PartyPanel, { MONO, initials } from './PartyPanel'
 
 /**
- * Room chrome: icon-only Host / Leave buttons (flat surfaces), the host modal,
- * toasts, and a join-request sidebar with accept/reject. `visible` fades the
- * top cluster with the auto-hide layer; the join sidebar stays put (it's a
- * notification), and toasts/modal are never hidden.
+ * Room chrome: icon-only Host / Leave buttons (flat surfaces), toasts, and a
+ * join-request sidebar with accept/reject. `visible` fades the top cluster with
+ * the auto-hide layer; the join sidebar stays put (it's a notification), and
+ * toasts are never hidden. The party panel itself lives in `PartyPanel`.
  */
 export default function RoomControls({
   stage, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false,
@@ -30,16 +25,9 @@ export default function RoomControls({
   hideSelf?: boolean
   onToggleHideSelf?: () => void
 } = {}) {
-  const party = useParty()
-  const {
-    session, role, toasts,
-    approveUser, rejectUser, kickUser, transferHost,
-    setCollaborative, setSyncMode, backToLobby, endParty,
-  } = party
+  const { session, role, toasts, approveUser, rejectUser, endParty } = useParty()
 
   const [open, setOpen] = useState(false)
-  const [copyLabel, setCopyLabel] = useState('Copy link')
-  const [confirmEnd, setConfirmEnd] = useState(false)
 
   useEffect(() => {
     if (phone || !session) return
@@ -60,12 +48,6 @@ export default function RoomControls({
   const waiting = currentSession.waiting ?? []
   const participantCount = 1 + (currentSession.guests?.length ?? 0)
 
-  function copyLink() {
-    navigator.clipboard.writeText(`${window.location.origin}/party/${currentSession.id}`)
-    setCopyLabel('Copied!')
-    setTimeout(() => setCopyLabel('Copy link'), 2000)
-  }
-
   async function leaveRoom() {
     // Back from a host-owned room is a real teardown, not just browser
     // navigation. Otherwise the app-wide socket remains in the room and guests
@@ -85,10 +67,6 @@ export default function RoomControls({
     background: 'var(--glass)',
     border: '1px solid var(--stroke)',
     boxShadow: 'var(--shadow)',
-  }
-  const elevatedPanel = {
-    background: 'var(--bg)',
-    border: '1px solid var(--stroke)',
   }
   const iconBtn = (danger = false) => ({
     width: phone ? 44 : 34, height: phone ? 44 : 34, borderRadius: 8, display: 'grid', placeItems: 'center',
@@ -175,173 +153,14 @@ export default function RoomControls({
         </div>
       )}
 
-      {/* Host modal */}
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.72)' }} />
-          <div style={{ ...elevatedPanel, position: 'absolute', top: phone ? '50%' : top + 64, left: phone ? '50%' : 'auto', right: phone ? 'auto' : 18, transform: phone ? 'translate(-50%,-50%)' : 'none', zIndex: 51, width: 420, maxWidth: 'calc(100vw - 28px)', maxHeight: 'min(680px, calc(100vh - 100px))', display: 'flex', flexDirection: 'column', borderRadius: 22, overflow: 'hidden', color: 'var(--text)', boxShadow: '0 24px 70px rgba(0,0,0,.55)' }}>
-            <div style={{ padding: '18px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--stroke)' }}>
-              <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.02em' }}>Watch party</span>
-              <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text2)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6 6 18M6 6l12 12" /></svg>
-              </button>
-            </div>
-
-            <div style={{ overflowY: 'auto', padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 12 }}>In the party · {participantCount}</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '6px 0' }}>
-                    <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--stroke2)', display: 'grid', placeItems: 'center', color: 'var(--text)', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{initials(session.hostName || 'Host')}</div>
-                    <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{session.hostName || 'Host'}</span>
-                    <span style={{ padding: '2px 7px', borderRadius: 6, background: 'var(--glass2)', color: 'var(--text)', fontSize: 10, fontWeight: 700, letterSpacing: '.04em' }}>HOST</span>
-                  </div>
-                  {session.guests?.map((g: PartyUser) => (
-                    <div key={g.userId} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '6px 0' }}>
-                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--stroke2)', display: 'grid', placeItems: 'center', color: 'var(--text)', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{initials(g.name)}</div>
-                      <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{g.name}</span>
-                      {isHost && (
-                        <>
-                          <button onClick={() => transferHost(g.userId)} title="Make host" style={{ width: 32, height: 32, borderRadius: 9, border: 'none', background: 'transparent', color: 'var(--text3)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 11 2-7 4 4 3-5 3 5 4-4 2 7z" /><path d="M3 11h18v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                          </button>
-                          <button onClick={() => kickUser(g.userId)} title="Kick" style={{ width: 32, height: 32, borderRadius: 9, border: 'none', background: 'transparent', color: 'var(--red)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M16 17l5-5-5-5M21 12H9M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8" /></svg>
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {isHost ? <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 0 4px', borderTop: '1px solid var(--stroke)' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14.5, fontWeight: 600 }}>Collaborative control</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--text3)', marginTop: 2 }}>Let guests browse, play, pause &amp; seek</div>
-                </div>
-                <button onClick={() => setCollaborative(!session.collaborativeControl)} style={{ width: 44, height: 26, borderRadius: 13, border: '1px solid var(--stroke2)', cursor: 'pointer', padding: 3, flexShrink: 0, background: session.collaborativeControl ? 'var(--stroke2)' : 'transparent', transition: 'background .2s', display: 'flex', alignItems: 'center', justifyContent: session.collaborativeControl ? 'flex-end' : 'flex-start' }}>
-                  <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--text)', display: 'block' }} />
-                </button>
-              </div> : null}
-
-              {/* Personal camera-view preferences. Local-only and available to
-                  everyone (not host-gated) — they moved here when the player's
-                  bottom bar was pared back to the essentials. */}
-              {watching && (onToggleHideSelf || onToggleLayout) ? (
-                <div style={{ padding: '16px 0 4px', borderTop: '1px solid var(--stroke)', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text3)' }}>My camera view</div>
-                  {onToggleHideSelf ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14.5, fontWeight: 600 }}>Hide my own camera</div>
-                        <div style={{ fontSize: 12.5, color: 'var(--text3)', marginTop: 2 }}>Others still see you — this only drops your own tile</div>
-                      </div>
-                      <button onClick={onToggleHideSelf} style={{ width: 44, height: 26, borderRadius: 13, border: '1px solid var(--stroke2)', cursor: 'pointer', padding: 3, flexShrink: 0, background: hideSelf ? 'var(--stroke2)' : 'transparent', transition: 'background .2s', display: 'flex', alignItems: 'center', justifyContent: hideSelf ? 'flex-end' : 'flex-start' }}>
-                        <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--text)', display: 'block' }} />
-                      </button>
-                    </div>
-                  ) : null}
-                  {onToggleLayout && !phone ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14.5, fontWeight: 600 }}>Camera layout</div>
-                        <div style={{ fontSize: 12.5, color: 'var(--text3)', marginTop: 2 }}>
-                          {layoutMode === 'dock' ? 'Docked in a column beside the video' : 'Floating over the video, drag anywhere'}
-                        </div>
-                      </div>
-                      <button onClick={onToggleLayout} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: 9, border: '1px solid var(--stroke2)', background: 'var(--glass2)', color: 'var(--text)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
-                        {layoutMode === 'dock' ? 'Float' : 'Dock'}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {watching && isHost && (
-                <div style={{ padding: '16px 0 4px', borderTop: '1px solid var(--stroke)' }}>
-                  <div style={{ fontSize: 14.5, fontWeight: 600 }}>Sync mode</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--text3)', margin: '2px 0 12px' }}>
-                    {(session.syncMode ?? 'hopping') === 'dragging' ? 'Everyone waits for the slowest viewer' : 'Host never waits; slow viewers catch up'}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, background: 'var(--glass2)', border: '1px solid var(--stroke)', borderRadius: 10, padding: 4 }}>
-                    {[{ id: 'hopping', label: 'Hopping' }, { id: 'dragging', label: 'Dragging' }].map((m: { id: string; label: string }) => {
-                      const active = (session.syncMode ?? 'hopping') === m.id
-                      return <button key={m.id} onClick={() => setSyncMode(m.id)} style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: active ? 700 : 600, background: active ? 'var(--accent)' : 'transparent', color: active ? 'var(--on-accent)' : 'var(--text2)', transition: 'background .15s, color .15s' }}>{m.label}</button>
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {watching && isHost && (
-                <button onClick={() => { backToLobby(); setOpen(false) }} style={{ padding: '11px 0', borderRadius: 10, border: '1px solid var(--stroke2)', background: 'var(--glass2)', color: 'var(--text)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>← Pick something else</button>
-              )}
-
-              <div style={{ paddingTop: 4 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 12 }}>Share this code</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <JoinQR url={`${window.location.origin}/party/${session.id}`} />
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 24, fontWeight: 600, letterSpacing: '.14em', color: 'var(--text)' }}>{session.id}</span>
-                    <button onClick={copyLink} style={{ padding: '10px 16px', borderRadius: 10, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{copyLabel}</button>
-                  </div>
-                </div>
-              </div>
-
-              {isHost && (
-                <div style={{ paddingTop: 4, borderTop: '1px solid var(--stroke)', paddingBottom: 2 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--red)', margin: '16px 0 10px' }}>Danger zone</div>
-                  <button onClick={() => setConfirmEnd(true)} style={{
-                    width: '100%', padding: '11px 0', borderRadius: 10, border: '1px solid rgba(224,101,94,.35)',
-                    background: 'rgba(224,101,94,.12)', color: 'var(--red)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer',
-                  }}>End party for everyone</button>
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* End-party confirmation — this is instant and permanent, distinct from
-          just leaving/closing the tab (which still goes through the grace-period
-          host-disconnect path). Every guest gets kicked back to login/lobby. */}
-      {confirmEnd && (
-        <>
-          <div onClick={() => setConfirmEnd(false)} style={{ position: 'absolute', inset: 0, zIndex: 52, background: 'rgba(0,0,0,.72)' }} />
-          <div style={{ ...elevatedPanel, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 53, width: 360, maxWidth: '90vw', borderRadius: 14, padding: 22, color: 'var(--text)' }}>
-            <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-.01em', marginBottom: 8 }}>End party for everyone?</div>
-            <p style={{ fontSize: 13.5, color: 'var(--text2)', lineHeight: 1.5, margin: '0 0 20px' }}>
-              Everyone in the party will be disconnected immediately and returned to the lobby. This can't be undone.
-            </p>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setConfirmEnd(false)} style={{ flex: 1, height: 44, borderRadius: 10, border: '1px solid var(--stroke2)', background: 'var(--glass2)', color: 'var(--text)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
-              <button onClick={() => { setConfirmEnd(false); setOpen(false); endParty() }} style={{ flex: 1, height: 44, borderRadius: 10, border: 'none', background: 'var(--red)', color: 'var(--text)', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>End party</button>
-            </div>
-          </div>
-        </>
-      )}
+      {open ? (
+        <PartyPanel
+          phone={phone} watching={watching} top={top}
+          onClose={() => setOpen(false)}
+          layoutMode={layoutMode} onToggleLayout={onToggleLayout}
+          hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
+        />
+      ) : null}
     </>
-  )
-}
-
-// Self-contained QR code encoding the join URL — no network calls (the
-// 'qrcode' package renders entirely client-side as inline SVG), framed in a
-// small rounded white card so it stays scannable against the dark UI.
-function JoinQR({ url, size = 108 }: { url: string; size?: number }) {
-  const [svg, setSvg] = useState<string | null>(null)
-  useEffect(() => {
-    let live = true
-    QRCode.toString(url, { type: 'svg', margin: 1, width: size, color: { dark: '#0a0a0c', light: '#ffffff' } })
-      .then(s => { if (live) setSvg(s) })
-      .catch(() => {})
-    return () => { live = false }
-  }, [url, size])
-
-  return (
-    <div style={{ flexShrink: 0, width: size + 20, height: size + 20, borderRadius: 14, background: '#fff', display: 'grid', placeItems: 'center' }}>
-      {svg
-        ? <div style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: svg }} />
-        : <div style={{ width: size, height: size, borderRadius: 8, background: 'rgba(0,0,0,.06)' }} />}
-    </div>
   )
 }
