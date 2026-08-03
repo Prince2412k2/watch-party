@@ -18,15 +18,6 @@ export function usePhone() {
   return matchStore(PHONE_QUERY)
 }
 
-// Roomy-phone gate for the watch control bar. Below this the bar splits into a
-// primary cluster + a "⋯" overflow popover; at/above it every control inlines
-// back into the bar. 820px clears a landscape 740×360 (→ overflow) but lets a
-// 844×390 phone (→ inline) fit all controls without horizontal scroll.
-const WIDE_BAR_QUERY = '(min-width: 820px)'
-export function useWideBar() {
-  return matchStore(WIDE_BAR_QUERY)
-}
-
 function matchStore(q: string) {
   return useSyncExternalStore(
     (cb) => {

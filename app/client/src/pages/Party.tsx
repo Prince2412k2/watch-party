@@ -6,7 +6,6 @@ import { useSocket } from '../hooks/useSocket'
 import { useLiveKit } from '../hooks/useLiveKit'
 import type { LiveKitParticipantView } from '../hooks/useLiveKit'
 import { useHideSelf } from '../hooks/useHideSelf'
-import { usePushToTalk } from '../hooks/usePushToTalk'
 import { navigate } from '../router'
 import Player from '../components/Player'
 import type { PlayerProps } from '../components/Player'
@@ -239,10 +238,10 @@ function WatchView({
     if (lk.micOn) lk.enableMic(false)
   }, []) // eslint-disable-line
 
-  // Push-to-talk: hold T (desktop) / press-and-hold the talk button (phone) to
-  // momentarily open the mic; release returns to muted. No-op if the user has
-  // manually unmuted. Works even while the video has focus (window listeners).
-  const ptt = usePushToTalk({ micOn: lk.micOn, enableMic: lk.enableMic })
+  // Hide every camera tile from MY screen — a purely-local display toggle (the
+  // cameras keep publishing; other people's views are untouched), driven by the
+  // bottom bar's eye-with-slash button.
+  const [hideAllFeeds, setHideAllFeeds] = useState(false)
 
   // Edge ripple when a message arrives in 'on' alert mode
   useEffect(() => {
@@ -450,7 +449,7 @@ function WatchView({
 
       {/* On desktop the dock shrinks the video; on phones the video stays full-bleed
           and cameras float as a compact strip so the movie is never letterboxed. */}
-      <div style={{ position: 'absolute', inset: 0, marginLeft: (!phone && layoutMode === 'dock') ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
+      <div style={{ position: 'absolute', inset: 0, marginLeft: (!phone && !hideAllFeeds && layoutMode === 'dock') ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
         <HlsPlayer
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
           onSetPlaybackTracks={setPlaybackTracks}
@@ -458,7 +457,7 @@ function WatchView({
           micOn={lk.micOn} camOn={lk.camOn}
           onToggleMic={() => guardedToggle(() => lk.enableMic(!lk.micOn))}
           onToggleCam={() => guardedToggle(() => lk.enableCamera(!lk.camOn))}
-          talking={ptt.talking} onTalkStart={ptt.start} onTalkEnd={ptt.stop}
+          hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={() => setHideAllFeeds(v => !v)}
           onToggleLayout={() => setLayout(layoutMode === 'float' ? 'dock' : 'float')}
           hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
           onOpenChat={() => openChat(true)} layoutMode={layoutMode}
@@ -467,10 +466,10 @@ function WatchView({
           seekBridgeRef={seekBridgeRef}
         />
         {/* Desktop camera layouts */}
-        {!phone && layoutMode === 'float' && <CameraGrid {...cameraProps} />}
+        {!phone && !hideAllFeeds && layoutMode === 'float' && <CameraGrid {...cameraProps} />}
       </div>
 
-      {!phone && layoutMode === 'dock' && (
+      {!phone && !hideAllFeeds && layoutMode === 'dock' && (
         <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 210, zIndex: Z.cameraStrip }}>
           <Dock {...cameraProps} />
         </div>
@@ -478,23 +477,13 @@ function WatchView({
 
       {/* Phone: compact, collapsible camera strip that sits above the bottom bar
           and can be hidden entirely so it never covers the movie. */}
-      {phone && camStripOpen && <MobileCameraStrip {...cameraProps} visible={visible} />}
+      {phone && !hideAllFeeds && camStripOpen && <MobileCameraStrip {...cameraProps} visible={visible} />}
 
-      {/* Desktop chat opener (bug 1): an explicit, visible tab you CLICK — no more
-          proximity/hover open from a full-height invisible edge zone. Press C also
-          works (handled in Player). Fades with the auto-hide chrome. */}
-      {!phone && !chatOpen && (
-        <button onClick={(e) => { e.stopPropagation(); openChat(true) }} title="Open chat (C)" aria-label="Open chat"
-          style={{
-            position: 'absolute', top: '50%', right: 0, transform: 'translateY(-50%)',
-            zIndex: Z.chatEdge, width: 30, height: 62, borderRadius: '13px 0 0 13px',
-            display: 'grid', placeItems: 'center', cursor: 'pointer', color: '#fff',
-            ...glass('medium'), borderRight: 'none',
-            opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
-          }}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-        </button>
-      )}
+      {/* The desktop chat opener now lives in RoomControls' top-right cluster
+          (alongside the watch-party menu), matching the redesigned player chrome.
+          It replaced a right-edge tab that sat here — two chat buttons on one
+          screen was worse than either alone. Press C still works (handled in
+          Player). */}
 
       {/* Notification ripple from the right edge ('on' mode) */}
       {ripple > 0 && !chatOpen && (
@@ -541,7 +530,12 @@ function WatchView({
           : <Chat top={76} />
       )}
 
-      <RoomControls stage="watching" visible={visible} phone={phone} onOpenChat={() => openChat(true)} chatOpen={chatOpen} />
+      <RoomControls
+        stage="watching" visible={visible} phone={phone}
+        onOpenChat={() => openChat(true)} chatOpen={chatOpen}
+        layoutMode={layoutMode} onToggleLayout={() => setLayout(layoutMode === 'float' ? 'dock' : 'float')}
+        hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
+      />
 
       {/* Non-rotating "rotate your phone" hint. Shows only on a coarse-pointer
           phone held in portrait; hides itself in landscape and stays dismissed
