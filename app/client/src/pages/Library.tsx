@@ -70,6 +70,11 @@ function parseDetailPlayback(value: unknown): DetailPlayback | null {
 
 const img = (id: string, type = 'Primary') => `/api/library/image/${id}?type=${type}`
 
+// Phone-first spacing rhythm for the mobile render paths below — an
+// intentional small scale, not ad-hoc "turn the number down a bit" values.
+// Desktop paths never read this.
+const MOB = { xs: 6, sm: 10, md: 16, lg: 24, xl: 32 }
+
 let posterCueContext: AudioContext | null = null
 function playPosterMoveCue() {
   try {
@@ -532,29 +537,55 @@ function JoinDialog({ mobile, onClose }: { mobile: boolean; onClose: () => void 
     navigate(`/party/${clean}`)
   }
 
+  const fieldH = mobile ? 54 : 46
+  const formInner = (
+    <>
+      <h2 style={{ fontSize: mobile ? 20 : 19, fontWeight: 800, margin: '0 0 6px', fontFamily: SANS }}>Join a party</h2>
+      <p style={{ color: C.dim, fontSize: 13.5, lineHeight: 1.5, margin: '0 0 16px', fontFamily: SANS }}>
+        Enter the code the host shared with you.
+      </p>
+      <input autoFocus value={code} onChange={e => { setCode(e.target.value); setErr('') }}
+        placeholder="A1B2C3D4" maxLength={8}
+        style={{ width: '100%', padding: '13px 16px', borderRadius: 10, border: `1px solid ${C.line2}`, height: mobile ? fieldH : undefined,
+          background: 'rgba(255,255,255,.04)', color: C.text, fontFamily: MONO, fontSize: 18, letterSpacing: '.14em',
+          textAlign: 'center', textTransform: 'uppercase', outline: 'none' }} />
+      {err && (
+        <div role="alert" style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(224,101,94,.12)', border: `1px solid rgba(224,101,94,.35)`, color: C.red, fontSize: 13.5, fontFamily: SANS }}>{err}</div>
+      )}
+      <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+        <button type="button" onClick={onClose} style={{ flex: 1, height: fieldH, borderRadius: 13, border: `1px solid ${C.line2}`,
+          cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: C.text, background: 'rgba(255,255,255,.04)' }}>Cancel</button>
+        <button type="submit" style={{ flex: 1, height: fieldH, borderRadius: 13, border: 'none',
+          cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: C.onAccent, background: C.accent }}>Join</button>
+      </div>
+    </>
+  )
+
+  // Phone: rises from the bottom edge (thumb-reachable, matches every other
+  // sheet in the app) instead of floating as a centered card.
+  if (mobile) {
+    return (
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'flex-end',
+        background: 'rgba(0,0,0,.66)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'scrimIn .2s ease both' }}>
+        <form onClick={(e) => e.stopPropagation()} onSubmit={submit} style={{
+          width: '100%', borderRadius: '20px 20px 0 0', padding: '10px 20px calc(env(safe-area-inset-bottom, 0px) + 20px)',
+          background: C.surface, border: `1px solid ${C.line}`, borderBottom: 'none',
+          boxShadow: '0 -24px 60px rgba(0,0,0,.7)', animation: 'sheetUp .28s cubic-bezier(.2,.8,.2,1) both' }}>
+          <div aria-hidden style={{ display: 'grid', placeItems: 'center', padding: '0 0 14px' }}>
+            <span style={{ width: 40, height: 5, borderRadius: 99, background: C.line2 }} />
+          </div>
+          {formInner}
+        </form>
+      </div>
+    )
+  }
+
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'grid', placeItems: 'center',
       padding: 16, background: 'rgba(0,0,0,.66)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'up .2s ease both' }}>
-      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} style={{ width: 'min(380px, 100%)', borderRadius: 16, padding: mobile ? 20 : 26,
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} style={{ width: 'min(380px, 100%)', borderRadius: 16, padding: 26,
         background: C.surface, border: `1px solid ${C.line}`, boxShadow: '0 24px 60px rgba(0,0,0,.7)' }}>
-        <h2 style={{ fontSize: 19, fontWeight: 800, margin: '0 0 6px', fontFamily: SANS }}>Join a party</h2>
-        <p style={{ color: C.dim, fontSize: 13.5, lineHeight: 1.5, margin: '0 0 16px', fontFamily: SANS }}>
-          Enter the code the host shared with you.
-        </p>
-        <input autoFocus value={code} onChange={e => { setCode(e.target.value); setErr('') }}
-          placeholder="A1B2C3D4" maxLength={8}
-          style={{ width: '100%', padding: '13px 16px', borderRadius: 10, border: `1px solid ${C.line2}`,
-            background: 'rgba(255,255,255,.04)', color: C.text, fontFamily: MONO, fontSize: 18, letterSpacing: '.14em',
-            textAlign: 'center', textTransform: 'uppercase', outline: 'none' }} />
-        {err && (
-          <div role="alert" style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(224,101,94,.12)', border: `1px solid rgba(224,101,94,.35)`, color: C.red, fontSize: 13.5, fontFamily: SANS }}>{err}</div>
-        )}
-        <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-          <button type="button" onClick={onClose} style={{ flex: 1, height: 46, borderRadius: 13, border: `1px solid ${C.line2}`,
-            cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: C.text, background: 'rgba(255,255,255,.04)' }}>Cancel</button>
-          <button type="submit" style={{ flex: 1, height: 46, borderRadius: 13, border: 'none',
-            cursor: 'pointer', fontFamily: SANS, fontSize: 14.5, fontWeight: 700, color: C.onAccent, background: C.accent }}>Join</button>
-        </div>
+        {formInner}
       </form>
     </div>
   )
@@ -917,15 +948,21 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
   }
   return (
     <div className={`library-poster-rail${edges.left ? ' has-left-overflow' : ''}${edges.right ? ' has-right-overflow' : ''}`}>
-      <div className="library-row-controls">
-        <button onClick={() => move(-1)} disabled={!!items && !mobile && selected === 0} aria-label="Previous title">‹</button>
-        <button onClick={() => move(1)} disabled={!!items && !mobile && selected === count - 1} aria-label="Next title">›</button>
-      </div>
-      <div ref={railRef} className="library-poster-wall" role={items ? 'listbox' : undefined} aria-label={items ? 'Titles' : undefined} aria-orientation={items ? 'horizontal' : undefined}
+      {/* Prev/next rail arrows are a mouse-hover affordance — meaningless on a
+          touch rail (there's no hover to reveal them), so phone skips them. */}
+      {!mobile && (
+        <div className="library-row-controls">
+          <button onClick={() => move(-1)} disabled={!!items && selected === 0} aria-label="Previous title">‹</button>
+          <button onClick={() => move(1)} disabled={!!items && selected === count - 1} aria-label="Next title">›</button>
+        </div>
+      )}
+      <div ref={railRef} className={`library-poster-wall${mobile ? ' mob-lib-grid' : ''}`} role={items ? 'listbox' : undefined} aria-label={items ? 'Titles' : undefined} aria-orientation={items ? 'horizontal' : undefined}
         onKeyDown={onKeyDown}
-        style={{ display: 'grid', gap: mobile ? 12 : 18, gridTemplateColumns: `repeat(auto-fill, minmax(${mobile ? 118 : 150}px, 1fr))` }}>
+        style={mobile
+          ? { display: 'grid', gap: MOB.md, gridTemplateColumns: 'repeat(2, 1fr)' }
+          : { display: 'grid', gap: 18, gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }}>
         {items ? items.map((item, index) => (
-          <WallPoster key={item.Id} item={item} onClick={() => onOpen?.(item)} selected={index === selected}
+          <WallPoster key={item.Id} item={item} onClick={() => onOpen?.(item)} selected={index === selected} mobile={mobile}
             tabIndex={mobile || index === selected ? 0 : -1} index={index} onSelect={() => setSelected(index)}
             onHover={() => { if (hoverLive.current) setBalancedPoster(item.Id) }} />
         )) : children}
@@ -933,13 +970,13 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
     </div>
   )
 }
-function WallPoster({ item, onClick, selected, tabIndex, index, onSelect, onHover }: { item: LibraryItem; onClick: () => void; selected: boolean; tabIndex: number; index: number; onSelect: () => void; onHover: () => void }) {
+function WallPoster({ item, onClick, selected, tabIndex, index, onSelect, onHover, mobile }: { item: LibraryItem; onClick: () => void; selected: boolean; tabIndex: number; index: number; onSelect: () => void; onHover: () => void; mobile: boolean }) {
   const badge = item.Type === 'Season' ? `S${item.IndexNumber}` : null
   return <div className={selected ? 'is-selected' : ''} style={{ width: '100%' }}><PosterCardFluid item={item} onClick={onClick} badge={badge}
-    selected={selected} tabIndex={tabIndex} index={index} onSelect={onSelect} onHover={onHover} /></div>
+    selected={selected} tabIndex={tabIndex} index={index} onSelect={onSelect} onHover={onHover} mobile={mobile} /></div>
 }
 // Poster that fills its grid cell width (rail cards are fixed 170px).
-function PosterCardFluid({ item, onClick, badge, selected, tabIndex, index, onSelect, onHover }: { item: LibraryItem; onClick: () => void; badge?: string | null; selected: boolean; tabIndex: number; index: number; onSelect: () => void; onHover?: () => void }) {
+function PosterCardFluid({ item, onClick, badge, selected, tabIndex, index, onSelect, onHover, mobile }: { item: LibraryItem; onClick: () => void; badge?: string | null; selected: boolean; tabIndex: number; index: number; onSelect: () => void; onHover?: () => void; mobile?: boolean }) {
   const rating = item.CommunityRating
   const filledStars = rating == null ? 0 : Math.round(rating / 2)
   const isSeries = item.Type === 'Series'
@@ -964,9 +1001,14 @@ function PosterCardFluid({ item, onClick, badge, selected, tabIndex, index, onSe
           <div style={{ position: 'absolute', top: 8, left: 8, padding: '2px 7px', borderRadius: 6, fontFamily: MONO, fontSize: 10.5, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff' }}>{badge}</div>
         )}
       </div>
-      <div className="library-poster-meta" aria-hidden>
-        <span className="library-poster-title">{item.Name}</span>
-        <span className="library-poster-stars">{Array.from({ length: 5 }, (_, index) => <span key={index} className={index >= filledStars ? 'is-empty' : ''}>★</span>)}</span>
+      <div className="library-poster-meta" aria-hidden style={mobile ? { minHeight: 0, padding: '10px 2px 0' } : undefined}>
+        <span className="library-poster-title" style={mobile ? { fontSize: 15 } : undefined}>{item.Name}</span>
+        {/* Star rating is decorative and repeats nothing — on the bigger mobile
+            grid it just adds a second line of noise under every tile, so phone
+            drops it and keeps the title as the only line. */}
+        {!mobile && (
+          <span className="library-poster-stars">{Array.from({ length: 5 }, (_, index) => <span key={index} className={index >= filledStars ? 'is-empty' : ''}>★</span>)}</span>
+        )}
       </div>
     </button>
   )
@@ -1105,7 +1147,7 @@ function Details({ itemId, onWatch, onOpen: _onOpen, onBack }: { itemId: string;
                 <span>{resumeLabel && playItem.Id === d.Id ? `Resume ${resumeLabel}` : isSeries && !isEpisode ? 'Play first episode' : 'Watch now'}</span>
               </button>
               {d.Type !== 'Series' ? <button className={`library-detail-track${trackMenuOpen ? ' is-open' : ''}`} onClick={() => setTrackMenuOpen(open => !open)} aria-label="Audio and subtitles" title="Audio and subtitles"><Icon path={Ic.music} size={18} sw={1.8} /></button> : null}
-              {trackMenuOpen && playback ? <DetailTrackMenu itemId={activeId} playback={playback} selectedAudio={selectedAudio} selectedSubtitle={selectedSubtitle} onSelectAudio={setSelectedAudio} onSelectSubtitle={setSelectedSubtitle} onRefresh={refreshPlayback} onClose={() => setTrackMenuOpen(false)} /> : null}
+              {trackMenuOpen && playback ? <DetailTrackMenu itemId={activeId} playback={playback} selectedAudio={selectedAudio} selectedSubtitle={selectedSubtitle} onSelectAudio={setSelectedAudio} onSelectSubtitle={setSelectedSubtitle} onRefresh={refreshPlayback} onClose={() => setTrackMenuOpen(false)} mobile={mobile} /> : null}
             </div> : null}
           </div>
 
@@ -1116,7 +1158,16 @@ function Details({ itemId, onWatch, onOpen: _onOpen, onBack }: { itemId: string;
             <nav className="library-seasons" aria-label="Seasons">
               {seasonRows.map((row, index) => {
                 const selected = row.season.Id === activeSeason?.season.Id
-                return <button key={row.season.Id} className={selected ? 'is-active' : ''} onClick={() => row.episodes[0] && setActiveId(row.episodes[0].Id)}>
+                // Phone gets a tappable pill, not the desktop underline-on-hover
+                // text link — there's no hover on touch, and a pill reads as a
+                // single deliberate control instead of a line of plain text.
+                return <button key={row.season.Id} className={selected ? 'is-active' : ''}
+                  onClick={() => row.episodes[0] && setActiveId(row.episodes[0].Id)}
+                  style={mobile ? {
+                    padding: '10px 18px', borderRadius: 999, minHeight: 44,
+                    background: selected ? C.text : C.surface2, color: selected ? C.bg : C.dim,
+                    fontSize: 14.5, fontWeight: 700,
+                  } : undefined}>
                   <span>{row.season.Name || `Season ${index + 1}`}</span><i />
                 </button>
               })}
@@ -1178,7 +1229,9 @@ function EpisodeCard({ episode, selected, onClick }: { episode: LibraryItem; sel
         <span style={{ color: C.faint, fontFamily: MONO, fontSize: 11.5 }}>{episode.IndexNumber ?? '–'}</span>
         <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, fontWeight: 700 }}>{episode.Name}</strong>
       </div>
-      {episode.Overview && <p style={{ margin: '5px 0 0 22px', color: C.faint, fontSize: 12.5, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{episode.Overview}</p>}
+      {/* Synopsis is dense secondary text on an already-scrolling strip — phone
+          drops it and keeps the row to art + title, tap through for the rest. */}
+      {!mobile && episode.Overview && <p style={{ margin: '5px 0 0 22px', color: C.faint, fontSize: 12.5, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{episode.Overview}</p>}
     </button>
   )
 }
@@ -1188,10 +1241,10 @@ function trackLabel(track: PlaybackTrack, fallback: string) {
   return `${base}${track.isDefault ? ' · Default' : ''}${track.isForced ? ' · Forced' : ''}`
 }
 
-function DetailTrackMenu({ itemId, playback, selectedAudio, selectedSubtitle, onSelectAudio, onSelectSubtitle, onRefresh, onClose }: {
+function DetailTrackMenu({ itemId, playback, selectedAudio, selectedSubtitle, onSelectAudio, onSelectSubtitle, onRefresh, onClose, mobile = false }: {
   itemId: string; playback: DetailPlayback; selectedAudio: number | null; selectedSubtitle: number | null
   onSelectAudio: (index: number | null) => void; onSelectSubtitle: (index: number | null) => void
-  onRefresh: () => Promise<void>; onClose: () => void
+  onRefresh: () => Promise<void>; onClose: () => void; mobile?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [busy, setBusy] = useState(false)
@@ -1227,21 +1280,17 @@ function DetailTrackMenu({ itemId, playback, selectedAudio, selectedSubtitle, on
   }
 
   const row = (label: string, selected: boolean, onClick: () => void, action?: ReactNode) => (
-    <div style={{ display: 'flex', alignItems: 'center', minHeight: 44, borderRadius: 9, background: selected ? 'rgba(255,255,255,.08)' : 'transparent' }}>
-      <button onClick={onClick} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 9, padding: '9px 10px', border: 0, background: 'transparent', color: selected ? '#fff' : 'rgba(255,255,255,.72)', cursor: 'pointer', textAlign: 'left', fontFamily: SANS, fontSize: 13 }}>
-        <span style={{ width: 15, opacity: selected ? 1 : 0 }}><Icon path={Ic.check} size={14} sw={2.4} /></span>
+    <div style={{ display: 'flex', alignItems: 'center', minHeight: mobile ? 52 : 44, borderRadius: mobile ? 12 : 9, background: selected ? 'rgba(255,255,255,.08)' : 'transparent' }}>
+      <button onClick={onClick} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: mobile ? 12 : 9, padding: mobile ? '12px' : '9px 10px', border: 0, background: 'transparent', color: selected ? '#fff' : 'rgba(255,255,255,.72)', cursor: 'pointer', textAlign: 'left', fontFamily: SANS, fontSize: mobile ? 15.5 : 13 }}>
+        <span style={{ width: mobile ? 18 : 15, opacity: selected ? 1 : 0, flexShrink: 0 }}><Icon path={Ic.check} size={mobile ? 16 : 14} sw={2.4} /></span>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
       </button>
       {action}
     </div>
   )
 
-  return (
-    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 20, top: 58, left: 0, width: 'min(430px, calc(100vw - 38px))', maxHeight: 'min(62vh, 520px)', overflow: 'hidden auto', padding: 12, borderRadius: 18, background: 'rgba(24,22,21,.94)', border: '1px solid rgba(255,255,255,.18)', boxShadow: '0 24px 70px rgba(0,0,0,.55)', backdropFilter: 'blur(22px)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 5px 9px' }}>
-        <strong style={{ fontSize: 13.5 }}>Playback tracks</strong>
-        <button onClick={onClose} aria-label="Close track menu" style={{ border: 0, background: 'transparent', color: C.dim, cursor: 'pointer', padding: 4 }}><Icon path={Ic.x} size={17} /></button>
-      </div>
+  const content = (
+    <>
       {playback.audioStreams.length > 0 && <div style={{ marginBottom: 12 }}>
         <div style={{ padding: '5px 10px', fontFamily: MONO, fontSize: 10.5, color: C.faint, letterSpacing: '.1em', textTransform: 'uppercase' }}>Audio</div>
         {playback.audioStreams.map((track, i) => <div key={track.index}>{row(trackLabel(track, `Audio ${i + 1}`), selectedAudio === track.index, () => onSelectAudio(track.index))}</div>)}
@@ -1249,16 +1298,54 @@ function DetailTrackMenu({ itemId, playback, selectedAudio, selectedSubtitle, on
       <div>
         <div style={{ padding: '5px 10px', fontFamily: MONO, fontSize: 10.5, color: C.faint, letterSpacing: '.1em', textTransform: 'uppercase' }}>Subtitles</div>
         {row('Off', selectedSubtitle == null || selectedSubtitle < 0, () => onSelectSubtitle(null))}
-        {playback.subtitleStreams.map((track, i) => <div key={track.index}>{row(trackLabel(track, `Subtitle ${i + 1}`), selectedSubtitle === track.index, () => onSelectSubtitle(track.index), track.isExternal ? <button disabled={busy} onClick={() => remove(track)} title="Delete subtitle" style={{ border: 0, background: 'transparent', color: C.faint, cursor: busy ? 'wait' : 'pointer', padding: '9px 10px' }}><Icon path={Ic.trash} size={15} /></button> : null)}</div>)}
+        {playback.subtitleStreams.map((track, i) => <div key={track.index}>{row(trackLabel(track, `Subtitle ${i + 1}`), selectedSubtitle === track.index, () => onSelectSubtitle(track.index), track.isExternal ? <button disabled={busy} onClick={() => remove(track)} title="Delete subtitle" style={{ border: 0, background: 'transparent', color: C.faint, cursor: busy ? 'wait' : 'pointer', padding: mobile ? '12px' : '9px 10px' }}><Icon path={Ic.trash} size={mobile ? 17 : 15} /></button> : null)}</div>)}
         <input ref={inputRef} type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden onChange={e => upload(e.target.files?.[0])} />
-        <button disabled={busy} onClick={() => inputRef.current?.click()} style={{ width: '100%', marginTop: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,.14)', background: 'rgba(255,255,255,.06)', color: '#fff', cursor: busy ? 'wait' : 'pointer', fontFamily: SANS, fontSize: 13, fontWeight: 650 }}>{busy ? 'Working…' : 'Upload SRT or VTT'}</button>
+        <button disabled={busy} onClick={() => inputRef.current?.click()} style={{ width: '100%', marginTop: 8, padding: mobile ? '14px 12px' : '10px 12px', borderRadius: mobile ? 12 : 10, border: '1px solid rgba(255,255,255,.14)', background: 'rgba(255,255,255,.06)', color: '#fff', cursor: busy ? 'wait' : 'pointer', fontFamily: SANS, fontSize: mobile ? 15 : 13, fontWeight: 650 }}>{busy ? 'Working…' : 'Upload SRT or VTT'}</button>
         {error && <div role="alert" style={{ marginTop: 8, padding: '0 4px', color: C.red, fontSize: 12 }}>{error}</div>}
       </div>
+    </>
+  )
+
+  // Phone: the anchored dropdown becomes a full-screen step sheet — a scrim +
+  // a sheet rising from the bottom (same sheetUp/scrimIn motion the rest of the
+  // app's sheets use), with room-to-breathe row heights instead of a cramped
+  // floating panel pinned under the track button.
+  if (mobile) {
+    return (
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', animation: 'scrimIn .2s ease both' }}>
+        <div onClick={e => e.stopPropagation()} style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '82dvh', display: 'flex', flexDirection: 'column',
+          background: 'rgba(20,20,22,.98)', border: '1px solid rgba(255,255,255,.14)', borderBottom: 'none',
+          borderRadius: '20px 20px 0 0', boxShadow: '0 -24px 60px rgba(0,0,0,.6)', animation: 'sheetUp .28s cubic-bezier(.2,.8,.2,1) both',
+        }}>
+          <div aria-hidden style={{ display: 'grid', placeItems: 'center', padding: '10px 0 2px' }}>
+            <span style={{ width: 40, height: 5, borderRadius: 99, background: 'rgba(255,255,255,.18)' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 18px 14px' }}>
+            <strong style={{ fontSize: 17, fontWeight: 800 }}>Audio &amp; subtitles</strong>
+            <button onClick={onClose} aria-label="Close" style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, background: 'rgba(255,255,255,.08)', color: C.text, cursor: 'pointer' }}><Icon path={Ic.x} size={18} /></button>
+          </div>
+          <div style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '0 18px calc(env(safe-area-inset-bottom, 0px) + 20px)' }}>
+            {content}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', zIndex: 20, top: 58, left: 0, width: 'min(430px, calc(100vw - 38px))', maxHeight: 'min(62vh, 520px)', overflow: 'hidden auto', padding: 12, borderRadius: 18, background: 'rgba(24,22,21,.94)', border: '1px solid rgba(255,255,255,.18)', boxShadow: '0 24px 70px rgba(0,0,0,.55)', backdropFilter: 'blur(22px)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 5px 9px' }}>
+        <strong style={{ fontSize: 13.5 }}>Playback tracks</strong>
+        <button onClick={onClose} aria-label="Close track menu" style={{ border: 0, background: 'transparent', color: C.dim, cursor: 'pointer', padding: 4 }}><Icon path={Ic.x} size={17} /></button>
+      </div>
+      {content}
     </div>
   )
 }
 /* ── Grid (inside a library / season) ───────────────────────────────────── */
 function GridView({ stack, items, loading, onOpen }: { stack: StackEntry[]; items: LibraryItem[]; loading: boolean; onOpen: (item: LibraryItem) => void; onCrumb: (index: number) => void; onHome: () => void }) {
+  const mobile = useIsMobile()
   const current = stack[stack.length - 1]
   const genreRows = Array.from(new Set(items.flatMap(item => item.Genres ?? [])))
     .map(name => ({ name, items: items.filter(item => item.Genres?.includes(name)) }))
@@ -1277,7 +1364,10 @@ function GridView({ stack, items, loading, onOpen }: { stack: StackEntry[]; item
             <PosterWall items={items} onOpen={onOpen} />
           )}
         </section>
-        {!loading && genreRows.map(row => (
+        {/* Genre rows repeat titles already in the grid above — a useful
+            "browse by mood" shelf with a mouse, but on phone it's just the same
+            posters scrolling past twice. Phone shows one grid, not N of them. */}
+        {!loading && !mobile && genreRows.map(row => (
           <section className="library-media-row" key={row.name}>
             <div className="library-title-row"><h2>{row.name}</h2></div>
             <PosterWall items={row.items} onOpen={onOpen} />
