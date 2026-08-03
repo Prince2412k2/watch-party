@@ -38,7 +38,15 @@ export function Sheet({ open = false, onClose, title, children, maxHeight = '85d
   return createPortal(
     <div
       role="dialog" aria-modal="true"
-      style={{ position: 'fixed', inset: 0, zIndex: Z.sheet, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: Z.sheet, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+        // Interactive only while actually open. Without this, a closed sheet
+        // that's still `mounted` (waiting on the exit animation's `animationend`
+        // to flip it false) stays a full-viewport hit target — and if that
+        // event ever fails to fire, it stays that way forever, invisibly
+        // swallowing every tap on the screen until the page is refreshed.
+        pointerEvents: open ? 'auto' : 'none',
+      }}
     >
       <div
         onClick={onClose}
