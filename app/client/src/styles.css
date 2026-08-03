@@ -104,6 +104,15 @@ media-player, media-player:focus, media-player:focus-visible,
    peek out under / overlap the app bar. Desktop keeps the skin scrubber so
    controllers can still drag to seek. */
 .watch-skin--nobar .media-controls { display: none !important; }
+/* ...and with it, the skin's own full-stage scrim. It's a separate element from
+   the bar (`.media-overlay`, inset:0) that the skin fades in whenever the
+   controls become visible — `.media-controls[data-visible] ~ .media-overlay`.
+   Hiding the controls above does NOT stop that: `[data-visible]` is still set on
+   the hidden element, so the sibling selector still matches and the whole frame
+   dims every time our chrome appears, on top of the one black-alpha scrim we
+   draw ourselves behind the bar. We replaced the skin's controls entirely, so
+   its scrim is redundant. */
+.watch-skin--nobar .media-overlay { display: none !important; }
 
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 99px; }
