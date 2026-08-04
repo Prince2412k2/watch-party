@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Rnd } from 'react-rnd'
-import CameraTile, { initials } from './CameraTile'
+import CameraTile from './CameraTile'
+import CollapsedFace from './CollapsedFace'
 
 type CameraParticipant = {
   identity: string
@@ -10,8 +11,8 @@ type CameraParticipant = {
   isSpeaking?: boolean
 }
 
-// Collapsed tiles become a circle this wide. Sized to fit two initials and stay
-// grabbable without turning into a dot.
+// Collapsed tiles become a circle this wide. Sized to stay grabbable without
+// turning into a dot, and to keep a face readable at a glance.
 const COLLAPSE_SIZE = 54
 // A click that wanders less than this many px is still a click, not a drag —
 // the collapsed circle has to be both draggable and tappable.
@@ -146,21 +147,8 @@ export default function CameraGrid({
                 />
               </div>
 
-              {/* Collapsed face: initials on a fixed neutral fill, same as the
-                  no-video avatar in CameraTile (no per-user hue). */}
-              {isCollapsed && (
-                <div style={{
-                  // Opaque, not a wash: the tile underneath is only faded to
-                  // opacity 0 (to keep tracks alive), so a translucent fill here
-                  // would leave the movie showing through the circle and the
-                  // initials fighting moving footage for legibility.
-                  position: 'absolute', inset: 0,
-                  background: 'var(--bg)',
-                  display: 'grid', placeItems: 'center', pointerEvents: 'none',
-                }}>
-                  <span style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>{initials(p.name)}</span>
-                </div>
-              )}
+              {/* Collapsed face: the same person the expanded tile shows. */}
+              {isCollapsed && <CollapsedFace identity={p.identity} name={p.name} />}
 
               {/* Active speaker still reads while collapsed — the same thin
                   --live ring CameraTile draws, bent round the circle. */}

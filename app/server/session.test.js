@@ -210,8 +210,10 @@ test('publicSession strips every member token — host, approved guest, and wait
     assert.equal(json.includes('Guest'), true)
     assert.equal(json.includes('Waiter'), true)
 
-    for (const guest of pub.guests) assert.deepEqual(Object.keys(guest).sort(), ['name', 'userId'])
-    for (const w of pub.waiting) assert.deepEqual(Object.keys(w).sort(), ['name', 'userId'])
+    // Profiles added `avatar` and nothing else. Keeping this list exact is the
+    // point of the test: it fails the moment a member field grows by accident.
+    for (const guest of pub.guests) assert.deepEqual(Object.keys(guest).sort(), ['avatar', 'name', 'userId'])
+    for (const w of pub.waiting) assert.deepEqual(Object.keys(w).sort(), ['avatar', 'name', 'userId'])
   } finally { deleteSession(sess.id) }
 })
 

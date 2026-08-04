@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react'
+import Avatar from './Avatar'
+import { useMemberAvatar } from '../hooks/useMemberAvatar'
 
 interface AttachableTrack {
   attach: (element: HTMLMediaElement) => unknown
@@ -6,6 +8,8 @@ interface AttachableTrack {
 }
 
 interface CameraParticipant {
+  /** LiveKit identity, which is the Jellyfin user id — so it seeds the avatar. */
+  identity: string
   name?: string
   videoTrack?: unknown
   audioTrack?: unknown
@@ -26,16 +30,11 @@ interface CameraTileProps {
   onRemove?: () => void
 }
 
-// Avatars carry identity through initials only — a fixed neutral fill, no
-// per-user hue (monochrome; color is reserved for semantic status).
-function initials(name = '') {
-  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
-}
-
 export default function CameraTile({ participant, isLocal }: CameraTileProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const hasVideo = isAttachableTrack(participant.videoTrack)
+  const avatar = useMemberAvatar(participant.identity)
 
   useEffect(() => {
     const track = participant.videoTrack
@@ -55,7 +54,6 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
     }
   }, [participant.audioTrack, isLocal])
 
-  const ini = initials(participant.name)
   const speaking = participant.isSpeaking
   const muted = !participant.audioTrack
 
@@ -63,7 +61,7 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
     <div style={{
       position: 'absolute', inset: 0, borderRadius: 12, overflow: 'hidden',
     }}>
-      {/* Video or avatar */}
+      {/* Live video always wins; the avatar is what a camera-off tile shows. */}
       {hasVideo
         ? <video ref={videoRef} autoPlay muted={isLocal} playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         : (
@@ -72,7 +70,14 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
             background: 'var(--glass2, rgba(255,255,255,.04))',
             display: 'grid', placeItems: 'center',
           }}>
-            <span style={{ fontSize: 28, fontWeight: 700, color: 'var(--text3)' }}>{ini}</span>
+            <Avatar
+              userId={participant.identity}
+              name={participant.name}
+              config={avatar}
+              // Fills the tile at whatever aspect ratio it has, the way footage would.
+              size="100%"
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
           </div>
         )
       }
@@ -123,5 +128,3 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
     </div>
   )
 }
-
-export { initials }

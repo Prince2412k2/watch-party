@@ -8,6 +8,7 @@ import Library from './pages/Library'
 import FindDownload from './pages/FindDownload'
 import Downloads from './pages/Downloads'
 import DesktopApp from './pages/DesktopApp'
+import Profile from './pages/Profile'
 import MobileApp from './mobile/MobileApp'
 import { WatchRoute } from './mobile/screens/Watch'
 import { PartyProvider } from './context/PartyContext'
@@ -53,7 +54,7 @@ function UnauthenticatedRouter() {
 function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof useAuth>['user']> }) {
   const path = useRoute()
   const phone = usePhone()
-  const { logout } = useAuth()
+  const { logout, profile } = useAuth()
 
   useEffect(() => {
     if (path === '/login') {
@@ -79,14 +80,21 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // Installer downloads must remain reachable from any device size.
   if (path === '/desktop-app') return <DesktopApp />
 
+  // One profile editor for both device sizes — it is a full-screen page on each,
+  // and rendering it above the phone branch keeps a rotation from remounting it
+  // (and discarding unsaved edits).
+  if (path === '/profile') return <Profile />
+
   // (2) Phone shell — the new mobile presentation tree (Login/Home/Browse/
   // Downloads). Coarse-pointer gated, so a narrow desktop window keeps desktop.
   if (phone) return <MobileApp path={path} />
 
   // (3) Desktop — existing switch, unchanged.
-  const initials = user.name?.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2) || '?'
   const shell = (active: 'movies' | 'series' | 'discover' | 'downloads', content: ReactNode) => (
-    <WebShell active={active} initials={initials} profileName={user.name} logout={logout}>{content}</WebShell>
+    <WebShell
+      active={active} userId={user.userId} profileAvatar={profile?.avatar}
+      profileName={profile?.displayName || user.name} logout={logout}
+    >{content}</WebShell>
   )
 
   if (path === '/library' || path === '/movies') return shell('movies', <Library libraryType="movies" />)

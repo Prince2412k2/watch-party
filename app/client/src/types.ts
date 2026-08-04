@@ -1,4 +1,5 @@
 import type { PlaybackTrack } from './types/media'
+import type { AvatarConfig } from './lib/avatar'
 
 export type PartyRole = 'host' | 'guest' | 'waiting' | null
 
@@ -6,6 +7,14 @@ export interface AuthUser {
   userId: string
   name?: string
   username?: string
+}
+
+/** The signed-in user's own profile. Both fields are null for anyone who has
+    never saved one, which is the default case rather than a missing record:
+    the account name and a derived avatar stand in. */
+export interface UserProfile {
+  displayName: string | null
+  avatar: AvatarConfig | null
 }
 
 export interface ChatMessage {
@@ -20,6 +29,9 @@ export interface ChatMessage {
 export interface PartyUser {
   userId: string
   name: string
+  /** Their saved customisation, or null when they have never saved one — in
+      which case their avatar is derived from `userId`. */
+  avatar?: AvatarConfig | null
 }
 
 export interface PartyPlayback {
@@ -61,6 +73,7 @@ export interface PartySession {
   id: string
   hostId: string
   hostName?: string
+  hostAvatar?: AvatarConfig | null
   stage?: string
   guests?: PartyUser[]
   waiting?: PartyUser[]
@@ -81,9 +94,13 @@ export interface ToastRecord {
 
 export interface AuthContextValue {
   user: AuthUser | null
+  profile: UserProfile | null
   loading: boolean
   login: (username: string, password: string) => Promise<AuthUser>
   logout: () => Promise<void>
+  /** Called by the profile page after a successful save so every surface
+      showing the signed-in user redraws without a reload. */
+  applyProfile: (profile: UserProfile) => void
 }
 
 export interface PartyContextValue {

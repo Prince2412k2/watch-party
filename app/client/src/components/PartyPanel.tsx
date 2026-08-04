@@ -2,13 +2,11 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import QRCode from 'qrcode'
 import { useParty } from '../context/PartyContext'
+import Avatar from './Avatar'
+import { useMemberAvatar } from '../hooks/useMemberAvatar'
 import type { PartyUser } from '../types'
 
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
-
-export function initials(name = '') {
-  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
-}
 
 /* ── viewport shape ─────────────────────────────────────────────────────────
    A landscape phone (≈874×402) and a portrait phone (≈402×874) want opposite
@@ -84,13 +82,13 @@ function Pane({ label, gap, divided, children }: { label: ReactNode; gap: number
   )
 }
 
-function Avatar({ name, size }: { name: string; size: number }) {
+function MemberAvatar({ userId, name, size }: { userId: string; name: string; size: number }) {
+  const config = useMemberAvatar(userId)
   return (
-    <div aria-hidden style={{
-      width: size, height: size, borderRadius: '50%', background: 'var(--stroke2)',
-      display: 'grid', placeItems: 'center', color: 'var(--text)',
-      fontSize: Math.round(size * 0.38), fontWeight: 700, flexShrink: 0,
-    }}>{initials(name)}</div>
+    <Avatar
+      userId={userId} name={name} config={config} size={size} circle
+      style={{ border: '1px solid var(--stroke2)' }}
+    />
   )
 }
 
@@ -109,12 +107,12 @@ function IconButton({ title, onClick, danger, tap, children }: {
   )
 }
 
-function PersonRow({ name, badge, row, actions }: {
-  name: string; badge?: string; row: number; actions?: ReactNode
+function PersonRow({ userId, name, badge, row, actions }: {
+  userId: string; name: string; badge?: string; row: number; actions?: ReactNode
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 9, height: row, flexShrink: 0 }}>
-      <Avatar name={name} size={Math.min(32, row - 12)} />
+      <MemberAvatar userId={userId} name={name} size={Math.min(32, row - 12)} />
       <span style={{
         flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: 'var(--text)',
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -399,10 +397,10 @@ export default function PartyPanel({
         display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: listMax,
         overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch',
       }}>
-        <PersonRow name={session.hostName || 'Host'} badge="HOST" row={personRow} />
+        <PersonRow userId={session.hostId} name={session.hostName || 'Host'} badge="HOST" row={personRow} />
         {guests.map((g: PartyUser) => (
           <PersonRow
-            key={g.userId} name={g.name} row={personRow}
+            key={g.userId} userId={g.userId} name={g.name} row={personRow}
             actions={isHost ? (
               <>
                 <IconButton title={`Make ${g.name} host`} tap={tap} onClick={() => transferHost(g.userId)}>

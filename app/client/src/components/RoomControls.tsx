@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { useParty } from '../context/PartyContext'
 import { navigate } from '../router'
 import type { PartyUser } from '../types'
-import PartyPanel, { MONO, initials } from './PartyPanel'
+import PartyPanel, { MONO } from './PartyPanel'
+import Avatar from './Avatar'
 
 /**
  * Room chrome: icon-only Host / Leave buttons (flat surfaces), toasts, and a
@@ -140,7 +141,9 @@ export default function RoomControls({
           </div>
           {waiting.map((w: PartyUser) => (
             <div key={w.userId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
-              <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--stroke2)', display: 'grid', placeItems: 'center', color: 'var(--text)', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{initials(w.name)}</div>
+              {/* The requester's profile is already on their waiting-list entry,
+                  so their face costs nothing extra here. */}
+              <Avatar userId={w.userId} name={w.name} config={w.avatar} size={32} circle style={{ border: '1px solid var(--stroke2)' }} />
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
               <button onClick={() => rejectUser(w.userId)} title="Reject" style={{ width: 32, height: 32, borderRadius: 9, border: 'none', background: 'var(--glass2)', color: 'var(--red)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M18 6 6 18M6 6l12 12" /></svg>

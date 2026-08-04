@@ -1,13 +1,14 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AuthContextValue, AuthUser } from '../types'
-import { errorMessage, isAuthUser } from '../guards'
+import type { AuthContextValue, AuthUser, UserProfile } from '../types'
+import { errorMessage, isAuthUser, isUserProfile } from '../guards'
 import { apiJson } from '../types/guards'
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children?: ReactNode } = {}) {
   const [user, setUser] = useState<AuthUser | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -21,6 +22,25 @@ export function AuthProvider({ children }: { children?: ReactNode } = {}) {
       .catch(() => setUser(null))
       .finally(() => setLoading(false))
   }, [])
+
+  // The signed-in user's own profile follows their identity. Everyone else's
+  // arrives on party state; this is only what we need to draw *them* — their
+  // own account control, and the profile page's starting point. A failure here
+  // is not fatal: no profile is the same as no customisation.
+  useEffect(() => {
+    if (!user) {
+      setProfile(null)
+      return
+    }
+    let active = true
+    fetch('/api/profile', { credentials: 'include' })
+      .then(async response => (response.ok ? apiJson(response) : null))
+      .then(value => {
+        if (active) setProfile(isUserProfile(value) ? value : null)
+      })
+      .catch(() => { if (active) setProfile(null) })
+    return () => { active = false }
+  }, [user?.userId])
 
   async function login(username: string, password: string): Promise<AuthUser> {
     const res = await fetch('/api/auth/login', {
@@ -42,7 +62,7 @@ export function AuthProvider({ children }: { children?: ReactNode } = {}) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, profile, loading, login, logout, applyProfile: setProfile }}>
       {children}
     </AuthContext.Provider>
   )
