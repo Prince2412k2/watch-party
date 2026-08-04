@@ -1,7 +1,13 @@
 # Profiles — display name and a drawn avatar
 
-Status: draft (Phase 1 — spec)
+Status: implemented
 Surface: web client (`app/client`), Express server (`app/server`)
+
+Implementation: `app/server/profile.js` (validation + routes), `app/server/profile-store.js`
+(storage), `publicMember`/`effectiveName` in `app/server/session.js` (sharing),
+`app/client/src/lib/avatar.ts` (derived defaults), `app/client/src/components/Avatar.tsx`,
+`app/client/src/pages/Profile.tsx` (editor). One deviation from the requirements is
+recorded under "Where avatars appear" below.
 
 ## Problem
 
@@ -145,6 +151,16 @@ page without typing a URL.
   connection is degraded.
 - FR-021: An avatar used to convey who someone is MUST carry that person's name as its
   accessible label.
+
+> **Deviation, FR-017 (camera tiles).** The floating camera grid deliberately renders a
+> tile only for a participant whose camera is actually on (`CameraGrid.tsx`, "Bug 5" —
+> camera-off participants used to leave blank placeholder tiles on screen). A camera-off
+> participant is therefore represented by their avatar in the participant list, the
+> collapsed circle, and any tile that loses its video while mounted — but no tile is
+> created for someone who simply never turned their camera on. Resurrecting placeholder
+> tiles would undo that earlier fix, so it was left alone; US-1's independent test reads
+> on the participant list rather than the grid. Revisit together if camera-off tiles are
+> wanted after all.
 
 **The profile page**
 - FR-022: The profile page MUST offer a live preview, per-slot part selection for every

@@ -4,6 +4,8 @@ import type { AuthUser } from '../../types'
 import type { MobileItem } from '../types'
 import { useAuth } from '../../context/AuthContext'
 import { navigate } from '../../router'
+import Avatar from '../../components/Avatar'
+import type { AvatarConfig } from '../../lib/avatar'
 import { useMobileShell } from '../shellContext'
 import { useTorrents, isActiveState } from '../../hooks/useTorrents'
 import type { TorrentRecord } from '../../hooks/useTorrents'
@@ -411,18 +413,25 @@ const rowBtn: CSSProperties = {
   borderRadius: R.md, border: `1px solid ${T.line}`, background: 'rgba(255,255,255,.03)', color: T.text,
   ...TYPE.body, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
 }
-function AccountSheet({ open, onClose, user, initials, logout, onJoin }: {
-  open: boolean; onClose: () => void; user: AuthUser | null; initials: string; logout: () => Promise<void>; onJoin: () => void
+function AccountSheet({ open, onClose, user, displayName, avatar, logout, onJoin }: {
+  open: boolean; onClose: () => void; user: AuthUser | null; displayName: string
+  avatar?: AvatarConfig | null; logout: () => Promise<void>; onJoin: () => void
 }) {
   return (
     <Sheet open={open} onClose={onClose} title="Account">
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '2px 0 18px' }}>
-        <span style={{ width: 52, height: 52, borderRadius: 999, display: 'grid', placeItems: 'center', background: AVATAR_BG, border: `1px solid ${T.line2}`, color: T.text, ...TYPE.headline, fontWeight: 800 }}>{initials}</span>
+        {user
+          ? <Avatar userId={user.userId} name={displayName} config={avatar} size={52} circle style={{ border: `1px solid ${T.line2}` }} />
+          : <span style={{ width: 52, height: 52, borderRadius: 999, background: AVATAR_BG, border: `1px solid ${T.line2}` }} />}
         <div style={{ minWidth: 0 }}>
-          <div style={{ ...TYPE.headline, color: T.text, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{user?.name || 'You'}</div>
+          <div style={{ ...TYPE.headline, color: T.text, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{displayName || 'You'}</div>
           <div style={{ ...TYPE.label, fontWeight: 500, color: T.dim, marginTop: 2 }}>Signed in with Jellyfin</div>
         </div>
       </div>
+      <button onClick={() => { onClose(); navigate('/profile') }} className="mob-press" style={{ ...rowBtn, marginBottom: 10 }}>
+        <Icon path={Ic.user} size={20} stroke={T.text} />Edit profile
+        <Icon path={Ic.chevR} size={18} stroke={T.faint} style={{ marginLeft: 'auto' }} />
+      </button>
       <button onClick={onJoin} className="mob-press" style={rowBtn}>
         <Icon path={Ic.users} size={20} stroke={T.text} />Start or join a party
         <Icon path={Ic.chevR} size={18} stroke={T.faint} style={{ marginLeft: 'auto' }} />
@@ -482,10 +491,12 @@ function EmptyState({ onStart }: { onStart: () => void }) {
 
 /* ── Screen ──────────────────────────────────────────────────────────────── */
 export default function Home() {
-  const { user, logout } = useAuth()
+  const { user, logout, profile } = useAuth()
   const { openJoin } = useMobileShell()
-  const name = (user?.name || 'there').split(' ')[0]
-  const initials = (user?.name || '?').split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
+  // What you call yourself wins over the account you signed in with, greeting
+  // included.
+  const displayName = profile?.displayName || user?.name || ''
+  const name = (displayName || 'there').split(' ')[0]
 
   const [home, setHome] = useState<HomeData | null>(null)
   const [latest, setLatest] = useState<MobileItem[]>([])
@@ -548,7 +559,10 @@ export default function Home() {
             <button onClick={() => setAccount(true)} aria-label="Account" className="mob-press" style={{
               width: 44, height: 44, borderRadius: 999, border: `1px solid ${T.line}`, background: T.glassHi,
               color: T.text, ...TYPE.label, fontWeight: 800, cursor: 'pointer', flex: '0 0 auto',
-            }}>{initials}</button>
+              padding: 0, overflow: 'hidden', display: 'grid', placeItems: 'center',
+            }}>
+              {user ? <Avatar userId={user.userId} name={displayName} config={profile?.avatar} size={42} circle /> : null}
+            </button>
           </>
         }
       />
@@ -581,7 +595,11 @@ export default function Home() {
       </div>
 
       <DetailSheet item={detail} onClose={() => setDetail(null)} />
-      <AccountSheet open={account} onClose={() => setAccount(false)} user={user} initials={initials} logout={logout} onJoin={() => { setAccount(false); openJoin() }} />
+      <AccountSheet
+        open={account} onClose={() => setAccount(false)} user={user}
+        displayName={displayName} avatar={profile?.avatar}
+        logout={logout} onJoin={() => { setAccount(false); openJoin() }}
+      />
     </>
   )
 }
