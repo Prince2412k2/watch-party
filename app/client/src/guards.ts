@@ -1,7 +1,32 @@
-import type { AuthUser, BrowseEntry, ChatMessage, MirrorPoint, PartyBrowse, PartySession, PartyUser, SubtitlePreferences } from './types'
+import type { AuthUser, BrowseEntry, ChatMessage, MirrorPoint, PartyBrowse, PartySession, PartyUser, SubtitlePreferences, UserProfile } from './types'
+import type { AvatarConfig } from './lib/avatar'
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return isObject(value) && Object.values(value).every(entry => typeof entry === 'string')
+}
+
+/** The server validates avatar configurations against the asset set before
+    storing them; this only checks the shape we are about to render, so a
+    malformed payload can't reach the renderer as a wrong type. */
+export function isAvatarConfig(value: unknown): value is AvatarConfig {
+  return isObject(value) &&
+    (value.selections === undefined || isStringMap(value.selections)) &&
+    (value.colors === undefined || isStringMap(value.colors)) &&
+    (value.background === undefined || typeof value.background === 'string')
+}
+
+function isOptionalAvatar(value: unknown): boolean {
+  return value === undefined || value === null || isAvatarConfig(value)
+}
+
+export function isUserProfile(value: unknown): value is UserProfile {
+  return isObject(value) &&
+    (value.displayName === null || typeof value.displayName === 'string') &&
+    isOptionalAvatar(value.avatar)
 }
 
 export function isAuthUser(value: unknown): value is AuthUser {
@@ -15,7 +40,8 @@ export function errorMessage(value: unknown, fallback: string): string {
 }
 
 export function isPartyUser(value: unknown): value is PartyUser {
-  return isObject(value) && typeof value.userId === 'string' && typeof value.name === 'string'
+  return isObject(value) && typeof value.userId === 'string' && typeof value.name === 'string' &&
+    isOptionalAvatar(value.avatar)
 }
 
 export function isBrowseEntry(value: unknown): value is BrowseEntry {
@@ -57,6 +83,7 @@ export function isPartySession(value: unknown): value is PartySession {
     (value.playback === undefined || value.playback === null || isPlayback(value.playback)) &&
     (value.subtitlePreferences === undefined || isSubtitlePreferences(value.subtitlePreferences)) &&
     (value.hostName === undefined || typeof value.hostName === 'string') &&
+    isOptionalAvatar(value.hostAvatar) &&
     (value.stage === undefined || typeof value.stage === 'string') &&
     (value.mediaItemId === undefined || value.mediaItemId === null || typeof value.mediaItemId === 'string')
 }
