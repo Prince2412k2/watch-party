@@ -22,6 +22,28 @@ set -euo pipefail
 export DISPLAY
 log() { echo "[entrypoint] $*" >&2; }
 
+# --- corporate TLS-inspection CA (optional) ----------------------------------
+# Some networks MITM HTTPS. On the network this was developed on, a Sophos
+# appliance re-signs Google/YouTube traffic, so Chromium shows "Privacy error"
+# and YouTube cannot be tested at all — while Wikipedia and GitHub work, because
+# they are on the appliance's bypass list. The appliance presents only the leaf,
+# so its CA cannot be recovered from the connection; you have to get the cert
+# from IT. Mount it and it gets trusted here:
+#   -v /path/to/sophos-ca.crt:/opt/spike/extra-ca/sophos.crt:ro
+# Not needed on a VPS, where nothing is intercepting.
+if compgen -G "/opt/spike/extra-ca/*.crt" >/dev/null 2>&1; then
+  cp /opt/spike/extra-ca/*.crt /usr/local/share/ca-certificates/ 2>/dev/null || true
+  update-ca-certificates >/dev/null 2>&1 || true
+  # Chromium on Linux may consult its own NSS store rather than /etc/ssl, so add
+  # the CA to both. Doing only one of these silently fails half the time.
+  mkdir -p /root/.pki/nssdb
+  [ -f /root/.pki/nssdb/cert9.db ] || certutil -d sql:/root/.pki/nssdb -N --empty-password >/dev/null 2>&1 || true
+  for c in /opt/spike/extra-ca/*.crt; do
+    certutil -d sql:/root/.pki/nssdb -A -t "C,," -n "$(basename "$c")" -i "$c" >/dev/null 2>&1 || true
+  done
+  log "installed extra CA(s): $(ls /opt/spike/extra-ca/*.crt | xargs -n1 basename | tr '\n' ' ')"
+fi
+
 cleanup() { pkill -P $$ 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 

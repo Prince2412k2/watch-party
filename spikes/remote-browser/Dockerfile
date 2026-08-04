@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fonts-liberation \
       fonts-noto-core \
       ca-certificates \
+      libnss3-tools \
       curl \
       netpbm \
       python3 \
