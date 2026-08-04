@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
 import '../app/router.dart';
@@ -15,6 +16,7 @@ import 'chat_provider.dart';
 import 'livekit_provider.dart';
 import 'player_provider.dart';
 import 'providers.dart';
+import 'shared_browser_provider.dart';
 
 /// Watch-party lifecycle over the socket (PLAN §3.8, E5.2). Owns
 /// create/join/approve/reject/kick/end/transferHost/setCollaborative/
@@ -83,6 +85,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _playback = null;
     _subtitlePreferences = SubtitlePreferences.defaults;
     _ref.read(partyWaitingProvider.notifier).clear();
+    _ref.read(sharedBrowserProvider.notifier).clear();
   }
 
   // ── Socket subscription (idempotent) ─────────────────────────────────────
@@ -181,6 +184,16 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         _toast('$name left');
       }),
     );
+    _unsubs.add(
+      // The shared browser failed. Advisory only: the party — playback, cameras,
+      // chat — is unaffected, and the server has already returned it to the lobby.
+      socket.on(ServerEvent.browserError, (data) {
+        if (data is! Map) return;
+        final message = data['message']?.toString();
+        if (message == null || message.isEmpty) return;
+        _toast(message, level: 'error');
+      }),
+    );
   }
 
   void _unsubscribe() {
@@ -267,6 +280,14 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         ? BrowseState.fromJson(Map<String, dynamic>.from(browseJson))
         : const BrowseState();
 
+    // The shared browser rides alongside PartyState (see shared_browser_provider).
+    _ref
+        .read(sharedBrowserProvider.notifier)
+        .apply(
+          available: json['browserAvailable'] == true,
+          browser: SharedBrowserState.fromJson(json['browser']),
+        );
+
     final playbackJson = json['playback'];
     _playback = playbackJson is Map
         ? PlaybackInfo.fromJson(Map<String, dynamic>.from(playbackJson))
@@ -316,6 +337,45 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
     _syncRoleToEngine();
     _syncPlayerToMedia();
+    _syncBrowserSurface();
+  }
+
+  /// True once this client has been sent to the party surface for the current
+  /// shared-browser session, so a `party:state` resync cannot navigate twice.
+  bool _browserSurfaceOpened = false;
+
+  /// Pull this client onto the party surface when the party starts a shared
+  /// browser.
+  ///
+  /// The browser is started from the popcorn, which lives in the home shell — so
+  /// nobody is on `/party/:id` when the activity changes. Without this the host
+  /// would press the button and stay looking at their library, and guests would
+  /// never see the stream at all. Mirrors the web's `shouldOpenPartyPlayer`.
+  void _syncBrowserSurface() {
+    final session = state;
+    if (session == null) return;
+    if (session.stage != 'browser') {
+      _browserSurfaceOpened = false;
+      return;
+    }
+    if (_browserSurfaceOpened) return;
+    // Waiting guests are not members yet and must not be pulled in.
+    final myUserId = _myUserId;
+    final isMember = myUserId != null &&
+        (session.hostId == myUserId ||
+            session.participants.any((p) => p.userId == myUserId));
+    if (!isMember) return;
+    _browserSurfaceOpened = true;
+    // The socket handlers run for the whole app lifetime, so this resolves the
+    // root navigator rather than a screen's — same as _toast.
+    final ctx = rootNavigatorKey.currentContext;
+    if (ctx == null) return;
+    // No "am I already there?" check: go() to the current location is a no-op for
+    // the widget tree (same route, same key, so PartyScreen keeps its State and
+    // never re-joins), and _browserSurfaceOpened already stops repeats. Reading
+    // the location would need a context below a GoRoute builder, which this is
+    // not guaranteed to be.
+    ctx.go('/party/${session.id}');
   }
 
   /// The media currently opened into the shared player, so we only re-open when
@@ -562,6 +622,84 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   /// "Stop Movie": back to the lobby, session (party/socket/A/V) stays alive.
   Future<void> backToLobby() => _ack(ClientEvent.partyBackToLobby);
+
+  /// Open the shared browser for the party (host only, server-enforced).
+  ///
+  /// Throws the server's message on refusal — including "the shared browser is
+  /// in use right now", which is the one case a caller must show verbatim rather
+  /// than turn into a generic failure.
+  Future<void> startSharedBrowser([String? url]) =>
+      _ack(ClientEvent.browserStart, {'url': ?url});
+
+  /// Close it and return the party to the lobby (host only).
+  Future<void> stopSharedBrowser() => _ack(ClientEvent.browserStop);
+
+  /// Point the shared browser at a URL (driver only, enforced server-side).
+  Future<void> navigateSharedBrowser(String url) =>
+      _ack(ClientEvent.browserNavigate, {'url': url});
+
+  Future<void> requestBrowserControl() =>
+      _ack(ClientEvent.browserRequestControl);
+
+  Future<void> grantBrowserControl(String userId) =>
+      _ack(ClientEvent.browserGrantControl, {'userId': userId});
+
+  Future<void> denyBrowserControl(String userId) =>
+      _ack(ClientEvent.browserDenyControl, {'userId': userId});
+
+  Future<void> reclaimBrowserControl() =>
+      _ack(ClientEvent.browserReclaimControl);
+
+  // ── Driving the shared browser ─────────────────────────────────────────────
+  //
+  // Batched with exactly ONE emit in flight. Sending an event per pointer move
+  // (~40/s) degrades the driver's own client as soon as the server or the
+  // container falls behind, and an unbounded queue is the same bug with a
+  // politer symptom: input arriving seconds after the gesture that produced it.
+
+  final List<Map<String, dynamic>> _browserOutbox = [];
+  bool _browserInFlight = false;
+  static const int _browserMaxQueue = 64;
+
+  /// Queue one input event, in REMOTE SCREEN coordinates.
+  ///
+  /// The caller does the letterbox correction, because only it knows how the
+  /// stream is laid out in its own window.
+  void sendBrowserInput(Map<String, dynamic> event) {
+    // Only the newest cursor position matters; an older one is not worth sending.
+    if (event['type'] == 'move' &&
+        _browserOutbox.isNotEmpty &&
+        _browserOutbox.last['type'] == 'move') {
+      _browserOutbox[_browserOutbox.length - 1] = event;
+    } else {
+      _browserOutbox.add(event);
+    }
+    // Never grow without bound, and drop the oldest MOVE rather than a click or a
+    // keystroke — those are the events a user would notice losing.
+    while (_browserOutbox.length > _browserMaxQueue) {
+      final index = _browserOutbox.indexWhere((e) => e['type'] == 'move');
+      _browserOutbox.removeAt(index == -1 ? 0 : index);
+    }
+    _flushBrowserInput();
+  }
+
+  void _flushBrowserInput() {
+    if (_browserInFlight || _browserOutbox.isEmpty) return;
+    final batch = List<Map<String, dynamic>>.from(_browserOutbox);
+    _browserOutbox.clear();
+    _browserInFlight = true;
+    // A timeout is required, not defensive: emitWithAck never completes if the
+    // connection drops mid-flight, which would wedge this queue shut for the rest
+    // of the session.
+    _socket
+        .emitWithAck(ClientEvent.browserInput, {'events': batch})
+        .timeout(const Duration(seconds: 2))
+        .catchError((_) => null)
+        .whenComplete(() {
+          _browserInFlight = false;
+          _flushBrowserInput();
+        });
+  }
 
   /// "Stop Stream": host ends the party for everyone.
   Future<void> end() async {

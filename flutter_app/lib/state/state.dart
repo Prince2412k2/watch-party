@@ -10,3 +10,4 @@ export 'party_provider.dart';
 export 'player_provider.dart';
 export 'providers.dart';
 export 'server_provider.dart';
+export 'shared_browser_provider.dart';

@@ -10,6 +10,7 @@ export 'offline_record.dart';
 export 'participant.dart';
 export 'party_state.dart';
 export 'person.dart';
+export 'shared_browser.dart';
 export 'playback_info.dart';
 export 'subtitle_preferences.dart';
 export 'stream_url.dart';

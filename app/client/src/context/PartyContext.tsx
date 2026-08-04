@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { useSocket } from '../hooks/useSocket'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
-import type { BrowseEntry, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types'
+import type { BrowseEntry, BrowserInputEvent, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types'
 import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards'
 import { partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority'
 
@@ -113,6 +113,14 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   const stateRef = useRef<PartyState>(initialState)
   stateRef.current = state
 
+  // Provider-scope so actions can raise a toast too, not just socket handlers —
+  // a server refusal ("the browser is in use") has to reach the user somehow.
+  function pushToast(msg: string, level = 'info') {
+    const id = Date.now()
+    dispatch({ type: 'ADD_TOAST', toast: { id, msg, level } })
+    setTimeout(() => dispatch({ type: 'REMOVE_TOAST', id }), 4000)
+  }
+
   function applySession(sess: PartySession, role: PartyContextValue['role']) {
     dispatch({ type: 'SET_SESSION', session: sess, role })
     if (shouldOpenPartyPlayer(sess, role, window.location.pathname)) navigate(`/party/${sess.id}`)
@@ -133,11 +141,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   }, [socket, userId])
 
   useEffect(() => {
-    function toast(msg: string, level = 'info') {
-      const id = Date.now()
-      dispatch({ type: 'ADD_TOAST', toast: { id, msg, level } })
-      setTimeout(() => dispatch({ type: 'REMOVE_TOAST', id }), 4000)
-    }
+    const toast = pushToast
 
     socket.on('party:state', (value: unknown) => {
       if (!isPartySession(value)) return
@@ -222,6 +226,23 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     // imperatively by followers so we don't re-render 60×/sec).
     socket.on('browse:pointer', (p: unknown) => { if (isMirrorPoint(p)) mirror.set(p) })
 
+    // ── Shared browser ──────────────────────────────────────────────────────
+    // A failure here is deliberately a toast and nothing more: the browser is one
+    // activity inside a party, and losing it must not disturb the party itself.
+    socket.on('browser:error', (value: unknown) => {
+      if (!isObject(value) || typeof value.message !== 'string') return
+      toast(value.message, 'error')
+    })
+
+    socket.on('browser:controlRequested', (value: unknown) => {
+      if (!isPartyUser(value)) return
+      toast(`${value.name} wants to control the browser`, 'warning')
+    })
+
+    socket.on('browser:controlDenied', () => {
+      toast('The host kept control of the browser')
+    })
+
     socket.on('chat:message', (value: unknown) => {
       if (!isChatMessage(value)) return
       const msg = value
@@ -249,6 +270,9 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       socket.off('host:changed')
       socket.off('browse:state')
       socket.off('browse:pointer')
+      socket.off('browser:error')
+      socket.off('browser:controlRequested')
+      socket.off('browser:controlDenied')
       socket.off('chat:message')
       socket.off('chat:history')
     }
@@ -339,6 +363,91 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   // Stop the movie, return the room to shared browsing.
   function backToLobby() {
     socket.emit('party:backToLobby', {})
+  }
+
+  // ── Shared browser ─────────────────────────────────────────────────────────
+
+  // Resolves to an error message, or null on success — so a caller can surface
+  // the server's refusal ("in use right now") without a try/catch.
+  function startSharedBrowser(url?: string): Promise<string | null> {
+    return new Promise(resolve => {
+      socket.emit('browser:start', { url }, (value: unknown) => {
+        const error = isObject(value) && typeof value.error === 'string' ? value.error : null
+        // Toasted here so every caller gets the refusal surfaced without having
+        // to remember to do it — this is the "someone else is using it" path.
+        if (error) pushToast(error, 'error')
+        resolve(error)
+      })
+    })
+  }
+
+  function stopSharedBrowser() {
+    socket.emit('browser:stop', {})
+  }
+
+  function navigateSharedBrowser(url: string): Promise<string | null> {
+    return new Promise(resolve => {
+      socket.emit('browser:navigate', { url }, (value: unknown) => {
+        const error = isObject(value) && typeof value.error === 'string' ? value.error : null
+        if (error) pushToast(error, 'error')
+        resolve(error)
+      })
+    })
+  }
+
+  // Batched with exactly ONE emit in flight, deliberately. Sending an event per
+  // pointermove (~40/s) means the driver's own client degrades as soon as the
+  // server or the container falls behind — the spike's HTTP version overran
+  // Chrome's connection limit and the tab could not even be reloaded, because a
+  // reload waits on in-flight requests. Socket.IO queues rather than opening
+  // connections, but an unbounded queue is the same bug with a different symptom.
+  const browserOutbox = useRef<BrowserInputEvent[]>([])
+  const browserInFlight = useRef(false)
+  const BROWSER_MAX_QUEUE = 64
+
+  function flushBrowserInput() {
+    if (browserInFlight.current || browserOutbox.current.length === 0) return
+    const batch = browserOutbox.current.splice(0, browserOutbox.current.length)
+    browserInFlight.current = true
+    // .timeout so a server that never acks (a drop mid-flight) cannot wedge the
+    // queue closed for the rest of the session.
+    socket.timeout(2000).emit('browser:input', { events: batch }, () => {
+      browserInFlight.current = false
+      flushBrowserInput()
+    })
+  }
+
+  function sendBrowserInput(event: BrowserInputEvent) {
+    const outbox = browserOutbox.current
+    // Only the newest cursor position matters; an older one is not worth sending.
+    if (event.type === 'move' && outbox.length > 0 && outbox[outbox.length - 1].type === 'move') {
+      outbox[outbox.length - 1] = event
+    } else {
+      outbox.push(event)
+    }
+    // Never grow without bound, and drop the oldest MOVE rather than a click or a
+    // keystroke — those are the events a user would notice losing.
+    while (outbox.length > BROWSER_MAX_QUEUE) {
+      const index = outbox.findIndex(candidate => candidate.type === 'move')
+      outbox.splice(index === -1 ? 0 : index, 1)
+    }
+    flushBrowserInput()
+  }
+
+  function requestBrowserControl() {
+    socket.emit('browser:requestControl', {})
+  }
+
+  function grantBrowserControl(targetUserId: string) {
+    socket.emit('browser:grantControl', { userId: targetUserId })
+  }
+
+  function denyBrowserControl(targetUserId: string) {
+    socket.emit('browser:denyControl', { userId: targetUserId })
+  }
+
+  function reclaimBrowserControl() {
+    socket.emit('browser:reclaimControl', {})
   }
 
   function joinParty(partyId: string): Promise<string> {
@@ -437,6 +546,8 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       ...state,
       createParty, createRoom, joinParty,
        navigateBrowse, shareView, sendPointer, selectMedia, backToLobby,
+      startSharedBrowser, stopSharedBrowser, navigateSharedBrowser, sendBrowserInput,
+      requestBrowserControl, grantBrowserControl, denyBrowserControl, reclaimBrowserControl,
       approveUser, rejectUser, kickUser, transferHost, endParty,
       setCollaborative, setSyncMode, sendMessage, removeCamera,
       setPlaybackTracks,

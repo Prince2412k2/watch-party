@@ -8,7 +8,7 @@ import type { PartyUser } from '../types'
 type WebTab = 'movies' | 'series' | 'discover' | 'downloads'
 type Theme = 'light' | 'dark' | 'balanced'
 
-type IconName = 'film' | 'tv' | 'compass' | 'download' | 'users' | 'plus' | 'enter' | 'logout' | 'x' | 'check' | 'copy' | 'play' | 'sun' | 'moon' | 'blend'
+type IconName = 'film' | 'tv' | 'compass' | 'download' | 'users' | 'plus' | 'enter' | 'logout' | 'x' | 'check' | 'copy' | 'play' | 'sun' | 'moon' | 'blend' | 'globe'
 
 const paths: Record<IconName, string> = {
   film: 'M4 4h16v16H4zM4 8h16M4 16h16M8 4v16M16 4v16',
@@ -26,6 +26,7 @@ const paths: Record<IconName, string> = {
   sun: 'M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
   moon: 'M20 15.3A8.5 8.5 0 0 1 8.7 4 8.5 8.5 0 1 0 20 15.3z',
   blend: 'M12 3a9 9 0 1 0 0 18V3zm0 0a9 9 0 0 1 0 18',
+  globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20',
 }
 
 const tabs: Array<{ id: WebTab; label: string; href: string; icon: IconName }> = [
@@ -115,7 +116,7 @@ function WebPartyWidget({ open = true, onClose, onStartParty, onJoinParty, start
   onJoinParty?: () => void
   starting?: boolean
 } = {}) {
-  const { session, role, approveUser, rejectUser, kickUser, endParty } = useParty()
+  const { session, role, approveUser, rejectUser, kickUser, endParty, startSharedBrowser, stopSharedBrowser } = useParty()
   const [copied, setCopied] = useState(false)
   if (!open) return null
 
@@ -134,6 +135,12 @@ function WebPartyWidget({ open = true, onClose, onStartParty, onJoinParty, start
   const guests = session.guests ?? []
   const waiting = session.waiting ?? []
   const joinUrl = `${window.location.origin}/party/${session.id}`
+  // The shared browser lives here, in the popcorn, and nowhere else: it is a
+  // "what shall we watch" decision, which is what this widget is for. It is
+  // deliberately absent from the movie screen — that surface is for watching the
+  // thing you already chose. Host only, and only where the server says the
+  // feature exists.
+  const canOpenBrowser = isHost && session.browserAvailable === true && session.stage !== 'browser'
 
   function copyLink() {
     navigator.clipboard.writeText(joinUrl).then(() => {
@@ -154,6 +161,16 @@ function WebPartyWidget({ open = true, onClose, onStartParty, onJoinParty, start
         {guests.map(guest => <Person key={guest.userId} user={guest} actions={isHost ? <button className="party-person-action" onClick={() => kickUser(guest.userId)} aria-label={`Remove ${guest.name}`}><Icon name="x" size={14} /></button> : undefined} />)}
       </div>
       {isHost && waiting.length ? <div className="party-waiting"><strong>Waiting to join</strong>{waiting.map(person => <Person key={person.userId} user={person} actions={<div className="party-person-actions"><button onClick={() => rejectUser(person.userId)} aria-label={`Reject ${person.name}`}><Icon name="x" size={14} /></button><button onClick={() => approveUser(person.userId)} aria-label={`Accept ${person.name}`}><Icon name="check" size={14} /></button></div>} />)}</div> : null}
+      {canOpenBrowser ? (
+        <button className="party-secondary-action" onClick={() => { onClose?.(); void startSharedBrowser() }}>
+          <Icon name="globe" size={18} />Open a shared browser
+        </button>
+      ) : null}
+      {isHost && session.stage === 'browser' ? (
+        <button className="party-secondary-action" onClick={() => { onClose?.(); stopSharedBrowser() }}>
+          <Icon name="x" size={18} />Close shared browser
+        </button>
+      ) : null}
       {isHost ? <button className="party-end" onClick={() => { if (window.confirm('End this party for everyone?')) void endParty() }}>End party</button> : null}
     </aside>
   )
