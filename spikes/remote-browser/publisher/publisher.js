@@ -133,14 +133,22 @@ function reportStats(room) {
   // indistinguishable from the logs.
   const aSender = [...room.localParticipant.audioTrackPublications.values()][0]?.track?.sender
   if (aSender) {
+    let prevEnergy = null
     setInterval(async () => {
       let src = null
       ;(await aSender.getStats()).forEach(s => { if (s.type === 'media-source' && s.kind === 'audio') src = s })
-      if (src) {
-        say('AUDIO level=' + (src.audioLevel ?? 0).toFixed(4)
-          + ' energy=' + (src.totalAudioEnergy ?? 0).toFixed(3)
-          + (src.audioLevel > 0.0005 ? ' (sound present)' : ' (SILENT)'))
-      }
+      if (!src) return
+      const energy = src.totalAudioEnergy ?? 0
+      const level = src.audioLevel ?? 0
+      // totalAudioEnergy is cumulative, so a RISING value is the reliable signal.
+      // Judging by instantaneous audioLevel alone reported SILENT during a quiet
+      // passage of audio that was plainly playing (energy 54.545), which nearly
+      // invalidated a measurement run. Trust the delta, fall back to the level.
+      const rising = prevEnergy !== null && energy - prevEnergy > 1e-6
+      const verdict = (rising || level > 0.0005) ? '(sound present)'
+        : prevEnergy === null ? '(no baseline yet)' : '(SILENT — nothing playing)'
+      prevEnergy = energy
+      say(`AUDIO level=${level.toFixed(4)} energy=${energy.toFixed(3)} ${verdict}`)
     }, 5000)
   }
 

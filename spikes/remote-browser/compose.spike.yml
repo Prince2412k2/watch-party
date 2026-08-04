@@ -12,6 +12,10 @@ services:
     # silently falls back to disk and the framerate collapses.
     shm_size: "2gb"
     networks: [watchparty-net]
+    volumes:
+      # Optional: a corporate TLS-inspection CA, so HTTPS sites behind it load.
+      # Create the dir and drop a .crt in; empty is fine and is the normal case.
+      - ./extra-ca:/opt/spike/extra-ca:ro
     ports:
       # The viewer is served from inside this container and published, so it is
       # reachable from a browser on the host. Serving it from anywhere else (a

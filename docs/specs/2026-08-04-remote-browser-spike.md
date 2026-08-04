@@ -49,7 +49,8 @@ its own client from its own origin.
 | 9 | Injected mouse/keyboard reaches the page | **PASS** | Interactive viewer: click, drag, right-click, wheel, touch and keyboard all forwarded and landing. Confirmed navigating and scrolling real sites, and confirmed by the operator driving it directly. |
 | 10 | Input latency under ~150 ms | NOT MEASURED numerically | Operator reports it "works well" interactively, so it is not obviously bad. No figure taken; `rtt` instrumentation is still broken (see below). |
 | 11 | Cursor visible in the stream | **FAIL (expected)** | capture settings report `cursor: "never"`. Not a blocker — render client-side from the controller's own pointer. |
-| 12 | DRM playback | NOT TESTED | Assume unavailable; see Not in scope. |
+| 12 | **YouTube plays with audio** (the stated acceptance bar) | **PASS** | 4K60 source, captured and published at 1280x720@30, 2.2–4.3 Mbps, `audioLevel 0.2064`. Costs ~40% more CPU and ~2x the memory of a local clip — see sizing. |
+| 13 | DRM playback (Netflix/Disney+/Prime) | NOT TESTED | Out of scope — YouTube is the bar. Assume unavailable. |
 
 ## 720p vs 1080p
 
@@ -115,14 +116,20 @@ per subscriber. A four-person party watching a 2 Mbps remote browser is 2 Mbps i
 **8 Mbps out**, before cameras and mics. At 1080p that is 4–6 Mbps in and 16–24 Mbps
 out. Check the VPS uplink and monthly allowance before tuning anything else.
 
-### Measured under a 2-CPU cap (`CPUS=2`, video stage, dev box)
+### Measured under a 2-CPU cap (`CPUS=2`, dev box)
 
-| | 720p30 | 1080p30 |
-|---|---|---|
-| CPU avg / peak (of one core) | 51.4% / 79.8% | **114.8% / 192.7%** |
-| Memory | 542 MiB | 640 MiB |
-| Bitrate | 1.9–2.8 Mbps | 1.9–5.6 Mbps |
-| 30fps held | yes, with headroom | yes, but **saturated** |
+| | 720p30 local clip | 1080p30 local clip | **720p30 YouTube** |
+|---|---|---|---|
+| CPU avg / peak (of one core) | 51.4% / 79.8% | 114.8% / 192.7% | **73.3% / 160.2%** |
+| Memory | 542 MiB | 640 MiB | **1.00 GiB** |
+| Bitrate | 1.9–2.8 Mbps | 1.9–5.6 Mbps | **2.2–4.3 Mbps** |
+| 30fps held | yes, headroom | yes, **saturated** | yes |
+
+**YouTube is the number that matters, and it is ~40% more CPU and nearly 2x the
+memory of a local video file at the same output resolution.** It is a heavy web app:
+player JavaScript, a high-resolution source being decoded and downscaled, and its own
+network activity. Anything sized against a bare `<video>` tag will be undersized.
+Audio confirmed present (`audioLevel 0.2064, energy rising`).
 
 1080p peaks at 192.7% against a 200% ceiling — it is pinned to the limit. It still
 holds 30fps *on this fast silicon*, with no headroom left. Apply the 1.5–2x
@@ -137,15 +144,47 @@ A caveat on the bitrate column: this is a mostly-dark animated trailer. Bright,
 high-motion content will sit higher, and the 1080p range already brushes its 6 Mbps
 cap.
 
+### Allocation: 4 vCPU / 10 GB (operator's decision)
+
+With 4 vCPU the 720p YouTube figure above — 160% of a core at peak on the dev box,
+so roughly 2.4–3.2 vCPU on prod — fits with real margin. That is the configuration to
+ship.
+
+**1080p + YouTube at 4 vCPU is not established.** Estimating from the two valid
+measurements (1080p local clip peaked at 192.7%, YouTube carries a ~40% CPU premium)
+puts it near 270% on the dev box, i.e. **4–5.4 vCPU on prod** — at or past the
+allocation. Do not commit to 1080p until it is measured with a working YouTube.
+
+On **10 GB**: `mem_limit` is a ceiling, not a reservation. Measured peak usage is
+1.00 GiB, so a 10 GB limit never binds and therefore stops protecting anything. Its
+purpose is to bound the container so the *rest* of the box survives; on a no-swap host
+also running Jellyfin, the *arr stack and postgres, a 10 GB ceiling lets a leaking
+Chromium reach 10 GB before the cgroup intervenes, by which point the kernel may
+OOM-kill something else instead. **~3g is the better limit** — 3x measured, enough for
+heavy multi-tab use, and it fails the browser fast and loudly. Use `mem_reservation`
+if the intent is to guarantee availability rather than to cap.
+
+### Measurement hazard: the interception recurs
+
+A 4-vCPU YouTube run produced 21.4% CPU at a flat 430 kbps with 480 MiB — a *cheaper*
+and entirely fake result, because the Sophos privacy error had returned and the
+"video" was a TLS error page. It was caught only by `audioLevel` reading `SILENT`.
+**Always confirm `audioLevel` shows sound and take a `./probe.sh shot` before trusting
+any measurement.** A static page yields a rock-steady bitrate and a flattering CPU
+number, and nothing else in the stats distinguishes it from success.
+
 Recommendations, in order of how much they matter:
 
-1. **720p with `cpus: 2` is the prod configuration.** It fits with headroom after the
-   slower-core penalty, where 1080p does not. 1080p is the right choice for browsing
-   on the dev box or a larger host, not on 8 shared vCPUs alongside Jellyfin.
-2. **Set hard `cpus` and `mem_limit`.** With no swap, an over-tight memory limit is an
-   OOM kill rather than a slowdown. Measured 531 MiB (720p) and 730 MiB (1080p) RSS,
-   and `/dev/shm` pages are charged to the container under cgroup v2, so the limit
-   must cover shm too. Suggested: `cpus: 2`, `mem_limit: 2g`, `shm_size: 1g`.
+1. **720p at `cpus: 4`** (the operator's allocation). YouTube peaks at 160% of a core
+   on the dev box → ~2.4–3.2 vCPU on prod, so 4 leaves genuine margin for the peaks
+   that matter: page load, ads, quality switches. Throttling here surfaces as dropped
+   frames, so margin is worth more than tightness. The 73% average means it will not
+   sit at 4. **1080p stays unproven at this allocation** — see above.
+2. **`mem_limit: ~3g`, not 10g.** YouTube measured **1.00 GiB** RSS against 542 MiB for
+   a local clip, so 1g would OOM-kill — and with **no swap on prod that is a kill, not
+   a slowdown**. 3g is 3x measured with room for many tabs, while still bounding a
+   runaway. `/dev/shm` is charged to the container under cgroup v2, so the limit must
+   cover `shm_size: 1g` on top of RSS.
 3. **Keep simulcast off — but lower the cap.** Simulcast is the single biggest CPU
    saving available and 8 shared vCPUs cannot afford three layers of full-motion
    video. The cost is no per-viewer adaptation: a viewer on poor mobile gets the full
@@ -319,9 +358,19 @@ finding.
 **GO — confirmed end to end, operator-verified.** The hypothesis holds and the cost is
 far better than assumed.
 
-Recommended starting configuration for prod: **720p30, `cpus: 2`, `mem_limit: 2g`,
-`shm_size: 1g`, simulcast off with a ~1.5 Mbps ceiling, one container per party via the
-existing lease.**
+Recommended starting configuration for prod: **720p30, `cpus: 4`, `mem_limit: 3g`,
+`shm_size: 1g`, simulcast off, one container per party via the existing lease.**
+YouTube plays with audio, which was the stated acceptance bar.
+
+Environment gotcha worth recording: on the network this was developed on, a **Sophos
+TLS-inspection appliance** re-signed Google traffic, so Chromium showed "Privacy error"
+and YouTube would not load at all — while Wikipedia and GitHub did, being on the
+bypass list. The appliance presents only the leaf certificate, so its CA cannot be
+recovered from the connection; it has to come from IT. `entrypoint.sh` will trust any
+`.crt` dropped in `extra-ca/` (into both the system store and Chromium's NSS store,
+since Chromium may consult either). The interception later stopped on its own without
+the CA being installed, so it appears intermittent — expect it to return, and do not
+mistake it for a remote-browser fault. Irrelevant on a VPS.
 
 - Probes 1–8 pass. A containerised Chromium publishes 1280x720@30 video plus
   2ch/44.1kHz audio into the existing LiveKit room, with no picker, no media
