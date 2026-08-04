@@ -36,8 +36,9 @@ import {
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
   transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
-  validateSubtitlePreferences,
+  validateSubtitlePreferences, effectiveName, publicMember,
 } from './session.js'
+import { registerProfileRoutes } from './profile.js'
 import { resolveMediaSourceId } from './jellyfin.js'
 
 // Fail fast: never run in production with a missing or default session secret.
@@ -212,6 +213,7 @@ registerLiveKitRoutes(app)
 registerServarrRoutes(app)
 registerNativeRoutes(app)
 registerDesktopBuildRoutes(app)
+registerProfileRoutes(app, io)
 
 // ── Dev-only observability (gated: 404 unless WP_TEST_MODE=1) ───────────────
 // Exposes session internals for the sync test harness. MUST stay off in prod.
@@ -377,7 +379,9 @@ io.on('connection', (socket) => {
       restoreSocket()
       // The ack's session snapshot already contains this guest. Exclude the
       // rejoining socket so its reducer cannot append itself a second time.
-      socket.to(sess.id).emit('user:joined', { userId, name })
+      // Same shape the party payload uses, so a member who arrives between two
+      // party:state emits still arrives with their name and face.
+      socket.to(sess.id).emit('user:joined', publicMember({ userId, name }))
       return ack?.({ status: 'joined', session: publicSession(sess) })
     }
 
@@ -385,7 +389,7 @@ io.on('connection', (socket) => {
     socket.join(partyId)
     ack?.({ status: 'waiting' })
     // Only notify the host on a genuinely new request (avoids duplicate prompts)
-    if (added) io.to(sess.hostSocketId).emit('party:waiting', { userId, name })
+    if (added) io.to(sess.hostSocketId).emit('party:waiting', publicMember({ userId, name }))
     // A repeated join may be recovering from a dropped notification. Re-send
     // the canonical waiting list without producing another toast.
     io.to(sess.hostSocketId).emit('party:state', publicSession(sess))
@@ -402,7 +406,7 @@ io.on('connection', (socket) => {
     io.to(guest.socketId).emit('party:approved', { session: publicSession(sess) })
     // Hand the joiner the current timeline so it locks straight onto the schedule
     io.to(guest.socketId).emit('sync:schedule', sess.schedule)
-    io.to(sess.id).emit('user:joined', { userId: guest.userId, name: guest.name })
+    io.to(sess.id).emit('user:joined', publicMember(guest))
     persistSession(sess)
     // Position sync is handled by the per-second drift heartbeat + buffer-ahead
     // rendezvous on the client (no immediate Unpause that would stall the guest).
@@ -428,7 +432,7 @@ io.on('connection', (socket) => {
     if (!g) return ack?.({ error: 'user not found' })
     sess.approved.delete(targetId)   // revoke — kicked users must re-request
     io.to(g.socketId).emit('party:kicked', { userId: targetId })
-    io.to(sess.id).emit('user:left', { userId: targetId, name: g.name })
+    io.to(sess.id).emit('user:left', { userId: targetId, name: effectiveName(targetId, g.name) })
     persistSession(sess)
     ack?.({ ok: true })
   })
@@ -710,7 +714,9 @@ io.on('connection', (socket) => {
     socket._chatTimes.push(now)
     // Server-side length cap (truncate) so a client can't flood the room log
     const clean = text.trim().slice(0, CHAT_MAX_LEN)
-    const msg = { userId, name, text: clean, timestamp: now }
+    // Stamped with the display name in force when the message was sent —
+    // already-sent messages are never rewritten by a later profile edit.
+    const msg = { userId, name: effectiveName(userId, name), text: clean, timestamp: now }
     pushMessage(sess, msg)
     io.to(sess.id).emit('chat:message', msg)
     ack?.({ ok: true })
@@ -733,7 +739,7 @@ io.on('connection', (socket) => {
       handleHostDisconnect(sess)
     } else {
       const g = removeGuest(sess, userId)
-      if (g) io.to(sess.id).emit('user:left', { userId, name })
+      if (g) io.to(sess.id).emit('user:left', { userId, name: effectiveName(userId, name) })
       if (g) persistSession(sess)
       // A departing member must not keep the group frozen in dragging mode
       const stallChanged = sess.stalled.delete(userId) || sess.stallFallback.delete(userId)
