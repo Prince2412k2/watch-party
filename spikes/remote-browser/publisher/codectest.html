@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>codectest</title>
+<script>
+// What can this chromium build actually do? Send-codec support decides whether
+// iOS viewers get hardware decode (H.264) or burn battery on software VP8, and
+// decode support decides whether it can play a real video at all.
+const out = m => console.log('CODEC ' + m)
+const v = document.createElement('video')
+
+out('decode h264=' + (v.canPlayType('video/mp4; codecs="avc1.42E01E"') || 'no') +
+    ' vp8=' + (v.canPlayType('video/webm; codecs="vp8"') || 'no') +
+    ' vp9=' + (v.canPlayType('video/webm; codecs="vp9"') || 'no') +
+    ' av1=' + (v.canPlayType('video/mp4; codecs="av01.0.05M.08"') || 'no'))
+
+const send = RTCRtpSender.getCapabilities('video').codecs
+  .map(c => c.mimeType.replace('video/', ''))
+const uniq = [...new Set(send)]
+out('send codecs=' + uniq.join(','))
+out('h264 send=' + (uniq.some(c => c.toLowerCase() === 'h264') ? 'YES' : 'NO'))
+</script>

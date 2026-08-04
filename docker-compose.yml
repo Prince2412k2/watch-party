@@ -41,7 +41,17 @@ services:
       - "7881:7881"
       - "7882:7882/udp"
     volumes:
-      - ./livekit.yaml:/etc/livekit.yaml
+      # DEV config, not the prod one. Differs only in rtc.use_external_ip: false —
+      # see the header of that file for why, and how to regenerate it. Prod keeps
+      # using secrets/livekit.yaml via docker-compose.prod.yml.
+      - ./secrets/livekit.dev.yaml:/etc/livekit.yaml:ro
+    environment:
+      # Only set this if clients live off-box (tailnet/LAN) and need a specific
+      # interface advertised. Left unset, use_external_ip: false makes LiveKit
+      # advertise its own container address, which is what local browsers want.
+      # NOTE: NODE_IP has no effect while use_external_ip is true — that path
+      # overwrites the node IP from STUN at startup.
+      - NODE_IP=${LIVEKIT_NODE_IP:-}
     command: --config /etc/livekit.yaml
 
   # coturn — uncomment for VPS deploy
