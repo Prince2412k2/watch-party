@@ -83,6 +83,25 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
     if (ok) await _party.end();
   }
 
+  /// Open or close the party's shared browser.
+  ///
+  /// Failures surface through this widget's own [_error] line rather than a
+  /// SnackBar, so the server's wording — "the shared browser is in use right
+  /// now" — lands where the user is already looking.
+  Future<void> _toggleSharedBrowser() async {
+    setState(() => _error = null);
+    final open = ref.read(partyProvider)?.stage == 'browser';
+    try {
+      if (open) {
+        await _party.stopSharedBrowser();
+      } else {
+        await _party.startSharedBrowser();
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
@@ -270,6 +289,22 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
                 ],
               ),
             ),
+        ],
+        // The shared browser lives here, in the popcorn, and nowhere else: it is
+        // a "what shall we watch" decision, which is what this widget is for.
+        // Deliberately absent from the player chrome — that surface is for
+        // watching the thing you already chose. Host only, and only where the
+        // server says the feature exists.
+        if (isHost && ref.watch(sharedBrowserProvider).available) ...[
+          const SizedBox(height: AppSpacing.xl),
+          AppButton(
+            label: session.stage == 'browser'
+                ? 'Close shared browser'
+                : 'Open a shared browser',
+            icon: session.stage == 'browser' ? Icons.close : Icons.public,
+            variant: AppButtonVariant.secondary,
+            onPressed: _toggleSharedBrowser,
+          ),
         ],
         const SizedBox(height: AppSpacing.xl),
         AppButton(

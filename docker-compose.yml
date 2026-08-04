@@ -101,6 +101,20 @@ services:
       - LIVEKIT_PUBLIC_URL=${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
       # Extra allowed CORS origin(s), comma-separated (dev + tailnet are built in).
       - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-}
+      # ── Shared browser (off unless BROWSER_ENABLED is set) ──────────────────
+      # The agent is reached by container name on this network. An unreachable or
+      # absent container reads as "the feature is unavailable", never as a fault,
+      # so setting the flag without the container degrades safely.
+      - BROWSER_ENABLED=${BROWSER_ENABLED:-}
+      - BROWSER_AGENT_URL=http://watchparty-browser:8080
+      - BROWSER_AGENT_TOKEN=${BROWSER_AGENT_TOKEN:-}
+      - BROWSER_HOME_URL=${BROWSER_HOME_URL:-https://www.google.com}
+      - BROWSER_MAX_BITRATE_KBPS=${BROWSER_MAX_BITRATE_KBPS:-2500}
+      # The same two values the container gets below. The server sends them to
+      # clients, which need them to translate a click into a remote coordinate —
+      # so both sides must read one setting, not two.
+      - BROWSER_SCREEN_W=${BROWSER_SCREEN_W:-1280}
+      - BROWSER_SCREEN_H=${BROWSER_SCREEN_H:-720}
       # ── Serve config ──
       - SERVE_CLIENT=1
       - PORT=3000
@@ -118,6 +132,59 @@ services:
       bazarr:
         condition: service_healthy
       qbittorrent:
+        condition: service_started
+
+  # ── Shared browser (opt-in) ────────────────────────────────────────────────
+  # A containerised Chromium that publishes its own screen into a party's LiveKit
+  # room. Two switches, both in .env, because they answer different questions:
+  #
+  #   BROWSER_ENABLED=1          does the app offer the feature?
+  #   COMPOSE_PROFILES=browser   does this container exist at all?
+  #
+  # Either one alone is safe: the app treats an unreachable container as
+  # "unavailable", and a container nobody talks to sits idle at near-zero CPU.
+  # See docs/ops/shared-browser.md.
+  browser:
+    build: ./browser
+    container_name: watchparty-browser
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    networks: [watchparty-net]
+    # No `ports:` on purpose. The control API accepts input injection and must be
+    # reachable only from app/server on this network — publishing it would put a
+    # remote-keyboard endpoint on the host's interfaces.
+    #
+    # Chromium wants real shared memory; on the default 64m it either crashes or
+    # falls back to disk and the framerate collapses. Note that under cgroup v2
+    # these pages count against mem_limit below.
+    shm_size: "1gb"
+    tmpfs:
+      # Chromium profiles: cookies, history, downloads, extensions. On a tmpfs so
+      # a wipe that fails, or a container killed outright, still cannot leak a
+      # signed-in session into the next party.
+      - /profiles:size=512m,mode=1777
+    volumes:
+      # Optional corporate TLS-inspection CA. Empty is the normal case; only a
+      # developer behind an HTTPS-intercepting appliance needs this.
+      - ./browser/extra-ca:/opt/browser/extra-ca:ro
+    environment:
+      # Interpolated with :- not :? — a `:?` guard here fails every compose
+      # command in the repo, even ones that do not select this profile.
+      # entrypoint.sh refuses to start without it instead.
+      - BROWSER_AGENT_TOKEN=${BROWSER_AGENT_TOKEN:-}
+      - SCREEN_W=${BROWSER_SCREEN_W:-1280}
+      - SCREEN_H=${BROWSER_SCREEN_H:-720}
+      - SCREEN_FPS=${BROWSER_FPS:-30}
+      - MAX_BITRATE_KBPS=${BROWSER_MAX_BITRATE_KBPS:-2500}
+    # Measured, not guessed: 720p30 of YouTube cost 68.6% of one core (peaks to
+    # ~160%) and 1.15 GiB. 4 vCPUs of the prod box's 8 covers the peaks; 3 GiB is
+    # ~2.6x the measured peak, and prod has NO SWAP, so an over-tight limit is an
+    # OOM kill rather than a slowdown. See the spike decision record.
+    cpus: "4.0"
+    mem_limit: 3g
+    depends_on:
+      livekit:
         condition: service_started
 
   # ── Media-acquisition stack (Servarr + qBittorrent) ────────────────────────
