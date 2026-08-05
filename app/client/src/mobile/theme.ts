@@ -35,7 +35,6 @@ export const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
 export const R = { sm: 12, md: 16, lg: 22, pill: 999 }
 export const EASE = 'cubic-bezier(.2,.8,.2,1)'   // spring-ish, iOS cadence
-export const DUR = { fast: '.14s', base: '.24s', slow: '.32s' }
 
 // Type scale (§1.2) — spread onto style objects. Sizes in px (root 16px).
 export const TYPE = {
@@ -48,13 +47,10 @@ export const TYPE = {
   input:    { fontFamily: SANS, fontSize: 16,   lineHeight: 1.4,  fontWeight: 500 },   // never below 16 (iOS zoom)
 }
 
-// Gradients are gone (cinematic-minimal: no color, no gradients). These two
-// exports are kept so importing screens don't break the build immediately —
-// each mobile-screen agent replaces its own usages with AVATAR_BG / nothing
-// per the redesign plan (docs/redesign/PLAN.md, foundation step 4).
-export const BRAND_GRADIENT = '#1e1e21'
+// Gradients are gone (cinematic-minimal: no color, no gradients). What's left of
+// that migration is the neutral avatar ground; BRAND_GRADIENT and AMBIENT held on
+// as transitional aliases until every screen had dropped them, which they now have.
 export const AVATAR_BG = '#1e1e21'
-export const AMBIENT = 'none'
 
 // Spacing scale (px) — keep rhythm consistent across screens.
 export const SP = { xs: 6, sm: 10, md: 14, lg: 20, xl: 28, xxl: 40 }
