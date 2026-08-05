@@ -22,13 +22,32 @@ export function createLiveKitTokenVerifier(apiKey, apiSecret) {
 //    client, browser or native, does attach the room/user-scoped access_token
 //    as a query param (that's LiveKit's own protocol) — and that token only
 //    exists because requireAuth on GET /api/livekit/token minted it. A
-//    verified signature is an equivalent proof of prior authentication.
-export async function authorizeLiveKitUpgrade({ session, accessToken, tokenVerifier }) {
-  if (session?.jellyfin) return true
-  if (!accessToken || !tokenVerifier) return false
+//    verified signature is an equivalent proof of prior authentication. Its
+//    identity and room are still checked against current party state below.
+export async function authorizeLiveKitUpgrade({
+  session,
+  accessToken,
+  tokenVerifier,
+  getParty,
+  isPartyMember,
+  isServiceIdentity = () => false,
+  isTokenRevoked = () => false,
+}) {
+  if (!accessToken) return Boolean(session?.jellyfin)
+  if (!tokenVerifier || !getParty || !isPartyMember) return false
   try {
-    await tokenVerifier.verify(accessToken)
-    return true
+    const claims = await tokenVerifier.verify(accessToken)
+    const identity = claims.sub
+    const room = claims.video?.room
+    if (!identity || !room || claims.video?.roomJoin !== true) return false
+
+    const party = getParty(room)
+    if (!party) return false
+    if (isTokenRevoked(party, identity, claims.nbf)) return false
+    if (isPartyMember(party, identity)) {
+      return !session?.jellyfin || session.jellyfin.userId === identity
+    }
+    return isServiceIdentity(identity, party)
   } catch {
     return false
   }
