@@ -51,7 +51,7 @@ interface RootFolder { path: string }
 interface Meta { profiles: Profile[]; rootFolders: RootFolder[]; langProfiles: Profile[] }
 interface Popular { source: string; items: CatalogItem[] }
 interface Release { guid: string; indexerId: number; title: string; rejected?: boolean; rejections?: string[]; seeders?: number; quality?: string; size?: number; indexer?: string }
-interface ReleaseData { movieId: number; createdByPicker?: boolean; searchFailed?: boolean; releases?: Release[] }
+interface ReleaseData { movieId: number; createdByPicker?: boolean; cancellationToken?: string; searchFailed?: boolean; releases?: Release[] }
 type RequestBody = Record<string, unknown>
 const isProfile = (value: unknown): value is Profile => isRecord(value) && typeof value.id === 'number'
 const isRootFolder = (value: unknown): value is RootFolder => isRecord(value) && typeof value.path === 'string'
@@ -67,6 +67,7 @@ const parseHealth = (value: unknown): Health => {
 const parseReleaseData = (value: unknown): ReleaseData => isRecord(value) && typeof value.movieId === 'number' ? {
   movieId: value.movieId,
   createdByPicker: typeof value.createdByPicker === 'boolean' ? value.createdByPicker : undefined,
+  cancellationToken: typeof value.cancellationToken === 'string' ? value.cancellationToken : undefined,
   searchFailed: typeof value.searchFailed === 'boolean' ? value.searchFailed : undefined,
   releases: arrayOf(value.releases, isRelease),
 } : { movieId: 0, releases: [] }
@@ -823,60 +824,100 @@ function SeasonRow({ season, state, disabled, specials, onRequest }: { season: S
 }
 
 /* ── Release picker (movies) — sheet sub-view ────────────────────────────── */
+async function cancelMobilePickerWithRetry(movieId: number, cancellationToken: string) {
+  const delays = [0, 250, 750, 1500, 3000]
+  for (const delay of delays) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+    try {
+      const response = await jpost('/api/servarr/radarr/releases/cancel', { movieId, cancellationToken })
+      if (response.status !== 503) return true
+    } catch { /* retry bounded transient failures */ }
+  }
+  return false
+}
+
 function ReleasePickerBody({ item, onBack, onGrabbed }: { item: CatalogItem; onBack: () => void; onGrabbed: (item: CatalogItem) => void }) {
   const [meta, setMeta] = useState({ loading: true, error: '' })
   const [data, setData] = useState<ReleaseData | null>(null)
   const [nonce, setNonce] = useState(0)
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [grabError, setGrabError] = useState('')
+  const operationId = useRef(crypto.randomUUID()).current
+  const requestGeneration = useRef(0)
 
-  const life = useRef<{ movieId: number | null; createdByPicker: boolean; settled: boolean }>({ movieId: null, createdByPicker: false, settled: false })
-  const cleanup = useCallback(() => {
-    const { movieId, createdByPicker, settled } = life.current
-    if (settled) return
-    life.current.settled = true
-    if (createdByPicker && movieId != null) jpost('/api/servarr/radarr/releases/cancel', { movieId, createdByPicker: true }).catch(() => {})
+  const life = useRef<{ movieId: number | null; cancellationToken: string | null; settled: boolean; cancelling: boolean; cleanupTimer: ReturnType<typeof setTimeout> | null }>({ movieId: null, cancellationToken: null, settled: false, cancelling: false, cleanupTimer: null })
+  const cancelNow = useCallback(() => {
+    const { movieId, cancellationToken, settled } = life.current
+    if (settled || life.current.cancelling) return
+    if (cancellationToken && movieId != null) {
+      life.current.cancelling = true
+      void cancelMobilePickerWithRetry(movieId, cancellationToken).then(terminal => {
+        life.current.settled = terminal
+        life.current.cancelling = false
+      })
+    }
   }, [])
+  const cleanup = useCallback(() => {
+    if (life.current.cleanupTimer) return
+    life.current.cleanupTimer = setTimeout(() => {
+      life.current.cleanupTimer = null
+      cancelNow()
+    }, 100)
+  }, [cancelNow])
 
   useEffect(() => {
     let cancelled = false
+    const generation = ++requestGeneration.current
     setMeta({ loading: true, error: '' }); setGrabError('')
     ;(async () => {
       const existing = life.current.movieId
-      let createdByPicker = life.current.createdByPicker
+      let cancellationToken = life.current.cancellationToken
       let body: RequestBody
-      if (existing != null) body = { movieId: existing }
-      else if (isAdded(item)) { body = { movieId: item.id }; createdByPicker = false }
+      if (existing != null) body = { movieId: existing, operationId }
+      else if (isAdded(item)) { body = { movieId: item.id, operationId }; cancellationToken = null }
       else {
         const m = await loadMeta('radarr')
         const qualityProfileId = m.profiles?.[0]?.id
         const rootFolderPath = m.rootFolders?.[0]?.path
         if (qualityProfileId == null || !rootFolderPath) throw new Error('meta')
-        body = { movie: item, qualityProfileId, rootFolderPath }
+        body = { movie: item, qualityProfileId, rootFolderPath, operationId }
       }
       const res = await jpost('/api/servarr/radarr/releases', body)
       if (!res.ok) throw new Error('releases')
       const d = parseReleaseData(await apiJson(res))
-      return { d, createdByPicker: existing != null ? createdByPicker : !!d.createdByPicker }
+      return { d, cancellationToken: existing != null ? cancellationToken : (d.cancellationToken ?? null) }
     })()
-      .then(({ d, createdByPicker }) => {
+      .then(({ d, cancellationToken }) => {
         if (cancelled) {
-          if (createdByPicker && d?.movieId != null) jpost('/api/servarr/radarr/releases/cancel', { movieId: d.movieId, createdByPicker: true }).catch(() => {})
+          if (generation === requestGeneration.current && cancellationToken && d?.movieId != null) {
+            void cancelMobilePickerWithRetry(d.movieId, cancellationToken)
+          }
           return
         }
-        life.current = { movieId: d.movieId, createdByPicker, settled: false }
+        life.current = { ...life.current, movieId: d.movieId, cancellationToken, settled: false }
         setData(d); setMeta({ loading: false, error: '' })
       })
       .catch(() => { if (!cancelled) setMeta({ loading: false, error: 'Couldn’t load sources right now. Please try again.' }) })
     return () => { cancelled = true }
-  }, [item, nonce])
+  }, [item, nonce, operationId])
 
-  useEffect(() => cleanup, [cleanup])
+  useEffect(() => {
+    if (life.current.cleanupTimer) {
+      clearTimeout(life.current.cleanupTimer)
+      life.current.cleanupTimer = null
+    }
+    return cleanup
+  }, [cleanup])
 
   const grab = (rel: Release) => {
     if (grabbing) return
     setGrabbing(rel.guid); setGrabError('')
-    jpost('/api/servarr/radarr/grab', { movieId: data?.movieId, guid: rel.guid, indexerId: rel.indexerId })
+    jpost('/api/servarr/radarr/grab', {
+      movieId: data?.movieId,
+      guid: rel.guid,
+      indexerId: rel.indexerId,
+      cancellationToken: life.current.cancellationToken,
+    })
       .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then(() => { life.current.settled = true; onGrabbed(item) })
       .catch(() => { setGrabbing(null); setGrabError('Couldn’t start that download. Try another source.') })
