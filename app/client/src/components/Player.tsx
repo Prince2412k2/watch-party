@@ -306,7 +306,8 @@ function NativePlayer({
   // MpvBackend instead of a real element reuses the entire host-authority
   // sync engine unmodified.
   const {
-    requestSeek, holdApplying, releaseApplying, TICKS_PER_SECOND,
+    requestPlay, requestPause, requestSeek,
+    holdApplying, releaseApplying, TICKS_PER_SECOND,
   } = useSyncPlay({ playerRef: playerRef as unknown as RefObject<HTMLVideoElement | null>, isHost, collaborativeControl, syncMode, onStruggle })
 
   useEffect(() => {
