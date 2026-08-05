@@ -1,5 +1,9 @@
-// Pure reconciliation core for useDownloads (native/useOffline.js), split out
-// so it's testable without a React renderer. Each function takes the current
+// Pure reconciliation core for the native (Tauri) offline download queue, split
+// out so it's testable without a React renderer. The offline UI that consumed it
+// was never wired into any route and has been removed; this core and its tests
+// stay because they are the specified behaviour the native queue must have, and
+// native/guards.ts still derives its payload guards from the types here.
+// Each function takes the current
 // `Map<id, record>` and returns a NEW map with one update applied — dl_list()
 // is the source of truth for state/byte totals (reconcileList), dl:* events
 // patch individual records between polls.

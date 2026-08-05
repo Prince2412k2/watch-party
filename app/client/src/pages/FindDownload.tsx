@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent, ReactNode, SelectHTMLAttributes } from 'react'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { useTorrents } from '../hooks/useTorrents'
+import { useDownloadsHub } from '../context/DownloadsContext'
+import { serviceReady } from '../hooks/downloadsCore'
+import type { ServiceHealth } from '../hooks/downloadsCore'
 import { C, SANS, MONO, glassStyle, Ic, Icon, Notice, Spinner } from '../lib/ui'
-import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, stateInfo, isPausedState } from '../lib/format'
+import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, isPausedState } from '../lib/format'
 import { jget, jpost, jdelete } from '../lib/api'
 import { apiJson, arrayOf, isRecord } from '../types/guards'
 
@@ -21,14 +23,6 @@ type CatalogItem = {
 const isCatalogItem = (value: unknown): value is CatalogItem => isRecord(value) && typeof value.title === 'string'
 const isProfile = (value: unknown): value is Profile => isRecord(value) && typeof value.id === 'number'
 const isRootFolder = (value: unknown): value is RootFolder => isRecord(value) && typeof value.path === 'string'
-const parseHealth = (value: unknown): Health => {
-  if (!isRecord(value) || !isRecord(value.services)) return { services: {} }
-  const service = (raw: unknown): HealthService | undefined => isRecord(raw) ? {
-    configured: typeof raw.configured === 'boolean' ? raw.configured : undefined,
-    reachable: typeof raw.reachable === 'boolean' ? raw.reachable : undefined,
-  } : undefined
-  return { services: { radarr: service(value.services.radarr), sonarr: service(value.services.sonarr), qbittorrent: service(value.services.qbittorrent) } }
-}
 const outcomeOf = (value: unknown): string | undefined => isRecord(value) && typeof value.outcome === 'string' ? value.outcome : undefined
 type Torrent = {
   hash?: string; name?: string; title?: string; state?: string; progress?: number; dlspeed?: number; eta?: number
@@ -38,9 +32,6 @@ type Season = { seasonNumber: number; monitored?: boolean; totalEpisodeCount?: n
 type Profile = { id: number; name?: string }
 type RootFolder = { id?: number; path: string; freeSpace?: number }
 type Metadata = { profiles: Profile[]; rootFolders: RootFolder[]; langProfiles: Profile[] }
-type HealthService = { configured?: boolean; reachable?: boolean }
-type Health = { services?: { radarr?: HealthService; sonarr?: HealthService; qbittorrent?: HealthService } }
-type RequestOutcome = { outcome?: string }
 type DiscoverData = { source: string; items: CatalogItem[] }
 type Release = {
   guid: string; title?: string; indexer?: string; size?: number; age?: number; ageHours?: number
@@ -205,10 +196,6 @@ export default function Browse() {
   const [searchError, setSearchError] = useState('')
   const [hasSearched, setHasSearched] = useState(false)
 
-  // Health drives the generic unconfigured state. null = still checking.
-  const [health, setHealth] = useState<Health | null>(null)
-  const [healthLoading, setHealthLoading] = useState(true)
-
   const [selected, setSelected] = useState<CatalogItem | null>(null)     // detail view item (or null)
   const [optionsItem, setOptionsItem] = useState<CatalogItem | null>(null) // "Options" dialog target
   const [pickerItem, setPickerItem] = useState<CatalogItem | null>(null)  // "Choose a release" picker target (movies)
@@ -220,20 +207,11 @@ export default function Browse() {
   const [addState, setAddState] = useState<Record<string, AddState>>(() => ({}))
 
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
+  // Health + the live download list come from the shared hub, so this page, the
+  // Library rail, and the Downloads screen always agree about what is arriving.
+  const { health, healthLoading, torrents: dlTorrents } = useDownloadsHub()
   const svcState = health?.services?.[service]
-  const svcReady = svcState?.configured && svcState?.reachable
-
-  // Live downloads — one poller for the whole page (cards + queue reuse it).
-  const dl = useTorrents(!!health?.services?.qbittorrent?.configured && !!health?.services?.qbittorrent?.reachable)
-
-  useEffect(() => {
-    setHealthLoading(true)
-    jget('/api/servarr/health')
-      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
-      .then((value: unknown) => setHealth(parseHealth(value)))
-      .catch(() => setHealth({ services: {} }))
-      .finally(() => setHealthLoading(false))
-  }, [])
+  const svcReady = serviceReady(health, service)
 
   // ── URL ⇄ state. Reflect the query + active tab into ?q= / ?type= with
   // replaceState (so typing doesn't spam the history stack), keeping the page
@@ -290,6 +268,9 @@ export default function Browse() {
     return () => clearTimeout(t)
   }, [term, kind, svcReady, runSearch])
 
+  // A non-blank query switches the page from the discover rails to results.
+  const query = term.trim()
+
   const stateForKind = (itemKind: Kind, item: CatalogItem): AddState | null => (isAdded(item) ? 'added' : addState[keyOf(itemKind, item)]) || null
   const stateFor = (item: CatalogItem): AddState | null => stateForKind(kind, item)
 
@@ -345,7 +326,7 @@ export default function Browse() {
             </button>
             <DetailView
               mobile={mobile} kind={kind} item={selected}
-              state={stateFor(selected)} torrents={dl.torrents}
+              state={stateFor(selected)} torrents={dlTorrents}
               onDownload={() => oneTapAdd(selected)} onOptions={() => setOptionsItem(selected)}
               onPickRelease={() => setPickerItem(selected)} onAddSource={() => setManualItem(selected)}
               onRemove={async () => {
@@ -357,13 +338,40 @@ export default function Browse() {
           </div>
         ) : (
           <div className="discover-rows">
-            {healthLoading ? <ResultsSkeleton mobile={mobile} /> : (
+            {/* The search box, its results, and the dead-end recovery were all
+                built but never rendered — the page ran a debounced search on every
+                ?q= keystroke and threw the results away, so desktop members could
+                only browse whatever the discover feed happened to return. */}
+            <div className="discover-search">
+              <SearchBar
+                mobile={mobile} kind={kind} setKind={setKind} term={term} setTerm={setTerm}
+                loading={loading} disabled={!healthLoading && !svcReady}
+                onSubmit={() => runSearch(term, kind)} />
+            </div>
+
+            {!healthLoading && !svcReady ? (
+              <NotAvailable kind={kind} state={svcState} />
+            ) : query ? (
+              <div className="discover-search">
+                {loading && !hasSearched ? <ResultsSkeleton mobile={mobile} />
+                  : searchError ? <Notice icon={Ic.alert} tone="error" title="Search failed" body={searchError} />
+                  : results.length > 0 ? (
+                    <>
+                      <h2>{results.length} {results.length === 1 ? 'result' : 'results'} for “{query}”</h2>
+                      <ResultGrid mobile={mobile} results={results} kind={kind} torrents={dlTorrents}
+                        stateFor={stateFor} onOpen={setSelected} onDownload={item => oneTapAdd(item)} />
+                    </>
+                  ) : hasSearched ? (
+                    <SuggestedSearches kind={kind} onPick={setTerm} />
+                  ) : null}
+              </div>
+            ) : healthLoading ? <ResultsSkeleton mobile={mobile} /> : (
               <>
-                <PopularRail mobile={mobile} kind="movie" torrents={dl.torrents}
+                <PopularRail mobile={mobile} kind="movie" torrents={dlTorrents}
                   stateFor={item => stateForKind('movie', item)}
                   onOpen={item => { setKind('movie'); setSelected(item) }}
                   onDownload={item => oneTapAdd(item, 'movie')} />
-                <PopularRail mobile={mobile} kind="series" torrents={dl.torrents}
+                <PopularRail mobile={mobile} kind="series" torrents={dlTorrents}
                   stateFor={item => stateForKind('series', item)}
                   onOpen={item => { setKind('series'); setSelected(item) }}
                   onDownload={item => oneTapAdd(item, 'series')} />
@@ -747,7 +755,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
                 monitor + search a chosen season); movies keep the one-tap
                 grab-or-remove plus the interactive release picker below. */}
             {kind === 'series' ? (
-              <SeasonChooser item={item} mobile={mobile} onWholeSeriesFallback={onDownload} />
+              <SeasonChooser item={item} onWholeSeriesFallback={onDownload} />
             ) : (
             <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 22, flexWrap: 'wrap' }}>
@@ -917,7 +925,7 @@ function DetailView({ mobile, kind, item, state, torrents, onDownload, onOptions
  * already monitors are shown as such; "Specials" (season 0) is listed last and is
  * never part of "All seasons". Episode counts are shown only when Sonarr has them
  * (a not-yet-added series has none until it's in the library). */
-function SeasonChooser({ item, mobile, onWholeSeriesFallback }: { item: CatalogItem; mobile: boolean; onWholeSeriesFallback: () => void }) {
+function SeasonChooser({ item, onWholeSeriesFallback }: { item: CatalogItem; onWholeSeriesFallback: () => void }) {
   const seasons = Array.isArray(item.seasons) ? item.seasons : []
   const real = seasons.filter((s) => s.seasonNumber >= 1).sort((a, b) => a.seasonNumber - b.seasonNumber)
   const specials = seasons.filter((s) => s.seasonNumber === 0)
@@ -1739,7 +1747,7 @@ function Toggle({ label, hint, on, set }: { label: string; hint?: string; on: bo
 }
 
 /* ── States: unavailable, notices, skeletons, spinner ─────────────────────── */
-function NotAvailable({ kind, state }: { kind: Kind; state?: HealthService }) {
+function NotAvailable({ kind, state }: { kind: Kind; state?: ServiceHealth }) {
   // Generic copy — never names the underlying service. `state` distinguishes
   // "not set up at all" from "set up but currently unreachable".
   const unreachable = state?.configured && !state?.reachable

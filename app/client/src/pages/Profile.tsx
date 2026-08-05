@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { createPartPreview, getPartsForSlot } from '@humation/core'
 import type { PartOption } from '@humation/core'
 import { useAuth } from '../context/AuthContext'

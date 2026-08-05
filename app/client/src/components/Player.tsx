@@ -212,7 +212,7 @@ export default function Player({
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
           onOpenChat={onOpenChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
           seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
-          userMuted={userMuted} onToggleMuted={toggleMuted} onLocalPhase={setLocalPhase} />
+          onToggleMuted={toggleMuted} onLocalPhase={setLocalPhase} />
 
         {userMuted && !hostMuted && (
           <UnmuteButton onClick={toggleMuted} />
@@ -306,8 +306,7 @@ function NativePlayer({
   // MpvBackend instead of a real element reuses the entire host-authority
   // sync engine unmodified.
   const {
-    requestPlay, requestPause, requestSeek, holdApplying, releaseApplying,
-    TICKS_PER_SECOND,
+    requestSeek, holdApplying, releaseApplying, TICKS_PER_SECOND,
   } = useSyncPlay({ playerRef: playerRef as unknown as RefObject<HTMLVideoElement | null>, isHost, collaborativeControl, syncMode, onStruggle })
 
   useEffect(() => {
@@ -479,9 +478,9 @@ function NativePlayer({
 // as it was. Only its own overlay render (buffering/switching-quality) at the
 // bottom was restyled to the neutral spinner spec.
 interface SyncBridgeProps extends Pick<PlayerProps, 'isHost' | 'collaborativeControl' | 'syncMode' | 'onStruggle' | 'onOpenChat' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'seekBridgeRef'> {
-  srcUrl?: string; onAutoplayBlocked?: VoidCallback; userMuted?: boolean; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
+  srcUrl?: string; onAutoplayBlocked?: VoidCallback; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
 }
-function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
+function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
   const toggleFullscreen = () => (immersive ? exitImmersive?.() : enterImmersive?.())
   const media = VPlayer.useMedia() as unknown as MediaLike
   const mediaRef = useRef<MediaLike | null>(null)
@@ -1194,10 +1193,6 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
       tt.mode = ownedTracks.current.get(hlsIdx) === tt ? 'showing' : preloaded ? 'hidden' : 'disabled'
     }
   }, [playback?.subtitleStreams, resolveHlsIdx, videoRef, ensureExternalTrack])
-
-  const disableSubtitles = useCallback((hls: HlsLike) => {
-    applySubtitle(hls, null)
-  }, [applySubtitle])
 
   useEffect(() => {
     selectedIndex.current = playback?.selectedSubtitleIndex ?? null
