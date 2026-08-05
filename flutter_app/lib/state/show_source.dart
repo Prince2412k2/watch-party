@@ -461,9 +461,8 @@ class ShowDownloadNotifier extends StateNotifier<ShowDownloadProgress> {
   }
 
   /// POSTs `sonarr/auto-season` for one season, either against an existing
-  /// Sonarr series or (mirroring `servarr_season_chooser.dart`'s request
-  /// body) a lookup `series` + the default quality/root-folder/language
-  /// profile for a series not yet added.
+  /// Sonarr series or a lookup `series` + the default
+  /// quality/root-folder/language profile for a series not yet added.
   Future<SeasonOutcome> autoSeason(ShowStageInfo info, int seasonNumber) async {
     final api = _ref.read(apiClientProvider);
     final body = <String, dynamic>{'seasonNumber': seasonNumber};

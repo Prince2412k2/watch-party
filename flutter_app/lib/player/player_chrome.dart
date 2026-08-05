@@ -2250,10 +2250,9 @@ class _PlayerMenuItem extends StatelessWidget {
   }
 }
 
-/// Normalise picked subtitle bytes to UTF-8 text for side-loading (mirrors the
-/// upload path in subtitle_manager_dialog): pass valid UTF-8 through, otherwise
-/// re-decode as Latin-1, and strip any stray U+FFFD so one bad glyph doesn't
-/// corrupt rendering.
+/// Normalise picked subtitle bytes to UTF-8 text for side-loading: pass valid
+/// UTF-8 through, otherwise re-decode as Latin-1, and strip any stray U+FFFD so
+/// one bad glyph doesn't corrupt rendering.
 String _subtitleToUtf8(List<int> raw) {
   String text;
   try {

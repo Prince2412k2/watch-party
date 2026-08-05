@@ -183,6 +183,57 @@ String? macAppBundlePath(String executablePath) {
   return bundle.endsWith('.app') ? bundle : null;
 }
 
+/// Whether [bundlePath] looks like a bundle macOS can actually launch, i.e. it
+/// has at least one file under `Contents/MacOS`.
+///
+/// Checked on the STAGED copy before the swap starts. A `ditto` that reports
+/// success but produced a hollow bundle is the one failure the rollback in
+/// [macSwapScript] cannot catch, because from the script's point of view the
+/// replacement worked.
+Future<bool> isRunnableMacBundle(String bundlePath) async {
+  final sep = Platform.pathSeparator;
+  final executables = Directory('$bundlePath${sep}Contents${sep}MacOS');
+  if (!await executables.exists()) return false;
+  return executables.list().any((entity) => entity is File);
+}
+
+/// Where [macSwapScript] moves the working install while it swaps in the new
+/// one. Appended to the bundle path so the move stays on the same volume and is
+/// therefore a rename rather than a copy that can half-happen.
+String macRollbackPath(String installedApp) => '$installedApp.watchparty-previous';
+
+/// Quotes [value] as a single `/bin/sh` word.
+///
+/// The paths in [macSwapScript] are not ours to choose — the install location
+/// comes from wherever the user dragged the app, and `Watchparty.app` can live
+/// under a directory with an apostrophe or a space in it. An unquoted (or
+/// naively single-quoted) path there would end the shell string early and hand
+/// the rest of the path to `sh` as commands, with the swap script's privileges.
+String shellQuote(String value) => "'${value.replaceAll("'", r"'\''")}'";
+
+/// Absolute paths to the macOS tools [macSwapScript] drives.
+///
+/// Absolute so the script cannot be redirected by a hostile `PATH`. Overridable
+/// only so the rollback test can run the real script against stand-ins on a
+/// machine that has no `ditto`; production always uses [system].
+class MacUpdateTools {
+  const MacUpdateTools({
+    required this.ditto,
+    required this.xattr,
+    required this.open,
+  });
+
+  static const system = MacUpdateTools(
+    ditto: '/usr/bin/ditto',
+    xattr: '/usr/bin/xattr',
+    open: '/usr/bin/open',
+  );
+
+  final String ditto;
+  final String xattr;
+  final String open;
+}
+
 /// Shell script that swaps the bundle once THIS process has exited.
 ///
 /// The running app cannot replace its own bundle while it holds it open, so the
@@ -191,20 +242,57 @@ String? macAppBundlePath(String executablePath) {
 /// from the staged copy because the DMG it came out of is flagged as downloaded;
 /// the bytes were already verified against the release's SHA-256 before we got
 /// here, so the flag would only block an update the user explicitly asked for.
+///
+/// The order is the whole correctness argument, and it is written so that every
+/// way this can fail still leaves a launchable Watchparty on disk:
+///
+///  * the installed bundle is MOVED aside, never deleted, and the move is a
+///    rename within one directory — it either happened or it didn't;
+///  * if that move fails nothing has been touched at all, so the script just
+///    relaunches what is still installed;
+///  * the old bundle is deleted only after `ditto` reports the replacement in
+///    place, and if `ditto` fails the old bundle is moved back;
+///  * there is deliberately no `set -e`: aborting the script mid-swap is
+///    exactly the state that used to leave a user with no app, so failures are
+///    handled branch by branch instead.
 String macSwapScript({
   required int pid,
   required String stagedApp,
   required String installedApp,
-}) => '''
+  MacUpdateTools tools = MacUpdateTools.system,
+}) {
+  final staged = shellQuote(stagedApp);
+  final installed = shellQuote(installedApp);
+  final previous = shellQuote(macRollbackPath(installedApp));
+  final ditto = shellQuote(tools.ditto);
+  final xattr = shellQuote(tools.xattr);
+  final open = shellQuote(tools.open);
+  return '''
 #!/bin/sh
-set -e
+set -u
 while kill -0 $pid 2>/dev/null; do sleep 0.2; done
-/usr/bin/xattr -dr com.apple.quarantine '$stagedApp' 2>/dev/null || true
-/bin/rm -rf '$installedApp'
-/usr/bin/ditto '$stagedApp' '$installedApp'
-/bin/rm -rf '$stagedApp'
-/usr/bin/open '$installedApp'
+
+$xattr -dr com.apple.quarantine $staged 2>/dev/null || true
+
+/bin/rm -rf $previous
+if ! /bin/mv $installed $previous; then
+  $open $installed
+  exit 1
+fi
+
+if $ditto $staged $installed; then
+  /bin/rm -rf $previous
+  /bin/rm -rf $staged
+  $open $installed
+  exit 0
+fi
+
+/bin/rm -rf $installed
+/bin/mv $previous $installed
+$open $installed
+exit 1
 ''';
+}
 
 Future<bool> canWriteUpdateBeside(String executablePath) async {
   final parent = File(executablePath).parent;
@@ -341,9 +429,11 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
       }
       await _applyVerified(file);
     } catch (error) {
-      if (file != null && await file.exists()) {
-        await file.delete();
-      }
+      // The half-downloaded artifact is worthless, but failing to remove it
+      // must not swallow the report of what actually went wrong.
+      try {
+        if (file != null && await file.exists()) await file.delete();
+      } catch (_) {}
       state = state.copyWith(
         status: UpdateStatus.error,
         message: 'Update failed: $error',
@@ -409,45 +499,92 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
     final installed = macAppBundlePath(Platform.resolvedExecutable);
     String? mountPoint;
     try {
-      if (installed == null) return _revealMacDmg(dmg, 'this build is not an app bundle');
+      if (installed == null) {
+        return _revealMacDmg(dmg, 'this build is not an app bundle');
+      }
+      if (!await Directory(installed).exists()) {
+        return _revealMacDmg(dmg, 'the installed app is no longer where it was');
+      }
 
-      final attach = await Process.run('hdiutil', [
+      final attach = await Process.run('/usr/bin/hdiutil', [
         'attach', dmg.path, '-nobrowse', '-readonly', '-mountrandom', '/tmp',
       ]);
-      if (attach.exitCode != 0) return _revealMacDmg(dmg, 'the disk image would not mount');
+      if (attach.exitCode != 0) {
+        return _revealMacDmg(dmg, 'the disk image would not mount');
+      }
       mountPoint = _mountPointFrom(attach.stdout.toString());
-      if (mountPoint == null) return _revealMacDmg(dmg, 'the mounted image had no volume');
+      if (mountPoint == null || !await Directory(mountPoint).exists()) {
+        return _revealMacDmg(dmg, 'the mounted image had no volume');
+      }
 
-      final source = await Directory(mountPoint)
-          .list()
-          .where((e) => e.path.endsWith('.app'))
-          .cast<FileSystemEntity?>()
-          .firstWhere((e) => e != null, orElse: () => null);
-      if (source == null) return _revealMacDmg(dmg, 'the disk image had no app in it');
+      final source = await _appBundleIn(Directory(mountPoint));
+      if (source == null) {
+        return _revealMacDmg(dmg, 'the disk image had no app in it');
+      }
 
-      // Stage beside the install so the swap is a local move, and so a failure
-      // here happens before anything touches the working copy.
-      final staged = '${(await getApplicationSupportDirectory()).path}/updates/Watchparty-new.app';
-      await Directory(staged).parent.create(recursive: true);
-      final ditto = await Process.run('ditto', [source.path, staged]);
-      if (ditto.exitCode != 0) return _revealMacDmg(dmg, 'the new app could not be staged');
+      // Stage into our own support directory, so everything that can fail
+      // happens while the working copy is still untouched. A leftover staged
+      // bundle from an update that never completed would make `ditto` merge
+      // two versions, so it goes first.
+      final sep = Platform.pathSeparator;
+      final staged = Directory(
+        '${(await getApplicationSupportDirectory()).path}'
+        '${sep}updates${sep}Watchparty-new.app',
+      );
+      if (await staged.exists()) await staged.delete(recursive: true);
+      await staged.parent.create(recursive: true);
+      final ditto = await Process.run('/usr/bin/ditto', [
+        source.path,
+        staged.path,
+      ]);
+      if (ditto.exitCode != 0) {
+        return _revealMacDmg(dmg, 'the new app could not be staged');
+      }
+      if (!await isRunnableMacBundle(staged.path)) {
+        await staged.delete(recursive: true);
+        return _revealMacDmg(dmg, 'the staged app is not a runnable bundle');
+      }
 
-      final script = File('${(await getTemporaryDirectory()).path}/watchparty-update.sh');
+      // Release the image HERE: the swap script is started and this process
+      // exits immediately after, so the `finally` below never gets to run on
+      // the success path and the volume would stay mounted until logout.
+      await _detachQuietly(mountPoint);
+      mountPoint = null;
+
+      final script = File(
+        '${(await getTemporaryDirectory()).path}${sep}watchparty-update.sh',
+      );
       await script.writeAsString(macSwapScript(
         pid: pid,
-        stagedApp: staged,
+        stagedApp: staged.path,
         installedApp: installed,
       ));
-      await Process.run('chmod', ['+x', script.path]);
+      await Process.run('/bin/chmod', ['+x', script.path]);
       await Process.start('/bin/sh', [script.path], mode: ProcessStartMode.detached);
       await DesktopLifecycle.instance.quitForUpdate();
     } catch (error) {
       await _revealMacDmg(dmg, '$error');
     } finally {
-      if (mountPoint != null) {
-        await Process.run('hdiutil', ['detach', mountPoint, '-quiet']).catchError((_) =>
-            ProcessResult(0, 0, '', ''));
-      }
+      if (mountPoint != null) await _detachQuietly(mountPoint);
+    }
+  }
+
+  /// The `.app` on a mounted image. Must be a directory: a DMG also carries the
+  /// `/Applications` symlink the drag-to-install layout needs, and a plain file
+  /// or link whose name ends in `.app` is not something to copy over a working
+  /// install.
+  static Future<Directory?> _appBundleIn(Directory mount) async {
+    await for (final entity in mount.list(followLinks: false)) {
+      if (entity is Directory && entity.path.endsWith('.app')) return entity;
+    }
+    return null;
+  }
+
+  static Future<void> _detachQuietly(String mountPoint) async {
+    try {
+      await Process.run('/usr/bin/hdiutil', ['detach', mountPoint, '-quiet']);
+    } catch (_) {
+      // A stuck volume is a nuisance, never a reason to fail an update.
     }
   }
 
