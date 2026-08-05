@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { AuthUser } from '../../types'
 import type { MobileItem } from '../types'
@@ -7,7 +7,10 @@ import { navigate } from '../../router'
 import Avatar from '../../components/Avatar'
 import type { AvatarConfig } from '../../lib/avatar'
 import { useMobileShell } from '../shellContext'
-import { useTorrents, isActiveState } from '../../hooks/useTorrents'
+import { useParty } from '../../context/PartyContext'
+import { activeTorrents, useDownloadsHub } from '../../context/DownloadsContext'
+import { canDriveBrowse } from '../../partyAuthority'
+import { browseStackFromSheet, sheetStackFromBrowse, viewPatchForSheet } from '../sharedBrowse'
 import type { TorrentRecord } from '../../hooks/useTorrents'
 import { T, SANS, MONO, R, EASE, TYPE, AVATAR_BG, SP } from '../theme'
 import { TopBar, TopBarButton } from '../ui/TopBar'
@@ -23,10 +26,14 @@ import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../../types/guard
  * built from the SAME data desktop `Library.jsx` uses (verbatim endpoints), plus
  * the live "Downloading now" cards and the create/join-a-party entry points.
  *
- * Reuse: useAuth() (greeting/avatar/logout), useTorrents(true)+isActiveState
- *   (the shared download poller — same shape the TabBar/Downloads use), the shell
- *   `openJoin` (start/join sheet), and navigate('/party/new?itemId=…') to start a
- *   party (exactly like desktop `pick()`).
+ * Reuse: useAuth() (greeting/avatar/logout), useDownloadsHub() (the app's single
+ *   download poller, shared with the TabBar badge and both Downloads screens),
+ *   the shell `openJoin` (start/join sheet), and navigate('/party/new?itemId=…')
+ *   to start a party (exactly like desktop `pick()`).
+ *
+ * Inside a party the detail sheet's position is the canonical shared browse
+ * stack, so a phone member drives (or mirrors) desktop members and vice versa —
+ * see mobile/sharedBrowse.ts.
  * Endpoints: /api/library/home, /api/library/latest,
  *   /api/library/items/:id/children, /api/library/item/:id,
  *   /api/library/image/:id?type=, /api/servarr/downloads/enriched.
@@ -349,31 +356,36 @@ function ChildrenView({ parentId, onOpen, onWatch, top = 0 }: {
 }
 
 /**
- * Bottom sheet that opens on any poster tap. Manages a small internal drill-in
- * stack so a Series → Season → Episode path lives in one sheet without touching
- * the app router. Leaf items expose "Watch together" → navigate('/party/new?…').
- * The stack is intentionally NOT cleared on close so the panel keeps its content
- * through the slide-out; it re-inits when a new root item opens.
+ * Bottom sheet that opens on any poster tap. Renders a Series → Season → Episode
+ * drill-in path in one sheet without touching the app router. Leaf items expose
+ * "Watch together" → navigate('/party/new?…').
+ *
+ * The stack is OWNED BY THE CALLER. Outside a party it is plain local state;
+ * inside one it is `session.browse.stack` — the canonical shared browsing record
+ * the desktop Library drives and follows — so a phone member and a desktop
+ * member are looking at the same position either way. An empty stack means the
+ * sheet is closed.
  */
-function DetailSheet({ item, onClose }: { item: MobileItem | null; onClose: () => void }) {
-  const [stack, setStack] = useState<MobileItem[]>([])
-  const rootRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!item) { rootRef.current = null; return }
-    if (item.Id !== rootRef.current) { rootRef.current = item.Id; setStack([item]) }
-  }, [item])
+function DetailSheet({ stack, onStack, onClose }: {
+  stack: MobileItem[]; onStack: (next: MobileItem[]) => void; onClose: () => void
+}) {
+  // Sheet stays mounted through a 200ms exit animation, so keep drawing the last
+  // real position while it slides out instead of emptying the panel mid-flight.
+  const [retained, setRetained] = useState(stack)
+  useEffect(() => { if (stack.length) setRetained(stack) }, [stack])
+  const shown = stack.length ? stack : retained
 
-  const current = stack[stack.length - 1] || null
-  const depth = stack.length
-  const push = (it: MobileItem) => setStack(s => [...s, { Id: it.Id, Name: it.Name, Type: it.Type, SeriesId: it.SeriesId, SeriesName: it.SeriesName }])
-  const pop = () => setStack(s => (s.length > 1 ? s.slice(0, -1) : s))
+  const current = shown[shown.length - 1] || null
+  const depth = shown.length
+  const push = (it: MobileItem) => onStack([...shown, { Id: it.Id, Name: it.Name, Type: it.Type, SeriesId: it.SeriesId, SeriesName: it.SeriesName }])
+  const pop = () => { if (shown.length > 1) onStack(shown.slice(0, -1)) }
   const watch = (id: string) => { onClose(); navigate(`/party/new?itemId=${id}`) }
 
   const isLeaf = current && LEAF.has(current.Type)
   const isSeries = current && current.Type === 'Series'
 
   return (
-    <Sheet open={!!item} onClose={onClose} maxHeight="92dvh">
+    <Sheet open={stack.length > 0} onClose={onClose} maxHeight="92dvh">
       {current && (
         <div key={current.Id} style={{ animation: `tabIn .2s ${EASE} both` }}>
           {depth > 1 && (
@@ -493,6 +505,7 @@ function EmptyState({ onStart }: { onStart: () => void }) {
 export default function Home() {
   const { user, logout, profile } = useAuth()
   const { openJoin } = useMobileShell()
+  const party = useParty()
   // What you call yourself wins over the account you signed in with, greeting
   // included.
   const displayName = profile?.displayName || user?.name || ''
@@ -503,12 +516,42 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [reload, setReload] = useState(0)
-  const [detail, setDetail] = useState<MobileItem | null>(null)
   const [account, setAccount] = useState(false)
 
-  // Shared download poller — same hook/shape the TabBar + Downloads screen use.
-  const { list } = useTorrents(true)
-  const arriving = list.filter(t => isActiveState(t.state))
+  // ── Shared browsing ──────────────────────────────────────────────────────
+  // Inside a party the detail sheet's position IS session.browse.stack, so the
+  // host driving from a phone moves every member (phone or desktop) and a guest
+  // mirrors whoever is driving. Outside a party it is ordinary local state.
+  const sharedBrowsing = party.session != null
+  const driving = canDriveBrowse(party.session, party.role)
+  const [localStack, setLocalStack] = useState<MobileItem[]>([])
+  const sharedStack = sheetStackFromBrowse(party.session?.browse)
+  const stack = sharedBrowsing ? sharedStack : localStack
+  const setStack = (next: MobileItem[]) => {
+    if (!sharedBrowsing) { setLocalStack(next); return }
+    // A follower's taps are already inert (the shell locks pointer events), but
+    // the server would refuse a non-driver's navigate anyway — so never emit one
+    // and desync this client's optimistic copy from the room.
+    if (!driving) return
+    party.navigateBrowse(browseStackFromSheet(next))
+  }
+  const openDetail = (item: MobileItem) => setStack([{
+    Id: item.Id, Name: item.Name, Type: item.Type, SeriesId: item.SeriesId, SeriesName: item.SeriesName,
+  }])
+
+  // Publish the view shape (grid vs. detail + which title) for the stack that is
+  // now in shared state. Separate from navigateBrowse above so this runs AFTER
+  // the stack has landed, and the {...browse, ...patch} merge cannot drop it.
+  const stackKey = stack.map(item => item.Id).join('/')
+  useEffect(() => {
+    if (!driving) return
+    party.shareView(viewPatchForSheet(stack))
+  }, [driving, stackKey])
+
+  // The shared download hub — one poller for the tab bar, this rail, and both
+  // Downloads screens.
+  const { list } = useDownloadsHub()
+  const arriving = activeTorrents(list)
 
   useEffect(() => {
     let cancel = false
@@ -574,12 +617,12 @@ export default function Home() {
 
         {upNext.length > 0 && (
           <Rail title="Continue watching" count={upNext.length} style={rise()}>
-            {upNext.map(it => <StillCard key={it.Id} item={it} onOpen={setDetail} progress />)}
+            {upNext.map(it => <StillCard key={it.Id} item={it} onOpen={openDetail} progress />)}
           </Rail>
         )}
         {latest.length > 0 && (
           <Rail title="Recently added" count={latest.length} style={rise()}>
-            {latest.map(it => <PosterCard key={it.Id} item={it} onOpen={setDetail} badge="NEW" />)}
+            {latest.map(it => <PosterCard key={it.Id} item={it} onOpen={openDetail} badge="NEW" />)}
           </Rail>
         )}
         {arriving.length > 0 && (
@@ -589,12 +632,12 @@ export default function Home() {
         )}
         {views.length > 0 && (
           <Rail title="Libraries" count={views.length} style={{ ...rise(), marginTop: SP.lg }}>
-            {views.map(v => <ViewCard key={v.Id} view={v} onOpen={setDetail} />)}
+            {views.map(v => <ViewCard key={v.Id} view={v} onOpen={openDetail} />)}
           </Rail>
         )}
       </div>
 
-      <DetailSheet item={detail} onClose={() => setDetail(null)} />
+      <DetailSheet stack={stack} onStack={setStack} onClose={() => setStack([])} />
       <AccountSheet
         open={account} onClose={() => setAccount(false)} user={user}
         displayName={displayName} avatar={profile?.avatar}

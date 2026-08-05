@@ -1,53 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { glass } from '../../glass'
 import { T, SANS, MONO, R, EASE, TYPE } from '../theme'
 import { TopBar } from '../ui/TopBar'
 import { Icon, Ic } from '../ui/Icon'
 import { Sheet } from '../ui/Sheet'
-import { useTorrents } from '../../hooks/useTorrents'
+import { useDownloadsHub } from '../../context/DownloadsContext'
+import type { DownloadsHub } from '../../context/DownloadsContext'
 import type { TorrentRecord } from '../../hooks/useTorrents'
-import { apiJson, arrayOf, isRecord } from '../../types/guards'
+import { failureReasons, queueTitle } from '../../hooks/useFailingDownloads'
+import type { FailingQueueItem, FailingQueueState } from '../../hooks/useFailingDownloads'
 
-interface ServiceHealth { configured?: boolean; reachable?: boolean }
-interface HealthResponse { services?: { qbittorrent?: ServiceHealth; radarr?: ServiceHealth; sonarr?: ServiceHealth } }
-interface FailingQueueItem {
-  id: string | number
-  service: string
-  title: string
-  failing?: boolean
-  statusMessages: string[]
-  errorMessage?: string
-  indexer?: string
-  size?: number
-}
 interface DownloadTorrent extends TorrentRecord {
   name?: string
   eta?: number
   size?: number
   numSeeds?: number
   numLeechs?: number
-}
-type FailingQueueState = ReturnType<typeof useFailingQueue>
-type TorrentState = ReturnType<typeof useTorrents>
-
-function parseServiceHealth(value: unknown): ServiceHealth | undefined {
-  if (!isRecord(value)) return undefined
-  const record = value
-  return {
-    configured: typeof record.configured === 'boolean' ? record.configured : undefined,
-    reachable: typeof record.reachable === 'boolean' ? record.reachable : undefined,
-  }
-}
-
-function parseHealth(value: unknown): HealthResponse {
-  if (!isRecord(value) || !isRecord(value.services)) return { services: {} }
-  const services = value.services
-  return { services: {
-    qbittorrent: parseServiceHealth(services.qbittorrent),
-    radarr: parseServiceHealth(services.radarr),
-    sonarr: parseServiceHealth(services.sonarr),
-  } }
 }
 
 /**
@@ -58,11 +27,12 @@ function parseHealth(value: unknown): HealthResponse {
  *   2. "Active" — qBittorrent-backed downloads with poster, state-tinted progress,
  *      live ↓/↑ + ETA, and always-visible pause/resume/remove (no hover reveal).
  *
- * Reuses (verbatim): useTorrents (list, activeCount, pause/resume/remove, busy,
- *   loadError, isPausedState) + /api/servarr/downloads/enriched. The failing
- *   queue detail (reasons + blocklist) is polled locally the same way the desktop
- *   page does — the shared hook (useFailingCount) only exposes a badge count.
- * Endpoints: /api/servarr/health, /downloads/enriched, /{service}/queue[/:id].
+ * All live data comes from the shared hub (context/DownloadsContext): health, the
+ * enriched torrent list with pause/resume/remove, and the *arr failing queue with
+ * reasons + blocklist. This screen owns no pollers — it is mounted alongside the
+ * tab bar, which shows the same counts, so owning any would double them.
+ * Endpoints (via the hub): /api/servarr/health, /downloads/enriched,
+ * /{service}/queue[/:id].
  */
 
 // Glyphs the mobile Icon dictionary doesn't carry — kept local (page-scoped) so
@@ -71,8 +41,6 @@ const P = {
   alert: 'M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4m0 4h.01',
   ban: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM5 5l14 14',
 }
-
-const jget = (url: string, signal?: AbortSignal) => fetch(url, { credentials: 'include', signal })
 
 /* ── Formatters ───────────────────────────────────────────────────────────── */
 function fmtSize(bytes?: number | null) {
@@ -117,95 +85,13 @@ function stateInfo(state?: string) {
   }
 }
 
-/* ── Local failing-queue poller (Radarr/Sonarr) ───────────────────────────────
-   Visibility-aware ~6s poll of both *arr queues, one shared AbortController so an
-   in-flight request is dropped on the next tick / unmount. A failed poll flags a
-   subtle reconnect and keeps the last good list; remove() is optimistic then
-   re-polls. Kept in-file (the shared useFailingDownloads hook only exposes the
-   badge count) so this screen change stays confined to its own file. */
-function isFailingQueueItem(value: unknown): value is FailingQueueItem {
-  if (!isRecord(value)) return false
-  const item = value
-  return (typeof item.id === 'string' || typeof item.id === 'number')
-    && typeof item.service === 'string' && typeof item.title === 'string'
-    && Array.isArray(item.statusMessages) && item.statusMessages.every((message) => typeof message === 'string')
-}
-
-function useFailingQueue(enabled: boolean) {
-  const [items, setItems] = useState<FailingQueueItem[] | null>(null)   // null = never loaded
-  const [loadError, setLoadError] = useState(false)
-  const [busy, setBusy] = useState<Set<string | number>>(() => new Set())
-  const abortRef = useRef<AbortController | null>(null)
-
-  const poll = useCallback(() => {
-    abortRef.current?.abort()
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    return Promise.all([
-      jget('/api/servarr/radarr/queue', ctrl.signal).then((r) => (r.ok ? apiJson(r) : Promise.reject(r))).catch(() => null),
-      jget('/api/servarr/sonarr/queue', ctrl.signal).then((r) => (r.ok ? apiJson(r) : Promise.reject(r))).catch(() => null),
-    ]).then(([a, b]) => {
-      if (ctrl.signal.aborted) return
-      if (a == null && b == null) { setLoadError(true); return }
-      const merged: unknown[] = [...arrayOf(a, isRecord), ...arrayOf(b, isRecord)]
-      setItems(merged.filter(isFailingQueueItem).filter((q) => q.failing))
-      setLoadError(false)
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!enabled) { setItems(null); return }
-    let timer: ReturnType<typeof setInterval> | null = null
-    const start = () => { if (timer == null) { poll(); timer = setInterval(poll, 6000) } }
-    const stop = () => { if (timer != null) { clearInterval(timer); timer = null } abortRef.current?.abort() }
-    const onVis = () => (document.hidden ? stop() : start())
-    if (!document.hidden) start()
-    document.addEventListener('visibilitychange', onVis)
-    return () => { document.removeEventListener('visibilitychange', onVis); stop() }
-  }, [enabled, poll])
-
-  const remove = (item: FailingQueueItem, blocklist: boolean) => {
-    setBusy((prev) => new Set(prev).add(item.id))
-    setItems((cur) => cur && cur.filter((q) => q.id !== item.id))
-    fetch(`/api/servarr/${item.service}/queue/${item.id}`, {
-      method: 'DELETE', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocklist: !!blocklist }),
-    }).catch(() => {}).finally(() => {
-      setBusy((prev) => { const n = new Set(prev); n.delete(item.id); return n })
-      poll()
-    })
-  }
-
-  return { items, loadError, busy, remove }
-}
-
 /* ── Screen ───────────────────────────────────────────────────────────────── */
 export default function Downloads() {
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [healthLoading, setHealthLoading] = useState(true)
-
-  useEffect(() => {
-    let alive = true
-    jget('/api/servarr/health')
-      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
-      .then((h: unknown) => { if (alive) setHealth(parseHealth(h)) })
-      .catch(() => { if (alive) setHealth({ services: {} }) })
-      .finally(() => { if (alive) setHealthLoading(false) })
-    return () => { alive = false }
-  }, [])
-
-  const svc = health?.services
-  const qbitReady = !!svc?.qbittorrent?.configured && !!svc?.qbittorrent?.reachable
-  const arrReady = (!!svc?.radarr?.configured && !!svc?.radarr?.reachable)
-    || (!!svc?.sonarr?.configured && !!svc?.sonarr?.reachable)
-
-  const dl = useTorrents(qbitReady)
-  const failing = useFailingQueue(arrReady)
+  const dl = useDownloadsHub()
+  const { health, healthLoading, qbitReady, arrReady, failing, failingCount } = dl
 
   const [confirmDel, setConfirmDel] = useState<DownloadTorrent | null>(null)
   const [resolveItem, setResolveItem] = useState<FailingQueueItem | null>(null)
-
-  const failCount = (failing.items || []).length
 
   return (
     <>
@@ -216,14 +102,14 @@ export default function Downloads() {
         paddingLeft: 'calc(var(--sa-l) + 16px)', paddingRight: 'calc(var(--sa-r) + 16px)',
         display: 'flex', flexDirection: 'column', gap: 26,
       }}>
-        {failCount > 0 || failing.loadError ? (
+        {failingCount > 0 || failing.loadError ? (
           <NeedsAttention arrReady={arrReady} failing={failing} onResolve={setResolveItem} />
         ) : null}
 
         <ActiveSection
           healthLoading={healthLoading}
           qbitReady={qbitReady}
-          configured={!!svc?.qbittorrent?.configured}
+          configured={!!health?.services?.qbittorrent?.configured}
           dl={dl}
           onDelete={setConfirmDel}
         />
@@ -291,7 +177,7 @@ function NeedsAttention({ arrReady, failing, onResolve }: { arrReady: boolean; f
 }
 
 function FailingRow({ q, busy, onResolve }: { q: FailingQueueItem; busy: boolean; onResolve: () => void }) {
-  const reasons = q.statusMessages.length ? q.statusMessages : (q.errorMessage ? [q.errorMessage] : ['No reason given.'])
+  const reasons = failureReasons(q)
   return (
     <div style={{
       background: T.surface, borderRadius: R.md, padding: 14,
@@ -306,7 +192,7 @@ function FailingRow({ q, busy, onResolve }: { q: FailingQueueItem; busy: boolean
           <Icon path={P.alert} size={17} stroke={T.red} sw={1.9} />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ ...TYPE.headline, color: T.text, wordBreak: 'break-word' }}>{q.title}</div>
+          <div style={{ ...TYPE.headline, color: T.text, wordBreak: 'break-word' }}>{queueTitle(q)}</div>
           <div style={{ marginTop: 5, display: 'flex', flexDirection: 'column', gap: 3 }}>
             {reasons.map((r, i) => (
               <span key={i} style={{ ...TYPE.body, fontSize: 13, color: T.red }}>{r}</span>
@@ -318,7 +204,7 @@ function FailingRow({ q, busy, onResolve }: { q: FailingQueueItem; busy: boolean
         </div>
       </div>
       <button
-        onClick={onResolve} disabled={busy} aria-label={`Resolve ${q.title}`} className="mob-press"
+        onClick={onResolve} disabled={busy} aria-label={`Resolve ${queueTitle(q)}`} className="mob-press"
         style={{
           marginTop: 12, width: '100%', minHeight: 44, borderRadius: R.sm,
           border: '1px solid rgba(255,107,107,.3)', background: 'rgba(255,107,107,.10)',
@@ -334,7 +220,7 @@ function FailingRow({ q, busy, onResolve }: { q: FailingQueueItem; busy: boolean
 }
 
 /* ── Active downloads ─────────────────────────────────────────────────────── */
-function ActiveSection({ healthLoading, qbitReady, configured, dl, onDelete }: { healthLoading: boolean; qbitReady: boolean; configured: boolean; dl: TorrentState; onDelete: (torrent: DownloadTorrent) => void }) {
+function ActiveSection({ healthLoading, qbitReady, configured, dl, onDelete }: { healthLoading: boolean; qbitReady: boolean; configured: boolean; dl: DownloadsHub; onDelete: (torrent: DownloadTorrent) => void }) {
   const list: DownloadTorrent[] = dl.list
   const agg = useMemo(() => {
     let down = 0, up = 0, active = 0
@@ -572,11 +458,11 @@ function DeleteSheet({ t, onCancel, onConfirm }: { t: DownloadTorrent; onCancel:
 }
 
 function ResolveSheet({ q, onCancel, onRemove }: { q: FailingQueueItem; onCancel: () => void; onRemove: (blocklist: boolean) => void }) {
-  const reasons = q.statusMessages.length ? q.statusMessages : (q.errorMessage ? [q.errorMessage] : ['No reason given.'])
+  const reasons = failureReasons(q)
   return (
     <div style={{ padding: '4px 4px 8px', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
-        <div style={{ ...TYPE.headline, color: T.text, wordBreak: 'break-word' }}>{q.title}</div>
+        <div style={{ ...TYPE.headline, color: T.text, wordBreak: 'break-word' }}>{queueTitle(q)}</div>
         <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
           {reasons.map((r, i) => <span key={i} style={{ ...TYPE.body, fontSize: 13, color: T.red }}>{r}</span>)}
         </div>

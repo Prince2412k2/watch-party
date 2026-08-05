@@ -1,8 +1,8 @@
-import { forwardRef, useEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { forwardRef, useEffect, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useParty } from '../context/PartyContext'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { useFailingCount } from '../hooks/useFailingDownloads'
+import { activeTorrents, useDownloadsHub } from '../context/DownloadsContext'
 import { isActiveState } from '../hooks/useTorrents'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
@@ -12,7 +12,7 @@ import type { AvatarConfig } from '../lib/avatar'
 import { C, SANS, MONO, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui'
 import { fmtRuntimeFromTicks, fmtSpeed } from '../lib/format'
 import { movePosterSelection } from '../components/posterSelection'
-import { apiJson, arrayOf, isLibraryItemJson, isRecord, isTorrentJson } from '../types/guards'
+import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../types/guards'
 import type { PlaybackTrack } from '../types/media'
 
 type ItemType = 'Movie' | 'Series' | 'Episode' | 'Season' | 'CollectionFolder' | 'Folder' | 'UserView' | string
@@ -101,47 +101,6 @@ function setBalancedPoster(id: string) {
   document.documentElement.style.setProperty('--balanced-poster', `url("${img(id, 'Backdrop')}"), url("${img(id)}")`)
 }
 
-/**
- * Poll active-download count from qBittorrent while the page is visible.
- * Returns { active, torrents } — active is the count of actively-downloading
- * torrents (shared isActiveState, so this badge matches the Browse/Downloads
- * badges exactly and excludes seeding/completed/errored items).
- * Servarr-unconfigured / unreachable simply yields active:0 and torrents:[],
- * so every consumer degrades to rendering nothing. Lifecycle: polls ~5s only
- * while the tab is visible, cancels the in-flight request on unmount/hide, and
- * clears the interval. Disabled entirely when `enabled` is false (embedded).
- */
-function useDownloads(enabled: boolean) {
-  const [torrents, setTorrents] = useState<Torrent[]>([])
-  useEffect(() => {
-    if (!enabled) { setTorrents([]); return }
-    let timer: ReturnType<typeof setInterval> | null = null
-    let ctrl: AbortController | null = null
-    const poll = () => {
-      ctrl?.abort()
-      // Capture this run's controller locally so a slower earlier response can't
-      // read a newer run's `ctrl` and slip past the aborted-guard to clobber state.
-      const c = new AbortController()
-      ctrl = c
-      // Enriched endpoint = the raw torrent list + a clean displayTitle/subtitle/
-      // posterUrl per item (superset of /qbittorrent/torrents), so the
-      // "Downloading now" cards can show a title + poster instead of the raw name.
-      fetch('/api/servarr/downloads/enriched', { credentials: 'include', signal: c.signal })
-        .then(r => r.ok ? apiJson(r) : Promise.reject(r))
-        .then(data => { if (!c.signal.aborted) setTorrents(arrayOf(data, isTorrentJson)) })
-        .catch(() => { if (!c.signal.aborted) setTorrents([]) })
-    }
-    const start = () => { if (timer == null) { poll(); timer = setInterval(poll, 5000) } }
-    const stop = () => { if (timer != null) { clearInterval(timer); timer = null } ctrl?.abort() }
-    const onVis = () => (document.hidden ? stop() : start())
-    if (!document.hidden) start()
-    document.addEventListener('visibilitychange', onVis)
-    return () => { document.removeEventListener('visibilitychange', onVis); stop() }
-  }, [enabled])
-  const active = torrents.filter(t => isActiveState(t.state)).length
-  return { active, torrents }
-}
-const isFolder = (t?: ItemType) => t === 'Series' || t === 'Season' || t === 'CollectionFolder' || t === 'Folder' || t === 'UserView'
 const DETAIL_TYPES = new Set(['Movie', 'Series', 'Episode'])
 const isDetail = (t?: ItemType) => typeof t === 'string' && DETAIL_TYPES.has(t)
 
@@ -185,10 +144,16 @@ export default function Library({
   // that was clicked; kept fresh from the live poll while open (see render).
   const [dlDetail, setDlDetail] = useState<Torrent | null>(null)
 
-  // Active downloads (qBittorrent). Standalone only — the embedded lobby stays
-  // lean and Servarr-agnostic. Degrades to empty when Servarr isn't configured.
-  const { active: dlActive, torrents: dlTorrents } = useDownloads(!embedded)
-  const failingCount = useFailingCount(!embedded)
+  // Active downloads (qBittorrent) + the *arr failing count, from the shared hub.
+  // This page used to own a second implementation of the enriched-torrent poller
+  // on a different interval than hooks/useTorrents, so the same badge could read
+  // differently here than on the phone. Inside the party lobby (`embedded`) the
+  // hub is deliberately not mounted, so this degrades to no downloads — the lobby
+  // stays Servarr-agnostic and a watch session never polls the download client.
+  const hub = useDownloadsHub()
+  const dlTorrents = hub.list
+  const dlActive = activeTorrents(dlTorrents).length
+  const failingCount = hub.failingCount
 
   const partyBrowsing = !embedded && party.session != null
   if (partyBrowsing) canDrive = party.role === 'host'
@@ -392,7 +357,7 @@ export default function Library({
         overflow: 'clip auto',
         overflowY: following ? 'hidden' : 'auto',
       }}>
-        {(embedded || !libraryType) && <TopBar embedded={embedded} mobile={mobile}
+        {(embedded || !libraryType) && <TopBar mobile={mobile}
           userId={user?.userId} profileName={profile?.displayName || user?.name} profileAvatar={profile?.avatar} logout={logout}
           headerRight={headerRight} current={current} onBack={goBack} onHome={goHome} />
         }
@@ -481,7 +446,7 @@ function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover,
 }
 
 
-function TopBar({ embedded, mobile, userId, profileName, profileAvatar, logout, headerRight, current, onBack, onHome }: { embedded: boolean; mobile: boolean; userId?: string; profileName?: string; profileAvatar?: AvatarConfig | null; logout: () => Promise<void>; headerRight?: ReactNode; current: StackEntry | null; onBack: () => void; onHome: () => void }) {
+function TopBar({ mobile, userId, profileName, profileAvatar, logout, headerRight, current, onBack, onHome }: { mobile: boolean; userId?: string; profileName?: string; profileAvatar?: AvatarConfig | null; logout: () => Promise<void>; headerRight?: ReactNode; current: StackEntry | null; onBack: () => void; onHome: () => void }) {
   const [joinOpen, setJoinOpen] = useState(false)
   return (
     <div style={{
