@@ -45,7 +45,9 @@ class _Segment {
 /// instead of writing a separate file, and add eviction; neither exists yet.
 class MediaCacheProxy {
   MediaCacheProxy({required ApiClient apiClient, RangeCacheStore? store})
-    : _apiClient = apiClient,
+    : // Keep the public parameter name distinct from the private field.
+      // ignore: prefer_initializing_formals
+      _apiClient = apiClient,
       _store = store ?? RangeCacheStore();
 
   final ApiClient _apiClient;

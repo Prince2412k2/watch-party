@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
 import 'package:watchparty/ui/widgets/floating_camera_tile.dart';
@@ -73,7 +74,7 @@ void main() {
       var offset = const Offset(100, 100);
       const size = Size(160, 146);
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(_withProviders(MaterialApp(
         home: Scaffold(
           body: StatefulBuilder(
             builder: (context, setState) => Stack(
@@ -96,7 +97,7 @@ void main() {
             ),
           ),
         ),
-      ));
+      )));
 
       final before = tester.getTopLeft(find.byType(FloatingCameraTile));
       // Drag on the header (top ~13px of the tile).
@@ -113,7 +114,7 @@ void main() {
         (tester) async {
       var resized = Offset.zero;
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(_withProviders(MaterialApp(
         home: Scaffold(
           body: Stack(
             children: [
@@ -134,7 +135,7 @@ void main() {
             ],
           ),
         ),
-      ));
+      )));
 
       await tester.drag(find.byIcon(Icons.south_east), const Offset(30, 30));
       await tester.pump();
@@ -143,3 +144,5 @@ void main() {
     });
   });
 }
+
+Widget _withProviders(Widget child) => ProviderScope(child: child);

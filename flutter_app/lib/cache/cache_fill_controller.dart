@@ -99,7 +99,11 @@ class CacheFillController {
   CacheFillController({
     required MediaCacheProxy proxy,
     int chunkSize = MediaCacheProxy.fetchChunkSize,
-  })  : _proxy = proxy,
+    // Keep the public parameter names distinct from private storage fields.
+  })  :
+        // ignore: prefer_initializing_formals
+        _proxy = proxy,
+        // ignore: prefer_initializing_formals
         _chunkSize = chunkSize;
 
   final MediaCacheProxy _proxy;
