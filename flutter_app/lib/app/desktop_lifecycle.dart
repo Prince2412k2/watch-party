@@ -83,8 +83,16 @@ class WindowGeometryRecorder {
     required Future<WindowGeometry> Function() read,
     required Future<void> Function(WindowGeometry) write,
     Duration debounce = _boundsDebounce,
-  }) : _read = read,
+    // Keep public constructor parameters distinct from private storage fields.
+    // Initializing formals would force callers to pass `_read:`/`_write:`,
+    // leaking private names into the public API — same trade-off as the other
+    // recorders in this codebase.
+  }) :
+       // ignore: prefer_initializing_formals
+       _read = read,
+       // ignore: prefer_initializing_formals
        _write = write,
+       // ignore: prefer_initializing_formals
        _debounce = debounce;
 
   final Future<WindowGeometry> Function() _read;
