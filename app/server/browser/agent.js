@@ -5,7 +5,10 @@
 // escaping into a socket handler that is also responsible for chat and playback.
 import { browserConfig } from './config.js'
 
+let callForTests = null
+
 async function call(method, path, body, { timeoutMs } = {}) {
+  if (callForTests) return callForTests(method, path, body)
   const config = browserConfig()
   if (!config.enabled) return { ok: false, error: 'unavailable', status: 0 }
 
@@ -40,16 +43,20 @@ async function call(method, path, body, { timeoutMs } = {}) {
   }
 }
 
+export function setCallForTests(replacement) {
+  callForTests = replacement
+}
+
 export function status() {
   return call('GET', '/status')
 }
 
-export function startSession({ url, token, lkUrl, kbps, fps }) {
-  return call('POST', '/session/start', { url, token, lkUrl, kbps, fps }, { timeoutMs: 15_000 })
+export function startSession({ url, token, lkUrl, kbps, fps, generation }) {
+  return call('POST', '/session/start', { url, token, lkUrl, kbps, fps, generation }, { timeoutMs: 15_000 })
 }
 
-export function stopSession(reason = 'stop') {
-  return call('POST', '/session/stop', { reason }, { timeoutMs: 15_000 })
+export function stopSession(reason = 'stop', generation = null) {
+  return call('POST', '/session/stop', { reason, generation }, { timeoutMs: 15_000 })
 }
 
 export function navigate(url) {
