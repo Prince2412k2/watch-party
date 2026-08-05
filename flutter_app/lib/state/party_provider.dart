@@ -717,24 +717,46 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     if (resp is Map && resp['error'] != null) throw resp['error'].toString();
   }
 
+  /// Release everything this client holds for the party: the sync engine, the
+  /// shared player, the LiveKit room, chat, and the socket itself.
+  ///
+  /// Every step is guarded independently, for the same reason `main.dart`'s
+  /// shutdown handler guards its own: one step throwing must not skip the ones
+  /// after it. Losing this teardown part-way through is how leaving a party —
+  /// or signing out — could leave the camera live or the socket connected.
   Future<void> _leaveLocal() async {
     _pendingPartyId = null;
     final engine = _ref.read(syncEngineProvider);
-    await engine.detach();
-    if (engine is SyncEngineImpl) engine.isHost = false;
+    await _bestEffort(() async {
+      await engine.detach();
+      if (engine is SyncEngineImpl) engine.isHost = false;
+    });
     // The shared PlayerController lives for the app's lifetime (it's a plain
     // Provider, not scoped to the party) — detaching the sync engine only
     // stops the party from *driving* it, so without an explicit stop here the
     // movie (and its audio) keeps playing after leaving/ending the party.
-    await _ref.read(playerControllerProvider).pause();
-    await _ref.read(playerControllerProvider).seek(Duration.zero);
+    await _bestEffort(() async {
+      final player = _ref.read(playerControllerProvider);
+      await player.pause();
+      await player.seek(Duration.zero);
+    });
     _openedMediaId = null;
-    await _ref.read(livekitProvider.notifier).leave();
-    _ref.read(livekitProvider.notifier).reset();
-    _ref.read(chatProvider.notifier).clear();
+    await _bestEffort(() async {
+      await _ref.read(livekitProvider.notifier).leave();
+      _ref.read(livekitProvider.notifier).reset();
+    });
+    await _bestEffort(() => _ref.read(chatProvider.notifier).clear());
     _unsubscribe();
-    await _socket.disconnect();
+    await _bestEffort(() => _socket.disconnect());
     clear();
+  }
+
+  Future<void> _bestEffort(FutureOr<void> Function() step) async {
+    try {
+      await step();
+    } catch (_) {
+      // Deliberately swallowed: see [_leaveLocal].
+    }
   }
 
   String _participantName(String userId) {

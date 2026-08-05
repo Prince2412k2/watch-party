@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'auth_provider.dart';
 import 'providers.dart';
 
 /// SharedPreferences key holding the runtime backend origin.
@@ -22,10 +23,16 @@ class ServerConfigNotifier extends StateNotifier<String?> {
   bool get isConfigured => (state ?? '').isNotEmpty;
 
   /// Normalize [raw], persist it, and repoint the API + socket clients at it.
+  /// A change of origin drops the old origin's session first — see
+  /// [_dropOriginSession].
   Future<void> setUrl(String raw) async {
     final url = normalize(raw);
+    final originChanged = url != state;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kServerUrlPrefKey, url);
+    // Before repointing, so nothing can carry the previous origin's cookie into
+    // the first request against the new one.
+    if (originChanged) await _dropOriginSession();
     _ref.read(apiClientProvider).baseUrl = url;
     _ref.read(socketClientProvider).url = url;
     state = url;
@@ -36,7 +43,26 @@ class ServerConfigNotifier extends StateNotifier<String?> {
   Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(kServerUrlPrefKey);
+    await _dropOriginSession();
     state = null;
+  }
+
+  /// Discard the authentication state that belonged to the origin we are
+  /// leaving: the persisted cookie jar plus the cached `Cookie:` header, and the
+  /// signed-in user itself.
+  ///
+  /// Immediate rather than deferred to the next sign-in, because the jar
+  /// survives the process: a session left behind here is a live credential that
+  /// the app would replay against whichever backend it is pointed at next, and
+  /// `authProvider` would meanwhile still claim a user the new origin has never
+  /// seen.
+  Future<void> _dropOriginSession() async {
+    try {
+      await _ref.read(apiClientProvider).clearSession();
+    } catch (_) {
+      // Best-effort: a jar that refuses to delete must not block the switch.
+    }
+    _ref.read(authProvider.notifier).markUnauthenticated();
   }
 
   /// Trim, default the scheme to https, and strip any trailing slash so
