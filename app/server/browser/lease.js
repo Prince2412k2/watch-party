@@ -30,24 +30,40 @@ export function acquireLease(partyId) {
   return { ok: true, leaseId }
 }
 
-export function markActive(partyId) {
+export function markActive(partyId, leaseId = null) {
   const lease = loadLease()
   if (!lease || lease.partyId !== partyId || lease.state !== 'starting') return false
+  if (leaseId && lease.leaseId !== leaseId) return false
   saveLease({ ...lease, state: 'active' })
   return true
 }
 
-export function beginCleaning(partyId) {
+export function beginCleaning(partyId, leaseId = null) {
   const lease = loadLease()
   if (!lease || lease.partyId !== partyId) return false
+  if (leaseId && lease.leaseId !== leaseId) return false
   if (lease.state === 'cleaning') return true
   saveLease({ ...lease, state: 'cleaning' })
+  return true
+}
+
+export function quarantine(partyId, leaseId, reason) {
+  const lease = loadLease()
+  if (!lease || lease.partyId !== partyId || lease.leaseId !== leaseId) return false
+  saveLease({ ...lease, state: 'quarantined', quarantineReason: reason, quarantinedAt: Date.now() })
   return true
 }
 
 export function releaseLease(partyId) {
   const lease = loadLease()
   if (!lease || lease.partyId !== partyId) return false
+  clearLease()
+  return true
+}
+
+export function releaseGeneration(partyId, leaseId) {
+  const lease = loadLease()
+  if (!lease || lease.partyId !== partyId || lease.leaseId !== leaseId) return false
   clearLease()
   return true
 }
@@ -92,7 +108,13 @@ export async function reconcile({ partyExists, agentStatus, stopSession }) {
   if (!lease) {
     // No lease but a live session means an orphan — a restart that lost the row,
     // or a lease cleared while the stop was in flight. Reclaim the container.
-    if (remote.ok && remote.body?.running) await stopSession('orphan')
+    if (remote.ok && (
+      remote.body?.running
+      || remote.body?.publisherRunning
+      || remote.body?.targetRunning
+      || remote.body?.expectedGeneration
+      || remote.body?.generation
+    )) await stopSession('orphan')
     return null
   }
 
@@ -100,10 +122,22 @@ export async function reconcile({ partyExists, agentStatus, stopSession }) {
     && partyExists(lease.partyId)
     && remote.ok
     && remote.body?.running === true
+    && remote.body?.publisherRunning === true
+    && remote.body?.targetRunning === true
+    && remote.body?.targetReachable === true
+    && remote.body?.publishing === true
+    && remote.body?.generation === lease.leaseId
+    && remote.body?.expectedGeneration === lease.leaseId
+    && !remote.body?.lastError
+    && !remote.body?.exited
 
   if (!salvageable) {
-    await stopSession('reconcile')
-    clearLease()
+    beginCleaning(lease.partyId, lease.leaseId)
+    const stopped = await stopSession('reconcile', lease.leaseId)
+    if (stopped?.ok) clearLease()
+    else if (stopped?.status === 409 || stopped?.error === 'generation mismatch') {
+      quarantine(lease.partyId, lease.leaseId, stopped.error || 'generation mismatch')
+    }
     return null
   }
   return { partyId: lease.partyId, leaseId: lease.leaseId }

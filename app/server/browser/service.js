@@ -10,9 +10,12 @@
 // and playback, and a browser that cannot start must cost a party nothing but an
 // error message on one surface.
 import { AccessToken } from 'livekit-server-sdk'
+import { lookup } from 'node:dns/promises'
+import { BlockList, isIP } from 'node:net'
 import * as agent from './agent.js'
 import * as lease from './lease.js'
 import { browserConfig } from './config.js'
+import { browserPolicy } from './policy.js'
 import {
   clearBrowserActivity, effectiveName, getSession, isHost, isMember, publicSession,
   setBrowserActivity, updateBrowserActivity,
@@ -96,6 +99,14 @@ export async function startBrowser({ partyId, userId, url, onActivityEnter }) {
 
   if (lease.isHeldBy(partyId) && session.browser) return { ok: true, alreadyRunning: true }
 
+  if (lease.getLease()) {
+    return { error: 'The shared browser is in use right now. Try again in a few minutes.' }
+  }
+
+  const requestedUrl = typeof url === 'string' && url.trim() ? url : config.homeUrl
+  const target = await validateTargetUrl(requestedUrl)
+  if (!target) return { error: 'invalid url' }
+
   const acquired = lease.acquireLease(partyId)
   if (!acquired.ok) {
     // Says only that it is in use. Naming the occupying party — or its host —
@@ -113,7 +124,6 @@ export async function startBrowser({ partyId, userId, url, onActivityEnter }) {
     }
   }
 
-  const target = normalizeUrl(url) || config.homeUrl
   setBrowserActivity(session, {
     state: 'starting',
     url: target,
@@ -132,21 +142,27 @@ export async function startBrowser({ partyId, userId, url, onActivityEnter }) {
     token = await mintPublisherToken(partyId)
   } catch (error) {
     console.error('browser: could not mint publisher token:', error.message)
-    await teardownBrowser(partyId, 'token-failed')
+    await teardownBrowser(partyId, 'token-failed', acquired.leaseId)
     return { error: 'Could not start the shared browser' }
+  }
+
+  const beforeStart = lease.getLease()
+  if (!beforeStart || beforeStart.partyId !== partyId || beforeStart.leaseId !== acquired.leaseId) {
+    return { error: 'The shared browser start was cancelled' }
   }
 
   const started = await agent.startSession({
     url: target,
     token,
-    lkUrl: process.env.LIVEKIT_URL || 'ws://livekit:7880',
+    lkUrl: process.env.BROWSER_LIVEKIT_URL || process.env.LIVEKIT_URL || 'ws://livekit:7880',
     kbps: config.maxBitrateKbps,
     fps: config.fps,
+    generation: acquired.leaseId,
   })
 
   if (!started.ok) {
     console.warn(`browser: agent refused start (${started.error})`)
-    await teardownBrowser(partyId, `start-failed:${started.error}`)
+    await teardownBrowser(partyId, `start-failed:${started.error}`, acquired.leaseId)
     return {
       error: started.status === 0
         ? 'The shared browser is not running on this server'
@@ -154,8 +170,12 @@ export async function startBrowser({ partyId, userId, url, onActivityEnter }) {
     }
   }
 
-  lease.markActive(partyId)
-  void waitForStream(partyId).catch(error => {
+  const currentLease = lease.getLease()
+  if (!currentLease || currentLease.leaseId !== acquired.leaseId || !lease.markActive(partyId, acquired.leaseId)) {
+    await agent.stopSession('stale-start', acquired.leaseId)
+    return { error: 'The shared browser start was cancelled' }
+  }
+  void waitForStream(partyId, acquired.leaseId).catch(error => {
     // Belt and braces — waitForStream already swallows its own failures.
     console.error('browser: waitForStream escaped:', error?.message)
   })
@@ -163,15 +183,22 @@ export async function startBrowser({ partyId, userId, url, onActivityEnter }) {
   return { ok: true }
 }
 
-async function waitForStream(partyId) {
+async function waitForStream(partyId, generation) {
   const config = browserConfig()
   const deadline = Date.now() + config.startTimeoutMs
   while (Date.now() < deadline) {
     await sleep(400)
-    if (!lease.isHeldBy(partyId)) return          // stopped while we waited
+    const current = lease.getLease()
+    if (!current || current.partyId !== partyId || current.leaseId !== generation) return
     const remote = await agent.status()
+    const afterStatus = lease.getLease()
+    if (!afterStatus || afterStatus.partyId !== partyId || afterStatus.leaseId !== generation) return
     if (!remote.ok) continue                      // a blip is not a failure yet
     const body = remote.body ?? {}
+    if (body.generation && body.generation !== generation) {
+      await teardownBrowser(partyId, 'generation-mismatch', generation)
+      return
+    }
     if (body.publishing) {
       const session = getSession(partyId)
       if (!session?.browser) return
@@ -186,11 +213,11 @@ async function waitForStream(partyId) {
       return
     }
     if (body.lastError || body.exited) {
-      await failBrowser(partyId, body.lastError || 'The shared browser stopped unexpectedly')
+      await failBrowser(partyId, body.lastError || 'The shared browser stopped unexpectedly', generation)
       return
     }
   }
-  await failBrowser(partyId, 'The shared browser took too long to start')
+  await failBrowser(partyId, 'The shared browser took too long to start', generation)
 }
 
 /**
@@ -199,14 +226,16 @@ async function waitForStream(partyId) {
  * The party itself is untouched: cameras, chat, joins and Jellyfin all keep
  * working, and the host can start playback immediately afterwards.
  */
-async function failBrowser(partyId, message) {
+async function failBrowser(partyId, message, generation = null) {
+  if (generation && lease.getLease()?.leaseId !== generation) return
   const session = getSession(partyId)
   if (session?.browser) {
     updateBrowserActivity(session, { state: 'error', error: message })
     broadcast(session)
     notifyError(session, message)
   }
-  await teardownBrowser(partyId, 'failed')
+  await teardownBrowser(partyId, 'failed', generation)
+  if (generation && lease.getLease()?.leaseId !== generation && lease.getLease() !== null) return
   const after = getSession(partyId)
   if (after) broadcast(after)
 }
@@ -218,24 +247,43 @@ async function failBrowser(partyId, message) {
  * of a party ending, and a container that will not answer must not be able to
  * stop a party from ending.
  */
-export function teardownBrowser(partyId, reason = 'stop') {
-  if (!partyId) return Promise.resolve()
+export function teardownBrowser(partyId, reason = 'stop', expectedGeneration = null) {
+  if (!partyId) return Promise.resolve({ ok: true, stopped: false })
   const existing = teardownsInFlight.get(partyId)
   if (existing) return existing
 
   const run = (async () => {
     try {
-      const held = lease.isHeldBy(partyId)
-      if (held) lease.beginCleaning(partyId)
+      const currentLease = lease.getLease()
+      if (!currentLease || currentLease.partyId !== partyId) return { ok: true, stopped: false }
+      const generation = expectedGeneration || currentLease.leaseId
+      if (currentLease.leaseId !== generation) return { ok: false, stale: true }
+      if (!lease.beginCleaning(partyId, generation)) return { ok: false, stale: true }
 
-      if (held) {
-        const stopped = await agent.stopSession(reason)
-        if (!stopped.ok) {
-          // Recorded for the operator, then ignored. The container's profile
-          // lives on a tmpfs and the agent kills orphans on the next start, so a
-          // failed stop is a cleanup problem, not a correctness one.
-          console.error(`browser: agent stop failed for ${partyId} (${stopped.error}) — releasing the lease anyway`)
-        }
+      const stopped = await agent.stopSession(reason, generation)
+      if (lease.getLease()?.leaseId !== generation) return { ok: false, stale: true }
+      if (!stopped.ok) {
+        const quarantined = stopped.status === 409 || stopped.error === 'generation mismatch'
+        if (quarantined) lease.quarantine(partyId, generation, stopped.error)
+        markCleanupPending(partyId, stopped.error, quarantined)
+        if (!quarantined) startMonitor()
+        console.error(`browser: agent stop failed for ${partyId} (${stopped.error})`)
+        return { ok: false, retry: !quarantined, quarantined }
+      }
+
+      const remote = await agent.status()
+      if (lease.getLease()?.leaseId !== generation) return { ok: false, stale: true }
+      if (!remote.ok) {
+        markCleanupPending(partyId, 'cleanup confirmation unavailable', false)
+        startMonitor()
+        return { ok: false, retry: true }
+      }
+      if (remote.body?.running || remote.body?.generation) {
+        const quarantined = Boolean(remote.body?.generation && remote.body.generation !== generation)
+        if (quarantined) lease.quarantine(partyId, generation, 'agent generation changed during cleanup')
+        markCleanupPending(partyId, 'browser is still running', quarantined)
+        if (!quarantined) startMonitor()
+        return { ok: false, retry: !quarantined, quarantined }
       }
 
       const session = getSession(partyId)
@@ -243,12 +291,13 @@ export function teardownBrowser(partyId, reason = 'stop') {
         clearBrowserActivity(session)
         broadcast(session)
       }
-      // forceClear, not releaseLease: a lease stuck in an unexpected state must
-      // never keep the feature locked for every other party.
-      if (held) lease.forceClear()
+      if (!lease.releaseGeneration(partyId, generation)) return { ok: false, stale: true }
+      return { ok: true, stopped: true }
     } catch (error) {
       console.error('browser: teardown error:', error?.message)
-      try { lease.forceClear() } catch { /* nothing left to try */ }
+      markCleanupPending(partyId, 'browser cleanup failed', false)
+      startMonitor()
+      return { ok: false, retry: true }
     } finally {
       teardownsInFlight.delete(partyId)
       stopMonitorIfIdle()
@@ -259,13 +308,25 @@ export function teardownBrowser(partyId, reason = 'stop') {
   return run
 }
 
+function markCleanupPending(partyId, detail, quarantined) {
+  const session = getSession(partyId)
+  if (!session?.browser) return
+  updateBrowserActivity(session, {
+    state: 'error',
+    error: quarantined
+      ? 'The shared browser was quarantined after a cleanup conflict'
+      : `Shared browser cleanup pending: ${detail}`,
+  })
+  broadcast(session)
+}
+
 /** Host explicitly closed the browser. */
 export async function stopBrowser({ partyId, userId }) {
   const session = getSession(partyId)
   if (!session) return { error: 'party not found' }
   if (!isHost(session, userId)) return { error: 'not host' }
-  await teardownBrowser(partyId, 'host-stopped')
-  return { ok: true }
+  const stopped = await teardownBrowser(partyId, 'host-stopped')
+  return stopped.ok ? { ok: true } : { error: 'The shared browser is still cleaning up' }
 }
 
 // ── control lease ───────────────────────────────────────────────────────────
@@ -407,7 +468,7 @@ export async function navigateBrowser({ partyId, userId, url }) {
   const session = activeBrowserSession(partyId)
   if (!session) return { error: 'the shared browser is not running' }
   if (!isDriver(session, userId)) return { error: 'not driving' }
-  const target = normalizeUrl(url)
+  const target = await validateTargetUrl(url)
   if (!target) return { error: 'invalid url' }
   const result = await agent.navigate(target)
   if (!result.ok) return { error: 'the shared browser is not responding' }
@@ -449,44 +510,62 @@ export async function tick() {
     stopMonitor()
     return
   }
-  if (current.state !== 'active') return          // a start or a teardown is mid-flight
+  if (current.state === 'cleaning') {
+    await teardownBrowser(current.partyId, 'cleanup-retry', current.leaseId)
+    return
+  }
+  if (current.state !== 'active') return
 
   const session = getSession(current.partyId)
   if (!session) {
     // The party is gone and never told us — a crash between deleteSession and
     // teardown. Reclaim the browser.
-    await teardownBrowser(current.partyId, 'party-gone')
+    await teardownBrowser(current.partyId, 'party-gone', current.leaseId)
     return
   }
 
   const remote = await agent.status()
+  const afterStatus = lease.getLease()
+  if (!afterStatus || afterStatus.leaseId !== current.leaseId || afterStatus.partyId !== current.partyId) return
   if (!remote.ok) {
     // One failed poll is a blip; treat a run of them as a dead container.
     session._browserMisses = (session._browserMisses ?? 0) + 1
     if (session._browserMisses >= 3) {
       session._browserMisses = 0
-      await failBrowser(current.partyId, 'Lost contact with the shared browser')
+      await failBrowser(current.partyId, 'Lost contact with the shared browser', current.leaseId)
     }
     return
   }
   session._browserMisses = 0
 
   const body = remote.body ?? {}
-  if (!body.running) {
-    await failBrowser(current.partyId, 'The shared browser closed unexpectedly')
+  if (body.generation !== current.leaseId || body.expectedGeneration !== current.leaseId) {
+    await teardownBrowser(current.partyId, 'generation-mismatch', current.leaseId)
+    return
+  }
+  const isStarting = session.browser?.state === 'starting'
+  if (
+    !body.running
+    || !body.publisherRunning
+    || !body.targetRunning
+    || !body.targetReachable
+    || (!isStarting && !body.publishing)
+    || body.lastError
+    || body.exited
+  ) {
+    await failBrowser(current.partyId, 'The shared browser closed unexpectedly', current.leaseId)
   }
 }
 
 /** Bring stored state in line with the container at startup. */
 export async function reconcileBrowser({ partyExists }) {
   if (!browserConfig().enabled) {
-    // The feature was turned off while a lease was held. Release it, and let any
-    // party that was on the browser activity fall back to the lobby (runtimeState
-    // has already done that for the restored sessions).
+    // Without a configured token the server cannot prove the agent stopped.
+    // Retain the lease rather than making an unverified browser reusable.
     const stale = lease.getLease()
     if (stale) {
-      lease.forceClear()
-      console.log('browser: feature disabled — cleared a stale lease')
+      lease.beginCleaning(stale.partyId, stale.leaseId)
+      console.warn('browser: feature disabled — retained stale lease for cleanup')
     }
     return null
   }
@@ -494,9 +573,12 @@ export async function reconcileBrowser({ partyExists }) {
     const survivor = await lease.reconcile({
       partyExists,
       agentStatus: () => agent.status(),
-      stopSession: reason => agent.stopSession(reason),
+      stopSession: (reason, generation) => agent.stopSession(reason, generation),
     })
-    if (!survivor) return null
+    if (!survivor) {
+      if (lease.getLease()?.state === 'cleaning') startMonitor()
+      return null
+    }
     const session = getSession(survivor.partyId)
     if (session?.browser) {
       updateBrowserActivity(session, { driverUserId: session.hostId, requests: [], focused: false })
@@ -514,9 +596,9 @@ export async function reconcileBrowser({ partyExists }) {
 // Modifiers then exactly one keysym. Four is the cap because there are four
 // modifier keys — and it has to match the agent's own pattern, or an event would
 // pass validation here and be silently dropped one layer down.
-const KEY_PATTERN = /^(?:(?:ctrl|alt|shift|super)\+){0,4}[A-Za-z0-9_]{1,20}$/
-const MAX_EVENTS = 64
-const MAX_TEXT = 256
+const KEY_PATTERN = new RegExp(browserPolicy.keyPattern)
+const MAX_EVENTS = browserPolicy.maxBatch
+const MAX_TEXT = browserPolicy.maxText
 
 /**
  * Reduce a client's batch to events the agent will accept.
@@ -551,7 +633,7 @@ export function sanitizeEvents(events) {
 export function normalizeUrl(value) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
-  if (!trimmed || trimmed.length > 2048) return null
+  if (!trimmed || trimmed.length > browserPolicy.maxUrlLength) return null
   const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) ? trimmed : `https://${trimmed}`
   let parsed
   try {
@@ -561,7 +643,97 @@ export function normalizeUrl(value) {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
   if (!parsed.hostname) return null
+  if (parsed.username || parsed.password) return null
   return parsed.toString()
+}
+
+const blockedAddresses4 = new BlockList()
+const blockedAddresses6 = new BlockList()
+for (const [network, prefix, family] of [
+  ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'],
+  ['127.0.0.0', 8, 'ipv4'], ['169.254.0.0', 16, 'ipv4'], ['172.16.0.0', 12, 'ipv4'],
+  ['192.0.0.0', 24, 'ipv4'], ['192.0.2.0', 24, 'ipv4'], ['192.88.99.0', 24, 'ipv4'],
+  ['192.168.0.0', 16, 'ipv4'], ['198.18.0.0', 15, 'ipv4'], ['198.51.100.0', 24, 'ipv4'],
+  ['203.0.113.0', 24, 'ipv4'], ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
+  ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'],
+  ['64:ff9b:1::', 48, 'ipv6'], ['100::', 64, 'ipv6'], ['2001::', 23, 'ipv6'],
+  ['2002::', 16, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
+]) (family === 'ipv6' ? blockedAddresses6 : blockedAddresses4).addSubnet(network, prefix, family)
+
+function deniedAddressLists(value) {
+  const ipv4 = new BlockList()
+  const ipv6 = new BlockList()
+  for (const raw of String(value || '').split(',')) {
+    const candidate = raw.trim()
+    if (!candidate) continue
+    const slash = candidate.lastIndexOf('/')
+    const address = slash === -1 ? candidate : candidate.slice(0, slash)
+    const family = isIP(address)
+    if (!family) throw new Error(`invalid denied address or CIDR: ${candidate}`)
+    const list = family === 6 ? ipv6 : ipv4
+    if (slash === -1) list.addAddress(address, family === 6 ? 'ipv6' : 'ipv4')
+    else list.addSubnet(address, Number(candidate.slice(slash + 1)), family === 6 ? 'ipv6' : 'ipv4')
+  }
+  return { ipv4, ipv6 }
+}
+
+function embeddedIpv4(address) {
+  const mapped = address.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (mapped) return mapped[1]
+  const normalized = address.replace(/^\[|\]$/g, '').toLowerCase()
+  const halves = normalized.split('::')
+  if (halves.length > 2) return null
+  const left = halves[0] ? halves[0].split(':') : []
+  const right = halves[1] ? halves[1].split(':') : []
+  const groups = halves.length === 2
+    ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right]
+    : left
+  if (groups.length !== 8 || groups.some(group => !/^[0-9a-f]{1,4}$/.test(group))) return null
+  const bytes = groups.flatMap(group => {
+    const value = Number.parseInt(group, 16)
+    return [value >> 8, value & 255]
+  })
+  if (bytes.slice(0, 12).join(',') !== [0, 100, 255, 155, 0, 0, 0, 0, 0, 0, 0, 0].join(',')) return null
+  return bytes.slice(12).join('.')
+}
+
+function isDeniedAddress(address, family, extra) {
+  const translated = family === 6 || family === 'IPv6' ? embeddedIpv4(address) : null
+  if (translated) {
+    return blockedAddresses4.check(translated, 'ipv4') || extra.ipv4.check(translated, 'ipv4')
+  }
+  const type = family === 6 || family === 'IPv6' ? 'ipv6' : 'ipv4'
+  const base = type === 'ipv6' ? blockedAddresses6 : blockedAddresses4
+  return base.check(address, type) || extra[type].check(address, type)
+}
+
+function isInternalHostname(hostname) {
+  const lowered = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase()
+  if (isIP(lowered)) return false
+  return !lowered.includes('.') || lowered === 'localhost' || [
+    '.localhost', '.local', '.internal', '.home.arpa', '.test', '.invalid',
+  ].some(suffix => lowered.endsWith(suffix))
+}
+
+export async function validateTargetUrl(value, {
+  lookupHostname = lookup,
+  deniedAddresses = process.env.BROWSER_DENY_ADDRESSES || '',
+} = {}) {
+  const normalized = normalizeUrl(value)
+  if (!normalized) return null
+  const parsed = new URL(normalized)
+  if (isInternalHostname(parsed.hostname)) return null
+  try {
+    const extra = deniedAddressLists(deniedAddresses)
+    const addresses = await lookupHostname(parsed.hostname, { all: true, verbatim: true })
+    if (!Array.isArray(addresses) || addresses.length === 0) return null
+    if (addresses.some(({ address, family }) => {
+      return isDeniedAddress(address, family, extra)
+    })) return null
+  } catch {
+    return null
+  }
+  return normalized
 }
 
 function sleep(ms) {

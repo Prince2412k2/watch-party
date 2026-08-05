@@ -8,16 +8,7 @@
 // "streaming" and "failed" to tell the party something truthful.
 
 const LK = window.LivekitClient
-const query = new URLSearchParams(location.search)
-
-const cfg = {
-  url: query.get('lk'),
-  token: query.get('token'),
-  kbps: Number(query.get('kbps') || 2500),
-  fps: Number(query.get('fps') || 30),
-  w: Number(query.get('w') || 1280),
-  h: Number(query.get('h') || 720),
-}
+let cfg
 
 const logEl = document.getElementById('log')
 const lines = []
@@ -39,6 +30,10 @@ function report(event, extra = {}) {
 }
 
 async function main() {
+  cfg = await fetch('/config', { cache: 'no-store' }).then(response => {
+    if (!response.ok) throw new Error('publisher config unavailable')
+    return response.json()
+  })
   say(`config ${cfg.w}x${cfg.h}@${cfg.fps} cap=${cfg.kbps}kbps`)
   if (!cfg.url || !cfg.token) throw new Error('missing lk / token query params')
 

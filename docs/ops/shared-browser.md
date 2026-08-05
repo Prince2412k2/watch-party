@@ -23,10 +23,16 @@ Add to `.env`:
 BROWSER_ENABLED=1
 COMPOSE_PROFILES=browser
 
-# Gates the container's control API, which accepts input injection. REQUIRED —
-# both the app and the container refuse to use the feature without it.
+# Gates the app-facing control API, which accepts input injection. REQUIRED.
+# Generate both tokens independently; equal tokens are rejected.
 #   openssl rand -hex 32
 BROWSER_AGENT_TOKEN=
+BROWSER_TARGET_TOKEN=
+
+# Every globally routable address assigned to this deployment, comma-separated.
+# This closes the path from an untrusted page back to host-published control
+# ports. Production also includes VPS_PUBLIC_IP automatically.
+BROWSER_DENY_ADDRESSES=
 
 # The page a browser opens on. Not an allow-list — the driver may go anywhere.
 BROWSER_HOME_URL=https://www.google.com
@@ -38,7 +44,7 @@ BROWSER_MAX_BITRATE_KBPS=2500
 Then:
 
 ```sh
-docker compose up -d --build browser watchparty
+docker compose --profile browser up -d --build
 ```
 
 Turning it off again is `BROWSER_ENABLED=` (and dropping the profile). No
@@ -65,9 +71,10 @@ The third row is the one that matters: a missing container runtime is treated as
 host presses "Shared browser"
   → app/server takes the single global lease            (browser/lease.js)
   → mints a publish-only LiveKit token for the party's room
-  → POST /session/start to the container's agent        (browser/agent.py)
-      → Chromium #1 (publisher, small, behind) captures the screen and publishes
-      → Chromium #2 (target, maximized) shows the URL
+  → POST /session/start through the control gateway     (browser/agent.py)
+      → publisher Chromium captures the shared display and publishes
+      → target agent starts untrusted Chromium in an egress-only sidecar
+      → filtered proxy resolves every destination and rejects internal/host IPs
   → publisher reports "published" → party state flips to active
   → every participant is already in that room, so the stream just appears
 ```
@@ -83,10 +90,11 @@ transport; the Flutter app inherits viewing because it already speaks LiveKit.
 
 ## The container's control API
 
-Listens on `8080`, **never published to the host** — it accepts input injection,
-so it must be reachable only from `app/server` on `watchparty-net`. Every request
-needs `Authorization: Bearer $BROWSER_AGENT_TOKEN`, and the agent refuses
-everything if no token is configured (fail closed).
+Listens on `8080`, **never published to the host**. The app reaches it through a
+fixed control gateway on `browser-control-net`; the target is attached only to
+the internal sandbox network and can reach the Internet only through the filtered
+proxy. Every app-facing request needs `BROWSER_AGENT_TOKEN`; controller-to-target
+requests use the distinct `BROWSER_TARGET_TOKEN`.
 
 | method | path | purpose |
 |---|---|---|
@@ -109,10 +117,16 @@ Set from measurement, not guesswork (spike decision record):
 | cold container start → frames | 6.3s |
 | browser restart, container up | 3.5s |
 
-Hence `cpus: "4.0"` and `mem_limit: 3g` in compose. **Prod has no swap**, so an
-over-tight memory limit is an OOM kill rather than a slowdown; 3 GiB is ~2.6× the
-measured peak. Note that `/dev/shm` pages count against `mem_limit` under
-cgroup v2, which is why `shm_size` is 1 GiB rather than the spike's 2 GiB.
+The measured browser budget remains 4 vCPU and 3 GiB, split evenly between the
+publisher/controller and untrusted target sidecars. The proxy and gateway have
+separate small ceilings. **Prod has no swap**, so an over-tight memory limit is
+an OOM kill rather than a slowdown. `/dev/shm` pages count against each sidecar's
+`mem_limit` under cgroup v2.
+
+Both Chromium sidecars use a default-deny seccomp profile derived from Moby's
+maintained default. Its browser-specific extensions permit only Chromium's exact
+user/PID/network namespace combinations and `chroot`, which establish the
+renderer sandbox without granting `CAP_SYS_ADMIN`.
 
 720p is the shipping resolution. 1080p was never validly measured at this
 allocation (estimated 4–5.4 vCPU) and is out of scope.
@@ -129,10 +143,10 @@ killed on stop.
 
 ## Privacy between parties
 
-Chromium profiles live on a **tmpfs** at `/profiles` and are destroyed on every
-stop — cookies, history, downloads, extensions, signed-in sessions. tmpfs so that
-a wipe that fails, or a container killed outright, still cannot leak a signed-in
-session into the next party.
+Publisher and target Chromium profiles live on separate **tmpfs** mounts and are
+destroyed on every stop: cookies, history, downloads, extensions, signed-in
+sessions. Separate mounts keep hostile page state out of the trusted controller;
+tmpfs makes a container recreate the final cleanup boundary.
 
 The publisher's LiveKit token is deliberately `canSubscribe: false`. The browser
 is a screen being shown to the room, not a member of it; a browser that could
