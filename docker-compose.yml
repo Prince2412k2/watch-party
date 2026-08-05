@@ -54,7 +54,11 @@ services:
       - NODE_IP=${LIVEKIT_NODE_IP:-}
     command: --config /etc/livekit.yaml
 
-  # coturn — uncomment for VPS deploy
+  # coturn — uncomment for VPS deploy. First copy the template to a real config;
+  # coturn.conf.example is all placeholders, and *.conf is gitignored so your
+  # filled-in copy stays out of git:
+  #     cp coturn.conf.example coturn.conf   # then fill it in
+  # (Production uses secrets/coturn.conf via docker-compose.prod.yml instead.)
   # coturn:
   #   image: coturn/coturn:latest
   #   container_name: watchparty-coturn

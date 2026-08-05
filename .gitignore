@@ -2,9 +2,9 @@ node_modules/
 .env
 .env.local
 # livekit.yaml holds the real LiveKit API key:secret — keep it out of git.
-# Commit livekit.yaml.example (placeholders) instead. NOTE: livekit.yaml was
-# already tracked in a prior commit, so to actually stop tracking the real
-# secret run once:  git rm --cached livekit.yaml
+# Commit livekit.yaml.example (placeholders) instead. It was tracked with a
+# placeholder devkey/devsecret in early commits and untracked in a8a09bf — see
+# docs/security/livekit-credential-exposure.md.
 livekit.yaml
 .claude/
 jellyfin/config/

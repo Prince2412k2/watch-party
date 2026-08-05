@@ -7,7 +7,8 @@
     "dev": "node --watch server/index.js",
     "build": "cd client && npm install && npm run build",
     "sim": "node harness/cli.js",
-    "sim:scenario": "node harness/scenario.js"
+    "sim:scenario": "node harness/scenario.js",
+    "test": "node --test \"server/**/*.test.js\""
   },
   "dependencies": {
     "@humation/assets-humation-1": "^1.0.1",
