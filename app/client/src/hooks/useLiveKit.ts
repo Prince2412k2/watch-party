@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Room, RoomEvent, Track } from 'livekit-client'
 import { isObject } from '../guards'
 import { apiJson } from '../types/guards'
+import { createLifecycleRun, isAbortError } from './liveKitLifecycle'
+import { mediaErrorMessage } from '../lib/mediaError'
 
 export interface LiveKitParticipantView {
   identity: string
@@ -51,27 +53,38 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
   useEffect(() => {
     if (!partyId || !enabled) return
 
-    let room: Room | null = null
-    let cancelled = false
+    // One owner token for this whole connect attempt. Everything the attempt
+    // creates belongs to the run, so a teardown mid-await (unmount, party
+    // switch, `enabled` flip) aborts the token request and disconnects the room
+    // instead of leaving a live session nobody owns — and a losing attempt can
+    // never overwrite the winner's roomRef. See liveKitLifecycle.ts.
+    const run = createLifecycleRun<Room>({
+      // Disconnecting a room that never finished connecting can reject; that is
+      // still a successful teardown, not something to report.
+      dispose: room => { Promise.resolve(room.disconnect()).catch(() => {}) },
+    })
 
     async function connect() {
       try {
-        const res = await fetch(`/api/livekit/token?partyId=${partyId}`, { credentials: 'include' })
+        const res = await fetch(`/api/livekit/token?partyId=${partyId}`, { credentials: 'include', signal: run.signal })
         if (!res.ok) throw new Error('Failed to get LiveKit token')
         const payload = await apiJson(res)
+        if (run.cancelled) return
         if (!isLiveKitConnection(payload)) throw new Error('LiveKit returned invalid connection details')
         const { token, url, iceServers } = payload
 
-        room = new Room({
+        const room = new Room({
           adaptiveStream: true,
           dynacast: true,
           ...(iceServers ? { rtcConfig: { iceServers } } : {}),
         })
+        // Torn down while the token was in flight: adopt() disposes the room it
+        // was handed and we touch nothing else — no connect, no roomRef write.
+        if (!run.adopt(room)) return
         roomRef.current = room
 
         function refresh() {
-          if (cancelled) return
-          if (!room) return
+          if (run.cancelled) return
           const remotes = [...room.remoteParticipants.values()]
 
           // The shared browser is a publish-only participant, not a person: it
@@ -115,24 +128,39 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
           .on(RoomEvent.LocalTrackPublished, refresh)
           .on(RoomEvent.LocalTrackUnpublished, refresh)
           .on(RoomEvent.AudioPlaybackStatusChanged, () => {
-            if (!cancelled && room) setAudioBlocked(!room.canPlaybackAudio)
+            if (!run.cancelled) setAudioBlocked(!room.canPlaybackAudio)
           })
 
         await room.connect(url, token)
+        // Cancelled during connect: run.cancel() has already disconnected this
+        // room, so publishing its state would describe a dead session.
+        if (run.cancelled) return
         setAudioBlocked(!room.canPlaybackAudio)
         refresh()
       } catch (err) {
-        if (!cancelled) flagError(err instanceof Error ? err.message : String(err))
+        // An aborted token request is our own teardown, not a failure to report.
+        if (run.cancelled || isAbortError(err)) return
+        flagError(err instanceof Error ? err.message : String(err))
       }
     }
 
     connect()
     return () => {
-      cancelled = true
-      room?.disconnect()
-      roomRef.current = null
+      const owned = run.resource
+      run.cancel()
+      // Only clear the ref if it still points at THIS run's room; a newer run
+      // may already own it.
+      if (roomRef.current === owned) roomRef.current = null
+      // A new party means a new room: nothing about the old one's participants
+      // or our own publish state survives the switch.
+      setParticipants([])
+      setLocalParticipant(null)
+      setSharedBrowser(null)
+      setCamOn(false)
+      setMicOn(false)
+      setAudioBlocked(false)
     }
-  }, [partyId, enabled])
+  }, [partyId, enabled, flagError])
 
   // WebRTC audio processing applied to the PUBLISHED mic track. Echo
   // cancellation is the backstop against the "mic picks up movie audio → echo"
@@ -146,33 +174,38 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
     autoGainControl: true,
   }
 
-  function mediaError(kind: string, err: unknown) {
-    // getUserMedia only works in a secure context (https or localhost).
-    if (!window.isSecureContext) {
-      return `${kind} needs a secure (HTTPS) connection — open the site over https.`
-    }
-    return err instanceof Error ? err.message : `Could not access ${kind.toLowerCase()}.`
+  function mediaError(kind: 'Camera' | 'Microphone', err: unknown) {
+    return mediaErrorMessage(kind, err, { secureContext: window.isSecureContext })
   }
 
-  async function enableCamera(on: boolean) {
-    if (!roomRef.current) return flagError('Not connected to the room yet.')
+  // Both return whether the device actually changed state, so a caller that
+  // wraps the toggle (the player's authoring guard) can tell a real failure from
+  // a no-op instead of assuming success.
+  async function enableCamera(on: boolean): Promise<boolean> {
+    const room = roomRef.current
+    if (!room) { flagError('Not connected to the room yet.'); return false }
     try {
-      await roomRef.current.localParticipant.setCameraEnabled(on)
+      await room.localParticipant.setCameraEnabled(on)
       setCamOn(on)
       flagError(null)
+      return true
     } catch (err) {
       flagError(mediaError('Camera', err))
+      return false
     }
   }
 
-  async function enableMic(on: boolean) {
-    if (!roomRef.current) return flagError('Not connected to the room yet.')
+  async function enableMic(on: boolean): Promise<boolean> {
+    const room = roomRef.current
+    if (!room) { flagError('Not connected to the room yet.'); return false }
     try {
-      await roomRef.current.localParticipant.setMicrophoneEnabled(on, MIC_CAPTURE)
+      await room.localParticipant.setMicrophoneEnabled(on, MIC_CAPTURE)
       setMicOn(on)
       flagError(null)
+      return true
     } catch (err) {
       flagError(mediaError('Microphone', err))
+      return false
     }
   }
 
@@ -191,6 +224,10 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
   return {
     participants, localParticipant, camOn, micOn, enableCamera, enableMic, error,
     sharedBrowser, audioBlocked, startAudio,
+    // Lets a wrapper around enableCamera/enableMic (the player's authoring
+    // guard) push its own failure into the SAME visible banner instead of
+    // dropping it on the floor.
+    reportError: flagError,
   }
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { useSocket } from './useSocket'
 import { useServerClock } from './useServerClock'
@@ -8,6 +8,8 @@ import {
   HARD_SEEK_COOLDOWN_MS,
 } from '../sync/syncCore'
 import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../sync/bufferSeek'
+import { mayAuthor } from '../sync/transportCommand'
+import type { CommandOrigin } from '../sync/transportCommand'
 import type { SyncIntent, SyncSchedule } from '../sync/syncCore'
 
 const STRUGGLE_WINDOW_MS = 15_000
@@ -94,12 +96,15 @@ export function useSyncPlay({
   // Every such event runs through the applyingRef check below, so while held no
   // bogus sync:seek/sync:play(0) can leak. Must be paired with exactly one
   // releaseApplying() call.
-  function holdApplying() {
+  // Stable identities: Player wires these into effect dependency lists (the
+  // seek bridge, the keyboard handler), and a fresh function every render made
+  // those effects tear down and re-subscribe on every single render.
+  const holdApplying = useCallback(() => {
     applyingRef.current += 1
-  }
-  function releaseApplying() {
+  }, [])
+  const releaseApplying = useCallback(() => {
     applyingRef.current = Math.max(0, applyingRef.current - 1)
-  }
+  }, [])
 
   function notifyUserSeeking() {
     userSeekRef.current = true
@@ -403,15 +408,24 @@ export function useSyncPlay({
     return () => clearInterval(id)
   }, [isHost, socket, playerRef, serverNow, clockReady])
 
-  function requestPlay(positionTicks: number) {
-    if (!applyingRef.current && canControl) socket.emit('sync:play', { positionTicks, t0: serverNow() })
-  }
-  function requestPause(positionTicks: number) {
-    if (!applyingRef.current && canControl) socket.emit('sync:pause', { positionTicks })
-  }
-  function requestSeek(positionTicks: number) {
-    if (!applyingRef.current && canControl) socket.emit('sync:seek', { positionTicks, t0: serverNow() })
-  }
+  // Author a shared command. `origin` decides whether the authoring guard
+  // applies: a 'media-event' request is an observation of the player and must
+  // stay suppressed while we are applying our own mutations, but a 'local'
+  // request IS the user's just-issued command — the guard exists to swallow the
+  // events that command fires, not the command itself. See sync/transportCommand.
+  const authorized = useCallback(
+    (origin: CommandOrigin) => mayAuthor({ origin, suppressed: applyingRef.current > 0, canControl: Boolean(canControl) }),
+    [canControl],
+  )
+  const requestPlay = useCallback((positionTicks: number, origin: CommandOrigin = 'media-event') => {
+    if (authorized(origin)) socket.emit('sync:play', { positionTicks, t0: serverNow() })
+  }, [authorized, socket, serverNow])
+  const requestPause = useCallback((positionTicks: number, origin: CommandOrigin = 'media-event') => {
+    if (authorized(origin)) socket.emit('sync:pause', { positionTicks })
+  }, [authorized, socket])
+  const requestSeek = useCallback((positionTicks: number, origin: CommandOrigin = 'media-event') => {
+    if (authorized(origin)) socket.emit('sync:seek', { positionTicks, t0: serverNow() })
+  }, [authorized, socket, serverNow])
 
   return {
     canControl, applyingRef, holdApplying, releaseApplying, notifyUserSeeking, reportStall,
