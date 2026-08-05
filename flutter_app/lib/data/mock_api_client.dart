@@ -58,6 +58,9 @@ class MockApiClient implements ApiClient {
   Future<void> logout() async {}
 
   @override
+  Future<void> clearSession() async {}
+
+  @override
   Future<Map<String, dynamic>> currentDesktopRelease() async =>
       throw StateError('No desktop release is configured');
 
