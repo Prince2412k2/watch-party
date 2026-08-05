@@ -5,7 +5,7 @@ import { navigate } from '../router'
 import { mirror } from '../mirror'
 import type { BrowseEntry, BrowserInputEvent, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types'
 import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards'
-import { partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority'
+import { browseTabRoute, partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority'
 
 const PartyContext = createContext<PartyContextValue | null>(null)
 
@@ -162,10 +162,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       if (!isObject(value) || !isPartySession(value.session)) return
       const sess = value.session
       applySession(sess, 'guest')
-      if (sess.stage !== 'watching' && sess.browse?.tab) {
-        const target = sess.browse.tab === 'movies' ? '/movies' : sess.browse.tab === 'series' ? '/series' : sess.browse.tab === 'discover' ? '/discover' : '/downloads'
-        navigate(target)
-      }
+      if (sess.stage !== 'watching' && sess.browse?.tab) navigate(browseTabRoute(sess.browse.tab))
     })
 
     socket.on('party:rejected', () => {
@@ -218,7 +215,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
       const current = stateRef.current
       if (current.role !== 'guest' || !browse.tab) return
-      const target = browse.tab === 'movies' ? '/movies' : browse.tab === 'series' ? '/series' : browse.tab === 'discover' ? '/discover' : '/downloads'
+      const target = browseTabRoute(browse.tab)
       if (window.location.pathname !== target) navigate(target)
     })
 

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, Dispatch, FormEvent, ReactNode, SetStateAction } from 'react'
 import { glass } from '../../glass'
 import { navigate } from '../../router'
-import { useTorrents, isPausedState } from '../../hooks/useTorrents'
+import { isPausedState } from '../../hooks/useTorrents'
+import { useDownloadsHub } from '../../context/DownloadsContext'
+import { serviceReady } from '../../hooks/downloadsCore'
+import type { ServiceHealth } from '../../hooks/downloadsCore'
 import { T, SANS, MONO, R, EASE, TYPE, SP } from '../theme'
 import { Icon, Ic } from '../ui/Icon'
 import { Rail, RailItem } from '../ui/Rail'
@@ -44,8 +47,6 @@ interface CatalogItem {
 }
 const isCatalogItem = (value: unknown): value is CatalogItem => isRecord(value) && typeof value.title === 'string'
 interface Torrent { name?: string; title?: string; state?: string; progress?: number; dlspeed?: number; eta?: number; numSeeds?: number }
-interface ServiceHealth { configured?: boolean; reachable?: boolean }
-interface Health { services?: Partial<Record<Service | 'qbittorrent', ServiceHealth>> }
 interface Profile { id: number }
 interface RootFolder { path: string }
 interface Meta { profiles: Profile[]; rootFolders: RootFolder[]; langProfiles: Profile[] }
@@ -56,14 +57,6 @@ type RequestBody = Record<string, unknown>
 const isProfile = (value: unknown): value is Profile => isRecord(value) && typeof value.id === 'number'
 const isRootFolder = (value: unknown): value is RootFolder => isRecord(value) && typeof value.path === 'string'
 const isRelease = (value: unknown): value is Release => isRecord(value) && typeof value.guid === 'string' && typeof value.indexerId === 'number' && typeof value.title === 'string'
-const parseHealth = (value: unknown): Health => {
-  if (!isRecord(value) || !isRecord(value.services)) return { services: {} }
-  const parse = (raw: unknown): ServiceHealth | undefined => isRecord(raw) ? {
-    configured: typeof raw.configured === 'boolean' ? raw.configured : undefined,
-    reachable: typeof raw.reachable === 'boolean' ? raw.reachable : undefined,
-  } : undefined
-  return { services: { radarr: parse(value.services.radarr), sonarr: parse(value.services.sonarr), qbittorrent: parse(value.services.qbittorrent) } }
-}
 const parseReleaseData = (value: unknown): ReleaseData => isRecord(value) && typeof value.movieId === 'number' ? {
   movieId: value.movieId,
   createdByPicker: typeof value.createdByPicker === 'boolean' ? value.createdByPicker : undefined,
@@ -193,9 +186,6 @@ export default function Browse() {
   const [searchError, setSearchError] = useState('')
   const [hasSearched, setHasSearched] = useState(false)
 
-  const [health, setHealth] = useState<Health | null>(null)
-  const [healthLoading, setHealthLoading] = useState(true)
-
   // One detail sheet, two modes: 'detail' | 'releases' (movie release picker).
   const [detail, setDetail] = useState<CatalogItem | null>(null)   // retained through the close anim
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -205,21 +195,12 @@ export default function Browse() {
   const [addState, setAddState] = useState<Record<string, AddState>>({})
 
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
+  // Health and the live download list come from the shared hub — this screen is
+  // mounted alongside the tab bar, so owning either meant polling twice.
+  const { health, healthLoading, list } = useDownloadsHub()
   const svcState = health?.services?.[service]
-  const svcReady = svcState?.configured && svcState?.reachable
-
-  const qbReady = !!health?.services?.qbittorrent?.configured && !!health?.services?.qbittorrent?.reachable
-  const dl = useTorrents(qbReady)
-  const torrents = dl.list.filter(isTorrent)
-
-  useEffect(() => {
-    setHealthLoading(true)
-    jget('/api/servarr/health')
-      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
-      .then((value) => setHealth(parseHealth(value)))
-      .catch(() => setHealth({ services: {} }))
-      .finally(() => setHealthLoading(false))
-  }, [])
+  const svcReady = serviceReady(health, service)
+  const torrents = list.filter(isTorrent)
 
   // Reflect query + tab into the URL (replaceState — typing must not spam history).
   useEffect(() => {
@@ -598,7 +579,6 @@ function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }: {
   const torrentDownloading = active && pct < 100
   const downloading = state === 'grabbed' || torrentDownloading
   const searching = state === 'searching' && !torrentDownloading
-  const monitoring = state === 'monitoring' && !torrentDownloading
   const noRelease = state === 'no_release' && !torrentDownloading
   const searchFailed = state === 'search_failed' && !torrentDownloading
 

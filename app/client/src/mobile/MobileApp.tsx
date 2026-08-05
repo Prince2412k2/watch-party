@@ -1,35 +1,57 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { T } from './theme'
 import { ShellContext } from './shellContext'
 import { TabBar } from './TabBar'
 import { JoinSheet } from './JoinSheet'
-import Login from './screens/Login'
-import Home from './screens/Home'
-import Browse from './screens/Browse'
-import Downloads from './screens/Downloads'
+import { useParty } from '../context/PartyContext'
+import { canDriveBrowse, isBrowseFollower } from '../partyAuthority'
+import { tabForMobilePath } from './sharedBrowse'
 
-// Route → shell screen. Party routes never reach MobileApp — App.jsx renders
-// them through the shared WatchRoute above the phone branch (mount-stable).
-function screenFor(path: string | undefined): { key: string; el: ReactElement; tab: boolean } {
-  if (path === '/login') return { key: 'login', el: <Login />, tab: false }
-  if (path === '/discover') return { key: 'browse', el: <Browse />, tab: true }
-  if (path === '/downloads') return { key: 'downloads', el: <Downloads />, tab: true }
-  // '/library' and anything else (incl. '/') land on Home.
-  return { key: 'home', el: <Home />, tab: true }
+/* Screens are split per route (they are the bulk of the phone bundle: Browse and
+ * Downloads alone are ~1.8k lines of presentation). Only the screen a member
+ * actually opens is fetched. */
+const Home = lazy(() => import('./screens/Home'))
+const Browse = lazy(() => import('./screens/Browse'))
+const Downloads = lazy(() => import('./screens/Downloads'))
+
+// Route → shell screen. MobileApp is only mounted for a signed-in member on a
+// tabbed route: '/login' is pre-auth (App.tsx renders the phone sign-in screen
+// itself) and party routes go through the shared WatchRoute above the phone
+// branch, so neither reaches here.
+function screenFor(path: string | undefined): { key: string; el: ReactElement } {
+  if (path === '/discover') return { key: 'browse', el: <Browse /> }
+  if (path === '/downloads') return { key: 'downloads', el: <Downloads /> }
+  // '/library', '/movies', '/series' and anything else (incl. '/') land on Home,
+  // which is the phone stand-in for both desktop library tabs — a guest pushed to
+  // '/series' by the host's shared browse state arrives here.
+  return { key: 'home', el: <Home /> }
 }
 
 /**
  * Phone app shell. Fixed to the dynamic viewport (100dvh) so the collapsing URL
  * bar never shifts layout; a single inner region scrolls with momentum; a
- * flush tab bar sits above the home indicator (hidden on /login). Flat
- * monochrome ground — no ambient glow, no gradient chrome.
+ * flush tab bar sits above the home indicator. Flat monochrome ground — no
+ * ambient glow, no gradient chrome.
  */
 export default function MobileApp({ path }: { path?: string } = {}) {
   const [joinOpen, setJoinOpen] = useState(false)
-  const { key, el, tab } = screenFor(path)
+  const { key, el } = screenFor(path)
+  const { session, role, shareView } = useParty()
 
-  const ctx = useMemo(() => ({ openJoin: () => setJoinOpen(true), path }), [path])
+  const driving = canDriveBrowse(session, role)
+  const following = isBrowseFollower(session, role)
+
+  const ctx = useMemo(() => ({ openJoin: () => setJoinOpen(true), path, following }), [path, following])
+
+  // Publish the tab this phone is showing, exactly as the desktop WebShell does
+  // for its own nav — so a phone host drives desktop guests and vice versa. Only
+  // fires when the route (or the party) actually changes.
+  useEffect(() => {
+    if (!driving) return
+    const next = tabForMobilePath(path)
+    if (next) shareView({ tab: next, screen: 'grid' })
+  }, [session?.id, driving, path])
 
   // `--app-vh` hardens `.mobile-shell`'s `100dvh` against iOS cases where the
   // CSS unit under-reports the real visible height (standalone/home-screen
@@ -62,14 +84,22 @@ export default function MobileApp({ path }: { path?: string } = {}) {
         {/* the ONLY scroller */}
         <div
           className="mobile-scroll"
-          style={{ paddingBottom: tab ? `calc(var(--sa-b) + 88px)` : `var(--sa-b)` }}
+          style={{ paddingBottom: `calc(var(--sa-b) + 88px)` }}
         >
-          <div key={key} className="mobile-screen">
-            {el}
+          {/* A follower's screen mirrors the driver, so it is inert — same rule
+              the desktop shell applies to `.web-main` for guests. The tab bar
+              below stays live so a guest can still leave the mirrored view. */}
+          <div
+            key={key}
+            className="mobile-screen"
+            aria-label={following ? 'Shared host view' : undefined}
+            style={following ? { pointerEvents: 'none' } : undefined}
+          >
+            <Suspense fallback={null}>{el}</Suspense>
           </div>
         </div>
 
-        {tab && <TabBar path={path} onParty={() => setJoinOpen(true)} />}
+        <TabBar path={path} onParty={() => setJoinOpen(true)} />
         <JoinSheet open={joinOpen} onClose={() => setJoinOpen(false)} />
       </div>
     </ShellContext.Provider>
