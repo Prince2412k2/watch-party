@@ -76,6 +76,9 @@ void main() {
     addTearDown(mouse.removePointer);
     await mouse.addPointer();
     await mouse.moveTo(
+      tester.getCenter(find.byKey(const ValueKey('poster-shelf-item-0'))),
+    );
+    await mouse.moveTo(
       tester.getCenter(find.byKey(const ValueKey('poster-shelf-item-1'))),
     );
     await tester.pump(const Duration(milliseconds: 300));

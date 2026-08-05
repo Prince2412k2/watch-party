@@ -52,7 +52,10 @@ class PlayerView extends StatefulWidget {
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
-  }) : _controller = controller,
+    // Keep public constructor parameters distinct from private storage fields.
+  }) :
+       // ignore: prefer_initializing_formals
+       _controller = controller,
        _itemId = null,
        _apiClient = null,
        _purpose = 'stream',
@@ -79,8 +82,11 @@ class PlayerView extends StatefulWidget {
   }) : _controller = null,
        _itemId = itemId,
        _apiClient = apiClient,
+       // ignore: prefer_initializing_formals
        _purpose = purpose,
+       // ignore: prefer_initializing_formals
        _startAt = startAt,
+       // ignore: prefer_initializing_formals
        _autoplay = autoplay,
        itemId = itemId,
        mediaSourceId = null,

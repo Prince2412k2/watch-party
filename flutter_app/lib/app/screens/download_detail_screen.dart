@@ -74,7 +74,7 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
     final runtime = fmtRuntimeFromMinutes(detail?.runtime);
     final infoLine = <String>[
       if (detail?.year != null) detail!.year!,
-      if (runtime != null) runtime,
+      ?runtime,
       if (detail?.certification != null && detail!.certification!.isNotEmpty)
         detail.certification!,
       if (detail?.network != null && detail!.network!.isNotEmpty) detail.network!,

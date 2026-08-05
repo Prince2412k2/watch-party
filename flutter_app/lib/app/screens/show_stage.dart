@@ -360,7 +360,7 @@ class _CopyColumn extends StatelessWidget {
     final meta = ep != null
         ? <String>[
             if (ep.rating != null) '★ ${ep.rating!.toStringAsFixed(1)}',
-            if (epRuntimeLabel != null) epRuntimeLabel,
+            ?epRuntimeLabel,
             if (ep.airDate != null) _formatDate(ep.airDate!),
           ]
         : <String>[
@@ -369,7 +369,7 @@ class _CopyColumn extends StatelessWidget {
               info.certification!,
             if (info.year != null) '${info.year}',
             if (info.network != null && info.network!.isNotEmpty) info.network!,
-            if (runtimeLabel != null) runtimeLabel,
+            ?runtimeLabel,
           ];
 
     final overview = ep?.overview ?? info.overview;
