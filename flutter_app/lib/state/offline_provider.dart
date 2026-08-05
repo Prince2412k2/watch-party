@@ -22,28 +22,51 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   final MediaCacheProxy _proxy;
   final OfflineManifestStore _manifestStore;
 
-  Future<void> _rehydrate() async {
-    final persisted = await _manifestStore.load();
-    final byId = {for (final r in persisted) r.itemId: r};
-    final completedIds = await _proxy.completedItemIds();
+  /// Serializes every read-modify-write of [state] + the manifest sidecar.
+  /// [_rehydrate] runs fire-and-forget from the constructor and takes two
+  /// awaits to assemble its list; without this queue a [markComplete] or
+  /// [remove] landing in that window was silently overwritten by the scan's
+  /// `state = records`, and both then persisted a list built from a snapshot
+  /// that was already stale.
+  Future<void> _queue = Future<void>.value();
 
-    // This runs fire-and-forget from the constructor; bail if the notifier
-    // was disposed while the async scan was in flight (never happens in the
-    // app, where it lives for the whole session, but does in tests).
-    if (!mounted) return;
-
-    final records = [
-      for (final id in completedIds) byId[id] ?? _bareRecord(id),
-    ];
-    state = records;
-
-    // Metadata for a title whose cache entry no longer fully exists (evicted,
-    // manually deleted from disk, …) is stale — drop it so a future rehydrate
-    // doesn't keep re-surfacing it.
-    if (records.length != persisted.length) {
-      await _manifestStore.save(records);
-    }
+  Future<void> _serialize(Future<void> Function() action) {
+    final result = _queue.then((_) => action());
+    // Only the chain swallows failures (the caller still gets [result]), so one
+    // failed persist can't wedge every later mutation behind a rejected future.
+    _queue = result.then((_) {}, onError: (_) {});
+    return result;
   }
+
+  Future<void> _rehydrate() => _serialize(() async {
+        final persisted = await _manifestStore.load();
+        final byId = {for (final r in persisted) r.itemId: r};
+        final completedIds = await _proxy.completedItemIds();
+
+        // This runs fire-and-forget from the constructor; bail if the notifier
+        // was disposed while the async scan was in flight (never happens in the
+        // app, where it lives for the whole session, but does in tests).
+        if (!mounted) return;
+
+        // Merge rather than replace: [upsert] is synchronous, so a record added
+        // while the scan was in flight is newer than the scan's snapshot and
+        // wins (a fill that completed mid-scan is genuinely offline, and its
+        // metadata is richer than a bare record).
+        final merged = <String, OfflineRecord>{
+          for (final id in completedIds) id: byId[id] ?? _bareRecord(id),
+        };
+        for (final live in state) {
+          merged[live.itemId] = live;
+        }
+        state = merged.values.toList(growable: false);
+
+        // Metadata for a title whose cache entry no longer fully exists
+        // (evicted, manually deleted from disk, …) is stale — drop it so a
+        // future rehydrate doesn't keep re-surfacing it.
+        final drifted = merged.length != persisted.length ||
+            merged.keys.any((id) => !byId.containsKey(id));
+        if (drifted) await _manifestStore.save(state);
+      });
 
   OfflineRecord _bareRecord(String itemId) => OfflineRecord(
         itemId: itemId,
@@ -62,17 +85,19 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
     required String title,
     String? posterTag,
     int runTimeTicks = 0,
-  }) async {
-    upsert(OfflineRecord(
-      itemId: itemId,
-      title: title,
-      filePath: '',
-      runTimeTicks: runTimeTicks,
-      posterTag: posterTag,
-      downloadedAt: DateTime.now().millisecondsSinceEpoch,
-    ));
-    await _manifestStore.save(state);
-  }
+  }) =>
+      _serialize(() async {
+        if (!mounted) return;
+        upsert(OfflineRecord(
+          itemId: itemId,
+          title: title,
+          filePath: '',
+          runTimeTicks: runTimeTicks,
+          posterTag: posterTag,
+          downloadedAt: DateTime.now().millisecondsSinceEpoch,
+        ));
+        await _manifestStore.save(state);
+      });
 
   void upsert(OfflineRecord record) {
     state = [
@@ -81,11 +106,12 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
     ];
   }
 
-  Future<void> remove(String itemId) async {
-    await _proxy.deleteEntry(itemId);
-    state = state.where((r) => r.itemId != itemId).toList();
-    await _manifestStore.save(state);
-  }
+  Future<void> remove(String itemId) => _serialize(() async {
+        await _proxy.deleteEntry(itemId);
+        if (!mounted) return;
+        state = state.where((r) => r.itemId != itemId).toList();
+        await _manifestStore.save(state);
+      });
 }
 
 final offlineProvider =

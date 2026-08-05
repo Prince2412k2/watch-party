@@ -229,6 +229,21 @@ class CacheFillController {
     _fills[itemId]?.pauseRequested = true;
   }
 
+  /// Requests every running fill stop after its current chunk, and reports how
+  /// many were still running. Used on app shutdown: a download the user
+  /// believes stopped must not keep consuming their bandwidth while the window
+  /// is closing. Already-cached bytes stay on disk, so the next `resume`/`start`
+  /// picks each title up from wherever its gaps are.
+  int pauseAll() {
+    var paused = 0;
+    for (final fill in _fills.values) {
+      if (!fill.loopRunning) continue;
+      fill.pauseRequested = true;
+      paused++;
+    }
+    return paused;
+  }
+
   /// Resumes a paused (or errored) fill for [itemId] from wherever
   /// [CacheEntry.missingRanges] says it left off. No-op if already running.
   Future<void> resume(String itemId, {RangeFetcher? fetcher}) async {
