@@ -1,0 +1,7 @@
+export const browserPolicy = Object.freeze({
+  keyPattern: '^(?:(?:ctrl|alt|shift|super)\\+){0,4}[A-Za-z0-9_]{1,20}$',
+  maxBatch: 64,
+  maxBody: 16384,
+  maxText: 256,
+  maxUrlLength: 2048,
+})
