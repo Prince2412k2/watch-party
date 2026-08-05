@@ -12,6 +12,10 @@ export function registerLiveKitRoutes(app) {
     if (!isMember(session, userId) && session.hostId !== userId) {
       return res.status(403).json({ error: 'not a party member' })
     }
+    const revokedBefore = Number(session.livekitRevokedBefore?.get(userId) ?? 0)
+    if (Math.floor(Date.now() / 1000) <= revokedBefore) {
+      return res.status(409).json({ error: 'participant eviction is still settling' })
+    }
 
     const token = new AccessToken(
       process.env.LIVEKIT_API_KEY,
