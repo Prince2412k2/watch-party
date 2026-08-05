@@ -79,6 +79,9 @@ services:
       # container recreate. See app/server/index.js's sessionStoreDir.
       - ./data/sessions:/data/sessions
       - ./data/subtitles:/data/subtitles
+      # Party and picker-lease SQLite state. This deployment intentionally runs
+      # one app replica; SQLite is not a multi-replica coordination backend.
+      - ./data/watchparty:/app/data
     env_file:
       # .env  = base (internal URLs, LiveKit keys, SESSION_SECRET)
       # .env.local = optional real secrets (servarr API keys, LiveKit keys).
@@ -90,6 +93,7 @@ services:
       # ── Server → service: INTERNAL container names (never sent to browser) ──
       - JELLYFIN_URL=http://jellyfin:8096
       - LIVEKIT_URL=ws://livekit:7880
+      - PARTY_DB_PATH=/app/data/watchparty.sqlite
       - SONARR_URL=http://sonarr:8989
       - RADARR_URL=http://radarr:7878
       - PROWLARR_URL=http://prowlarr:9696
