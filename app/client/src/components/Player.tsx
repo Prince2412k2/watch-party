@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
 import { createPlayer } from '@videojs/react'
 import { VideoSkin, videoFeatures } from '@videojs/react/video'
 import { HlsVideo } from '@videojs/react/media/hls-video'
@@ -6,6 +6,7 @@ import '@videojs/react/video/skin.css'
 import { useSyncPlay } from '../hooks/useSyncPlay'
 import { Z } from '../watchLayers'
 import { createTransportIntent } from '../sync/transportIntent'
+import { createLocalTransport } from '../sync/transportCommand'
 import { isBuffered } from '../sync/bufferSeek'
 import { BUFFER_AHEAD_SEC } from '../sync/syncCore'
 import { IS_NATIVE } from '../native/env'
@@ -19,7 +20,7 @@ import type { SubtitlePreferences } from '../types'
 
 type LocalPhase = 'ready' | 'catchingUp' | 'buffering'
 type VoidCallback = () => void
-interface SeekBridge { canControl: boolean; seekBy: (delta: number) => void; guardToggle: (fn: () => Promise<void> | void) => Promise<void> }
+interface SeekBridge { canControl: boolean; seekBy: (delta: number) => void; guardToggle: (fn: () => unknown) => Promise<void> }
 type SeekBridgeRef = MutableRefObject<SeekBridge | null>
 interface MediaLike {
   currentTime: number; duration: number; paused: boolean; playbackRate: number; volume: number; muted: boolean
@@ -387,26 +388,29 @@ function NativePlayer({
   // Imperative seek for the surface gesture layer, mirroring the web path's
   // seekBridgeRef contract — kept for callers that still reach for it, even
   // though there's no double-tap gesture layer over an opaque native surface.
+  const transport = useMemo(() => createLocalTransport({
+    ticksPerSecond: TICKS_PER_SECOND,
+    hold: holdApplying, release: releaseApplying,
+    emitPlay: ticks => requestPlay(ticks, 'local'),
+    emitPause: ticks => requestPause(ticks, 'local'),
+    emitSeek: ticks => requestSeek(ticks, 'local'),
+  }), [holdApplying, releaseApplying, requestPlay, requestPause, requestSeek, TICKS_PER_SECOND])
+
   useEffect(() => {
     if (!seekBridgeRef) return
     seekBridgeRef.current = {
       canControl: Boolean(canControl),
-        seekBy: (delta: number) => {
+      seekBy: (delta: number) => {
         const m = playerRef.current
         if (!m || !canControl) return
-        const dur = m.duration
-        let t = (m.currentTime || 0) + delta
-        if (t < 0) t = 0
-        if (Number.isFinite(dur) && dur > 0 && t > dur - 0.5) t = dur - 0.5
-        holdApplying()
-        m.currentTime = t
-        requestSeek(Math.round(t * TICKS_PER_SECOND))
-        setTimeout(releaseApplying, 250)
+        transport.seekBy(m, delta)
       },
-      guardToggle: async (fn: () => Promise<void> | void) => { try { await fn?.() } catch {} },
+      // Device toggles must not author playback, but a failure must not vanish
+      // either: the caller (Party) turns a rejection into a visible banner.
+      guardToggle: async (fn: () => unknown) => { await fn?.() },
     }
     return () => { seekBridgeRef.current = null }
-  }, [seekBridgeRef, canControl, holdApplying, releaseApplying, requestSeek, TICKS_PER_SECOND])
+  }, [seekBridgeRef, canControl, transport])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: '#000' }}>
@@ -497,14 +501,36 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   const transportIntent = useRef(createTransportIntent())
   const [buffering, setBuffering] = useState(false)
   const [switchingQuality, setSwitchingQuality] = useState(false)
+  // Mirrored into refs so the transport below keeps a stable identity: these say
+  // whether media.currentTime currently means anything, and both change often.
+  const swappingSrcRef = useRef(false)
+  const phaseRef = useRef<LocalPhase>(localPhase)
+  phaseRef.current = localPhase
+
+  // The single sequencer for deliberate local commands (keyboard, watch:transport,
+  // double-tap bridge): emit exactly one request with origin 'local' — which the
+  // authoring guard may never suppress — then hold the guard across the local
+  // mutation so the media events it fires cannot author a duplicate.
+  const transport = useMemo(() => createLocalTransport({
+    ticksPerSecond: TICKS_PER_SECOND,
+    hold: holdApplying, release: releaseApplying,
+    emitPlay: ticks => requestPlay(ticks, 'local'),
+    emitPause: ticks => requestPause(ticks, 'local'),
+    emitSeek: ticks => requestSeek(ticks, 'local'),
+    // Mid source-swap the element is rebuilding from 0, and mid catch-up it is
+    // being driven to a transient position. Authoring the room off either would
+    // teleport everyone; the command is dropped instead.
+    blocked: () => swappingSrcRef.current || phaseRef.current !== 'ready',
+  }), [holdApplying, releaseApplying, requestPlay, requestPause, requestSeek, TICKS_PER_SECOND])
 
   // ── Imperative seek for the surface gesture layer (Party.jsx double-tap) ────
-  // Driving media.currentTime here is the SAME authoring path as the keyboard
-  // j/l seek and the scrubber drag: it fires a 'seeked' event, and the onSeeked
-  // handler below emits requestSeek → the host-authority schedule is re-authored
-  // and every guest follows. This is deliberately NOT a bare, sync-bypassing
-  // currentTime write. Gated to controllers (host, or a guest under
-  // collaborativeControl); the WatchView caller also gates, so guests never seek.
+  // Authors the shared seek itself (origin 'local') and then holds the guard
+  // across the local currentTime write, so the room gets EXACTLY ONE sync:seek:
+  // the command, never the 'seeked' event it provokes. The old order held the
+  // guard first and then called requestSeek, which meant requestSeek's own
+  // applyingRef check dropped it — the imperative seek moved this player only
+  // and every guest stayed where they were. Gated to controllers (host, or a
+  // guest under collaborativeControl); the WatchView caller also gates.
   useEffect(() => {
     if (!seekBridgeRef) return
     seekBridgeRef.current = {
@@ -512,14 +538,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       seekBy: (delta: number) => {
         const m = mediaRef.current
         if (!m || !canControl) return
-        const dur = m.duration
-        let t = (m.currentTime || 0) + delta
-        if (t < 0) t = 0
-        if (Number.isFinite(dur) && dur > 0 && t > dur - 0.5) t = dur - 0.5
-        holdApplying()
-        m.currentTime = t
-        requestSeek(Math.round(t * TICKS_PER_SECOND))
-        setTimeout(releaseApplying, 250)
+        transport.seekBy(m, delta)
       },
       // ── Bug 2: camera/mic toggle guard ──────────────────────────────────────
       // Enabling/disabling the camera or mic drives getUserMedia, which on some
@@ -530,20 +549,26 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       // useSyncPlay; we do NOT touch the sync engine) across the whole toggle, then
       // undo any spurious local pause of a movie that was playing. Net effect:
       // toggling the camera/mic never touches playback, locally or for the room.
-      guardToggle: async (fn: () => Promise<void> | void) => {
+      guardToggle: async (fn: () => unknown) => {
         const before = mediaRef.current
         const wasPlaying = before ? !before.paused : false
         holdApplying()
-        try { await fn?.() } catch {}
+        // A device failure (permission denied, camera in use) must still leave
+        // the guard balanced and the movie playing — but it must NOT be
+        // swallowed the way it used to be: re-thrown below so the caller can
+        // put it in front of the user.
+        let failure: unknown = null
+        try { await fn?.() } catch (err) { failure = err }
         // Let any device-(re)acquisition pause/play events settle.
         await new Promise(r => setTimeout(r, 400))
         const m = mediaRef.current
         if (m && wasPlaying && m.paused) { try { await m.play() } catch {} }
         releaseApplying()
+        if (failure) throw failure
       },
     }
     return () => { seekBridgeRef.current = null }
-  }, [seekBridgeRef, canControl, holdApplying, releaseApplying, requestSeek, TICKS_PER_SECOND])
+  }, [seekBridgeRef, canControl, holdApplying, releaseApplying, transport])
 
   // ── Quality-tier / source swap: preserve position across the reload ──────
   // Changing quality fetches a new transcode URL, which swaps <HlsVideo src>.
@@ -569,6 +594,9 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     const resumeTime = m.currentTime || 0
     const wasPaused = m.paused
     setSwitchingQuality(true)
+    // Same window, but readable synchronously: currentTime is meaningless until
+    // the new source has metadata, so no local command may author off it.
+    swappingSrcRef.current = true
     holdApplying()   // suppress schedule authoring for the entire reload
 
     let done = false
@@ -577,6 +605,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       done = true
       m.removeEventListener('loadedmetadata', onReady)
       m.removeEventListener('loadeddata', onReady)
+      swappingSrcRef.current = false
       // Restore local playback position + play/pause state on the new source.
       // These mutations fire their own seeked/play/pause events shortly after;
       // the guard stays held here so those don't author, then is released.
@@ -586,14 +615,13 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
 
       if (canControl) {
         // Controller: re-author the shared schedule at the RESTORED position so
-        // guests follow across the switch (never 0). Briefly release just to let
-        // the request emit pass the guard, then re-hold so the restore's own
-        // seeked/play don't double-author; a short timer clears it once settled.
+        // guests follow across the switch (never 0). These are deliberate local
+        // commands (origin 'local'), so the guard stays held straight through —
+        // no release/re-hold dance to sneak the emit past our own gate — and the
+        // restore's own seeked/play events still can't double-author.
         const ticks = Math.round(resumeTime * TICKS_PER_SECOND)
-        releaseApplying()
-        if (wasPaused) requestPause(ticks)
-        else { requestSeek(ticks); requestPlay(ticks) }
-        holdApplying()
+        if (wasPaused) requestPause(ticks, 'local')
+        else { requestSeek(ticks, 'local'); requestPlay(ticks, 'local') }
         setTimeout(releaseApplying, 400)
       } else {
         // Guest local quality change: purely local. Do NOT author the shared
@@ -612,7 +640,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       clearTimeout(guardTimer)
       m.removeEventListener('loadedmetadata', onReady)
       m.removeEventListener('loadeddata', onReady)
-      if (!done) releaseApplying()
+      if (!done) { swappingSrcRef.current = false; releaseApplying() }
     }
   }, [srcUrl]) // eslint-disable-line
 
@@ -621,16 +649,9 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   // browser stalls and pipeline reconfiguration must never become room intent.
   // Volume / mute / fullscreen / chat are local and available to everyone.
   useEffect(() => {
-    const ticks = (m: MediaLike) => Math.round((m.currentTime || 0) * TICKS_PER_SECOND)
-    const play = (m: MediaLike) => { requestPlay(ticks(m)); holdApplying(); m.play().catch(() => {}); setTimeout(releaseApplying, 250) }
-    const pause = (m: MediaLike) => { requestPause(ticks(m)); holdApplying(); m.pause(); setTimeout(releaseApplying, 250) }
-    const seek = (m: MediaLike, time: number) => {
-      const dur = m.duration
-      const max = Number.isFinite(dur) && dur > 0 ? Math.max(0, dur - 0.5) : Infinity
-      const target = Math.min(max, Math.max(0, time))
-      requestSeek(Math.round(target * TICKS_PER_SECOND))
-      holdApplying(); m.currentTime = target; setTimeout(releaseApplying, 250)
-    }
+    const play = (m: MediaLike) => transport.play(m)
+    const pause = (m: MediaLike) => transport.pause(m)
+    const seek = (m: MediaLike, time: number) => { transport.seekTo(m, time) }
     function onKey(e: KeyboardEvent) {
       const t = e.target instanceof HTMLElement ? e.target : null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
@@ -678,7 +699,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('watch:transport', onCommand)
     }
-  }, [canControl, onOpenChat, onToggleMuted, immersive, enterImmersive, exitImmersive, requestPlay, requestPause, requestSeek, holdApplying, releaseApplying, TICKS_PER_SECOND])
+  }, [canControl, onOpenChat, onToggleMuted, immersive, enterImmersive, exitImmersive, transport])
 
   // The desktop skin is third-party UI, so mark its pointer gestures before its
   // media mutations occur. Only the next matching event may author a command.

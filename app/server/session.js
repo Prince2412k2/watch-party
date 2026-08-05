@@ -323,6 +323,19 @@ export function isMember(session, userId) {
   return session.hostId === userId || session.guests.some(g => g.userId === userId)
 }
 
+/**
+ * The party rooms a socket should be dropped from when it joins `keepId`.
+ *
+ * Socket.IO membership is additive: a client that navigates straight from
+ * /party/AAA to /party/BBB stays in AAA's room, so it keeps receiving AAA's
+ * chat and — worse — AAA's sync:schedule stream interleaved with BBB's. Every
+ * room this server uses is a party id apart from the socket's own private room,
+ * which must never be left.
+ */
+export function staleRoomIds(rooms, { socketId, keepId }) {
+  return [...(rooms ?? [])].filter(room => room !== socketId && room !== keepId)
+}
+
 /** The name to show for a member: their own display name when they've set one,
     otherwise the Jellyfin account name the session already carries. Resolved at
     send time rather than stored on the member, so a profile edit reaches every
