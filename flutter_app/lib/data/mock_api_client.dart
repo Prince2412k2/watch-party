@@ -162,6 +162,50 @@ class MockApiClient implements ApiClient {
   Future<LiveKitToken> livekitToken(String partyId) async =>
       const LiveKitToken(token: 'mock-token', url: 'ws://localhost:7880');
 
+  // ── Profile ───────────────────────────────────────────────────────────
+  // Drawing an avatar needs the asset set, which only the real server has, so
+  // the mock reports "nothing saved" and hands back an empty drawing. Callers
+  // fall back to initials, which is exactly what they do when the network is
+  // unavailable.
+
+  UserProfile _profile = const UserProfile(accountName: 'root');
+
+  @override
+  Future<UserProfile> profile() async => _profile;
+
+  @override
+  Future<UserProfile> saveProfile({
+    String? displayName,
+    AvatarConfig? avatar,
+  }) async {
+    _profile = UserProfile(
+      accountName: _profile.accountName,
+      displayName: displayName,
+      avatar: (avatar == null || avatar.isEmpty) ? null : avatar,
+    );
+    return _profile;
+  }
+
+  @override
+  Future<AvatarOptions> avatarOptions() async => const AvatarOptions(
+    groups: <AvatarGroup>[],
+    colors: <AvatarColorSlot>[],
+    palettes: <String, List<String>>{},
+    defaultBackground: 'F6F5F4',
+  );
+
+  @override
+  Future<String> avatarSvg(String userId) async => '';
+
+  @override
+  Future<Map<String, String>> avatarPartSvgs(
+    String slotId, {
+    Map<String, String> colors = const <String, String>{},
+  }) async => const <String, String>{};
+
+  @override
+  Future<String> avatarPreviewSvg(AvatarConfig? avatar) async => '';
+
   @override
   Future<dynamic> servarrGet(String path, {Map<String, dynamic>? query}) async {
     if (path == 'health') return const {'services': {}};

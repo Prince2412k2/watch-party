@@ -1,17 +1,6 @@
-import { mkdirSync } from 'fs'
-import { dirname, join } from 'path'
-import { DatabaseSync } from 'node:sqlite'
+import { db } from './db.js'
 
-const databasePath = process.env.PARTY_DB_PATH
-  || (process.env.WP_TEST_MODE === '1'
-    ? join('/tmp', `watchparty-test-${process.pid}.sqlite`)
-    : join(process.cwd(), 'data/watchparty.sqlite'))
-
-mkdirSync(dirname(databasePath), { recursive: true })
-
-const db = new DatabaseSync(databasePath)
 db.exec(`
-  PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS party_sessions (
     id TEXT PRIMARY KEY,
     state TEXT NOT NULL,

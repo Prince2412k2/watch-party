@@ -14,7 +14,7 @@ import * as agent from './agent.js'
 import * as lease from './lease.js'
 import { browserConfig } from './config.js'
 import {
-  clearBrowserActivity, getSession, isHost, isMember, publicSession,
+  clearBrowserActivity, effectiveName, getSession, isHost, isMember, publicSession,
   setBrowserActivity, updateBrowserActivity,
 } from '../session.js'
 
@@ -296,7 +296,13 @@ export function requestControl({ partyId, userId, name }) {
   if (io) {
     // A direct nudge as well as the state broadcast: the host may be watching the
     // stream full-screen with no room for a list they have to notice changing.
-    io.to(session.hostSocketId).emit('browser:controlRequested', { userId, name })
+    // effectiveName so the host sees the display name this person chose, matching
+    // every other named broadcast (user:left, chat:message) — the stored request
+    // above needs no such treatment, since publicMember resolves it on the way out.
+    io.to(session.hostSocketId).emit('browser:controlRequested', {
+      userId,
+      name: effectiveName(userId, name),
+    })
   }
   return { ok: true }
 }

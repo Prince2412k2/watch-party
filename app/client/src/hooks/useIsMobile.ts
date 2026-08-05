@@ -18,6 +18,12 @@ export function usePhone() {
   return matchStore(PHONE_QUERY)
 }
 
+/** Any media query as reactive state, for layout branches that don't fit either
+    named breakpoint above. */
+export function useMediaQuery(query: string) {
+  return matchStore(query)
+}
+
 function matchStore(q: string) {
   return useSyncExternalStore(
     (cb) => {

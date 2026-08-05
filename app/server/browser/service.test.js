@@ -362,7 +362,9 @@ test('party state carries browser availability and the current activity', () => 
     state: 'active',
     url: 'https://example.com',
     driverUserId: 'guest',
-    requests: [{ userId: 'g2', name: 'Two' }],
+    // publicMember resolves the profile display name and avatar, so a control
+    // request carries whatever that member chose to be called.
+    requests: [{ userId: 'g2', name: 'Two', avatar: null }],
     error: null,
     screen: { w: 1280, h: 720 },
   })
