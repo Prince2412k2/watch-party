@@ -24,6 +24,7 @@ import Library from './Library'
 import Lobby from './Lobby'
 import type { PartySession, SubtitlePreferences } from '../types'
 import { apiJson, stringField } from '../types/guards'
+import { partyJoinTransition } from '../partyAuthority'
 
 type LiveKitState = ReturnType<typeof useLiveKit>
 type CameraProps = {
@@ -37,7 +38,9 @@ type CameraProps = {
 type SeekBridge = {
   canControl: boolean
   seekBy: (seconds: number) => void
-  guardToggle: (action: () => void | Promise<void>) => Promise<void>
+  // Returns a promise that REJECTS when the toggle failed — the caller is
+  // responsible for putting that in front of the user.
+  guardToggle: (action: () => unknown) => Promise<void>
 }
 
 export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } } = {}) {
@@ -61,21 +64,33 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   // coupling is strictly camera → self-view, never the reverse.
   useEffect(() => { setHideSelf(!lk.camOn) }, [lk.camOn, setHideSelf])
 
-  const joinedRef = useRef(false)
+  // Which party id this surface has actually created/joined. App.jsx renders ONE
+  // mount-stable <Party> for every /party/* URL, so navigating straight from
+  // /party/AAA to /party/BBB only changes the prop — with the old boolean latch
+  // that navigation was a no-op and the AAA session (its LiveKit room, its
+  // schedule, its chat) stayed live under the BBB URL. Keyed on the target so
+  // the same navigation leaves AAA and joins BBB, while StrictMode's
+  // double-invoke and ordinary re-renders still can't join twice.
+  const joinedFor = useRef<string | null>(null)
   useEffect(() => {
-    // Guard against StrictMode's double-invoke (would create/join twice)
-    if (joinedRef.current) return
-    joinedRef.current = true
-    if (isNew) {
+    const action = partyJoinTransition({ joinedFor: joinedFor.current, partyId, isNew })
+    if (action.kind === 'idle') return
+    joinedFor.current = action.target
+    if (action.leavePrevious) {
+      party.leaveParty()
+      setRemovedCameras(new Set())
+      setJoinError(null)
+    }
+    if (action.kind === 'create') {
       // itemId → room preloaded with a title; no itemId → empty lobby room
       const create = itemId ? party.createParty(itemId, initialTracks) : party.createRoom()
       create
         .then(id => window.history.replaceState({}, '', `/party/${id}`))
         .catch(() => navigate('/library'))
-    } else if (partyId) {
-      party.joinParty(partyId).catch(err => setJoinError(err?.message || 'not found'))
+    } else {
+      party.joinParty(action.target).catch(err => setJoinError(err?.message || 'not found'))
     }
-  }, []) // eslint-disable-line
+  }, [partyId, isNew]) // eslint-disable-line
 
   // Rules-of-Hooks: this must run UNCONDITIONALLY, above the joinError early
   // return below. A failed join (invalid/expired code — the common case for a
@@ -171,6 +186,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
             : <Chat top={124} />
         )}
 
+        <AVErrorBanner error={lk.error} />
         <LobbyAVBar lk={lk} chatOpen={chatOpen} onToggleChat={toggleChat} hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf} />
         <RoomControls stage="lobby" top={74} />
 
@@ -203,6 +219,32 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
       setSubtitlePreferences={setSubtitlePreferences}
       hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf}
     />
+  )
+}
+
+/**
+ * Camera / microphone / room failures, in front of the user.
+ *
+ * Rendered on EVERY stage — lobby, shared browser, watch. It used to exist only
+ * inside WatchView, so a denied camera permission in the lobby (where people
+ * first switch their camera on, before any title is picked) flagged an error the
+ * UI never showed: the button just did nothing. useLiveKit auto-dismisses the
+ * message after ~4.5s. Opaque and high-contrast so it stays readable over a
+ * bright frame.
+ */
+function AVErrorBanner({ error, top = 'calc(var(--sa-t) + 70px)' }: { error?: string | null; top?: string }) {
+  if (!error) return null
+  return (
+    <div role="alert" style={{
+      position: 'absolute', top, left: '50%', transform: 'translateX(-50%)', zIndex: Z.toast, maxWidth: '80vw',
+      display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 12,
+      background: 'rgba(224,101,94,.14)', border: '1px solid rgba(224,101,94,.4)', color: 'var(--text)',
+      fontSize: 13.5, fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,.55)',
+      animation: 'in .22s cubic-bezier(.2,0,.1,1)',
+    }}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
+      {error}
+    </div>
   )
 }
 
@@ -275,6 +317,8 @@ function BrowserStage({
           )
           : <Chat top={76} />
       )}
+
+      <AVErrorBanner error={lk.error} />
 
       {/* The party keeps every control it has anywhere else — mic, camera,
           self-view, chat — plus the browser's own sound. Same bar as the lobby, so
@@ -387,9 +431,17 @@ function WatchView({
   // pause/play the browser can emit while (re)acquiring a device via getUserMedia
   // never authors a pause/seek to the shared timeline — and any spurious local
   // pause of a playing movie is undone. Falls back to a plain call pre-wiring.
-  const guardedToggle = (fn: () => void) => {
+  //
+  // The guard used to `catch {}` whatever the toggle threw, so a device that
+  // failed outside useLiveKit's own try/catch (or before the room existed) left
+  // the user pressing a button that silently did nothing. Every rejection now
+  // lands in the same visible banner useLiveKit uses.
+  const guardedToggle = (fn: () => unknown) => {
     const g = seekBridgeRef.current?.guardToggle
-    return g ? g(fn) : fn()
+    const run = g ? g(fn) : Promise.resolve().then(fn)
+    return run.catch((err: unknown) => {
+      lk.reportError(err instanceof Error ? err.message : 'Could not change your camera or microphone.')
+    })
   }
   const DOUBLE_MS = 280                        // single/double discrimination window
   const MOVE_TOL = 12                          // px: past this a press is a drag/scroll, not a tap
@@ -535,20 +587,7 @@ function WatchView({
       onClick={phone ? onPhoneTap : onSurfaceTap}
       onPointerDownCapture={phone ? onPhonePointerDown : undefined}
       style={rootStyle}>
-      {lk.error && (
-        // Bug 8: opaque, high-contrast banner (was a see-through red wash that was
-        // hard to read over a bright frame). useLiveKit auto-dismisses it ~4.5s.
-        <div role="alert" style={{
-          position: 'absolute', top: 'calc(var(--sa-t) + 70px)', left: '50%', transform: 'translateX(-50%)', zIndex: Z.toast, maxWidth: '80vw',
-          display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 12,
-          background: 'rgba(224,101,94,.14)', border: '1px solid rgba(224,101,94,.4)', color: 'var(--text)',
-          fontSize: 13.5, fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,.55)',
-          animation: 'in .22s cubic-bezier(.2,0,.1,1)',
-        }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
-          {lk.error}
-        </div>
-      )}
+      <AVErrorBanner error={lk.error} />
 
       {/* On desktop the dock shrinks the video; on phones the video stays full-bleed
           and cameras float as a compact strip so the movie is never letterboxed. */}

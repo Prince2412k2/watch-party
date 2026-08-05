@@ -37,7 +37,7 @@ import {
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
   transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
-  validateSubtitlePreferences, effectiveName, publicMember,
+  validateSubtitlePreferences, effectiveName, publicMember, staleRoomIds,
 } from './session.js'
 import {
   authorizeLiveKitUpgrade, createLiveKitTokenVerifier, isLiveKitUpgradePath,
@@ -454,6 +454,14 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ error: 'party not found' })
     const current = findSessionByUser(userId)
     if (current && current.id !== sess.id) return ack?.({ error: 'already in a party' })
+
+    // Joining a DIFFERENT party must stop this socket receiving the previous
+    // one's broadcasts. Socket.IO rooms are additive, so without this a client
+    // that navigates from /party/AAA to /party/BBB gets both parties' chat and
+    // sync:schedule streams and the two timelines fight over its player. No-op
+    // for every ordinary join (reconnect, first join), which is already in this
+    // room or in none.
+    for (const room of staleRoomIds(socket.rooms, { socketId: socket.id, keepId: sess.id })) socket.leave(room)
 
     // Rejoining uses the same Socket instance on the client but a brand-new
     // Socket.IO id on the server. Restore every room-scoped channel here, then

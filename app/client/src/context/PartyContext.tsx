@@ -466,6 +466,15 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     })
   }
 
+  // Release the session this client holds. Local only — no room-wide teardown:
+  // walking away from one party's URL is not "end the party" for the people
+  // still in it. Clearing here is what stops the previous party's session, role
+  // and chat history from surviving into the next join (which also unwinds the
+  // LiveKit room, since useLiveKit is keyed on session.id).
+  function leaveParty() {
+    dispatch({ type: 'CLEAR' })
+  }
+
   function approveUser(targetUserId: string) {
     socket.emit('party:approve', { userId: targetUserId })
     const waiting = (stateRef.current.session?.waiting ?? []).filter(w => w.userId !== targetUserId)
@@ -544,7 +553,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   return (
     <PartyContext.Provider value={{
       ...state,
-      createParty, createRoom, joinParty,
+      createParty, createRoom, joinParty, leaveParty,
        navigateBrowse, shareView, sendPointer, selectMedia, backToLobby,
       startSharedBrowser, stopSharedBrowser, navigateSharedBrowser, sendBrowserInput,
       requestBrowserControl, grantBrowserControl, denyBrowserControl, reclaimBrowserControl,
