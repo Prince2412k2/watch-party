@@ -11,6 +11,7 @@ import 'screens/login_screen.dart';
 import 'screens/gallery_screen.dart';
 import 'screens/browse_screen.dart';
 import 'screens/detail_screen.dart';
+import 'screens/download_detail_screen.dart';
 import 'screens/downloads_screen.dart';
 import 'screens/offline_screen.dart';
 import 'screens/servarr_screen.dart';
@@ -42,12 +43,6 @@ abstract final class Routes {
   /// Secondary shelled routes (reachable but not tabs).
   static const offline = '/offline';
   static const servarrQueue = '/servarr/queue';
-
-  /// `/discover/:id` — a Discover (servarr) title detail deep-link.
-  static const discoverDetail = '/discover';
-
-  /// `/downloads/:id` — a download detail deep-link.
-  static const downloadsDetail = '/downloads';
 
   /// The profile editor — reachable from the account menu on any screen.
   static const profile = '/profile';
@@ -186,16 +181,13 @@ GoRouter buildRouter(WidgetRef ref) {
               child: const ServarrScreen(),
             ),
           ),
-          // Discover (servarr) title detail. Points at the existing Discover
-          // screen for now; W2d rebuilds the detail surface in place (as an
-          // overlay/deep-link keyed by :id).
-          GoRoute(
-            path: '${Routes.discover}/:id',
-            pageBuilder: (_, state) => NoTransitionPage(
-              key: state.pageKey,
-              child: const ServarrScreen(),
-            ),
-          ),
+          // NOTE: there is deliberately no `/discover/:id`. It existed and
+          // rendered a bare [ServarrScreen], discarding the id — a deep link
+          // to a title silently landed on the Discover rails instead. Honouring
+          // it needs a lookup-by-id the servarr client does not have (the
+          // detail surface is built from a [ServarrTitle] out of a discover or
+          // search response), so the route is gone rather than lying. It comes
+          // back with W2d's in-place detail surface.
           GoRoute(
             path: Routes.downloads,
             pageBuilder: (_, state) => NoTransitionPage(
@@ -203,13 +195,19 @@ GoRouter buildRouter(WidgetRef ref) {
               child: const DownloadsScreen(),
             ),
           ),
-          // Download detail. Points at the existing Downloads screen for now;
-          // W2d rebuilds the detail overlay in place (deep-link keyed by :id).
+          // Download detail, rendered for the hash that was asked for. Its own
+          // close action, because a deep link straight here has nothing
+          // underneath it to pop back to.
           GoRoute(
             path: '${Routes.downloads}/:id',
-            pageBuilder: (_, state) => NoTransitionPage(
+            pageBuilder: (context, state) => NoTransitionPage(
               key: state.pageKey,
-              child: const DownloadsScreen(),
+              child: DownloadDetailScreen(
+                hash: state.pathParameters['id']!,
+                onClose: () => context.canPop()
+                    ? context.pop()
+                    : context.go(Routes.downloads),
+              ),
             ),
           ),
           // Offline library — folded under Downloads in the nav, still routable
