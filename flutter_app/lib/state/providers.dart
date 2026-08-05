@@ -40,7 +40,10 @@ final socketClientProvider = Provider<SocketClient>(
 /// and [offlineProvider] are now backed by [cacheFillControllerProvider] /
 /// [mediaCacheProxyProvider] instead (download == filling the on-device
 /// cache). Kept only so the class/provider still exist for anything that
-/// still references them; nothing in the app reads this provider anymore.
+/// still references them; nothing in the app reads this provider anymore —
+/// including the desktop shutdown handler, which pauses the live
+/// [cacheFillControllerProvider] fills rather than this downloader's (always
+/// empty) task database.
 final downloaderProvider = Provider<Downloader>((ref) => Downloader());
 
 /// The on-device caching media proxy (Phase 2) playback routes network
