@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>captest</title>
+<script>
+// Minimal getDisplayMedia probe. Prints one RESULT line to the console (which
+// chromium forwards to stderr) so flag combinations can be compared cheaply
+// without rebuilding the image or minting a token.
+(async () => {
+  const out = m => console.log('CAPTEST ' + m)
+  try {
+    const s = await navigator.mediaDevices.getDisplayMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+      audio: false,
+    })
+    const t = s.getVideoTracks()[0]
+    out('RESULT=OK settings=' + JSON.stringify(t.getSettings()))
+    // Give the pipeline a moment, then confirm frames are actually moving.
+    setTimeout(() => {
+      out('RESULT=OK readyState=' + t.readyState + ' muted=' + t.muted)
+    }, 3000)
+  } catch (e) {
+    out('RESULT=FAIL name=' + e.name + ' msg=' + e.message)
+  }
+})()
+</script>

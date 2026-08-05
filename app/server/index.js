@@ -41,6 +41,13 @@ import {
 import { registerProfileRoutes } from './profile.js'
 import { registerAvatarRoutes } from './avatar.js'
 import { resolveMediaSourceId } from './jellyfin.js'
+import { registerBrowserEvents } from './browser/events.js'
+import { warnIfMisconfigured } from './browser/config.js'
+import {
+  handleHostChanged as browserHostChanged,
+  handleMemberGone as browserMemberGone,
+  initBrowserService, reconcileBrowser, teardownBrowser,
+} from './browser/service.js'
 
 // Fail fast: never run in production with a missing or default session secret.
 if (process.env.NODE_ENV === 'production' &&
@@ -86,6 +93,11 @@ const ALLOWED_ORIGINS = [
 const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, credentials: true },
 })
+
+// The shared browser broadcasts party state of its own (a stream coming up, a
+// crash) so it needs the server, not a socket. Off unless BROWSER_ENABLED is set.
+initBrowserService(io)
+warnIfMisconfigured()
 
 // Sessions persist to disk so a redeploy (container restart) doesn't silently
 // log everyone out — express-session's default MemoryStore is wiped on every
@@ -271,11 +283,20 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const { userId, name, token, deviceId } = socket.user
 
+  // Shared browser. Registered per connection like every other feature; with
+  // BROWSER_ENABLED unset these become a flat refusal and nothing else exists.
+  registerBrowserEvents(socket, {
+    findSession: () => findSessionForMember(userId),
+    leaveCurrentActivity: stopJellyfinPlayback,
+  })
+
   socket.on('party:resume', (_payload, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess) return ack?.({ session: null })
     if (sess.originalHostId === userId && sess.hostId !== userId) {
+      const previousHostId = sess.hostId
       reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
+      browserHostChanged(sess.id, userId, previousHostId)
       io.to(sess.id).emit('host:changed', { hostId: userId })
     } else if (sess.hostId === userId) {
       clearTimeout(sess.hostDisconnectTimer)
@@ -348,7 +369,9 @@ io.on('connection', (socket) => {
     if (sess.originalHostId === userId && sess.hostId !== userId) {
       clearTimeout(sess.hostDisconnectTimer)
       sess.hostDisconnectTimer = null
+      const previousHostId = sess.hostId
       reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
+      browserHostChanged(sess.id, userId, previousHostId)
       restoreSocket()
       io.to(sess.id).emit('host:changed', { hostId: userId })
       io.to(sess.id).emit('party:state', publicSession(sess))
@@ -433,6 +456,8 @@ io.on('connection', (socket) => {
     const g = removeGuest(sess, targetId)
     if (!g) return ack?.({ error: 'user not found' })
     sess.approved.delete(targetId)   // revoke — kicked users must re-request
+    // Control must not be stranded with someone who is no longer in the room.
+    browserMemberGone(sess.id, targetId)
     io.to(g.socketId).emit('party:kicked', { userId: targetId })
     io.to(sess.id).emit('user:left', { userId: targetId, name: effectiveName(targetId, g.name) })
     persistSession(sess)
@@ -449,6 +474,10 @@ io.on('connection', (socket) => {
     clearTimeout(sess.hostDisconnectTimer)
     clearTimeout(sess._stallTimer)
     socket.to(sess.id).emit('party:ended', {})
+    // Not awaited, and its failures are its own: a browser that refuses to die
+    // must never stop a party from ending. If this teardown fails outright the
+    // health monitor reclaims the browser once it sees the party is gone.
+    void teardownBrowser(sess.id, 'party-ended')
     deleteSession(sess.id)
     ack?.({ ok: true })
   })
@@ -461,7 +490,9 @@ io.on('connection', (socket) => {
     if (!targetGuest) return ack?.({ error: 'user not found' })
     const targetSocket = io.sockets.sockets.get(targetGuest.socketId)
     const targetToken = targetSocket?.user?.token ?? token
+    const previousHostId = sess.hostId
     transferHost(sess, targetId, targetGuest.socketId, targetToken)
+    browserHostChanged(sess.id, targetId, previousHostId)
     io.to(sess.id).emit('host:changed', { hostId: targetId })
     ack?.({ ok: true })
   })
@@ -540,6 +571,10 @@ io.on('connection', (socket) => {
       clearTimeout(sess._stallTimer)
       sess.intent.playing = true
       startSegment(sess, Date.now())
+      // Picking a title ends the shared browser: one activity at a time. Ordered
+      // after the stage change so the teardown can't drag the party back to the
+      // lobby, and not awaited so a wedged container can't block the movie.
+      void teardownBrowser(sess.id, 'movie-selected')
       persistSession(sess)
       io.to(sess.id).emit('party:state', publicSession(sess))
       ack?.({ ok: true })
@@ -553,12 +588,11 @@ io.on('connection', (socket) => {
   socket.on('party:backToLobby', (_p, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
-    sess.mediaItemId = null
-    sess.mediaSourceId = null
-    sess.playback = null
+    stopJellyfinPlayback(sess)
     sess.stage = 'lobby'
-    beginMediaGeneration(sess)
-    resetTimeline(sess)
+    // Leaving for the lobby leaves the browser too — one activity at a time.
+    // Fire-and-forget: the lobby must not wait on a container.
+    void teardownBrowser(sess.id, 'back-to-lobby')
     persistSession(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
@@ -741,6 +775,9 @@ io.on('connection', (socket) => {
       handleHostDisconnect(sess)
     } else {
       const g = removeGuest(sess, userId)
+      // Before anything else: a driver who disconnects hands the pointer back to
+      // the host rather than leaving the browser unusable for everyone.
+      if (g) browserMemberGone(sess.id, userId)
       if (g) io.to(sess.id).emit('user:left', { userId, name: effectiveName(userId, name) })
       if (g) persistSession(sess)
       // A departing member must not keep the group frozen in dragging mode
@@ -778,6 +815,17 @@ async function resolveMediaSourceSafe(token, userId, mediaItemId) {
   }
   if (process.env.WP_TEST_MODE === '1') return mediaItemId || 'test-media'
   return null
+}
+
+// Leaving Jellyfin playback: forget the title and reset the shared timeline.
+// Shared by "back to lobby" and by starting the shared browser, because a party
+// has exactly one current activity and starting one stops the other.
+function stopJellyfinPlayback(sess) {
+  sess.mediaItemId = null
+  sess.mediaSourceId = null
+  sess.playback = null
+  beginMediaGeneration(sess)
+  resetTimeline(sess)
 }
 
 // Reset the shared timeline to a fresh, paused-at-start state (new title / lobby)
@@ -880,13 +928,16 @@ function handleHostDisconnect(sess) {
     sess.hostDisconnectTimer = null
     const next = randomConnectedGuest(sess, socketId => io.sockets.sockets.has(socketId))
     if (!next) {
+      void teardownBrowser(sess.id, 'party-abandoned')
       deleteSession(sess.id)
       return
     }
     const nextSocket = io.sockets.sockets.get(next.socketId)
     const nextToken = nextSocket?.user?.token ?? sess.hostToken
+    const previousHostId = sess.hostId
     sess.hostSocketId = null
     transferHost(sess, next.userId, next.socketId, nextToken)
+    browserHostChanged(sess.id, next.userId, previousHostId)
     io.to(sess.id).emit('host:changed', { hostId: next.userId })
   }, HOST_GRACE_MS)
 }
@@ -900,6 +951,13 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   console.error('uncaughtException:', err)
 })
+
+// A restart can leave the browser container holding a session nobody owns any
+// more. Reconciliation runs once here and resolves that; it is deliberately not
+// awaited before listen, because the app must come up whether or not the browser
+// container answers.
+void reconcileBrowser({ partyExists: (partyId) => Boolean(getSession(partyId)) })
+  .catch(error => console.error('browser: reconcile failed:', error?.message))
 
 const PORT = process.env.PORT || 3001
 httpServer.listen(PORT, () => console.log(`server listening on :${PORT}`))

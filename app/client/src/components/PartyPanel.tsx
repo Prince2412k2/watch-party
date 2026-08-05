@@ -562,6 +562,8 @@ export default function PartyPanel({
                 ← Pick something else
               </PanelButton>
             ) : null}
+            {/* Deliberately no shared-browser control here either: this panel is
+                reached from the movie screen. It lives in the popcorn widget. */}
             <div style={{ flex: 1, minWidth: 0 }} />
             <PanelButton tone="danger" height={tap} onClick={() => setConfirmEnd(true)} title="End the party for everyone">
               {dense ? 'End party' : 'End party for everyone'}
