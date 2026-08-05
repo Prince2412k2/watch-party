@@ -39,6 +39,7 @@ import {
   validateSubtitlePreferences, effectiveName, publicMember,
 } from './session.js'
 import { registerProfileRoutes } from './profile.js'
+import { registerAvatarRoutes } from './avatar.js'
 import { resolveMediaSourceId } from './jellyfin.js'
 
 // Fail fast: never run in production with a missing or default session secret.
@@ -214,6 +215,7 @@ registerServarrRoutes(app)
 registerNativeRoutes(app)
 registerDesktopBuildRoutes(app)
 registerProfileRoutes(app, io)
+registerAvatarRoutes(app)
 
 // ── Dev-only observability (gated: 404 unless WP_TEST_MODE=1) ───────────────
 // Exposes session internals for the sync test harness. MUST stay off in prod.

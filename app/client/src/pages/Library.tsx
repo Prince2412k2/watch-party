@@ -385,7 +385,11 @@ export default function Library({
           This is the element the mirror engine drives. */}
       <div ref={scrollRef} style={{
         position: 'absolute', top: 0, right: 0, bottom: 0, left: (embedded || !libraryType) ? sidebarW : 0,
-        overflow: 'hidden auto',
+        // `clip` rather than `hidden` sideways: hidden still leaves this a scroll
+        // container that scrollIntoView and focus can move programmatically,
+        // which is how the whole shell used to slide left. clip paints the same
+        // and cannot be scrolled at all.
+        overflow: 'clip auto',
         overflowY: following ? 'hidden' : 'auto',
       }}>
         {(embedded || !libraryType) && <TopBar embedded={embedded} mobile={mobile}
@@ -841,8 +845,19 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
 
   useEffect(() => {
     if (mobile || count === 0) return
-    const poster = railRef.current?.querySelector<HTMLButtonElement>(`[data-poster-index="${selected}"]`)
-    poster?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    const rail = railRef.current
+    const poster = rail?.querySelector<HTMLButtonElement>(`[data-poster-index="${selected}"]`)
+    if (rail && poster) {
+      // Deliberately not scrollIntoView: that walks up and scrolls every
+      // scrollable ancestor too (browsers move overflow:hidden boxes for it
+      // as well), which slid the whole shell — heading, background and all —
+      // sideways every time the selection stepped. Centre the poster by
+      // moving this rail and nothing else.
+      const railBox = rail.getBoundingClientRect()
+      const posterBox = poster.getBoundingClientRect()
+      const delta = (posterBox.left + posterBox.width / 2) - (railBox.left + railBox.width / 2)
+      if (Math.abs(delta) > 1) rail.scrollBy({ left: delta, behavior: 'smooth' })
+    }
     if (focusAfterMove.current) {
       focusAfterMove.current = false
       poster?.focus({ preventScroll: true })
