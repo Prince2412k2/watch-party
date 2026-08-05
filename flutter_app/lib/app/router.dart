@@ -17,6 +17,7 @@ import 'screens/offline_screen.dart';
 import 'screens/servarr_screen.dart';
 import 'screens/servarr_queue_screen.dart';
 import 'screens/party_screen.dart';
+import 'screens/profile_screen.dart';
 import 'screens/show_stage.dart';
 
 /// The root Navigator's key. Exposed because some app-wide affordances resolve a
@@ -48,6 +49,9 @@ abstract final class Routes {
 
   /// `/downloads/:id` — a download detail deep-link.
   static const downloadsDetail = '/downloads';
+
+  /// The profile editor — reachable from the account menu on any screen.
+  static const profile = '/profile';
 
   /// Top-level immersive routes.
   static const detail = '/detail'; // /detail/:id
@@ -118,6 +122,7 @@ GoRouter buildRouter(WidgetRef ref) {
     routes: [
       GoRoute(path: Routes.login, builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/gallery', builder: (_, _) => const GalleryScreen()),
+      GoRoute(path: Routes.profile, builder: (_, _) => const ProfileScreen()),
 
       // Immersive party screen — full-window, outside the nav shell. A
       // top-level PUSH route gets the ~180ms fade-through from motion.dart.

@@ -197,15 +197,24 @@ page without typing a URL.
 
 ## Out of scope
 
-- **The Flutter desktop/mobile app.** Humation is a JS/React renderer with embedded SVG
-  artwork; Flutter cannot consume it directly. Flutter clients keep showing names and
-  initials. Accepted consequence: a party mixing web and Flutter clients shows avatars to
-  the web users and initials to the Flutter users for the same participant. This is
-  cosmetic and only visible in mixed parties. A server-side SVG endpoint (Humation runs
-  in Node) was considered and rejected for now — it adds an endpoint plus caching, needs
-  Flutter work, and re-introduces a network dependency for something otherwise entirely
-  local. Display names, unlike avatars, ride along on existing party membership data, so
-  Flutter picks those up for free.
+- ~~**The Flutter desktop/mobile app.**~~ **Reversed after Phase 3 (2026-08-05), at the
+  product owner's request: Flutter gets the same feature.** The original reasoning still
+  describes the constraint — Humation is a JS/React renderer with embedded SVG artwork
+  that Flutter cannot consume — so the rejected option was taken instead: the server (which
+  runs Node and already holds the asset set) draws each avatar and serves it as SVG, and
+  the Flutter client displays that. Both clients derive identical faces because the
+  derivation moved to one shared module, `app/shared/avatar-derive.js`.
+
+  Two consequences the original scoping predicted, now accepted:
+  - Flutter avatars need the network, unlike the web's local rendering. They fall back to
+    initials while loading and whenever a fetch fails, so a degraded connection loses the
+    faces, not the people.
+  - The colours had to be baked into the served SVG. The renderer expresses them as CSS
+    custom properties, which native SVG renderers don't implement — left alone, every
+    Flutter avatar would have rendered with the asset set's default white skin.
+
+  Display names still ride along on existing party membership data, so Flutter picked
+  those up for free as predicted.
 - Uploaded or photographic profile pictures. The avatar is drawn from the asset set only.
 - Avatars on chat messages. Chat currently renders names; adding avatars there is a
   follow-up, not part of making the camera-off state feel populated.
