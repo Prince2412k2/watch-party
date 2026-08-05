@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../models/models.dart';
 import '../../state/state.dart';
@@ -23,9 +24,11 @@ import 'watch_party_animation.dart';
 /// No session → "Start a watch party" (create) + "Join with a code" (an 8-char
 /// hex [JoinCodeDialog]). Live → a QR invite + room code + copy-invite, the
 /// people roster (host + kickable guests), the host approve/reject waiting list,
-/// and a host "End party". Watching sessions navigate from the shell
-/// automatically. Host-only actions are
-/// gated by [PartyNotifier.isHost].
+/// "Return to the party" whenever the room is watching or browsing, and a host
+/// "End party". Watching sessions navigate from the shell automatically the
+/// first time; after that the return button is the way back, because the party
+/// screen's Back minimizes rather than leaving. Host-only actions are gated by
+/// [PartyNotifier.isHost].
 class PartyWidget extends ConsumerStatefulWidget {
   const PartyWidget({super.key});
 
@@ -195,6 +198,10 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
     final waiting = ref.watch(partyWaitingProvider);
     final joinUrl =
         '${ref.watch(apiClientProvider).baseUrl}/party/${session.id}';
+    // The room has an immersive surface of its own while it is watching or
+    // driving the shared browser; in the lobby there is nothing to return to.
+    final onImmersiveStage =
+        session.stage == 'watching' || session.stage == 'browser';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -307,6 +314,20 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
             icon: session.stage == 'browser' ? Icons.close : Icons.public,
             variant: AppButtonVariant.secondary,
             onPressed: _toggleSharedBrowser,
+          ),
+        ],
+        // The way back in. The party surface's Back MINIMIZES — the room keeps
+        // playing without a window on it — so there has to be a non-destructive
+        // way to return, or minimizing would strand the user next to a live
+        // session whose only remaining controls end or leave it.
+        if (onImmersiveStage) ...[
+          const SizedBox(height: AppSpacing.xl),
+          AppButton(
+            key: const Key('returnToPartyButton'),
+            label: 'Return to the party',
+            icon: Icons.open_in_full,
+            variant: AppButtonVariant.secondary,
+            onPressed: () => context.go('/party/${session.id}'),
           ),
         ],
         const SizedBox(height: AppSpacing.xl),
