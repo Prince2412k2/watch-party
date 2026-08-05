@@ -4,6 +4,7 @@
 // is bounded by an AbortController timeout so a dead service can't hang a route.
 
 import { serviceConfig } from './config.js'
+import { Readable, Transform } from 'stream'
 
 const DEFAULT_TIMEOUT_MS = 8000
 
@@ -424,19 +425,39 @@ export async function remoteImageFetch(rawUrl) {
     if (declaredLength > REMOTE_IMAGE_MAX_BYTES) {
       throw Object.assign(new Error('remote image too large'), { status: 502, upstream: true })
     }
-    const buffer = Buffer.from(await res.arrayBuffer())
-    // content-length can be absent or simply wrong — the real cap is on the
-    // bytes actually received.
-    if (buffer.length > REMOTE_IMAGE_MAX_BYTES) {
-      throw Object.assign(new Error('remote image too large'), { status: 502, upstream: true })
+    if (!res.body) throw Object.assign(new Error('remote image body missing'), { status: 502, upstream: true })
+
+    const source = Readable.fromWeb(res.body)
+    let received = 0
+    const capped = new Transform({
+      transform(chunk, _encoding, callback) {
+        received += chunk.length
+        if (received > REMOTE_IMAGE_MAX_BYTES) {
+          ctrl.abort()
+          callback(Object.assign(new Error('remote image too large'), { status: 502, upstream: true }))
+          return
+        }
+        callback(null, chunk)
+      },
+    })
+    source.on('error', (err) => capped.destroy(err))
+    source.pipe(capped)
+    capped.once('close', () => clearTimeout(timer))
+    capped.once('end', () => clearTimeout(timer))
+    return {
+      stream: capped,
+      contentType: res.headers.get('content-type') || 'image/jpeg',
+      abort() {
+        ctrl.abort()
+        source.destroy()
+        capped.destroy()
+      },
     }
-    return { buffer, contentType: res.headers.get('content-type') || 'image/jpeg' }
   } catch (err) {
+    clearTimeout(timer)
     if (err?.upstream) throw err
     const message = err.name === 'AbortError' ? 'remote image timed out' : 'remote image unreachable'
     throw Object.assign(new Error(message), { status: 504, upstream: true })
-  } finally {
-    clearTimeout(timer)
   }
 }
 

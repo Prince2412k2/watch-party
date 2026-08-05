@@ -13,7 +13,7 @@ import {
   radarr, sonarr, prowlarr, bazarr, arrPing,
   radarrAddPayload, sonarrAddPayload, pickBestRelease,
   curatedPopular, CURATED_MOVIES, CURATED_SERIES,
-  enrichTorrents, pickPosterImage, arrImageFetch, remoteImageFetch,
+  enrichTorrents, pickPosterImage, arrImageFetch, remoteImageFetch, shapeImages,
   parseReleaseName, seasonEpisodeLabel, posterUrlFromImage, arrRating,
 } from './arr.js'
 import * as qbit from './qbittorrent.js'
@@ -22,6 +22,12 @@ import {
   MAX_TORRENT_BYTES, parseMagnet, parseManualSubmission,
   storeTorrent, takeTorrent, torrentCallbackUrl,
 } from './manual.js'
+import {
+  abandonOpeningLease, activatePickerLease, beginPickerLease, claimPickerCancellation,
+  canRemovePickerRecord, closePickerLease, countOtherActivePickerLeases, markPickerCancelPending,
+  markPickerGrabbing, pendingPickerOwner, pickerToken, restorePickerAfterGrab,
+  restorePickerCancellation, settlePickerRecord, validatePickerToken, waitForPickerLease,
+} from './picker.js'
 
 // Map any thrown upstream/config error onto a clean JSON response. Logs
 // server-side (message only — never the key) and strips upstream internals.
@@ -52,7 +58,7 @@ const shapeMovieLookup = (m) => ({
   titleSlug: m.titleSlug, overview: m.overview, runtime: m.runtime,
   genres: Array.isArray(m.genres) ? m.genres : [], ratings: m.ratings ?? null,
   certification: m.certification ?? null, studio: m.studio ?? null,
-  images: m.images, hasFile: !!m.hasFile, monitored: !!m.monitored, id: m.id ?? null,
+  images: shapeImages('radarr', m.images), hasFile: !!m.hasFile, monitored: !!m.monitored, id: m.id ?? null,
 })
 const shapeMovie = (m) => ({
   id: m.id, tmdbId: m.tmdbId, title: m.title, year: m.year, hasFile: !!m.hasFile,
@@ -96,7 +102,7 @@ const shapeSeriesLookup = (s) => ({
   titleSlug: s.titleSlug, overview: s.overview, network: s.network,
   genres: Array.isArray(s.genres) ? s.genres : [], ratings: s.ratings ?? null,
   runtime: s.runtime ?? null, certification: s.certification ?? null, status: s.status ?? null,
-  images: s.images, seasonCount: s.seasons?.length ?? s.seasonCount, id: s.id ?? null,
+  images: shapeImages('sonarr', s.images), seasonCount: s.seasons?.length ?? s.seasonCount, id: s.id ?? null,
   // Additive: the season list drives the client's per-season download chooser.
   seasons: Array.isArray(s.seasons) ? s.seasons.map(shapeSeason) : [],
 })
@@ -236,7 +242,7 @@ function getCachedPoster(service, title) {
     Promise.resolve(lookup(title))
       .then((arr) => {
         const poster = pickPosterImage((Array.isArray(arr) ? arr[0] : null)?.images)
-        const url = poster?.remoteUrl && /^https?:\/\//i.test(poster.remoteUrl) ? poster.remoteUrl : null
+        const url = posterUrlFromImage(service, poster)
         posterCache.set(key, { at: Date.now(), url })
       })
       .catch(() => posterCache.set(key, { at: Date.now(), url: null }))
@@ -382,6 +388,99 @@ async function reconcileArrQueues(hashes) {
         client.removeQueueItem(r.id, { removeFromClient: false, blocklist: false }).catch(() => {})))
     } catch { /* best-effort reconciliation */ }
   }))
+}
+
+async function acquirePickerLease(req, service, recordId) {
+  let acquired = beginPickerLease({
+    operationId: req.body?.operationId,
+    service,
+    recordId,
+    userId: req.session.jellyfin.userId,
+  })
+  if (!acquired.created && acquired.lease?.state === 'opening') {
+    acquired = { created: false, lease: await waitForPickerLease(acquired.lease.id) }
+  }
+  return acquired
+}
+
+function pickerLeaseError(res, err) {
+  if (err?.badRequest) return res.status(400).json({ error: err.message })
+  if (err?.tooMany) return res.status(429).json({ error: err.message })
+  if (err?.retryable) return res.status(409).json({ error: err.message, retryable: true })
+  return null
+}
+
+async function finishPickerCancellation(service, recordId, owner) {
+  const client = service === 'radarr' ? radarr : sonarr
+  const record = await client.get(recordId)
+  const hasFile = service === 'radarr'
+    ? !!record?.hasFile
+    : (record?.statistics?.sizeOnDisk ?? 0) > 0 || (record?.statistics?.episodeFileCount ?? 0) > 0
+  if (hasFile) {
+    settlePickerRecord(service, recordId, 'kept')
+    return { ok: true, removed: false }
+  }
+
+  const queue = await client.queue()
+  const queueKey = service === 'radarr' ? 'movieId' : 'seriesId'
+  const inQueue = (Array.isArray(queue?.records) ? queue.records : [])
+    .some((entry) => entry[queueKey] === recordId)
+  if (inQueue) {
+    settlePickerRecord(service, recordId, 'kept')
+    return { ok: true, removed: false }
+  }
+
+  if (!canRemovePickerRecord(owner)) {
+    throw Object.assign(new Error('record is in use by another picker'), { retryable: true })
+  }
+  await client.remove(recordId, { deleteFiles: false, addImportExclusion: false })
+  settlePickerRecord(service, recordId, 'cancelled')
+  return { ok: true, removed: true }
+}
+
+async function cancelPickerLease(req, res, service, recordId) {
+  const lease = validatePickerToken(req.body?.cancellationToken, {
+    service,
+    recordId,
+    userId: req.session.jellyfin.userId,
+  })
+  if (!lease) return res.status(409).json({ error: 'cancellation capability is invalid or settled' })
+
+  let owner
+  if (!lease.owner) {
+    closePickerLease(lease.id)
+    owner = pendingPickerOwner(service, recordId)
+    if (!owner || countOtherActivePickerLeases(owner) > 0) {
+      return res.json({ ok: true, removed: false, released: true })
+    }
+  } else {
+    owner = markPickerCancelPending(lease.id)
+    if (countOtherActivePickerLeases(owner) > 0) {
+      return res.status(409).json({
+        error: 'record is in use by another picker',
+        retryable: true,
+      })
+    }
+  }
+
+  if (!claimPickerCancellation(owner.id)) {
+    return res.status(409).json({ error: 'cancellation already in progress', retryable: true })
+  }
+
+  try {
+    return res.json(await finishPickerCancellation(service, recordId, owner))
+  } catch (err) {
+    if (err?.status === 404) {
+      settlePickerRecord(service, recordId, 'cancelled')
+      return res.json({ ok: true, removed: false })
+    }
+    restorePickerCancellation(owner.id)
+    console.error(`servarr/${service}/releases/cancel`, err?.message || err)
+    return res.status(503).json({
+      error: 'cancellation safety check unavailable',
+      retryable: true,
+    })
+  }
 }
 
 // ── Discover / "popular" rail ─────────────────────────────────────────────────
@@ -776,8 +875,7 @@ export function registerServarrRoutes(app) {
   //
   //   POST /radarr/releases  — open the picker. releaseSearch needs a movieId, so
   //       if the title isn't in Radarr yet we add it (monitored, NO auto-search)
-  //       purely to run the live search, and flag `createdByPicker:true`. The
-  //       client keeps `movieId`+`createdByPicker` for its lifetime.
+  //       purely to run the live search. A durable lease records who created it.
   //   POST /radarr/grab      — the user picked a row: hand that exact release to
   //       the download client and KEEP the entry.
   //   POST /radarr/releases/cancel — the user closed the picker without grabbing:
@@ -789,52 +887,76 @@ export function registerServarrRoutes(app) {
 
   // Open the picker. Body is either { movieId } for a title already in Radarr, or
   // { movie, qualityProfileId, rootFolderPath } for a lookup result we must add
-  // first. Returns { movieId, createdByPicker, releases, searchFailed }. A failed
+  // first. Returns { movieId, cancellationToken, releases, searchFailed }. A failed
   // live search is reported (searchFailed:true) WITHOUT deleting anything — the
   // client still holds movieId so closing the picker can clean up if we created it.
   app.post('/api/servarr/radarr/releases', requireAuth, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const { movieId: bodyMovieId, movie, qualityProfileId, rootFolderPath } = req.body || {}
 
-    let movieId = Number.isFinite(Number(bodyMovieId)) ? Number(bodyMovieId) : null
-    let createdByPicker = false
+    let movieId = bodyMovieId != null && Number.isFinite(Number(bodyMovieId)) ? Number(bodyMovieId) : null
+    let acquired
+    try {
+      acquired = await acquirePickerLease(req, 'radarr', movieId)
+    } catch (err) {
+      return pickerLeaseError(res, err) || fail(res, 'radarr/releases/lease', err)
+    }
+    let lease = acquired.lease
+    if (!lease || (!acquired.created && lease.state !== 'active')) {
+      return res.status(409).json({ error: 'picker operation is not available', retryable: true })
+    }
+    if (!acquired.created) movieId = lease.recordId
 
     // No movieId → this is a not-yet-added lookup result. Add it monitored with no
     // auto-search (the picker drives the search itself), so browsing can proceed.
-    if (movieId == null) {
+    if (acquired.created && movieId == null) {
       if (!movie?.tmdbId || !qualityProfileId || !rootFolderPath) {
+        abandonOpeningLease(lease.id)
         return res.status(400).json({ error: 'movieId, or movie (with tmdbId) + qualityProfileId + rootFolderPath, required' })
       }
       try {
         const payload = radarrAddPayload(movie, { qualityProfileId, rootFolderPath, monitor: true, searchNow: false })
         const added = await radarr.add(payload)
         movieId = added.id
-        createdByPicker = true
+        lease = activatePickerLease(lease.id, movieId, true)
       } catch (err) {
+        if (err?.retryable) {
+          abandonOpeningLease(lease.id)
+          return pickerLeaseError(res, err)
+        }
         // Already present? Fall back to the existing library entry (we did NOT
         // create it, so the picker must never remove it on cancel).
         if (err?.status === 400 && /already|exist/i.test(err.body || '')) {
           try {
             const lib = await radarr.library()
             const found = (Array.isArray(lib) ? lib : []).find((m) => m.tmdbId === movie.tmdbId)
-            if (found) { movieId = found.id; createdByPicker = false }
+            if (found) {
+              movieId = found.id
+              lease = activatePickerLease(lease.id, movieId, false)
+            }
           } catch { /* fall through to the error below */ }
-          if (movieId == null) return fail(res, 'radarr/releases/add', err)
+          if (movieId == null) {
+            abandonOpeningLease(lease.id)
+            return fail(res, 'radarr/releases/add', err)
+          }
         } else {
+          abandonOpeningLease(lease.id)
           return fail(res, 'radarr/releases/add', err)
         }
       }
     }
 
+    const cancellationToken = pickerToken(lease)
+
     // Live interactive release search (slow — bounded ~45s by arr.js).
     try {
       const releases = await radarr.releaseSearch(movieId)
-      return res.json({ movieId, createdByPicker, searchFailed: false, releases: shapeReleases(releases) })
+      return res.json({ movieId, createdByPicker: lease.owner, cancellationToken, searchFailed: false, releases: shapeReleases(releases) })
     } catch (searchErr) {
       // Do NOT delete on a search error — leave the (possibly picker-created)
       // entry so closing the picker takes the single, guarded cleanup path.
       console.error('servarr/radarr/releases search', searchErr?.message || searchErr)
-      return res.json({ movieId, createdByPicker, searchFailed: true, releases: [] })
+      return res.json({ movieId, createdByPicker: lease.owner, cancellationToken, searchFailed: true, releases: [] })
     }
   })
 
@@ -843,45 +965,44 @@ export function registerServarrRoutes(app) {
     if (!ensureConfigured('radarr', res)) return
     const { guid, indexerId } = req.body || {}
     if (!guid || indexerId == null) return res.status(400).json({ error: 'guid and indexerId required' })
+    const movieId = Number(req.body?.movieId)
+    if (!Number.isInteger(movieId) || movieId <= 0) return res.status(400).json({ error: 'movieId required' })
+    const lease = validatePickerToken(req.body?.cancellationToken, {
+      service: 'radarr', recordId: movieId, userId: req.session.jellyfin.userId, states: null,
+    })
+    if (!lease) return res.status(403).json({ error: 'valid picker capability required' })
+    if (lease.state === 'settled' && lease.terminalAction === 'grabbed') {
+      return res.json({ outcome: 'grabbed', movieId })
+    }
+    if (lease.state === 'grabbing') {
+      return res.status(409).json({ error: 'grab already in progress', retryable: true })
+    }
+    if (lease.state !== 'active' && lease.state !== 'cancel_pending') {
+      return res.status(409).json({ error: 'picker capability is settled' })
+    }
+    const priorState = lease.state
+    if (!markPickerGrabbing(lease.id).claimed) {
+      return res.status(409).json({ error: 'grab already in progress', retryable: true })
+    }
     try {
       await radarr.grabRelease({ guid, indexerId })
-      return res.json({ outcome: 'grabbed' })
-    } catch (err) { fail(res, 'radarr/grab', err) }
+      settlePickerRecord('radarr', movieId, 'grabbed')
+      return res.json({ outcome: 'grabbed', movieId })
+    } catch (err) {
+      restorePickerAfterGrab(lease.id, priorState)
+      fail(res, 'radarr/grab', err)
+    }
   })
 
-  // Clean up a browsing-only entry when the picker closes without a grab. Only
-  // acts when the client says THIS picker created the entry, and only after
-  // re-checking the movie is safe to drop: it must still exist, have no imported
-  // file, and have nothing in the download queue (an in-flight grab). Anything
-  // else → leave it. Always best-effort: a cleanup failure never surfaces as an
-  // error to the user (the worst case is one harmless fileless entry, not a
-  // wrongly-deleted title).
+  // Clean up a browsing-only entry when the picker closes without a grab. The
+  // signed lease proves this user created this record through the picker;
+  // the movie must also have no imported file and nothing in the download queue.
+  // Cleanup failures leave the entry in place rather than risk deleting a title.
   app.post('/api/servarr/radarr/releases/cancel', requireAuth, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const movieId = Number(req.body?.movieId)
-    const createdByPicker = req.body?.createdByPicker === true
     if (!Number.isFinite(movieId)) return res.status(400).json({ error: 'movieId required' })
-    if (!createdByPicker) return res.json({ ok: true, removed: false }) // never touch entries we didn't create
-
-    try {
-      const mv = await radarr.get(movieId)
-      if (mv?.hasFile) return res.json({ ok: true, removed: false }) // real file imported — keep it
-
-      // A record in the queue means a grab is already in flight — don't nuke it.
-      let inQueue = false
-      try {
-        const q = await radarr.queue()
-        const records = Array.isArray(q?.records) ? q.records : []
-        inQueue = records.some((r) => r.movieId === movieId)
-      } catch { /* queue check is best-effort; fall back to the hasFile guard */ }
-      if (inQueue) return res.json({ ok: true, removed: false })
-
-      await radarr.remove(movieId, { deleteFiles: false, addImportExclusion: false })
-      return res.json({ ok: true, removed: true })
-    } catch (err) {
-      console.error('servarr/radarr/releases/cancel', err?.message || err)
-      return res.json({ ok: true, removed: false }) // swallow — cleanup is not user-facing
-    }
+    return cancelPickerLease(req, res, 'radarr', movieId)
   })
 
   app.get('/api/servarr/radarr/queue', requireAuth, async (_req, res) => {
@@ -1183,7 +1304,7 @@ export function registerServarrRoutes(app) {
 
   // Interactive release search at one of Sonarr's two scopes: a whole season
   // (omit episodeNumber) or a single episode. Mirrors radarr/releases — same
-  // response shape, same createdByPicker contract for the cancel path.
+  // response shape, same cancellation-capability contract for the cancel path.
   app.post('/api/servarr/sonarr/releases', requireAuth, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const seasonNumber = Number(req.body?.seasonNumber)
@@ -1192,16 +1313,35 @@ export function registerServarrRoutes(app) {
     }
     const episodeNumber = req.body?.episodeNumber == null ? null : Number(req.body.episodeNumber)
 
-    let seriesId
-    let createdByPicker
-    try {
-      const resolved = await resolveSonarrSeriesId(req.body || {})
-      seriesId = resolved.seriesId
-      createdByPicker = resolved.freshlyAdded
-    } catch (err) {
-      if (err?.badRequest) return res.status(400).json({ error: err.message })
-      return fail(res, 'sonarr/releases/add', err)
+    const rawSeriesId = req.body?.seriesId
+    let seriesId = rawSeriesId == null ? null : Number(rawSeriesId)
+    if (seriesId != null && (!Number.isInteger(seriesId) || seriesId <= 0)) {
+      return res.status(400).json({ error: 'valid seriesId required' })
     }
+    let acquired
+    try {
+      acquired = await acquirePickerLease(req, 'sonarr', seriesId)
+    } catch (err) {
+      return pickerLeaseError(res, err) || fail(res, 'sonarr/releases/lease', err)
+    }
+    let lease = acquired.lease
+    if (!lease || (!acquired.created && lease.state !== 'active')) {
+      return res.status(409).json({ error: 'picker operation is not available', retryable: true })
+    }
+    if (!acquired.created) seriesId = lease.recordId
+    if (acquired.created && seriesId == null) {
+      try {
+        const resolved = await resolveSonarrSeriesId(req.body || {})
+        seriesId = resolved.seriesId
+        lease = activatePickerLease(lease.id, seriesId, resolved.freshlyAdded)
+      } catch (err) {
+        abandonOpeningLease(lease.id)
+        if (err?.retryable) return pickerLeaseError(res, err)
+        if (err?.badRequest) return res.status(400).json({ error: err.message })
+        return fail(res, 'sonarr/releases/add', err)
+      }
+    }
+    const cancellationToken = pickerToken(lease)
 
     let episode = null
     if (episodeNumber != null) {
@@ -1218,7 +1358,7 @@ export function registerServarrRoutes(app) {
         episode ? { episodeId: episode.id } : { seriesId, seasonNumber },
       )
       return res.json({
-        seriesId, createdByPicker, searchFailed: false,
+        seriesId, createdByPicker: lease.owner, cancellationToken, searchFailed: false,
         episodeId: episode?.id ?? null,
         releases: shapeReleases(releases),
       })
@@ -1227,7 +1367,7 @@ export function registerServarrRoutes(app) {
       // the client must be able to reach a terminal state.
       console.error('servarr/sonarr/releases search', searchErr?.message || searchErr)
       return res.json({
-        seriesId, createdByPicker, searchFailed: true,
+        seriesId, createdByPicker: lease.owner, cancellationToken, searchFailed: true,
         episodeId: episode?.id ?? null,
         releases: [],
       })
@@ -1246,6 +1386,23 @@ export function registerServarrRoutes(app) {
       return res.status(400).json({ error: 'seriesId and seasonNumber required' })
     }
     const episodeNumber = req.body?.episodeNumber == null ? null : Number(req.body.episodeNumber)
+    const lease = validatePickerToken(req.body?.cancellationToken, {
+      service: 'sonarr', recordId: seriesId, userId: req.session.jellyfin.userId, states: null,
+    })
+    if (!lease) return res.status(403).json({ error: 'valid picker capability required' })
+    if (lease.state === 'settled' && lease.terminalAction === 'grabbed') {
+      return res.json({ outcome: 'grabbed', seriesId, seasonNumber, episodeNumber })
+    }
+    if (lease.state === 'grabbing') {
+      return res.status(409).json({ error: 'grab already in progress', retryable: true })
+    }
+    if (lease.state !== 'active' && lease.state !== 'cancel_pending') {
+      return res.status(409).json({ error: 'picker capability is settled' })
+    }
+    const priorState = lease.state
+    if (!markPickerGrabbing(lease.id).claimed) {
+      return res.status(409).json({ error: 'grab already in progress', retryable: true })
+    }
 
     try {
       const episode = episodeNumber == null
@@ -1256,8 +1413,12 @@ export function registerServarrRoutes(app) {
       }
       await sonarrMonitorTarget(seriesId, seasonNumber, episode)
       await sonarr.grabRelease({ guid, indexerId })
+      settlePickerRecord('sonarr', seriesId, 'grabbed')
       return res.json({ outcome: 'grabbed', seriesId, seasonNumber, episodeNumber })
-    } catch (err) { return fail(res, 'sonarr/grab', err) }
+    } catch (err) {
+      restorePickerAfterGrab(lease.id, priorState)
+      return fail(res, 'sonarr/grab', err)
+    }
   })
 
   // One season, unattended: take the best acceptable season release, and where
@@ -1322,34 +1483,13 @@ export function registerServarrRoutes(app) {
   })
 
   // Drop a browsing-only shell when the picker closes without a grab. Mirrors
-  // radarr/releases/cancel: only entries THIS picker created, only when the
-  // series still has no files and nothing in the queue, and always best-effort —
-  // a cleanup failure is never surfaced (one stray unmonitored series beats a
-  // wrongly-deleted one).
+  // radarr/releases/cancel: require the user-bound capability, no files, and an
+  // empty queue. Cleanup failures leave the shell in place.
   app.post('/api/servarr/sonarr/releases/cancel', requireAuth, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const seriesId = Number(req.body?.seriesId)
     if (!Number.isFinite(seriesId)) return res.status(400).json({ error: 'seriesId required' })
-    if (req.body?.createdByPicker !== true) return res.json({ ok: true, removed: false })
-
-    try {
-      const series = await sonarr.get(seriesId)
-      if ((series?.statistics?.sizeOnDisk ?? 0) > 0 || (series?.statistics?.episodeFileCount ?? 0) > 0) {
-        return res.json({ ok: true, removed: false })
-      }
-      let inQueue = false
-      try {
-        const q = await sonarr.queue()
-        inQueue = (Array.isArray(q?.records) ? q.records : []).some((r) => r.seriesId === seriesId)
-      } catch { /* best-effort; the file check above still guards */ }
-      if (inQueue) return res.json({ ok: true, removed: false })
-
-      await sonarr.remove(seriesId, { deleteFiles: false, addImportExclusion: false })
-      return res.json({ ok: true, removed: true })
-    } catch (err) {
-      console.error('servarr/sonarr/releases/cancel', err?.message || err)
-      return res.json({ ok: true, removed: false })
-    }
+    return cancelPickerLease(req, res, 'sonarr', seriesId)
   })
 
   // Resolve (or shell in) the Sonarr series for a title the user is acting on,
@@ -1377,10 +1517,19 @@ export function registerServarrRoutes(app) {
   app.get('/api/servarr/remote-image', requireAuth, async (req, res) => {
     const url = (req.query.url || '').toString()
     try {
-      const { buffer, contentType } = await remoteImageFetch(url)
+      const { stream, contentType, abort } = await remoteImageFetch(url)
       res.set('Content-Type', contentType)
       res.set('Cache-Control', 'public, max-age=604800, immutable')
-      return res.send(buffer)
+      stream.on('error', (err) => {
+        console.error('servarr/remote-image stream', err?.message || err)
+        res.destroy(err)
+      })
+      const close = () => {
+        if (!res.writableEnded) abort()
+      }
+      res.once('close', close)
+      stream.once('end', () => res.off('close', close))
+      return stream.pipe(res)
     } catch (err) {
       res.set('Cache-Control', 'public, max-age=3600')
       return res.status(err?.status === 400 ? 400 : 404).end()

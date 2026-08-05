@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { posterUrlFromImage, remoteImageFetch, shapeImages } from './arr.js'
+import { enrichTorrents, posterUrlFromImage, remoteImageFetch, shapeImages } from './arr.js'
 
 const realFetch = globalThis.fetch
 
@@ -12,6 +12,21 @@ function stubFetch(handler) {
     return handler(url.toString(), opts)
   }
   return calls
+}
+
+function bodyStream(chunks) {
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk)
+      controller.close()
+    },
+  })
+}
+
+async function readStream(stream) {
+  const chunks = []
+  for await (const chunk of stream) chunks.push(chunk)
+  return Buffer.concat(chunks)
 }
 
 test.afterEach(() => { globalThis.fetch = realFetch })
@@ -53,6 +68,16 @@ test('shapeImages strips raw remoteUrl/url and keeps only coverType + proxied ar
     { coverType: 'banner', remoteUrl: null },
   ])
   for (const i of shaped) assert.equal('url' in i, false)
+})
+
+test('enriched downloads proxy embedded queue artwork', () => {
+  const remoteUrl = 'https://image.tmdb.org/t/p/w500/p.jpg'
+  const [torrent] = enrichTorrents(
+    [{ hash: 'ABC', name: 'Movie.2026' }],
+    { radarr: [{ downloadId: 'abc', movie: { title: 'Movie', images: [{ coverType: 'poster', remoteUrl }] } }] },
+  )
+  assert.equal(torrent.posterUrl, `/api/servarr/remote-image?url=${encodeURIComponent(remoteUrl)}`)
+  assert.notEqual(torrent.posterUrl, remoteUrl)
 })
 
 test('remoteImageFetch rejects a host that is not on the artwork allow-list, without ever calling fetch', async () => {
@@ -97,12 +122,12 @@ test('remoteImageFetch passes bytes + content-type through for an allow-listed h
       ok: true,
       status: 200,
       headers: new Map([['content-type', 'image/jpeg']]),
-      arrayBuffer: async () => new TextEncoder().encode('JPEGBYTES').buffer,
+      body: bodyStream([new TextEncoder().encode('JPEGBYTES')]),
     }
   })
   const out = await remoteImageFetch('https://image.tmdb.org/t/p/w500/x.jpg')
   assert.equal(out.contentType, 'image/jpeg')
-  assert.equal(out.buffer.toString(), 'JPEGBYTES')
+  assert.equal((await readStream(out.stream)).toString(), 'JPEGBYTES')
   // fetch() follows redirects by default — this proxy must ask for manual
   // redirect handling instead, or the allow-list check below is worthless.
   assert.equal(calls[0].opts.redirect, 'manual')
@@ -113,7 +138,7 @@ test('remoteImageFetch does not follow a redirect to a disallowed host', async (
     ok: false,
     status: 302,
     headers: new Map([['location', 'https://evil.example.com/x.jpg']]),
-    arrayBuffer: async () => { throw new Error('must not be read') },
+    body: bodyStream([]),
   }))
   await assert.rejects(() => remoteImageFetch('https://image.tmdb.org/t/p/w500/x.jpg'), (err) => {
     assert.equal(err.upstream, true)
@@ -123,14 +148,15 @@ test('remoteImageFetch does not follow a redirect to a disallowed host', async (
 })
 
 test('remoteImageFetch rejects a response over the size cap', async () => {
-  const big = new Uint8Array(13 * 1024 * 1024)
+  const chunk = new Uint8Array(7 * 1024 * 1024)
   stubFetch(() => ({
     ok: true,
     status: 200,
     headers: new Map([['content-type', 'image/jpeg']]),
-    arrayBuffer: async () => big.buffer,
+    body: bodyStream([chunk, chunk]),
   }))
-  await assert.rejects(() => remoteImageFetch('https://image.tmdb.org/t/p/w500/x.jpg'), (err) => {
+  const { stream } = await remoteImageFetch('https://image.tmdb.org/t/p/w500/x.jpg')
+  await assert.rejects(() => readStream(stream), (err) => {
     assert.equal(err.upstream, true)
     return true
   })

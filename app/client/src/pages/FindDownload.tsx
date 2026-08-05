@@ -48,13 +48,14 @@ type Release = {
   rejected?: boolean; rejections?: string[]; downloadAllowed?: boolean
 }
 type OptionsResult = { ok?: boolean; outcome?: string; warn?: string; error?: string }
-type ReleaseData = { movieId: number; createdByPicker?: boolean; searchFailed?: boolean; releases?: Release[] }
+type ReleaseData = { movieId: number; createdByPicker?: boolean; cancellationToken?: string; searchFailed?: boolean; releases?: Release[] }
 const isRelease = (value: unknown): value is Release => isRecord(value) && typeof value.guid === 'string'
 function parseReleaseData(value: unknown): ReleaseData {
   if (!isRecord(value) || typeof value.movieId !== 'number') return { movieId: 0, releases: [] }
   return {
     movieId: value.movieId,
     createdByPicker: typeof value.createdByPicker === 'boolean' ? value.createdByPicker : undefined,
+    cancellationToken: typeof value.cancellationToken === 'string' ? value.cancellationToken : undefined,
     searchFailed: typeof value.searchFailed === 'boolean' ? value.searchFailed : undefined,
     releases: arrayOf(value.releases, isRelease),
   }
@@ -1438,6 +1439,18 @@ function OptionsDialog({ kind, item, onClose, onAdded }: {
  * The cancel fires on every close path (X / backdrop / Cancel) and on unmount
  * (e.g. navigating Back mid-browse), guarded so it runs at most once and never
  * after a successful grab. */
+async function cancelPickerWithRetry(movieId: number, cancellationToken: string) {
+  const delays = [0, 250, 750, 1500, 3000]
+  for (const delay of delays) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+    try {
+      const response = await jpost('/api/servarr/radarr/releases/cancel', { movieId, cancellationToken })
+      if (response.status !== 503) return true
+    } catch { /* retry bounded transient failures */ }
+  }
+  return false
+}
+
 function ReleasePicker({ item, onClose, onGrabbed, onManual }: {
   item: CatalogItem; onClose: () => void; onGrabbed: (item: CatalogItem) => void; onManual: () => void
 }) {
@@ -1447,71 +1460,95 @@ function ReleasePicker({ item, onClose, onGrabbed, onManual }: {
   const [nonce, setNonce] = useState(0)          // bump to retry the search
   const [grabbing, setGrabbing] = useState<string | null>(null) // guid currently being grabbed
   const [grabError, setGrabError] = useState('')
+  const operationId = useRef(crypto.randomUUID()).current
+  const requestGeneration = useRef(0)
 
   // Cleanup handle kept in a ref so an unmount can still cancel exactly once.
-  const life = useRef<{ movieId: number | null; createdByPicker: boolean; settled: boolean }>({ movieId: null, createdByPicker: false, settled: false })
-  const cleanup = useCallback(() => {
-    const { movieId, createdByPicker, settled } = life.current
-    if (settled) return
-    life.current.settled = true
-    if (createdByPicker && movieId != null) {
-      jpost('/api/servarr/radarr/releases/cancel', { movieId, createdByPicker: true }).catch(() => {})
+  const life = useRef<{ movieId: number | null; cancellationToken: string | null; settled: boolean; cancelling: boolean; cleanupTimer: ReturnType<typeof setTimeout> | null }>({ movieId: null, cancellationToken: null, settled: false, cancelling: false, cleanupTimer: null })
+  const cancelNow = useCallback(() => {
+    const { movieId, cancellationToken, settled } = life.current
+    if (settled || life.current.cancelling) return
+    if (cancellationToken && movieId != null) {
+      life.current.cancelling = true
+      void cancelPickerWithRetry(movieId, cancellationToken).then(terminal => {
+        life.current.settled = terminal
+        life.current.cancelling = false
+      })
     }
   }, [])
+  const cleanup = useCallback(() => {
+    if (life.current.cleanupTimer) return
+    life.current.cleanupTimer = setTimeout(() => {
+      life.current.cleanupTimer = null
+      cancelNow()
+    }, 100)
+  }, [cancelNow])
 
   // Open / retry: reuse an existing movieId (retry keeps the same entry so we
   // never add twice or lose the createdByPicker flag), else use the library id,
   // else add-then-search via a lookup item + default profile/folder.
   useEffect(() => {
     let cancelled = false
+    const generation = ++requestGeneration.current
     setMeta({ loading: true, error: '' }); setGrabError('')
     ;(async () => {
       const existing = life.current.movieId
-      let createdByPicker = life.current.createdByPicker
+      let cancellationToken = life.current.cancellationToken
       let body
       if (existing != null) {
-        body = { movieId: existing }
+        body = { movieId: existing, operationId }
       } else if (isAdded(item)) {
-        body = { movieId: item.id }; createdByPicker = false
+        body = { movieId: item.id, operationId }; cancellationToken = null
       } else {
         const m = await loadMeta('radarr')
         const qualityProfileId = m.profiles?.[0]?.id
         const rootFolderPath = m.rootFolders?.[0]?.path
         if (qualityProfileId == null || !rootFolderPath) throw new Error('meta')
-        body = { movie: item, qualityProfileId, rootFolderPath }
+        body = { movie: item, qualityProfileId, rootFolderPath, operationId }
       }
       const res = await jpost('/api/servarr/radarr/releases', body)
       if (!res.ok) throw new Error('releases')
       const d = parseReleaseData(await apiJson(res))
-      // When we passed a movieId the server reports createdByPicker:false, but we
-      // must keep our own flag so a retried browse still cleans up on close.
-      return { d, createdByPicker: existing != null ? createdByPicker : !!d.createdByPicker }
+      // A retry uses the existing movie id, so preserve the capability returned
+      // by the original add instead of replacing it with the retry response.
+      return { d, cancellationToken: existing != null ? cancellationToken : (d.cancellationToken ?? null) }
     })()
-      .then(({ d, createdByPicker }) => {
+      .then(({ d, cancellationToken }) => {
         if (cancelled) {
           // Unmounted mid-search — still remove an entry we just created.
-          if (createdByPicker && d?.movieId != null) {
-            jpost('/api/servarr/radarr/releases/cancel', { movieId: d.movieId, createdByPicker: true }).catch(() => {})
+          if (generation === requestGeneration.current && cancellationToken && d?.movieId != null) {
+            void cancelPickerWithRetry(d.movieId, cancellationToken)
           }
           return
         }
-        life.current = { movieId: d.movieId, createdByPicker, settled: false }
+        life.current = { ...life.current, movieId: d.movieId, cancellationToken, settled: false }
         setData(d)
         setMeta({ loading: false, error: '' })
       })
       .catch(() => { if (!cancelled) setMeta({ loading: false, error: 'Couldn’t load sources right now. Please try again.' }) })
     return () => { cancelled = true }
-  }, [item, nonce])
+  }, [item, nonce, operationId])
 
   // Fire cleanup on unmount too (Back button etc.) — no-op if already settled.
-  useEffect(() => cleanup, [cleanup])
+  useEffect(() => {
+    if (life.current.cleanupTimer) {
+      clearTimeout(life.current.cleanupTimer)
+      life.current.cleanupTimer = null
+    }
+    return cleanup
+  }, [cleanup])
 
-  const doClose = () => { cleanup(); onClose() }
+  const doClose = () => { cancelNow(); onClose() }
 
   const grab = (rel: Release) => {
     if (grabbing) return
     setGrabbing(rel.guid); setGrabError('')
-    jpost('/api/servarr/radarr/grab', { movieId: data?.movieId, guid: rel.guid, indexerId: rel.indexerId })
+    jpost('/api/servarr/radarr/grab', {
+      movieId: data?.movieId,
+      guid: rel.guid,
+      indexerId: rel.indexerId,
+      cancellationToken: life.current.cancellationToken,
+    })
       .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then(() => { life.current.settled = true; onGrabbed(item) })   // keep the entry; parent flips card to downloading
       .catch(() => { setGrabbing(null); setGrabError('Couldn’t start that download. Try another source.') })
