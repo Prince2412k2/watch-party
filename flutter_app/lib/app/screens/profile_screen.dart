@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../state/profile_provider.dart';
 import '../../state/providers.dart';
 import '../../ui/palette.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/avatar_view.dart';
 import '../router.dart';
 
 /// Profile editor — the native counterpart of the web's `/profile` page.
@@ -50,6 +52,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _saving = false;
   String? _status;
   bool _statusIsError = false;
+  // Kept apart from [_status] (which reports saving): this is "the editor could
+  // not be assembled", and it has to be visible on its own rather than inside
+  // the options it is reporting the absence of.
+  String? _loadError;
 
   @override
   void initState() {
@@ -68,32 +74,53 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return keys.map((k) => '$k=${config.colors[k]}').join(',');
   }
 
+  static String _messageFor(Object error, String fallback) {
+    if (error is ApiException) {
+      // A 404 here means the server predates the avatar endpoints, which is
+      // worth saying plainly rather than reporting as a generic failure.
+      if (error.statusCode == 404) {
+        return 'This server does not support avatars yet — it needs updating.';
+      }
+      return error.message;
+    }
+    return fallback;
+  }
+
+  /// The profile and the avatar vocabulary are fetched independently and
+  /// reported separately. The name field only needs the first and the pickers
+  /// only need the second, so one of them failing must not blank the other —
+  /// which is exactly what a single combined await used to do.
   Future<void> _bootstrap() async {
     final api = ref.read(apiClientProvider);
+
     try {
-      final results = await Future.wait(<Future<Object>>[
-        api.profile(),
-        api.avatarOptions(),
-      ]);
-      final profile = results[0] as UserProfile;
-      final options = results[1] as AvatarOptions;
+      final profile = await api.profile();
       if (!mounted) return;
       _name.text = profile.displayName ?? '';
       setState(() {
         _accountName = profile.accountName;
         _config = profile.avatar ?? const AvatarConfig();
-        _options = options;
-        _loading = false;
       });
-      await Future.wait(<Future<void>>[_refreshPreview(), _refreshThumbnails()]);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _status = 'Could not load your profile';
-        _statusIsError = true;
-      });
+      setState(() => _loadError = _messageFor(error, 'Could not load your profile'));
     }
+
+    try {
+      final options = await api.avatarOptions();
+      if (!mounted) return;
+      setState(() => _options = options);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _loadError = _messageFor(error, 'Could not load the avatar options'),
+      );
+    }
+
+    if (!mounted) return;
+    setState(() => _loading = false);
+    await _refreshPreview();
+    await _refreshThumbnails();
   }
 
   Future<void> _refreshPreview() async {
@@ -169,6 +196,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     _refreshThumbnails();
   }
 
+  void _retry() {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    _bootstrap();
+  }
+
   void _back() {
     if (context.canPop()) {
       context.pop();
@@ -203,9 +238,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             children: [
                               Center(child: preview),
                               const SizedBox(height: AppSpacing.lg),
-                              ...(_options == null
-                                  ? const <Widget>[]
-                                  : _optionWidgets(_options!)),
+                              ..._editorWidgets(),
                             ],
                           );
                         }
@@ -221,9 +254,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             Expanded(
                               child: ListView(
                                 padding: const EdgeInsets.all(AppSpacing.lg),
-                                children: _options == null
-                                    ? const <Widget>[]
-                                    : _optionWidgets(_options!),
+                                children: _editorWidgets(),
                               ),
                             ),
                           ],
@@ -242,9 +273,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return typed.isNotEmpty ? typed : _accountName;
   }
 
-  List<Widget> _optionWidgets(AvatarOptions options) {
+  List<Widget> _editorWidgets() {
     final wp = context.wp;
+    final options = _options;
     return <Widget>[
+      if (_loadError != null) ...[
+        _Notice(message: _loadError!, onRetry: _retry),
+        const SizedBox(height: AppSpacing.lg),
+      ],
       _SectionLabel('Display name'),
       const SizedBox(height: AppSpacing.sm),
       TextField(
@@ -280,6 +316,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
       const SizedBox(height: AppSpacing.lg),
 
+      if (options != null) ...[
       for (final group in options.groups) ...[
         _SectionLabel(group.label),
         const SizedBox(height: AppSpacing.sm),
@@ -311,6 +348,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
         ),
         const SizedBox(height: AppSpacing.lg),
+      ],
+
       ],
 
       Divider(color: wp.line),
@@ -393,6 +432,45 @@ class _Header extends StatelessWidget {
   }
 }
 
+/// Says why the editor is missing something, rather than leaving a blank page
+/// to be interpreted.
+class _Notice extends StatelessWidget {
+  const _Notice({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: wp.surface2,
+        borderRadius: BorderRadius.circular(AppSpacing.radius),
+        border: Border.all(color: wp.line2),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline, size: 18, color: kSemanticRed),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontFamily: AppFonts.sans,
+                fontSize: 13,
+                color: wp.text,
+              ),
+            ),
+          ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
+      ),
+    );
+  }
+}
+
 class _Preview extends StatelessWidget {
   const _Preview({required this.svg, required this.name, required this.size});
 
@@ -415,8 +493,20 @@ class _Preview extends StatelessWidget {
             border: Border.all(color: wp.line2),
           ),
           clipBehavior: Clip.antiAlias,
+          // An empty circle says nothing about why it is empty; initials at
+          // least say who this is meant to be.
           child: svg == null
-              ? null
+              ? Center(
+                  child: Text(
+                    initialsOf(name),
+                    style: TextStyle(
+                      fontFamily: AppFonts.sans,
+                      fontSize: size * 0.28,
+                      fontWeight: FontWeight.w700,
+                      color: wp.dim,
+                    ),
+                  ),
+                )
               : SvgPicture.string(
                   svg!,
                   width: size,
