@@ -1,6 +1,5 @@
-/// Profile models. Deliberately hand-written rather than freezed: they are
-/// plain data with no codegen step, and every other model in here needs
-/// `build_runner` re-run to change.
+// Profile models are hand-written because they are plain data and changing
+// generated models requires rerunning build_runner.
 
 /// A saved avatar customisation — overrides only, in the vocabulary the asset
 /// set defines. Anything absent falls back to the value derived from the

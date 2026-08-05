@@ -12,10 +12,10 @@ import 'servarr_options_dialog.dart';
 /// them and only the request bodies differ. Mirrors `FindDownload.tsx`'s
 /// `ReleasePicker`, including the `createdByPicker` cleanup that keeps the *arr
 /// databases clean:
-///   open  → POST <service>/releases (adds a browsing-only entry when the title
+///   open  → POST `<service>/releases` (adds a browsing-only entry when the title
 ///           isn't in the library yet, then runs the live interactive search)
-///   grab  → POST <service>/grab     (hand the release to the client, KEEP entry)
-///   close → POST <service>/releases/cancel (remove ONLY an entry this picker
+///   grab  → POST `<service>/grab`     (hand the release to the client, KEEP entry)
+///   close → POST `<service>/releases/cancel` (remove ONLY an entry this picker
 ///           created — fires on every close/unmount path exactly once, and
 ///           never after a successful grab).
 ///

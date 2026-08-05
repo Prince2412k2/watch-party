@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { assets, derivedColors, derivedConfig, effectiveConfig } from './avatar'
+import { assets, derivedColors, derivedConfig, effectiveConfig } from './avatar.ts'
 
 const IDS = [
   '8f4b2c1d', 'root', 'a7e91b33', 'prince', 'yash',

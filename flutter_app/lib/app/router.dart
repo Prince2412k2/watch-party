@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import '../state/show_source.dart';
 import '../state/state.dart';
 import '../ui/ui.dart';
-import '../ui/motion.dart';
 import 'screens/app_shell.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';

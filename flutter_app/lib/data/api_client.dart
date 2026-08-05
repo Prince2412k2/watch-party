@@ -635,8 +635,8 @@ class DioApiClient implements ApiClient {
         'service': service,
         'targetId': targetId,
         'title': title,
-        if (seasonNumber != null) 'seasonNumber': seasonNumber,
-        if (episodeNumber != null) 'episodeNumber': episodeNumber,
+        'seasonNumber': ?seasonNumber,
+        'episodeNumber': ?episodeNumber,
       },
       data: Stream.fromIterable([bytes]),
       options: Options(
