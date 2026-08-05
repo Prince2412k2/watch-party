@@ -152,11 +152,20 @@ GoRouter buildRouter(WidgetRef ref) {
           // page identity so the Navigator replaces rather than reuses it.
           GoRoute(
             path: Routes.movies,
+            // The child depends on auth, so it is chosen inside a Consumer that
+            // WATCHES it. A plain `ref.read` here picked the child once and never
+            // again: this page's key is stable for the location, so signing in
+            // did not rebuild it and the login form stayed on screen even though
+            // the session was live — visible as "Sign in does nothing, but
+            // restarting the app lands me logged in".
             pageBuilder: (_, state) => NoTransitionPage(
               key: state.pageKey,
-              child: ref.read(authProvider).isAuthenticated
-                  ? const BrowseScreen(type: BrowseTypeFilter.movie)
-                  : const HomeScreen(),
+              child: Consumer(
+                builder: (_, ref, _) =>
+                    ref.watch(authProvider.select((s) => s.isAuthenticated))
+                    ? const BrowseScreen(type: BrowseTypeFilter.movie)
+                    : const HomeScreen(),
+              ),
             ),
           ),
           GoRoute(
