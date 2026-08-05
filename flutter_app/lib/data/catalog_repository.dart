@@ -79,8 +79,15 @@ class CatalogRepository {
     try {
       final fresh = await fetch();
       final freshJson = encode(fresh);
+      // Persistence is best-effort and deliberately isolated: a cache write
+      // that fails (full disk, unwritable support dir, a rename losing a race
+      // with another writer) must never discard a good network result, which
+      // is what a shared try/catch with the fetch did — the caller was handed
+      // a stale-or-error stream even though the request had succeeded.
       if (namespace != null && cache != null) {
-        await cache!.write(namespace, key, freshJson);
+        try {
+          await cache!.write(namespace, key, freshJson);
+        } catch (_) {}
       }
       if (cached == null || jsonEncode(cachedJson) != jsonEncode(freshJson)) {
         yield fresh;

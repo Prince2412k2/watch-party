@@ -297,4 +297,36 @@ void main() {
       engine.detach();
     });
   });
+
+  test('dispose() stops the control loop and closes the engine streams', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000.0);
+      final player = FakePlayer();
+      final socket = MockSocketClient();
+      var scheduleStreamDone = false;
+      engine.scheduleStream.listen(
+        (_) {},
+        onDone: () => scheduleStreamDone = true,
+      );
+
+      engine.attach(player: player, socket: socket, partyId: 'p', canControl: false);
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, playingSchedule());
+      fa.elapse(const Duration(milliseconds: 250));
+      expect(player.calls, isNotEmpty, reason: 'the control loop is live');
+
+      engine.dispose();
+      fa.flushMicrotasks();
+
+      // Nothing may drive the player after disposal — the 200ms control loop,
+      // the applying timers and the user-seek timer all outlived the provider
+      // before, still holding the player and socket they were attached to.
+      player.calls.clear();
+      fa.elapse(const Duration(seconds: 5));
+
+      expect(player.calls, isEmpty);
+      expect(engine.isDisposed, isTrue);
+      expect(scheduleStreamDone, isTrue);
+    });
+  });
 }

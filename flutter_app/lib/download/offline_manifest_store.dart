@@ -16,6 +16,9 @@ class OfflineManifestStore {
   final Directory? overrideDir;
   static const _fileName = 'offline_manifest.json';
 
+  /// Tail of the chain of in-flight [save]s (see [_serialize]).
+  Future<void> _writes = Future<void>.value();
+
   Future<File> _file() async {
     final dir = overrideDir ?? await getApplicationSupportDirectory();
     if (!await dir.exists()) await dir.create(recursive: true);
@@ -36,9 +39,29 @@ class OfflineManifestStore {
     }
   }
 
-  Future<void> save(List<OfflineRecord> records) async {
-    final file = await _file();
-    final raw = jsonEncode(records.map((r) => r.toJson()).toList());
-    await file.writeAsString(raw);
+  /// Writes [records] as the whole manifest. Serialized against every other
+  /// save on this store (two overlapping writes used to interleave inside
+  /// `writeAsString`) and atomic (temp file + rename), so a reader — or a save
+  /// racing an app kill — never sees a half-written manifest. Mirrors
+  /// [CatalogCacheStore.write]'s temp-then-rename idiom.
+  ///
+  /// Serialization is per-instance: the app has exactly one store (owned by
+  /// [OfflineNotifier]), and the temp name is shared, so a second store over
+  /// the same directory would still race. Tests that want isolation should
+  /// give each store its own `overrideDir`.
+  Future<void> save(List<OfflineRecord> records) => _serialize(() async {
+        final file = await _file();
+        final raw = jsonEncode(records.map((r) => r.toJson()).toList());
+        final temp = File('${file.path}.tmp');
+        await temp.writeAsString(raw, flush: true);
+        await temp.rename(file.path);
+      });
+
+  Future<void> _serialize(Future<void> Function() action) {
+    final result = _writes.then((_) => action());
+    // Swallow failures on the *chain* only (the caller still gets [result]) so
+    // one failed write can't wedge every later save behind a rejected future.
+    _writes = result.then((_) {}, onError: (_) {});
+    return result;
   }
 }
