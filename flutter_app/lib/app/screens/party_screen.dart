@@ -50,6 +50,12 @@ class _PartyScreenState extends ConsumerState<PartyScreen> {
     super.initState();
     final id = widget.partyId;
     if (id == null || id.isEmpty) return;
+    // Being on this route IS the un-minimized state: clear the latch so the
+    // shell resumes auto-opening this party after the next lobby round trip.
+    // Deferred a frame — Riverpod refuses provider writes from a life-cycle.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(partyMinimizedProvider.notifier).restore();
+    });
     // Already in this party (created/joined via the popcorn widget, or minimized
     // then re-opened) — render the live session WITHOUT re-emitting party:join,
     // so the socket / LiveKit / sync engine are never torn down and re-set up.
@@ -366,20 +372,23 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   }
 
   // Back MINIMIZES to the shell — it never leaves/ends the party, so the
-  // socket / LiveKit / sync engine stay alive and the popcorn shows "N in
-  // party". End (host) lives in the Watch Party menu; leave lives in the
+  // socket / LiveKit / sync engine stay alive, playback keeps tracking the
+  // shared schedule, and the popcorn shows the live room (with "Return to the
+  // party"). End (host) lives in the Watch Party menu; leave lives in the
   // popcorn — Stop Movie (backToLobby) and Stop Stream (end) stay distinct.
-  Future<void> _minimize() async {
-    final notifier = ref.read(partyProvider.notifier);
-    if (notifier.isHost) {
-      await notifier.backToLobby();
-    } else {
-      await notifier.leave();
+  //
+  // It used to do the opposite of what it says: a host's Back emitted
+  // `party:backToLobby` (stopping the movie for the WHOLE room) and a guest's
+  // Back left the party outright, tearing down its own socket. Neither is
+  // recoverable, and both were presented as a plain back arrow.
+  void _minimize() {
+    final party = ref.read(partyProvider);
+    // Latch the minimize so [AppShell]'s auto-open does not immediately send us
+    // back here; re-entering `/party/:id` clears it again.
+    if (party != null) {
+      ref.read(partyMinimizedProvider.notifier).minimize(party.id);
     }
-    final player = ref.read(playerControllerProvider);
-    await player.pause();
-    await player.seek(Duration.zero);
-    if (mounted) context.go('/home');
+    context.go('/home');
   }
 
   @override
@@ -576,8 +585,11 @@ class _WatchChrome extends ConsumerWidget {
         child: Row(
           children: [
             _AvIconButton(
+              key: const Key('minimizePartyButton'),
               icon: Icons.arrow_back,
-              tooltip: 'Back',
+              // Named for what it does. It is not a leave and not a stop: the
+              // room keeps playing and the popcorn offers the way back.
+              tooltip: 'Minimize — the party keeps going',
               scrim: true,
               onTap: onBack,
             ),
@@ -636,9 +648,10 @@ class _WatchChrome extends ConsumerWidget {
 ///
 /// [scrim] backs the glyph with a dark disc: a bare icon sitting over full-bleed
 /// video is legible or invisible depending on the frame behind it, which is not
-/// a coin-flip worth taking for the control that leaves the party.
+/// a coin-flip worth taking for the control that leaves the immersive stage.
 class _AvIconButton extends StatefulWidget {
   const _AvIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onTap,

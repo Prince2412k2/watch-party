@@ -166,7 +166,20 @@ class _PlayerChromeState extends State<PlayerChrome> {
   void initState() {
     super.initState();
     FocusManager.instance.addListener(_onGlobalFocusChange);
-    final c = widget.controller;
+    _bindController(widget.controller);
+    _scheduleIdle();
+    _loadTrickplay();
+    _loadExternalSubtitles();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _applyCanonicalSubtitlePreferences();
+      _applyCanonicalTracks();
+    });
+  }
+
+  /// Seed every mirrored field from [c]'s real state and subscribe to its
+  /// streams. Assignments only, no `setState` — callers own the rebuild
+  /// (`initState` runs before the first build; [didUpdateWidget] wraps it).
+  void _bindController(PlayerController c) {
     _position = c.positionNow;
     _duration = c.durationNow;
     _playing = c.isPlayingNow;
@@ -223,24 +236,41 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (c is MediaKitPlayerController) {
       _subs.add(c.errors.listen((e) => setState(() => _error = e)));
     }
+  }
 
-    _scheduleIdle();
-    _loadTrickplay();
-    _loadExternalSubtitles();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _applyCanonicalSubtitlePreferences();
-      _applyCanonicalTracks();
-    });
+  void _unbindController() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
   }
 
   @override
   void didUpdateWidget(PlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
+      // A replaced controller left this chrome subscribed to the OLD player: the
+      // transport bar kept mirroring a position/duration/track set nobody was
+      // watching, every control wrote to the new player, and none of the new
+      // player's own state was ever read. Drop the old streams and re-seed.
+      _unbindController();
+      // Anything still resolving against the previous player (an external
+      // subtitle fetch) must not land on the new one.
+      _subtitleSelectionVersion++;
       setState(() {
         _subtitleCues = const [];
         _selectedSubtitle = null;
+        // These native track ids were injected into the OLD player; the new one
+        // has no such tracks, so keeping them would hide real subtitle entries.
+        _loadedExternalSubtitleTrackIds.clear();
+        _bindController(widget.controller);
       });
+      // Idle behaviour follows the new player's play state, and the party's
+      // canonical audio/subtitle/appearance choices have to be re-applied —
+      // the replacement starts on libmpv's own defaults.
+      _scheduleIdle();
+      unawaited(_applyCanonicalSubtitlePreferences());
+      unawaited(_applyCanonicalTracks());
     }
     if (oldWidget.itemId != widget.itemId ||
         oldWidget.mediaSourceId != widget.mediaSourceId ||
@@ -403,9 +433,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
   void dispose() {
     FocusManager.instance.removeListener(_onGlobalFocusChange);
     _idleTimer?.cancel();
-    for (final s in _subs) {
-      s.cancel();
-    }
+    _unbindController();
     _focusNode.dispose();
     super.dispose();
   }

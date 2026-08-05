@@ -28,6 +28,9 @@ class _SpyController implements PlayerController {
   void emitTracks(PlayerTracks t) => _tracksCtrl.add(t);
   void emitPosition(Duration position) => _positionCtrl.add(position);
 
+  /// Whether the chrome is still subscribed to this controller's streams.
+  bool get isBound => _positionCtrl.hasListener || _tracksCtrl.hasListener;
+
   @override
   Future<void> setVolume(double volume) async => volumes.add(volume);
   @override
@@ -69,7 +72,7 @@ class _SpyController implements PlayerController {
   Stream<PlayerTracks> get tracks => _tracksCtrl.stream;
 
   @override
-  Duration get positionNow => Duration.zero;
+  Duration positionNow = Duration.zero;
   @override
   Duration get durationNow => const Duration(minutes: 90);
   @override
@@ -486,5 +489,53 @@ void main() {
     await tester.pump();
 
     expect(c.seeks, hasLength(1));
+  });
+
+  // A replaced controller used to leave the chrome subscribed to the old
+  // player: it kept mirroring a position/track set nobody was watching, while
+  // every control wrote to the new one (audit #61).
+  testWidgets('replacing the controller unbinds the old player and seeds '
+      'the new one', (tester) async {
+    final first = _SpyController();
+    final second = _SpyController()..positionNow = const Duration(minutes: 10);
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+
+    Widget chrome(_SpyController c) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(body: PlayerChrome(controller: c)),
+    );
+
+    await tester.pumpWidget(chrome(first));
+    await tester.pump();
+    first.emitPosition(const Duration(minutes: 3));
+    await tester.pump(); // deliver the stream event (schedules setState)
+    await tester.pump(); // rebuild with it
+    expect(find.text('3:00 / 1:30:00'), findsOneWidget);
+    expect(first.isBound, isTrue);
+
+    await tester.pumpWidget(chrome(second));
+    await tester.pump();
+
+    // Seeded from the replacement's own state, not carried over from the old.
+    expect(find.text('10:00 / 1:30:00'), findsOneWidget);
+    expect(first.isBound, isFalse);
+    expect(second.isBound, isTrue);
+
+    // The old player can no longer move the chrome…
+    first.emitPosition(const Duration(minutes: 40));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('10:00 / 1:30:00'), findsOneWidget);
+
+    // …and the new one can, on every stream the chrome reads.
+    second.emitPosition(const Duration(minutes: 20));
+    second.emitTracks(tracks);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('20:00 / 1:30:00'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.subtitles));
+    await tester.pumpAndSettle();
+    expect(find.text('English SDH'), findsOneWidget);
   });
 }

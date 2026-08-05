@@ -91,6 +91,9 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _subtitlePreferences = SubtitlePreferences.defaults;
     _ref.read(partyWaitingProvider.notifier).clear();
     _ref.read(sharedBrowserProvider.notifier).clear();
+    // There is no party surface left to be minimized away from, so the shell's
+    // auto-open must not stay latched shut for the next session.
+    _ref.read(partyMinimizedProvider.notifier).restore();
   }
 
   // ── Socket subscription (idempotent) ─────────────────────────────────────
@@ -387,12 +390,42 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   /// the selection actually changes (guards the per-update `party:state` churn).
   String? _openedMediaId;
 
+  /// Monotonic token for shared-player intents. Every party-state change and
+  /// every teardown claims a new one, so a step that has been superseded can
+  /// recognise itself and stand down.
+  int _mediaGeneration = 0;
+
+  /// Tail of the SERIALIZED shared-player queue.
+  ///
+  /// [PlayerController.open] is not re-entrant: two overlapping opens complete
+  /// in whatever order the player finishes them, which is how switching from
+  /// movie A to movie B could leave the room playing A under a `party:state`
+  /// that said B, and how leaving mid-open could be undone by the open it was
+  /// meant to cancel. One step at a time, newest intent wins.
+  Future<void> _mediaQueue = Future<void>.value();
+
+  /// Claims the newest generation for [step] and runs it after every earlier
+  /// step has finished. The returned future is [step]'s; the stored tail
+  /// swallows failures so one bad open cannot wedge the queue shut forever.
+  Future<void> _enqueueMediaStep(Future<void> Function(int generation) step) {
+    final generation = ++_mediaGeneration;
+    final queued = _mediaQueue.then((_) => step(generation));
+    _mediaQueue = queued.catchError((_) {});
+    return queued;
+  }
+
   /// Loads the party's selected movie into the shared [PlayerController] — for
   /// BOTH a local pick and a remote one (the server broadcasts `party:state`
   /// with `mediaItemId`/`stage` to the whole room, so a web host's pick lands
   /// here too and a Flutter guest opens the same title). The sync engine then
   /// drives position/play from `sync:schedule`. On back-to-lobby it clears.
-  Future<void> _syncPlayerToMedia() async {
+  Future<void> _syncPlayerToMedia() => _enqueueMediaStep(_applyMediaSelection);
+
+  Future<void> _applyMediaSelection(int generation) async {
+    // Superseded while queued — the intent that replaced us reads the same
+    // `state` and will settle the player, and doing it here as well is exactly
+    // the double open this queue exists to prevent.
+    if (generation != _mediaGeneration) return;
     final s = state;
     if (s == null) return;
     final controller = _ref.read(playerControllerProvider);
@@ -412,7 +445,9 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         // authoritative schedule, so playback stays in sync across clients.
         await controller.open(url, autoplay: false);
       } catch (_) {
-        _openedMediaId = null; // allow a retry on the next party:state
+        // Allow a retry on the next party:state — but only if nothing newer has
+        // claimed the player in the meantime, whose bookkeeping must stand.
+        if (generation == _mediaGeneration) _openedMediaId = null;
       }
     } else if (_openedMediaId != null) {
       // Back to lobby / media cleared — stop local playback.
@@ -421,6 +456,20 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       await controller.seek(Duration.zero);
     }
   }
+
+  /// Stops the shared player and forgets what was open, ordered behind any open
+  /// still in flight — otherwise a leave that raced an open paused a player that
+  /// then finished loading and sat there holding the movie.
+  Future<void> _releaseSharedPlayer() =>
+      _enqueueMediaStep((generation) async {
+        // A new session already claimed the player (solo → party handoff, or a
+        // fresh join): its open is the current truth, so don't stop it.
+        if (generation != _mediaGeneration) return;
+        _openedMediaId = null;
+        final player = _ref.read(playerControllerProvider);
+        await player.pause();
+        await player.seek(Duration.zero);
+      });
 
   // ── Create / join ─────────────────────────────────────────────────────────
   /// Restores a server-side party after an app restart.
@@ -505,12 +554,22 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _syncRoleToEngine();
   }
 
-  /// Pushes the derived `isHost`/`canControl` onto the live engine without a
-  /// re-attach — called after every roster/host-transfer/collaborative change.
+  /// Pushes the derived `isHost`/`canControl` — and the room's server-owned sync
+  /// mode — onto the live engine without a re-attach. Called after every
+  /// roster/host-transfer/collaborative change and every session snapshot.
   void _syncRoleToEngine() {
     final engine = _ref.read(syncEngineProvider);
     engine.canControl = canControl;
-    if (engine is SyncEngineImpl) engine.isHost = isHost;
+    if (engine is SyncEngineImpl) {
+      engine.isHost = isHost;
+      // `syncMode` is part of every session snapshot, so a join, an app-restart
+      // resume, or a host transfer has to carry it. Without this the engine kept
+      // its constructor default ('hopping') until a host on THIS client happened
+      // to call setSyncMode — a room configured for 'dragging' was silently
+      // driven with hopping semantics by everyone who joined it.
+      final mode = state?.syncMode;
+      if (mode != null) engine.syncMode = mode;
+    }
   }
 
   // ── Host controls ─────────────────────────────────────────────────────────
@@ -558,6 +617,10 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     // while the solo-to-party handoff is still in progress.
     final previouslyOpened = _openedMediaId;
     _openedMediaId = mediaItemId;
+    // Claim the newest shared-player intent as well: a queued open or stop left
+    // over from the session being handed off would otherwise run against the
+    // stream that is already playing and restart it from zero.
+    _mediaGeneration++;
     late final String partyId;
     try {
       partyId = await create(
@@ -745,12 +808,13 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     // Provider, not scoped to the party) — detaching the sync engine only
     // stops the party from *driving* it, so without an explicit stop here the
     // movie (and its audio) keeps playing after leaving/ending the party.
-    await _bestEffort(() async {
-      final player = _ref.read(playerControllerProvider);
-      await player.pause();
-      await player.seek(Duration.zero);
-    });
-    _openedMediaId = null;
+    //
+    // Queued behind any open still in flight (see [_releaseSharedPlayer]), with
+    // a bound on the wait: teardown must release the socket and the camera even
+    // if the player itself never finishes loading.
+    await _bestEffort(
+      () => _releaseSharedPlayer().timeout(const Duration(seconds: 5)),
+    );
     await _bestEffort(() async {
       await _ref.read(livekitProvider.notifier).leave();
       _ref.read(livekitProvider.notifier).reset();
@@ -869,6 +933,31 @@ class PartyWaitingNotifier extends StateNotifier<List<Participant>> {
 final partyWaitingProvider =
     StateNotifierProvider<PartyWaitingNotifier, List<Participant>>(
       (ref) => PartyWaitingNotifier(),
+    );
+
+/// The id of the party whose immersive surface this client has deliberately
+/// MINIMIZED away from, or null.
+///
+/// The party screen's top-left Back is a minimize: the session — socket, A/V,
+/// sync engine, playback — stays live behind the popcorn. Something has to stop
+/// the shell's auto-open from dragging the user straight back in, and it cannot
+/// be `_AppShellState` state: `/party/:id` is a top-level route, so navigating
+/// to it REPLACES the shell, and the shell is built from scratch on the way
+/// back with no memory of why it was entered.
+class PartyMinimizedNotifier extends StateNotifier<String?> {
+  PartyMinimizedNotifier() : super(null);
+
+  void minimize(String partyId) => state = partyId;
+
+  /// Re-entering the player, the room leaving the player surface, and the
+  /// session ending all clear the latch, so the next `watching` stage opens
+  /// normally again.
+  void restore() => state = null;
+}
+
+final partyMinimizedProvider =
+    StateNotifierProvider<PartyMinimizedNotifier, String?>(
+      (ref) => PartyMinimizedNotifier(),
     );
 
 /// The sync engine driving playback from the party timeline (PLAN §3.4). The
