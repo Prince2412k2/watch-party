@@ -140,6 +140,35 @@ abstract class ApiClient {
   /// Delete the external subtitle track at [streamIndex] on [itemId].
   Future<void> deleteSubtitle(String itemId, int streamIndex);
 
+  // ── Profile ───────────────────────────────────────────────────────────
+  /// The signed-in user's own profile. Nobody else's is readable.
+  Future<UserProfile> profile();
+
+  /// Replace the signed-in user's own profile. Nulls clear: a null
+  /// [displayName] falls back to the account name, a null [avatar] returns to
+  /// the avatar derived from the account.
+  Future<UserProfile> saveProfile({String? displayName, AvatarConfig? avatar});
+
+  /// The slots, parts, colour slots and swatches an editor should offer, read
+  /// from the asset set the server has installed.
+  Future<AvatarOptions> avatarOptions();
+
+  /// Someone's avatar, drawn by the server as SVG. Humation is a JavaScript
+  /// renderer with the artwork in a JS package, so this client cannot draw one
+  /// itself. Readable for yourself and for anyone you currently share a party
+  /// with.
+  Future<String> avatarSvg(String userId);
+
+  /// Every part of one slot, drawn in [colors], as `{ partId: svg }` — one
+  /// request instead of one per thumbnail.
+  Future<Map<String, String>> avatarPartSvgs(
+    String slotId, {
+    Map<String, String> colors = const <String, String>{},
+  });
+
+  /// An unsaved configuration, drawn, so an editor can preview before saving.
+  Future<String> avatarPreviewSvg(AvatarConfig? avatar);
+
   // ── LiveKit ─────────────────────────────────────────────────────────────
   Future<LiveKitToken> livekitToken(String partyId);
 
@@ -474,6 +503,83 @@ class DioApiClient implements ApiClient {
     );
     if (res.statusCode != 200) _fail(res, 'livekitToken');
     return LiveKitToken.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  // ── Profile ───────────────────────────────────────────────────────────
+
+  @override
+  Future<UserProfile> profile() async {
+    final res = await _dio.get('/api/profile');
+    if (res.statusCode != 200) _fail(res, 'profile');
+    return UserProfile.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<UserProfile> saveProfile({
+    String? displayName,
+    AvatarConfig? avatar,
+  }) async {
+    // The route replaces the whole profile, so both fields are always sent —
+    // an omitted one would read as "clear it".
+    final res = await _dio.put(
+      '/api/profile',
+      data: <String, dynamic>{
+        'displayName': displayName,
+        'avatar': (avatar == null || avatar.isEmpty) ? null : avatar.toJson(),
+      },
+    );
+    if (res.statusCode != 200) _fail(res, 'saveProfile');
+    return UserProfile.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<AvatarOptions> avatarOptions() async {
+    final res = await _dio.get('/api/avatar/options');
+    if (res.statusCode != 200) _fail(res, 'avatarOptions');
+    return AvatarOptions.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<String> avatarSvg(String userId) async {
+    final res = await _dio.get<String>(
+      '/api/avatar/$userId.svg',
+      options: Options(responseType: ResponseType.plain),
+    );
+    if (res.statusCode != 200) _fail(res, 'avatarSvg');
+    return res.data ?? '';
+  }
+
+  @override
+  Future<Map<String, String>> avatarPartSvgs(
+    String slotId, {
+    Map<String, String> colors = const <String, String>{},
+  }) async {
+    final res = await _dio.get(
+      '/api/avatar/parts/$slotId',
+      queryParameters: colors,
+    );
+    if (res.statusCode != 200) _fail(res, 'avatarPartSvgs');
+    final body = res.data;
+    final previews = <String, String>{};
+    if (body is Map) {
+      body.forEach((key, value) {
+        if (key is String && value is String) previews[key] = value;
+      });
+    }
+    return previews;
+  }
+
+  @override
+  Future<String> avatarPreviewSvg(AvatarConfig? avatar) async {
+    final res = await _dio.post<String>(
+      '/api/avatar/preview.svg',
+      data: <String, dynamic>{
+        'avatar': (avatar == null || avatar.isEmpty) ? null : avatar.toJson(),
+      },
+      options: Options(responseType: ResponseType.plain),
+    );
+    if (res.statusCode != 200) _fail(res, 'avatarPreviewSvg');
+    return res.data ?? '';
   }
 
   @override

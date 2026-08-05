@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../app/router.dart';
 import '../../state/state.dart';
 import '../../state/theme_provider.dart';
 import '../../update/desktop_updater.dart';
@@ -8,6 +10,7 @@ import '../palette.dart';
 import '../theme_mode.dart';
 import '../tokens.dart';
 import 'app_dialog.dart';
+import 'avatar_view.dart';
 
 /// The top-right profile control (`.web-profile`, styles.css:313-331). A
 /// circular avatar showing the signed-in user's initials with a red
@@ -27,6 +30,17 @@ class ProfileMenu extends ConsumerStatefulWidget {
 class _ProfileMenuState extends ConsumerState<ProfileMenu> {
   bool _open = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // This control is the app's one persistent view of "me", so it is where the
+    // profile gets fetched. Deferred past the first frame because loading it
+    // moves provider state.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(profileProvider.notifier).load();
+    });
+  }
+
   Future<void> _signOut() async {
     setState(() => _open = false);
     final confirmed = await showConfirm(
@@ -40,9 +54,13 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu> {
 
   @override
   Widget build(BuildContext context) {
-    final name = ref.watch(
+    final accountName = ref.watch(
       authProvider.select((s) => s.user?.name ?? 'Profile'),
     );
+    final userId = ref.watch(authProvider.select((s) => s.user?.userId));
+    // What you call yourself wins over the account you signed in with.
+    final displayName = ref.watch(profileProvider.select((s) => s.shownName));
+    final name = displayName.isNotEmpty ? displayName : accountName;
 
     return TapRegion(
       onTapOutside: (_) {
@@ -53,12 +71,20 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           _Avatar(
-            initials: _initials(name),
+            userId: userId,
+            name: name,
             onTap: () => setState(() => _open = !_open),
           ),
           if (_open) ...[
             const SizedBox(height: 8),
-            _Menu(name: name, onSignOut: _signOut),
+            _Menu(
+              name: name,
+              onSignOut: _signOut,
+              onEditProfile: () {
+                setState(() => _open = false);
+                context.push(Routes.profile);
+              },
+            ),
           ],
         ],
       ),
@@ -67,9 +93,10 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu> {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.initials, required this.onTap});
+  const _Avatar({required this.userId, required this.name, required this.onTap});
 
-  final String initials;
+  final String? userId;
+  final String name;
   final VoidCallback onTap;
 
   @override
@@ -82,20 +109,27 @@ class _Avatar extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Container(
+            SizedBox(
               width: 36,
               height: 36,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(color: wp.text, shape: BoxShape.circle),
-              child: Text(
-                initials,
-                style: TextStyle(
-                  fontFamily: AppFonts.sans,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: wp.bg,
-                ),
-              ),
+              child: userId == null
+                  ? Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: wp.text,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        initialsOf(name),
+                        style: TextStyle(
+                          fontFamily: AppFonts.sans,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: wp.bg,
+                        ),
+                      ),
+                    )
+                  : AvatarView(userId: userId!, name: name, size: 36),
             ),
             Positioned(
               top: 0,
@@ -118,10 +152,15 @@ class _Avatar extends StatelessWidget {
 }
 
 class _Menu extends ConsumerWidget {
-  const _Menu({required this.name, required this.onSignOut});
+  const _Menu({
+    required this.name,
+    required this.onSignOut,
+    required this.onEditProfile,
+  });
 
   final String name;
   final VoidCallback onSignOut;
+  final VoidCallback onEditProfile;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -214,6 +253,11 @@ class _Menu extends ConsumerWidget {
                 ),
               ),
             ),
+          _MenuRow(
+            icon: Icons.person_outline,
+            label: 'Edit profile',
+            onTap: onEditProfile,
+          ),
           _SignOutButton(onTap: onSignOut),
         ],
       ),
@@ -360,6 +404,62 @@ class _ThemeButtonState extends State<_ThemeButton> {
   }
 }
 
+/// A neutral menu row. Same shape as [_SignOutButton] without the danger
+/// colouring — that one stays red because it is the destructive one.
+class _MenuRow extends StatefulWidget {
+  const _MenuRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_MenuRow> createState() => _MenuRowState();
+}
+
+class _MenuRowState extends State<_MenuRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: _hover ? wp.surface2 : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Row(
+            children: [
+              Icon(widget.icon, size: 16, color: wp.text),
+              const SizedBox(width: 9),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  fontFamily: AppFonts.sans,
+                  fontSize: 13,
+                  color: wp.text,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SignOutButton extends StatefulWidget {
   const _SignOutButton({required this.onTap});
 
@@ -405,11 +505,4 @@ class _SignOutButtonState extends State<_SignOutButton> {
       ),
     );
   }
-}
-
-String _initials(String name) {
-  final parts = name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
-  final letters = parts.map((w) => w[0]).join().toUpperCase();
-  if (letters.isEmpty) return '?';
-  return letters.length > 2 ? letters.substring(0, 2) : letters;
 }

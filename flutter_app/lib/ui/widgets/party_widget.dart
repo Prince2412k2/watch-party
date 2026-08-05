@@ -9,6 +9,7 @@ import '../../state/state.dart';
 import '../palette.dart';
 import '../tokens.dart';
 import 'app_button.dart';
+import 'avatar_view.dart';
 import 'app_dialog.dart';
 import 'join_code_dialog.dart';
 import 'party_qr.dart';
@@ -249,6 +250,7 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
         const SizedBox(height: AppSpacing.lg),
         for (final p in session.participants)
           _Person(
+            userId: p.userId,
             name: p.name,
             host: p.isHost,
             trailing: (isHost && !p.isHost)
@@ -272,6 +274,7 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
           ),
           for (final p in waiting)
             _Person(
+              userId: p.userId,
               name: p.name,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -351,8 +354,14 @@ class _PartyWidgetState extends ConsumerState<PartyWidget> {
 }
 
 class _Person extends StatelessWidget {
-  const _Person({required this.name, this.host = false, this.trailing});
+  const _Person({
+    required this.userId,
+    required this.name,
+    this.host = false,
+    this.trailing,
+  });
 
+  final String userId;
   final String name;
   final bool host;
   final Widget? trailing;
@@ -364,24 +373,7 @@ class _Person extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         children: [
-          Container(
-            width: 28,
-            height: 28,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: wp.surface2,
-              shape: BoxShape.circle,
-            ),
-            child: Text(
-              _initials(name),
-              style: TextStyle(
-                fontFamily: AppFonts.sans,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: wp.text,
-              ),
-            ),
-          ),
+          AvatarView(userId: userId, name: name, size: 28),
           const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Text(
@@ -443,9 +435,4 @@ class _IconAction extends StatelessWidget {
   }
 }
 
-String _initials(String name) {
-  final parts = name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
-  final letters = parts.map((w) => w[0]).join().toUpperCase();
-  if (letters.isEmpty) return '?';
-  return letters.length > 2 ? letters.substring(0, 2) : letters;
-}
+

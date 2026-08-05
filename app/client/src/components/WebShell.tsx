@@ -3,12 +3,15 @@ import type { ReactNode } from 'react'
 import QRCode from 'qrcode'
 import { useParty } from '../context/PartyContext'
 import { navigate } from '../router'
+import Avatar from './Avatar'
+import { useMemberAvatar } from '../hooks/useMemberAvatar'
+import type { AvatarConfig } from '../lib/avatar'
 import type { PartyUser } from '../types'
 
 type WebTab = 'movies' | 'series' | 'discover' | 'downloads'
 type Theme = 'light' | 'dark' | 'balanced'
 
-type IconName = 'film' | 'tv' | 'compass' | 'download' | 'users' | 'plus' | 'enter' | 'logout' | 'x' | 'check' | 'copy' | 'play' | 'sun' | 'moon' | 'blend' | 'globe'
+type IconName = 'film' | 'tv' | 'compass' | 'download' | 'users' | 'plus' | 'enter' | 'logout' | 'x' | 'check' | 'copy' | 'play' | 'sun' | 'moon' | 'blend' | 'globe' | 'user'
 
 const paths: Record<IconName, string> = {
   film: 'M4 4h16v16H4zM4 8h16M4 16h16M8 4v16M16 4v16',
@@ -19,6 +22,7 @@ const paths: Record<IconName, string> = {
   plus: 'M12 5v14M5 12h14',
   enter: 'M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M3 12h12m0 0-4-4m4 4-4 4',
   logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
+  user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   x: 'M18 6 6 18M6 6l12 12',
   check: 'M20 6 9 17l-5-5',
   copy: 'M8 8h11v11H8zM5 16H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v1',
@@ -40,10 +44,6 @@ function Icon({ name, size = 19, fill = 'none' }: { name: IconName; size?: numbe
   return <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={paths[name]} /></svg>
 }
 
-function initials(name = '') {
-  return name.split(/\s+/).map(word => word[0]).join('').toUpperCase().slice(0, 2) || '?'
-}
-
 function ThemeSwitch({ theme, onChange }: { theme: Theme; onChange: (theme: Theme) => void }) {
   const options: Array<{ id: Theme; label: string; icon: IconName }> = [
     { id: 'light', label: 'Light mode', icon: 'sun' },
@@ -61,7 +61,7 @@ function ThemeSwitch({ theme, onChange }: { theme: Theme; onChange: (theme: Them
   )
 }
 
-function ProfileMenu({ profileInitials, profileName, logout, theme, onThemeChange }: { profileInitials?: string; profileName?: string; logout?: () => void | Promise<void>; theme: Theme; onThemeChange: (theme: Theme) => void }) {
+function ProfileMenu({ userId, profileAvatar, profileName, logout, theme, onThemeChange }: { userId?: string; profileAvatar?: AvatarConfig | null; profileName?: string; logout?: () => void | Promise<void>; theme: Theme; onThemeChange: (theme: Theme) => void }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -76,11 +76,16 @@ function ProfileMenu({ profileInitials, profileName, logout, theme, onThemeChang
 
   return (
     <div className="web-profile" ref={rootRef}>
-      <button className="web-avatar" onClick={() => setOpen(value => !value)} aria-label="Open profile menu" aria-expanded={open}>{profileInitials || '?'}</button>
+      <button className="web-avatar" onClick={() => setOpen(value => !value)} aria-label="Open profile menu" aria-expanded={open}>
+        {userId
+          ? <Avatar userId={userId} name={profileName} config={profileAvatar} size={36} circle />
+          : '?'}
+      </button>
       {open ? (
         <div className="web-profile-menu">
           <div><span>Signed in as</span><strong>{profileName || 'Profile'}</strong></div>
           <ThemeSwitch theme={theme} onChange={onThemeChange} />
+          <button onClick={() => { setOpen(false); navigate('/profile') }}><Icon name="user" size={16} />Edit profile</button>
           <button onClick={() => logout?.()}><Icon name="logout" size={16} />Sign out</button>
         </div>
       ) : null}
@@ -99,9 +104,12 @@ function PartyQr({ url }: { url: string }) {
 }
 
 function Person({ user, host, actions }: { user: PartyUser; host?: boolean; actions?: ReactNode }) {
+  const avatar = useMemberAvatar(user.userId)
   return (
     <div className="party-person">
-      <span className="party-person-avatar">{initials(user.name)}</span>
+      <span className="party-person-avatar">
+        <Avatar userId={user.userId} name={user.name} config={avatar} size={30} circle />
+      </span>
       <span>{user.name}</span>
       {host ? <small>Host</small> : null}
       {actions}
@@ -216,10 +224,11 @@ function JoinDialog({ onClose, onJoin }: { onClose: () => void; onJoin: (code: s
   )
 }
 
-export function WebShell({ children, active, initials: profileInitials, profileName, logout }: {
+export function WebShell({ children, active, userId, profileAvatar, profileName, logout }: {
   children: ReactNode
   active?: WebTab
-  initials?: string
+  userId?: string
+  profileAvatar?: AvatarConfig | null
   profileName?: string
   logout?: () => void | Promise<void>
 }) {
@@ -275,7 +284,7 @@ export function WebShell({ children, active, initials: profileInitials, profileN
     <div className="web-app" data-theme={theme}>
       <div className="web-ambient" aria-hidden />
       <div className="web-stage">
-        <ProfileMenu profileInitials={profileInitials} profileName={profileName} logout={logout} theme={theme} onThemeChange={setTheme} />
+        <ProfileMenu userId={userId} profileAvatar={profileAvatar} profileName={profileName} logout={logout} theme={theme} onThemeChange={setTheme} />
 
         <main className="web-main" aria-label={session && role === 'guest' ? 'Shared host view' : undefined} style={{ pointerEvents: session && role === 'guest' ? 'none' : 'auto' }}>{children}</main>
 

@@ -7,6 +7,8 @@ import { isActiveState } from '../hooks/useTorrents'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
+import Avatar from '../components/Avatar'
+import type { AvatarConfig } from '../lib/avatar'
 import { C, SANS, MONO, Ic, Icon, viewIcon, NavRow, GlassBtn } from '../lib/ui'
 import { fmtRuntimeFromTicks, fmtSpeed } from '../lib/format'
 import { movePosterSelection } from '../components/posterSelection'
@@ -169,7 +171,7 @@ export default function Library({
   canDrive = true, headerRight, banner,
   onPointer, mirrorSubscribe, driverName,
 }: LibraryProps = {}) {
-  const { user, logout } = useAuth()
+  const { user, logout, profile } = useAuth()
   const party = useParty()
   const mobile = useIsMobile()
   const [home, setHome] = useState<LibraryHome | null>(null)
@@ -363,7 +365,6 @@ export default function Library({
   const goToDepth = (i: number) => { if (canDrive) setStack(s => s.slice(0, i + 1)) }
   const openView = (v: LibraryItem) => { if (canDrive) setStack([{ id: v.Id, name: v.Name, type: v.Type }]) }
 
-  const initials = user?.name?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
   const views = home?.views ?? []
   const sidebarW = mobile ? 62 : 236
 
@@ -384,10 +385,15 @@ export default function Library({
           This is the element the mirror engine drives. */}
       <div ref={scrollRef} style={{
         position: 'absolute', top: 0, right: 0, bottom: 0, left: (embedded || !libraryType) ? sidebarW : 0,
-        overflow: 'hidden auto',
+        // `clip` rather than `hidden` sideways: hidden still leaves this a scroll
+        // container that scrollIntoView and focus can move programmatically,
+        // which is how the whole shell used to slide left. clip paints the same
+        // and cannot be scrolled at all.
+        overflow: 'clip auto',
         overflowY: following ? 'hidden' : 'auto',
       }}>
-        {(embedded || !libraryType) && <TopBar embedded={embedded} mobile={mobile} initials={initials} logout={logout}
+        {(embedded || !libraryType) && <TopBar embedded={embedded} mobile={mobile}
+          userId={user?.userId} profileName={profile?.displayName || user?.name} profileAvatar={profile?.avatar} logout={logout}
           headerRight={headerRight} current={current} onBack={goBack} onHome={goHome} />
         }
 
@@ -475,7 +481,7 @@ function Sidebar({ mobile, width, views, activeId, onHome, onView, showDiscover,
 }
 
 
-function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBack, onHome }: { embedded: boolean; mobile: boolean; initials: string; logout: () => Promise<void>; headerRight?: ReactNode; current: StackEntry | null; onBack: () => void; onHome: () => void }) {
+function TopBar({ embedded, mobile, userId, profileName, profileAvatar, logout, headerRight, current, onBack, onHome }: { embedded: boolean; mobile: boolean; userId?: string; profileName?: string; profileAvatar?: AvatarConfig | null; logout: () => Promise<void>; headerRight?: ReactNode; current: StackEntry | null; onBack: () => void; onHome: () => void }) {
   const [joinOpen, setJoinOpen] = useState(false)
   return (
     <div style={{
@@ -508,10 +514,16 @@ function TopBar({ embedded, mobile, initials, logout, headerRight, current, onBa
             <Icon path={Ic.plus} size={16} sw={2.4} />
             {!mobile && 'Start a watch party'}
           </GlassBtn>
-          <div title={initials} style={{
-            width: 38, height: 38, borderRadius: '50%', display: 'grid', placeItems: 'center',
-            fontSize: 12, fontWeight: 700, background: C.surface2, border: `1px solid ${C.line}`, color: C.text, flexShrink: 0,
-          }}>{initials}</div>
+          <button
+            onClick={() => navigate('/profile')} title="Your profile" aria-label="Your profile"
+            style={{
+              width: 38, height: 38, borderRadius: '50%', padding: 0, cursor: 'pointer', overflow: 'hidden',
+              display: 'grid', placeItems: 'center',
+              background: C.surface2, border: `1px solid ${C.line}`, flexShrink: 0,
+            }}
+          >
+            {userId ? <Avatar userId={userId} name={profileName} config={profileAvatar} size={36} circle /> : null}
+          </button>
           <GlassBtn onClick={logout} title="Sign out"><Icon path={Ic.logout} size={17} sw={1.8} /></GlassBtn>
         </div>
       )}
@@ -833,8 +845,19 @@ function PosterWall({ items, onOpen, children }: { items?: LibraryItem[]; onOpen
 
   useEffect(() => {
     if (mobile || count === 0) return
-    const poster = railRef.current?.querySelector<HTMLButtonElement>(`[data-poster-index="${selected}"]`)
-    poster?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    const rail = railRef.current
+    const poster = rail?.querySelector<HTMLButtonElement>(`[data-poster-index="${selected}"]`)
+    if (rail && poster) {
+      // Deliberately not scrollIntoView: that walks up and scrolls every
+      // scrollable ancestor too (browsers move overflow:hidden boxes for it
+      // as well), which slid the whole shell — heading, background and all —
+      // sideways every time the selection stepped. Centre the poster by
+      // moving this rail and nothing else.
+      const railBox = rail.getBoundingClientRect()
+      const posterBox = poster.getBoundingClientRect()
+      const delta = (posterBox.left + posterBox.width / 2) - (railBox.left + railBox.width / 2)
+      if (Math.abs(delta) > 1) rail.scrollBy({ left: delta, behavior: 'smooth' })
+    }
     if (focusAfterMove.current) {
       focusAfterMove.current = false
       poster?.focus({ preventScroll: true })

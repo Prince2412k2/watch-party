@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { loadParties, removeParty, saveParty } from './party-store.js'
 import { browserEnabled } from './browser/config.js'
+import { getProfile } from './profile-store.js'
 
 const sessions = new Map() // partyId → Session
 
@@ -322,10 +323,25 @@ export function isMember(session, userId) {
   return session.hostId === userId || session.guests.some(g => g.userId === userId)
 }
 
+/** The name to show for a member: their own display name when they've set one,
+    otherwise the Jellyfin account name the session already carries. Resolved at
+    send time rather than stored on the member, so a profile edit reaches every
+    surface without rewriting party state. */
+export function effectiveName(userId, accountName) {
+  return getProfile(userId).displayName ?? accountName
+}
+
 // Guests and waiting users each carry their own live Jellyfin token
 // (socketId/deviceId too) for server-side use — never forward the raw record.
-function publicMember({ userId, name }) {
-  return { userId, name }
+//
+// The display name is folded into the existing `name` field instead of riding
+// beside it: every client already renders `name`, so the Flutter clients pick
+// display names up without a change. `avatar` is null whenever the member has
+// saved no customisation — clients derive the default from `userId`, so the
+// common case adds nothing to the payload.
+export function publicMember({ userId, name }) {
+  const { displayName, avatar } = getProfile(userId)
+  return { userId, name: displayName ?? name, avatar }
 }
 
 // Explicit allow-list, not a deny-list: session gains internal/secret fields
@@ -334,10 +350,12 @@ function publicMember({ userId, name }) {
 // only what the web and Flutter clients actually consume means a new secret
 // field is safe-by-default instead of a future leak.
 export function publicSession(session) {
+  const host = publicMember({ userId: session.hostId, name: session.hostName })
   return {
     id: session.id,
     hostId: session.hostId,
-    hostName: session.hostName,
+    hostName: host.name,
+    hostAvatar: host.avatar,
     stage: session.stage,
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
