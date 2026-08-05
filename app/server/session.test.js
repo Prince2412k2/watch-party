@@ -11,7 +11,7 @@ const {
   createSession, deleteSession, persistSession, randomConnectedGuest,
   transferHost, reclaimOriginalHost, validateSyncCommand, authorizeSyncCommand,
   beginMediaGeneration, applyStallReport, publicSession, approveGuest, addToWaiting,
-  validateSubtitlePreferences, DEFAULT_SUBTITLE_PREFERENCES,
+  validateSubtitlePreferences, DEFAULT_SUBTITLE_PREFERENCES, staleRoomIds,
 } = await import('./session.js')
 const { loadParty } = await import('./party-store.js')
 
@@ -234,4 +234,17 @@ test('publicSession strips tokens after a host transfer demotes the old host int
     assert.equal(json.includes('newhost-old-token'), false)    // promoted guest's pre-transfer token
     assert.equal(json.includes('newhost-secret-token'), false) // new hostToken issued at transfer
   } finally { deleteSession(sess.id) }
+})
+
+test('joining another party drops the previous room but never the socket\'s own', () => {
+  // Socket.IO room membership is additive, so a client that navigates straight
+  // from /party/AAA to /party/BBB would otherwise receive BOTH parties'
+  // sync:schedule streams and let two timelines fight over one player.
+  const rooms = new Set(['sock-1', 'AAA'])
+  assert.deepEqual(staleRoomIds(rooms, { socketId: 'sock-1', keepId: 'BBB' }), ['AAA'])
+
+  // The ordinary joins: already in the target room, or in none yet.
+  assert.deepEqual(staleRoomIds(new Set(['sock-1', 'BBB']), { socketId: 'sock-1', keepId: 'BBB' }), [])
+  assert.deepEqual(staleRoomIds(new Set(['sock-1']), { socketId: 'sock-1', keepId: 'BBB' }), [])
+  assert.deepEqual(staleRoomIds(undefined, { socketId: 'sock-1', keepId: 'BBB' }), [])
 })

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { canManagePartyMedia, partyRoleForUser, shouldOpenPartyPlayer } from './partyAuthority.ts'
+import { canManagePartyMedia, partyJoinTransition, partyRoleForUser, shouldOpenPartyPlayer } from './partyAuthority.ts'
 import type { PartySession } from './types.ts'
 
 const watching: PartySession = { id: 'A1B2C3D4', hostId: 'host', stage: 'watching', mediaItemId: 'movie' }
@@ -35,4 +35,36 @@ test('room broadcasts do not promote a waiting socket to guest', () => {
 test('collaborative guests never manage canonical media settings', () => {
   assert.equal(canManagePartyMedia('host'), true)
   assert.equal(canManagePartyMedia('guest'), false)
+})
+
+test('the first render of a party URL joins it exactly once', () => {
+  assert.deepEqual(partyJoinTransition({ joinedFor: null, partyId: 'AAA' }),
+    { kind: 'join', target: 'AAA', leavePrevious: false })
+  // StrictMode's double-invoke, and every later re-render, must not re-join.
+  assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: 'AAA' }), { kind: 'idle' })
+})
+
+test('/party/new creates once and is not re-created by the id it settles on', () => {
+  assert.deepEqual(partyJoinTransition({ joinedFor: null, isNew: true }),
+    { kind: 'create', target: 'new', leavePrevious: false })
+  assert.deepEqual(partyJoinTransition({ joinedFor: 'new', isNew: true }), { kind: 'idle' })
+  // createParty() replaceState's to /party/<id> without a popstate, so the props
+  // stay isNew — but if the URL is later navigated to a real id, that is a join.
+  assert.deepEqual(partyJoinTransition({ joinedFor: 'new', partyId: 'AAA' }),
+    { kind: 'join', target: 'AAA', leavePrevious: true })
+})
+
+test('navigating straight between party ids leaves the old party first', () => {
+  // The regression this exists for: ONE mount-stable <Party> serves every
+  // /party/* URL, so /party/AAA → /party/BBB only changes a prop. The old
+  // boolean latch made it a no-op and the AAA session stayed live under the
+  // BBB URL — AAA's LiveKit room, AAA's schedule, AAA's chat.
+  assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: 'BBB' }),
+    { kind: 'join', target: 'BBB', leavePrevious: true })
+})
+
+test('a party surface with no target does nothing', () => {
+  assert.deepEqual(partyJoinTransition({ joinedFor: null }), { kind: 'idle' })
+  assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: undefined }), { kind: 'idle' })
+  assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: '' }), { kind: 'idle' })
 })
