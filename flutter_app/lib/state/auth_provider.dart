@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api_client.dart';
 import '../models/models.dart';
+import 'party_provider.dart';
+import 'profile_provider.dart';
 import 'providers.dart';
 import 'server_provider.dart';
 
@@ -64,15 +68,53 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Sign out. Ending the session on the server is best-effort; what actually
+  /// signs this device out is [_teardownSession], which runs whether or not the
+  /// round trip succeeded.
   Future<void> logout() async {
     try {
       await _ref.read(apiClientProvider).logout();
+    } catch (_) {
+      // A dropped connection or an HTTP 500 must not strand the user in a
+      // half-signed-out app — and it must not surface as an unhandled error
+      // from the sign-out button either. `ApiClient.logout` has already
+      // dropped the local cookies on its own way out.
     } finally {
+      await _teardownSession();
+    }
+  }
+
+  /// Release everything that belongs to the signed-in session, in the order it
+  /// has to go: the party first (it owns the socket, the LiveKit room, the sync
+  /// engine and the shared player), then the per-user state the UI reads, then
+  /// the configured server.
+  ///
+  /// Each step is independent and best-effort. A failure part-way through used
+  /// to skip the rest, which is how a "logout" could leave the camera live or
+  /// the socket still authenticated as the previous user.
+  Future<void> _teardownSession() async {
+    final steps = <FutureOr<void> Function()>[
+      // Leaves the party and, with it, disconnects the socket and the LiveKit
+      // room, detaches the sync engine, stops playback and clears chat.
+      () => _ref.read(partyProvider.notifier).leave(),
+      () => _ref.read(profileProvider.notifier).clear(),
+      // Avatar widgets cache the SVG they drew, keyed by account id — bump the
+      // revision so the next account can't be shown wearing this one's face.
+      () {
+        _ref.read(avatarRevisionProvider.notifier).state++;
+      },
       // The configured server is kept only while signed in — clear it on
       // logout so the next login starts from the server picker.
-      await _ref.read(serverConfigProvider.notifier).clear();
-      state = const AuthState(initialized: true);
+      () => _ref.read(serverConfigProvider.notifier).clear(),
+    ];
+    for (final step in steps) {
+      try {
+        await step();
+      } catch (_) {
+        // Best-effort: the remaining steps still have to run.
+      }
     }
+    state = const AuthState(initialized: true);
   }
 
   /// Boot-time initialization when no server is configured yet: mark the auth
