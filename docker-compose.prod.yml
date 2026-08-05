@@ -13,19 +13,38 @@
 #      3478/udp + 5349/tcp (coturn), 6881 (qBittorrent, optional).
 #
 # ADMIN PORTS (Jellyfin 8096, Sonarr 8989, Radarr 7878, Bazarr 6767,
-# Prowlarr 9696, the app itself 3001) are bound to
-# 0.0.0.0 for Tailscale access — by explicit choice, NOT firewalled by this
-# repo. They are also reachable on the VPS's public interface unless you
-# separately lock them down yourself (ufw/iptables, allow only tailscale0 +
-# loopback on these ports). This is intentionally your responsibility.
+# Prowlarr 9696, qBittorrent 8080, the app itself 3001) are bound to 0.0.0.0 so
+# they stay reachable over Tailscale. Exposure is therefore controlled at the
+# packet-filter layer, NOT by these bind addresses:
+#
+#     ./deploy/firewall.sh          # apply (idempotent, survives reboot)
+#     ./deploy/firewall.sh --verify # confirm the rules are live
+#
+# Running that script is MANDATORY, not optional. Until it has been applied,
+# every port listed above is reachable from the public internet. It writes
+# DOCKER-USER chain rules specifically because Docker's own iptables NAT rules
+# bypass ufw's INPUT chain — a plain `ufw deny 8096` does NOT stop traffic to a
+# published container port.
+#
+# `deploy/up-prod.sh` refuses to bring the stack up if the rules are missing.
 #
 # Bring up:  ./deploy/up-prod.sh   (preferred — has pre-flight checks)
 #        or: docker compose --env-file secrets/.env -f docker-compose.prod.yml up -d --build
 # See secrets/README.md for the full walkthrough.
 
 services:
+  # Every image below is pinned by registry manifest digest rather than a tag.
+  # A tag like `:latest` or `:2-alpine` moves, which makes a deploy
+  # irreproducible from its commit and means `compose pull` can silently swap a
+  # major version under a running stack. The digests here are not guesses —
+  # each was read from the corresponding container actually running in
+  # production on 2026-08-05, so this pins to a known-good, already-verified
+  # set. Version comments are the human-readable label of that same image.
+  #
+  # To upgrade a pin, see docs/deploy/pinning.md — never hand-edit a digest.
   caddy:
-    image: caddy:2-alpine
+    # caddy v2.11.4
+    image: caddy@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     container_name: watchparty-caddy
     restart: unless-stopped
     networks: [watchparty-net]
@@ -36,36 +55,76 @@ services:
       - ./secrets/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    healthcheck:
+      # Caddy's admin API on 2019 (localhost-only by default) rather than
+      # probing :80 — a request to :80 gets a 308 redirect to https, which is a
+      # confusing signal for a liveness probe. Verified returning 200 against
+      # the running container.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
-      - watchparty
+      watchparty:
+        condition: service_healthy
 
   jellyfin:
-    image: jellyfin/jellyfin:latest
+    # jellyfin 10.11.11
+    image: jellyfin/jellyfin@sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db
     container_name: watchparty-jellyfin
     restart: unless-stopped
     networks: [watchparty-net]
     ports:
-      # Admin UI — bound to 0.0.0.0 for Tailscale access. NOT firewalled by
-      # this repo: you are managing exposure yourself (ufw/iptables) since
-      # this also listens on the VPS's public interface. Playback for party
+      # Admin UI — bound to 0.0.0.0 for Tailscale access, with public exposure
+      # blocked by deploy/firewall.sh (see the header). Playback for party
       # members still goes through Caddy -> app -> the authenticated
       # /jellyfin proxy, not this port.
       - "0.0.0.0:8096:8096"
     volumes:
       - ./jellyfin/config:/config
-      - ./media:/media
-      - ${MEDIA_ROOT:-./media-data}/media:/servarr-media
+      # Media is mounted READ-ONLY. Jellyfin writes metadata, artwork and
+      # user data under /config, so it does not need write access to the media
+      # trees, and read-only removes the possibility of the media server
+      # mutating or deleting source files.
+      #
+      # Reverse this ONLY if you deliberately enable a Jellyfin library option
+      # that saves into media folders ("Save artwork into media folders" or NFO
+      # metadata saving). If you do, document why here — otherwise a future
+      # reader cannot tell an intentional exception from a regression.
+      - ./media:/media:ro
+      - ${MEDIA_ROOT:-./media-data}/media:/servarr-media:ro
     environment:
       - JELLYFIN_PublishedServerUrl=https://watch.example.com/jellyfin
+    healthcheck:
+      # Jellyfin's own /health returns the literal string "Healthy". Verified
+      # returning 200 against the running container. Only curl is present in
+      # this image (no wget), hence curl here and wget for livekit below.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8096/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
   livekit:
-    image: livekit/livekit-server:latest
+    # livekit-server v1.13.2
+    image: livekit/livekit-server@sha256:50409575b8a4c4d4e5496793ba698701a230bc5d0f33e54dbe6877ba6e325a9f
     container_name: watchparty-livekit
     restart: unless-stopped
     networks: [watchparty-net]
     ports:
+      # Media only. 7880 (HTTP/WS) is deliberately NOT published — the app
+      # reaches it as ws://livekit:7880 over watchparty-net. Publishing it would
+      # expose the signalling API to the internet.
       - "7881:7881"
       - "7882:7882/udp"
+    healthcheck:
+      # GET / on 7880 returns "OK". This image has wget but no curl.
+      test: ["CMD", "wget", "-q", "-O", "-", "-T", "5", "http://127.0.0.1:7880/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     volumes:
       - ./secrets/livekit.yaml:/etc/livekit.yaml:ro
     environment:
@@ -81,7 +140,11 @@ services:
   # /api/livekit/token (see app/server/livekit.js) using TURN_URL/USERNAME/
   # PASSWORD from secrets/.env — must match secrets/coturn.conf's `user=` line.
   coturn:
-    image: coturn/coturn:latest
+    # coturn 4.14.0-r0. No healthcheck: network_mode: host means there is no
+    # container network to probe from, and the image has no shell utilities for
+    # a UDP liveness check. TURN reachability is verified end-to-end by a real
+    # party connection instead.
+    image: coturn/coturn@sha256:0c0e8fc0c263b85a134e9e4242b5e46e1f4c077c5029633511191c05b5c2c814
     container_name: watchparty-coturn
     restart: unless-stopped
     network_mode: host
@@ -133,11 +196,26 @@ services:
       - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-}
       - SERVE_CLIENT=1
       - PORT=3000
+    healthcheck:
+      # Mirrors the HEALTHCHECK baked into app/Dockerfile. Declared here too so
+      # the dependency conditions below and deploy/health-check.sh read from one
+      # visible contract rather than an inherited image directive. Uses node's
+      # global fetch because the alpine base ships no curl.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>{if(!r.ok)process.exit(1);return r.json()}).then(j=>process.exit(j&&j.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
+      # jellyfin and livekit were service_started, which only waits for the
+      # container to exist — the app would come up and start serving while
+      # Jellyfin was still initialising, so early requests failed against a
+      # backend that was not listening yet. Both now have verified health
+      # probes, so wait for actual readiness.
       jellyfin:
-        condition: service_started
+        condition: service_healthy
       livekit:
-        condition: service_started
+        condition: service_healthy
       sonarr:
         condition: service_healthy
       radarr:
@@ -150,7 +228,8 @@ services:
         condition: service_started
 
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
+    # prowlarr 2.4.0.5397-ls152
+    image: lscr.io/linuxserver/prowlarr@sha256:3e9bd62ca90c97c5df75b7012e10a29f6926e62807deeddc1dc89e6e2fd141e1
     container_name: watchparty-prowlarr
     restart: unless-stopped
     networks: [watchparty-net]
@@ -170,7 +249,8 @@ services:
       start_period: 30s
 
   sonarr:
-    image: lscr.io/linuxserver/sonarr:latest
+    # sonarr 4.0.19.2979-ls316
+    image: lscr.io/linuxserver/sonarr@sha256:fbb15bb4fb14d1ffe017f6be0e3fed8f1b300e4687e329767da0b61f36ba1eed
     container_name: watchparty-sonarr
     restart: unless-stopped
     networks: [watchparty-net]
@@ -194,7 +274,8 @@ services:
       start_period: 30s
 
   radarr:
-    image: lscr.io/linuxserver/radarr:latest
+    # radarr 6.2.1.10461-ls308
+    image: lscr.io/linuxserver/radarr@sha256:39da107b5a9371fdaa651bd188049b863716a815385eb3a30d41071b7e1aeb33
     container_name: watchparty-radarr
     restart: unless-stopped
     networks: [watchparty-net]
@@ -218,7 +299,8 @@ services:
       start_period: 30s
 
   bazarr:
-    image: lscr.io/linuxserver/bazarr:latest
+    # bazarr v1.5.6-ls353
+    image: lscr.io/linuxserver/bazarr@sha256:047222423d6d8556a88581b189175bec57f286f120b52ba29c0390fe6babaa5a
     container_name: watchparty-bazarr
     restart: unless-stopped
     networks: [watchparty-net]
@@ -245,7 +327,13 @@ services:
       start_period: 30s
 
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:latest
+    # qbittorrent 5.2.2_v2.0.13-ls464
+    # No healthcheck by choice: qBittorrent is not on the watch path (the app
+    # only needs it service_started for the Servarr download flow), and its
+    # WebUI root behind auth is exactly the shape that produced the permanent
+    # false-unhealthy bug documented on bazarr below. Not worth blocking a
+    # deploy on.
+    image: lscr.io/linuxserver/qbittorrent@sha256:163f3384db6cba9f68eaa83ca5f4209298b6029ba2d07b5e67562d0715baf5b9
     container_name: watchparty-qbittorrent
     restart: unless-stopped
     networks: [watchparty-net]
