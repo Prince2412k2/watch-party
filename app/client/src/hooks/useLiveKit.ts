@@ -11,12 +11,30 @@ export interface LiveKitParticipantView {
   isSpeaking: boolean
 }
 
+/**
+ * The shared browser's tracks, when a party is running one.
+ *
+ * Identified by track SOURCE rather than by participant identity: nothing else in
+ * this app publishes a screen share, and the container's identity is a
+ * deployment setting the client should not have to know.
+ */
+export interface SharedBrowserTracks {
+  identity: string
+  videoTrack: unknown | null
+  audioTrack: unknown | null
+}
+
 export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enabled?: boolean } = {}) {
   const roomRef = useRef<Room | null>(null)
   const [participants, setParticipants] = useState<LiveKitParticipantView[]>([])
   const [localParticipant, setLocalParticipant] = useState<LiveKitParticipantView | null>(null)
   const [camOn, setCamOn] = useState(false)
   const [micOn, setMicOn] = useState(false)
+  const [sharedBrowser, setSharedBrowser] = useState<SharedBrowserTracks | null>(null)
+  // Browsers refuse audible playback without a gesture, and a surface that
+  // starts streaming on its own has not had one. Tracked so the UI can offer a
+  // button instead of leaving a silent stream that looks broken.
+  const [audioBlocked, setAudioBlocked] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -54,13 +72,28 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
         function refresh() {
           if (cancelled) return
           if (!room) return
-          const parts = [...room.remoteParticipants.values()].map(p => ({
-            identity: p.identity,
-            name: p.name || p.identity,
-            videoTrack: p.getTrackPublication(Track.Source.Camera)?.track ?? null,
-            audioTrack: p.getTrackPublication(Track.Source.Microphone)?.track ?? null,
-            isSpeaking: p.isSpeaking,
-          }))
+          const remotes = [...room.remoteParticipants.values()]
+
+          // The shared browser is a publish-only participant, not a person: it
+          // must never appear as a camera tile in the grid or the dock.
+          const screen = remotes.find(p => p.getTrackPublication(Track.Source.ScreenShare))
+          setSharedBrowser(screen
+            ? {
+              identity: screen.identity,
+              videoTrack: screen.getTrackPublication(Track.Source.ScreenShare)?.track ?? null,
+              audioTrack: screen.getTrackPublication(Track.Source.ScreenShareAudio)?.track ?? null,
+            }
+            : null)
+
+          const parts = remotes
+            .filter(p => p !== screen)
+            .map(p => ({
+              identity: p.identity,
+              name: p.name || p.identity,
+              videoTrack: p.getTrackPublication(Track.Source.Camera)?.track ?? null,
+              audioTrack: p.getTrackPublication(Track.Source.Microphone)?.track ?? null,
+              isSpeaking: p.isSpeaking,
+            }))
           setParticipants(parts)
           setLocalParticipant({
             identity: room.localParticipant.identity,
@@ -81,8 +114,12 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
           .on(RoomEvent.ActiveSpeakersChanged, refresh)
           .on(RoomEvent.LocalTrackPublished, refresh)
           .on(RoomEvent.LocalTrackUnpublished, refresh)
+          .on(RoomEvent.AudioPlaybackStatusChanged, () => {
+            if (!cancelled && room) setAudioBlocked(!room.canPlaybackAudio)
+          })
 
         await room.connect(url, token)
+        setAudioBlocked(!room.canPlaybackAudio)
         refresh()
       } catch (err) {
         if (!cancelled) flagError(err instanceof Error ? err.message : String(err))
@@ -139,7 +176,22 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
     }
   }
 
-  return { participants, localParticipant, camOn, micOn, enableCamera, enableMic, error }
+  // Must be called from a real user gesture — that is the whole point of it.
+  // Resolves either way; a rejection just means the browser still refuses.
+  async function startAudio() {
+    if (!roomRef.current) return
+    try {
+      await roomRef.current.startAudio()
+      setAudioBlocked(!roomRef.current.canPlaybackAudio)
+    } catch {
+      setAudioBlocked(true)
+    }
+  }
+
+  return {
+    participants, localParticipant, camOn, micOn, enableCamera, enableMic, error,
+    sharedBrowser, audioBlocked, startAudio,
+  }
 }
 
 interface LiveKitConnection {

@@ -11,3 +11,4 @@ export 'player_provider.dart';
 export 'profile_provider.dart';
 export 'providers.dart';
 export 'server_provider.dart';
+export 'shared_browser_provider.dart';

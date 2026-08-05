@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>audiotest</title>
+<script>
+const out = m => console.log('AUDIO ' + m)
+;(async () => {
+  try {
+    // getUserMedia first: without an active permission grant Chromium hides
+    // device labels and can report an empty input list even when Pulse has one.
+    let gum = 'n/a'
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const t = s.getAudioTracks()[0]
+      gum = 'OK label="' + (t ? t.label : '?') + '" state=' + (t ? t.readyState : '?')
+    } catch (e) {
+      gum = 'FAIL ' + e.name + ': ' + e.message
+    }
+    out('getUserMedia ' + gum)
+
+    const devs = await navigator.mediaDevices.enumerateDevices()
+    const ins = devs.filter(d => d.kind === 'audioinput')
+    out('audioinput count=' + ins.length + ' -> ' +
+        JSON.stringify(ins.map(d => ({ id: d.deviceId.slice(0, 12), label: d.label }))))
+  } catch (e) {
+    out('FATAL ' + e.name + ': ' + e.message)
+  }
+})()
+</script>

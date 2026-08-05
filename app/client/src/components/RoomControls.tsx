@@ -122,6 +122,9 @@ export default function RoomControls({
         opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none',
         transform: visible ? 'translateY(0)' : 'translateY(-6px)', transition: 'opacity .25s, transform .25s',
       }}>
+        {/* No shared-browser control here. The movie screen is for watching the
+            thing you already chose; starting a browser is a "what shall we watch"
+            decision and lives in the popcorn widget (WebShell) instead. */}
         {watching && onOpenChat ? (
           <button onClick={(event) => { event.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: phone ? 44 : 38, height: phone ? 44 : 38, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
             <svg width={phone ? 19 : 18} height={phone ? 19 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>

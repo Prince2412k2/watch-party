@@ -1,0 +1,61 @@
+# Standalone — does NOT touch the app stack. Joins the existing watchparty-net
+# so the container reaches the running LiveKit at ws://livekit:7880, the same
+# way app/server does. Nothing here is meant to ship; see README.md.
+name: wp-spike-remote-browser
+
+services:
+  remote-browser:
+    build: .
+    container_name: spike-remote-browser
+    init: true
+    # Chromium wants real shared memory. Without this it either crashes or
+    # silently falls back to disk and the framerate collapses.
+    shm_size: "2gb"
+    networks: [watchparty-net]
+    volumes:
+      # Optional: a corporate TLS-inspection CA, so HTTPS sites behind it load.
+      # Create the dir and drop a .crt in; empty is fine and is the normal case.
+      - ./extra-ca:/opt/spike/extra-ca:ro
+    ports:
+      # The viewer is served from inside this container and published, so it is
+      # reachable from a browser on the host. Serving it from anywhere else (a
+      # helper shell, a sandbox) puts it on the wrong localhost.
+      - "${VIEWER_PORT:-8899}:8899"
+    environment:
+      - LIVEKIT_URL=${LIVEKIT_URL:-ws://livekit:7880}
+      # Not guarded with :? here — that would also fail `build`, which needs no
+      # token. entrypoint.sh rejects an empty one at container start instead.
+      - LIVEKIT_TOKEN=${LIVEKIT_TOKEN:-}
+      # Subscribe-only token for the published viewer page, plus the LiveKit URL as
+      # a browser ON THE HOST sees it (not the ws://livekit:7880 the container uses).
+      - VIEWER_TOKEN=${VIEWER_TOKEN:-}
+      - VIEWER_LK_URL=${VIEWER_LK_URL:-ws://localhost:7880}
+      # A real browsable page by default, so the stream looks like a browser.
+      # For measurement runs point it at the built-in stages instead:
+      #   http://127.0.0.1:9000/player.html   looping real video (H.264)
+      #   http://127.0.0.1:9000/motion.html   codec-independent 60fps control
+      # A bare .mp4 URL is a trap — it plays once, freezes on its last frame, and
+      # the run silently becomes a static-image test.
+      - TARGET_URL=${TARGET_URL:-https://en.wikipedia.org/wiki/Main_Page}
+      # full = Chromium's tab strip and address bar are in the stream (a real
+      # remote browser). kiosk = page only, for a video-stage measurement run.
+      - BROWSER_CHROME=${BROWSER_CHROME:-full}
+      - CAPTURE_MODE=${CAPTURE_MODE:-screen}
+      - CODEC=${CODEC:-vp8}
+      - SCREEN_W=${SCREEN_W:-1280}
+      - SCREEN_H=${SCREEN_H:-720}
+      - SCREEN_FPS=${SCREEN_FPS:-30}
+      - MAX_BITRATE_KBPS=${MAX_BITRATE_KBPS:-2500}
+      - DESKTOP_SOURCE=${DESKTOP_SOURCE:-Entire screen}
+      - TARGET_TITLE=${TARGET_TITLE:-}
+    # Unset by default: an unconstrained run measures true cost, whereas a limit
+    # hides it as dropped frames. Set them to rehearse a smaller box —
+    # e.g. CPUS=2 to approximate 2 shared vCPUs on the 8-vCPU prod VPS.
+    cpus: ${CPUS:-0}                 # 0 = unlimited
+    mem_limit: ${MEM_LIMIT:-0}       # 0 = unlimited. Prod has NO SWAP, so an
+                                     # over-tight limit is an OOM kill, not slowdown.
+
+networks:
+  watchparty-net:
+    external: true
+    name: watchparty-net

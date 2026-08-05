@@ -48,6 +48,7 @@ class LiveKitRoomSnapshot {
     this.participants = const [],
     this.micEnabled = false,
     this.cameraEnabled = false,
+    this.screenShare,
     this.error,
   });
 
@@ -55,6 +56,14 @@ class LiveKitRoomSnapshot {
   final List<ParticipantTrack> participants;
   final bool micEnabled;
   final bool cameraEnabled;
+
+  /// The shared browser's screen, when a party is running one.
+  ///
+  /// Kept out of [participants] deliberately: it is a publish-only participant,
+  /// not a person, and it must never be laid out as a camera tile. Identified by
+  /// track SOURCE rather than by identity, because the container's LiveKit
+  /// identity is a server-side setting this app should not have to know.
+  final lk.VideoTrack? screenShare;
   final String? error;
 
   bool get connected => connectionState == lk.ConnectionState.connected;
@@ -64,12 +73,17 @@ class LiveKitRoomSnapshot {
     List<ParticipantTrack>? participants,
     bool? micEnabled,
     bool? cameraEnabled,
+    lk.VideoTrack? screenShare,
+    bool clearScreenShare = false,
     String? error,
   }) => LiveKitRoomSnapshot(
     connectionState: connectionState ?? this.connectionState,
     participants: participants ?? this.participants,
     micEnabled: micEnabled ?? this.micEnabled,
     cameraEnabled: cameraEnabled ?? this.cameraEnabled,
+    // A nullable field cannot be cleared through `??`, and the browser closing
+    // is exactly the case that has to clear it.
+    screenShare: clearScreenShare ? null : (screenShare ?? this.screenShare),
     error: error,
   );
 }
@@ -308,7 +322,15 @@ class LiveKitRoomService {
         ),
       );
     }
+
+    lk.VideoTrack? screenShare;
     for (final p in room.remoteParticipants.values) {
+      final shared = _screenShareTrack(p.videoTrackPublications);
+      if (shared != null) {
+        // The shared browser: its screen is the stage, not a tile in the grid.
+        screenShare = shared;
+        continue;
+      }
       tracks.add(
         _toParticipantTrack(
           identity: p.identity,
@@ -327,8 +349,19 @@ class LiveKitRoomService {
         participants: tracks,
         micEnabled: room.localParticipant?.isMicrophoneEnabled() ?? false,
         cameraEnabled: room.localParticipant?.isCameraEnabled() ?? false,
+        screenShare: screenShare,
+        clearScreenShare: screenShare == null,
       ),
     );
+  }
+
+  lk.VideoTrack? _screenShareTrack(List<lk.TrackPublication> videoPubs) {
+    for (final pub in videoPubs) {
+      if (pub.source != lk.TrackSource.screenShareVideo) continue;
+      final track = pub.track;
+      if (track is lk.VideoTrack && !pub.muted) return track;
+    }
+    return null;
   }
 
   ParticipantTrack _toParticipantTrack({
@@ -342,6 +375,8 @@ class LiveKitRoomService {
     lk.VideoTrack? videoTrack;
     var videoMuted = true;
     for (final pub in videoPubs) {
+      // A tile shows a camera. Never let a screen share become someone's face.
+      if (pub.source == lk.TrackSource.screenShareVideo) continue;
       final t = pub.track;
       if (t is lk.VideoTrack && !pub.muted) {
         videoTrack = t;
