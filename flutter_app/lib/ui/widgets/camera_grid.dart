@@ -6,6 +6,7 @@ import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import '../../livekit/livekit_room.dart';
 import '../../state/livekit_provider.dart';
 import '../tokens.dart';
+import 'avatar_view.dart';
 
 /// Layout mode for [CameraGrid] — E5's party screen picks the mode that fits
 /// the docked panel it mounts this into.
@@ -178,26 +179,37 @@ class CameraVideoView extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           lk.VideoTrackRenderer(videoTrack, key: ValueKey(videoTrack.sid)),
-          if (track.videoMuted) const _CamOffPlaceholder(),
+          if (track.videoMuted) _CamOffPlaceholder(track: track),
         ],
       );
     }
-    return const _CamOffPlaceholder();
+    return _CamOffPlaceholder(track: track);
   }
 }
 
+/// A participant whose camera is off is drawn as their avatar rather than as a
+/// crossed-out camera — the whole point of profiles is that the camera-off
+/// state, which is most of the room most of the time, reads as people. Live
+/// video always wins: this only renders when there is none.
 class _CamOffPlaceholder extends StatelessWidget {
-  const _CamOffPlaceholder();
+  const _CamOffPlaceholder({required this.track});
+
+  final ParticipantTrack track;
 
   @override
   Widget build(BuildContext context) {
-    return const ColoredBox(
+    return ColoredBox(
       color: AppColors.surface2,
       child: Center(
-        child: Icon(
-          Icons.videocam_off_outlined,
-          color: AppColors.faint,
-          size: 22,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final side = constraints.biggest.shortestSide;
+            return AvatarView(
+              userId: track.identity,
+              name: track.name,
+              size: side.isFinite && side > 0 ? side : 48,
+            );
+          },
         ),
       ),
     );
