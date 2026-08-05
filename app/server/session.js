@@ -48,6 +48,7 @@ function durableState(session) {
     browser: session.browser,
     guests: session.guests.map(durableGuest),
     approved: [...session.approved],
+    livekitRevokedBefore: Object.fromEntries(session.livekitRevokedBefore),
     messages: session.messages,
     collaborativeControl: session.collaborativeControl,
     mediaGeneration: session.mediaGeneration,
@@ -88,6 +89,7 @@ function runtimeState(saved) {
     guests: (saved.guests ?? []).map(guest => ({ ...guest, socketId: null })),
     waiting: [],
     approved: new Set(saved.approved ?? [saved.hostId]),
+    livekitRevokedBefore: new Map(Object.entries(saved.livekitRevokedBefore ?? {})),
     messages: saved.messages ?? [],
     collaborativeControl: saved.collaborativeControl ?? false,
     hostDisconnectTimer: null,
@@ -118,6 +120,7 @@ export function persistSession(session) {
 }
 
 export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostSocketId, mediaItemId = null, mediaSourceId = null }) {
+  if (findSessionByUser(hostId)) throw new Error('already in a party')
   const id = randomUUID().slice(0, 8).toUpperCase()
   const session = {
     id,
@@ -143,6 +146,7 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     guests: [],       // [{ userId, name, socketId, joinedAt }]
     waiting: [],      // [{ userId, name, socketId }]
     approved: new Set([hostId]),  // userIds allowed to re-enter without asking (until kicked)
+    livekitRevokedBefore: new Map(), // userId -> unix seconds; tokens at/before this instant are invalid
     messages: [],     // capped 200
     collaborativeControl: false,
     hostDisconnectTimer: null,
