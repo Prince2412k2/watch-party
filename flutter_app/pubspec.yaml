@@ -45,6 +45,9 @@ dependencies:
   shadcn_flutter: ^0.0.52
   # Watch-party invite QR (popcorn widget invite panel).
   qr_flutter: ^4.1.0
+  # Profile avatars. Humation is a JavaScript renderer, so the server draws
+  # them and we display the SVG it returns.
+  flutter_svg: ^2.0.17
 
   # Immutable models + JSON.
   freezed_annotation: ^2.4.4
