@@ -13,6 +13,19 @@ test('the same account derives a byte-identical avatar every time', () => {
   }
 })
 
+test('derived colours are pinned — changing them restyles every existing user', () => {
+  // Golden values, not a re-derivation: the palettes and the seed hash are a
+  // contract with everyone who has never opened the profile page, and the
+  // server draws the same faces for the Flutter clients from the same module.
+  // If this fails, someone reordered a palette or changed the hash.
+  assert.deepEqual(derivedColors('test-alice'), {
+    skin: 'EFC2A2', hair: '7A7A7A', clothes: '55606E', bottom: '8A8F97',
+  })
+  assert.deepEqual(derivedColors('root'), {
+    skin: '623C22', hair: 'B08D57', clothes: 'D3D7DC', bottom: '7A5F4B',
+  })
+})
+
 test('ten accounts derive ten different avatars', () => {
   const rendered = new Set(IDS.map(id => JSON.stringify(derivedConfig(id))))
   assert.equal(rendered.size, IDS.length)
