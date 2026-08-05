@@ -67,6 +67,7 @@ test('a party surface with no target does nothing', () => {
   assert.deepEqual(partyJoinTransition({ joinedFor: null }), { kind: 'idle' })
   assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: undefined }), { kind: 'idle' })
   assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: '' }), { kind: 'idle' })
+})
 
 test('every shared browse tab resolves to one route for both device trees', () => {
   assert.equal(browseTabRoute('movies'), '/movies')
