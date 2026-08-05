@@ -29,6 +29,11 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   final Ref _ref;
   final List<void Function()> _unsubs = [];
+
+  /// The engine this notifier attached, held so [dispose] can detach it without
+  /// reading a provider off a container that is already tearing down.
+  SyncEngine? _attachedEngine;
+
   StreamSubscription<bool>? _connectionSubscription;
   bool _subscribed = false;
   bool _recoveringConnection = false;
@@ -490,6 +495,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     }
 
     final engine = _ref.read(syncEngineProvider);
+    _attachedEngine = engine;
     await engine.attach(
       player: _ref.read(playerControllerProvider),
       socket: _socket,
@@ -727,6 +733,10 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   Future<void> _leaveLocal() async {
     _pendingPartyId = null;
     final engine = _ref.read(syncEngineProvider);
+    // Cleared before (and outside) the guarded detach: dropping our reference
+    // must not depend on detach succeeding, or a throwing engine would leave a
+    // stale _attachedEngine behind for dispose() to detach a second time.
+    _attachedEngine = null;
     await _bestEffort(() async {
       await engine.detach();
       if (engine is SyncEngineImpl) engine.isHost = false;
@@ -818,6 +828,14 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   @override
   void dispose() {
     _unsubscribe();
+    // Disposing the party without detaching left the sync engine's 200ms
+    // control loop, applying timers, and clock ping running against a player
+    // and socket this notifier no longer manages. `dispose` is synchronous, so
+    // the detach is fire-and-forget; it cancels its timers before its first
+    // await either way.
+    final engine = _attachedEngine;
+    _attachedEngine = null;
+    if (engine != null) unawaited(engine.detach());
     super.dispose();
   }
 }
@@ -856,4 +874,13 @@ final partyWaitingProvider =
 /// The sync engine driving playback from the party timeline (PLAN §3.4). The
 /// real host-authority [SyncEngineImpl] (E5.1); [PartyNotifier] attaches it
 /// and keeps `isHost`/`canControl` current.
-final syncEngineProvider = Provider<SyncEngine>((ref) => SyncEngineImpl());
+///
+/// Disposing the container (logout teardown, app shutdown, a test's
+/// `addTearDown`) disposes the engine with it: its control loop, applying
+/// timers, socket handlers, and server-clock ping all outlived the provider
+/// otherwise, and kept driving whatever player they were last attached to.
+final syncEngineProvider = Provider<SyncEngine>((ref) {
+  final engine = SyncEngineImpl();
+  ref.onDispose(() => unawaited(engine.dispose()));
+  return engine;
+});

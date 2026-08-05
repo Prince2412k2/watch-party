@@ -470,32 +470,83 @@ class ServarrDownloadsSnapshot {
       );
 }
 
+/// Serializes one timer-driven poller's ticks.
+///
+/// Two things went wrong without it: a tick fired every N seconds regardless of
+/// whether the previous request had come back, so a slow Servarr let requests
+/// pile up and land out of order (an older, slower response overwriting a newer
+/// snapshot); and a response that resolved after the provider was disposed
+/// still mutated the captured snapshot. [poll] therefore drops a tick that
+/// would overlap an in-flight one — which is also what makes out-of-order
+/// application impossible, since at most one request is ever outstanding — and
+/// applies nothing at all once [stop] has run.
+class PollSequencer {
+  bool _inFlight = false;
+  bool _stopped = false;
+
+  /// True once [stop] has run — no further tick starts, and no in-flight
+  /// response is applied.
+  bool get isStopped => _stopped;
+
+  /// True while a request issued by [poll] is still outstanding.
+  bool get isInFlight => _inFlight;
+
+  /// Runs one tick: awaits [request], then applies it via [onData] (or [onError]
+  /// if the request — or [onData] itself, e.g. on a malformed payload — threw).
+  /// Returns without issuing anything when a tick is already in flight or the
+  /// sequencer is stopped.
+  Future<void> poll<T>({
+    required Future<T> Function() request,
+    required void Function(T value) onData,
+    required void Function() onError,
+  }) async {
+    if (_stopped || _inFlight) return;
+    _inFlight = true;
+    try {
+      final value = await request();
+      if (_stopped) return;
+      onData(value);
+    } catch (_) {
+      if (_stopped) return;
+      onError();
+    } finally {
+      _inFlight = false;
+    }
+  }
+
+  /// Stops the sequencer for good (called from the provider's `onDispose`).
+  void stop() => _stopped = true;
+}
+
 /// Polls the enriched download list every 4s while listened to. Shared by the
 /// Downloads grid + detail and the Discover cards' live-download overlay.
 /// `autoDispose` + `ref.onDispose` stop the timer the moment the last listener
-/// is gone, so it never polls in the background.
+/// is gone, so it never polls in the background. [PollSequencer] keeps the
+/// ticks from overlapping and drops whatever is still in flight at disposal.
 final servarrDownloadsPollProvider =
     StreamProvider.autoDispose<ServarrDownloadsSnapshot>((ref) {
   final api = ref.watch(apiClientProvider);
   _bindServarrApi(api);
   final controller = StreamController<ServarrDownloadsSnapshot>();
+  final sequencer = PollSequencer();
   var snapshot = const ServarrDownloadsSnapshot();
 
-  Future<void> tick() async {
-    try {
-      final data = await api.servarrGet('downloads/enriched');
-      final list = (data as List)
-          .cast<Map<String, dynamic>>()
-          .map(ServarrDownload.new)
-          .toList();
-      snapshot = ServarrDownloadsSnapshot(list: list, loaded: true);
-      if (!controller.isClosed) controller.add(snapshot);
-    } catch (_) {
-      // Keep the last good list; surface a subtle reconnect flag.
-      snapshot = snapshot.copyWith(loadError: true, loaded: true);
-      if (!controller.isClosed) controller.add(snapshot);
-    }
-  }
+  Future<void> tick() => sequencer.poll<dynamic>(
+        request: () => api.servarrGet('downloads/enriched'),
+        onData: (data) {
+          final list = (data as List)
+              .cast<Map<String, dynamic>>()
+              .map(ServarrDownload.new)
+              .toList();
+          snapshot = ServarrDownloadsSnapshot(list: list, loaded: true);
+          if (!controller.isClosed) controller.add(snapshot);
+        },
+        onError: () {
+          // Keep the last good list; surface a subtle reconnect flag.
+          snapshot = snapshot.copyWith(loadError: true, loaded: true);
+          if (!controller.isClosed) controller.add(snapshot);
+        },
+      );
 
   Timer? timer;
   controller.onListen = () {
@@ -503,6 +554,7 @@ final servarrDownloadsPollProvider =
     timer = Timer.periodic(const Duration(seconds: 4), (_) => tick());
   };
   ref.onDispose(() {
+    sequencer.stop();
     timer?.cancel();
     controller.close();
   });
@@ -600,30 +652,39 @@ final servarrFailingQueueProvider =
     StreamProvider.autoDispose<ServarrFailingSnapshot>((ref) {
   final api = ref.watch(apiClientProvider);
   final controller = StreamController<ServarrFailingSnapshot>();
+  final sequencer = PollSequencer();
   var snapshot = const ServarrFailingSnapshot();
 
-  Future<void> tick() async {
-    try {
-      final results = await Future.wait<dynamic>([
-        api.servarrGet('radarr/queue').then<dynamic>((v) => v).catchError((_) => null),
-        api.servarrGet('sonarr/queue').then<dynamic>((v) => v).catchError((_) => null),
-      ]);
-      if (results[0] == null && results[1] == null) {
-        snapshot = snapshot.copyWith(loadError: true, loaded: true);
-        if (!controller.isClosed) controller.add(snapshot);
-        return;
-      }
-      final merged = [
-        ...((results[0] as List?) ?? const []).cast<Map<String, dynamic>>(),
-        ...((results[1] as List?) ?? const []).cast<Map<String, dynamic>>(),
-      ].map(ServarrArrQueueItem.new).where((q) => q.failing).toList();
-      snapshot = ServarrFailingSnapshot(items: merged, loaded: true);
-      if (!controller.isClosed) controller.add(snapshot);
-    } catch (_) {
-      snapshot = snapshot.copyWith(loadError: true, loaded: true);
-      if (!controller.isClosed) controller.add(snapshot);
-    }
+  void applyError() {
+    snapshot = snapshot.copyWith(loadError: true, loaded: true);
+    if (!controller.isClosed) controller.add(snapshot);
   }
+
+  Future<void> tick() => sequencer.poll<List<dynamic>>(
+        request: () => Future.wait<dynamic>([
+          api
+              .servarrGet('radarr/queue')
+              .then<dynamic>((v) => v)
+              .catchError((_) => null),
+          api
+              .servarrGet('sonarr/queue')
+              .then<dynamic>((v) => v)
+              .catchError((_) => null),
+        ]),
+        onData: (results) {
+          if (results[0] == null && results[1] == null) {
+            applyError();
+            return;
+          }
+          final merged = [
+            ...((results[0] as List?) ?? const []).cast<Map<String, dynamic>>(),
+            ...((results[1] as List?) ?? const []).cast<Map<String, dynamic>>(),
+          ].map(ServarrArrQueueItem.new).where((q) => q.failing).toList();
+          snapshot = ServarrFailingSnapshot(items: merged, loaded: true);
+          if (!controller.isClosed) controller.add(snapshot);
+        },
+        onError: applyError,
+      );
 
   Timer? timer;
   controller.onListen = () {
@@ -631,6 +692,7 @@ final servarrFailingQueueProvider =
     timer = Timer.periodic(const Duration(seconds: 6), (_) => tick());
   };
   ref.onDispose(() {
+    sequencer.stop();
     timer?.cancel();
     controller.close();
   });
