@@ -281,6 +281,8 @@ List<String> selectEvictions({
 /// storage shape above — nothing about [open]/[CacheEntry] changed shape for
 /// it.
 class RangeCacheStore {
+  // Keep the public parameter name distinct from the private field.
+  // ignore: prefer_initializing_formals
   RangeCacheStore({Directory? overrideDir}) : _overrideDir = overrideDir;
 
   final Directory? _overrideDir;

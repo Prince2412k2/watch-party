@@ -72,11 +72,11 @@ void main() {
     entry.setTotalLength(50);
 
     var fetchCount = 0;
-    final pausingFetcher = (entry, start, end) async {
+    Future<void> pausingFetcher(CacheEntry entry, int start, int end) async {
       fetchCount++;
       await entry.write(start, List<int>.filled(end - start, 1));
       if (fetchCount == 2) controller.pause('item-pause');
-    };
+    }
 
     await controller.start('item-pause', fetcher: pausingFetcher);
 
@@ -99,11 +99,11 @@ void main() {
     entry.setTotalLength(50);
 
     var fetchCount = 0;
-    final cancellingFetcher = (entry, start, end) async {
+    Future<void> cancellingFetcher(CacheEntry entry, int start, int end) async {
       fetchCount++;
       await entry.write(start, List<int>.filled(end - start, 1));
       if (fetchCount == 2) controller.cancel('item-cancel');
-    };
+    }
 
     await controller.start('item-cancel', fetcher: cancellingFetcher);
 
