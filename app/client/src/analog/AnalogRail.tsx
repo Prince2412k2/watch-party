@@ -36,6 +36,12 @@ export interface AnalogRailItem {
   badge?: string | null
   progressPct?: number | null
   art: ArtworkItem
+  /**
+   * A resolved artwork URL, for rails whose items are not Jellyfin library
+   * items — Discover's catalog results come from the same-origin
+   * `/api/servarr/remote-image` proxy rather than the library image route.
+   */
+  artSrc?: string | null
 }
 
 export interface AnalogRailProps {
@@ -245,6 +251,7 @@ export function AnalogRail({
               >
                 <AnalogPoster
                   item={item.art}
+                  src={item.artSrc}
                   focused={index === selection}
                   motion={motion}
                   caption={item.label}
