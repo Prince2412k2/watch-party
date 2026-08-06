@@ -19,7 +19,7 @@ import { DownloadsProvider } from './context/DownloadsContext.tsx'
 const Login = lazy(() => import('./pages/Login'))
 const PhoneLogin = lazy(() => import('./mobile/screens/Login'))
 const Library = lazy(() => import('./pages/Library'))
-const MoviesBrowse = lazy(() => import('./pages/MoviesBrowse'))
+const MoviesStage = lazy(() => import('./pages/MoviesStage'))
 const FindDownload = lazy(() => import('./pages/FindDownload'))
 const Downloads = lazy(() => import('./pages/Downloads'))
 const DesktopApp = lazy(() => import('./pages/DesktopApp'))
@@ -165,13 +165,13 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
     >{content}</WebShell>
   )
 
-  // Movies browse is the first surface rebuilt on the analog kit (issue #66).
-  // It brings its own stage, bottom modes and corner toolboxes, so it is NOT
-  // wrapped in WebShell — and it runs on phones too, because the analog model
-  // is the same stage and focus behaviour at every size rather than a separate
-  // phone tree. '/library' stays on the superseded implementations: nothing is
-  // removed until parity is verified, and it is the phone shell's Home tab.
-  const screen = path === '/movies' ? <MoviesBrowse />
+  // Movies is the first surface rebuilt on the analog kit (issue #66). It brings
+  // its own stage, bottom modes and corner toolboxes, so it is NOT wrapped in
+  // WebShell — and it runs on phones too, because the analog model is the same
+  // stage and focus behaviour at every size rather than a separate phone tree.
+  // '/library' stays on the superseded implementations: nothing is removed until
+  // parity is verified, and it is the phone shell's Home tab.
+  const screen = path === '/movies' ? <MoviesStage />
     : phone ? <MobileApp path={path} />
     : path === '/series' ? shell('series', <Library libraryType="series" />)
     : path === '/discover' ? shell('discover', <FindDownload />)
