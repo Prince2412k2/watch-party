@@ -458,10 +458,10 @@ export default function MoviesStage() {
         layout={layout}
         motion={motion}
         inert={!canDrive}
+        side={<AnalogModeSlider mode={mode} onChange={setMode} disabled={!canDrive} />}
         header={
           <div className="an-stage-head">
             <div className="an-stage-head-row">
-              <AnalogModeSlider mode={mode} onChange={setMode} disabled={!canDrive} />
               {collection ? (
                 <button type="button" className="an-back" onClick={goBack} disabled={!canDrive}>
                   <AnIcon name="back" size={14} />

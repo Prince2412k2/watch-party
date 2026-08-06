@@ -23,6 +23,8 @@ export interface AnalogStageProps {
   /** A party guest mirrors the host, so the stage is inert for them. */
   inert?: boolean
   header?: ReactNode
+  /** Right-edge rail: the Singles/Collections selector. */
+  side?: ReactNode
   nav?: ReactNode
   toolboxes?: ReactNode
   children?: ReactNode
@@ -41,6 +43,7 @@ export function AnalogStage({
   motion,
   inert = false,
   header,
+  side,
   nav,
   toolboxes,
   children,
@@ -112,6 +115,7 @@ export function AnalogStage({
       <div className="an-stage-content">
         {header ?? <div />}
         <div className="an-stage-shelves">{children}</div>
+        {side ? <div className="an-stage-side">{side}</div> : null}
         <div ref={navRef}>{nav}</div>
       </div>
 
