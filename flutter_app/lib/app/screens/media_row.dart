@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../../analog/chrome/analog_button.dart';
+import '../../analog/chrome/analog_panel.dart';
+import '../../analog/chrome/analog_progress.dart';
+import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
 
 /// PKG-D shared list-row idiom. Consolidates the three divergent row styles that
 /// used to live on the Downloads and acquisition-Queue screens — a bespoke
 /// bordered `Container`, a Material `Card`+`ListTile`, and a `Card`+`Row` — into
-/// ONE `sc.Card`-framed row so both screens read as the same surface.
+/// ONE [AnalogPanel]-framed row so both screens read as the same surface.
 ///
 /// Slots (all optional except [title]):
 /// - [leading]: a fixed-size visual — a poster [MediaThumb] or a status icon.
-/// - [badge]: a top-right status pill (an [AppChip] / `sc` badge).
+/// - [badge]: a top-right status pill (an [AppChip] or a badge).
 /// - [subtitle]: a secondary line (queue metadata, or a failure message when
 ///   [subtitleIsError]).
-/// - [progress]: when [showProgress], an `sc.Progress` bar (a null value renders
-///   the indeterminate animation). Callers must clamp values into 0..1.
+/// - [progress]: when [showProgress], an [AnalogProgress] line (a null value
+///   runs the indeterminate sweep). Callers must clamp values into 0..1.
 /// - [meta]: a monospace readout line (percentage / speed / seeds).
 /// - [trailing]: the action cluster ([MediaRowIconButton]s or an [AppButton]).
 class MediaRow extends StatelessWidget {
@@ -49,20 +52,17 @@ class MediaRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return sc.Card(
-      filled: true,
-      fillColor: AppColors.surface,
-      borderColor: AppColors.line,
-      borderRadius: BorderRadius.circular(AppSpacing.radius),
+    return AnalogPanel(
+      lift: AnalogLift.flush,
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
+        horizontal: AnalogSpace.lgPx,
+        vertical: AnalogSpace.mdPx,
       ),
       child: Row(
         children: [
           if (leading != null) ...[
             leading!,
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AnalogSpace.mdPx),
           ],
           Expanded(
             child: Column(
@@ -77,14 +77,15 @@ class MediaRow extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: AppColors.text,
+                          fontFamily: AnalogType.sansFamily,
+                          color: AnalogColor.ink,
                           fontSize: 14.5,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                     if (badge != null) ...[
-                      const SizedBox(width: AppSpacing.sm),
+                      const SizedBox(width: AnalogSpace.smPx),
                       badge!,
                     ],
                   ],
@@ -96,27 +97,42 @@ class MediaRow extends StatelessWidget {
                     maxLines: subtitleMaxLines,
                     overflow: TextOverflow.ellipsis,
                     style: subtitleIsError
-                        ? const TextStyle(color: AppColors.red, fontSize: 12.5)
-                        : AppTheme.dim,
+                        ? const TextStyle(
+                            fontFamily: AnalogType.sansFamily,
+                            color: AnalogColor.statusDanger,
+                            fontSize: 12.5,
+                          )
+                        : const TextStyle(
+                            fontFamily: AnalogType.sansFamily,
+                            color: AnalogColor.inkDim,
+                            fontSize: 13,
+                          ),
                   ),
                 ],
                 if (showProgress) ...[
-                  const SizedBox(height: AppSpacing.sm),
-                  sc.Progress(
-                    progress: progress,
-                    color: progressColor ?? AppColors.accent,
-                    backgroundColor: AppColors.line2,
+                  const SizedBox(height: AnalogSpace.smPx),
+                  AnalogProgress(
+                    value: progress,
+                    ink: progressColor ?? AnalogColor.ink,
+                    semanticLabel: title,
                   ),
                 ],
                 if (meta != null) ...[
                   const SizedBox(height: 6),
-                  Text(meta!, style: AppTheme.mono),
+                  Text(
+                    meta!,
+                    style: const TextStyle(
+                      fontFamily: AnalogType.monoFamily,
+                      fontSize: 11.5,
+                      color: AnalogColor.inkDim,
+                    ),
+                  ),
                 ],
               ],
             ),
           ),
           if (trailing != null) ...[
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AnalogSpace.mdPx),
             trailing!,
           ],
         ],
@@ -125,8 +141,12 @@ class MediaRow extends StatelessWidget {
   }
 }
 
-/// A small rounded poster thumbnail for a [MediaRow.leading] slot, with a
-/// monochrome fallback when the URL is missing or fails to load.
+/// A small poster thumbnail for a [MediaRow.leading] slot, with a monochrome
+/// fallback when the URL is missing or fails to load.
+///
+/// Square-cornered, like every other piece of artwork in the app:
+/// [AnalogPoster.radiusPx] is 0 "including skeletons, placeholders, seasons and
+/// selected states", and a list row is not an exception to that.
 class MediaThumb extends StatelessWidget {
   const MediaThumb({
     super.key,
@@ -143,8 +163,7 @@ class MediaThumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+    return ClipRect(
       child: SizedBox(
         width: width,
         height: height,
@@ -160,8 +179,8 @@ class MediaThumb extends StatelessWidget {
   }
 
   Widget get _fallback => ColoredBox(
-    color: AppColors.surface2,
-    child: Center(child: Icon(icon, color: AppColors.faint, size: 20)),
+    color: AnalogColor.stageSurface2,
+    child: Center(child: Icon(icon, color: AnalogColor.inkFaint, size: 20)),
   );
 }
 
@@ -171,7 +190,7 @@ class MediaRowIcon extends StatelessWidget {
   const MediaRowIcon({
     super.key,
     required this.icon,
-    this.color = AppColors.dim,
+    this.color = AnalogColor.inkDim,
   });
 
   final IconData icon;
@@ -183,38 +202,39 @@ class MediaRowIcon extends StatelessWidget {
       width: 40,
       height: 40,
       decoration: BoxDecoration(
-        color: AppColors.surface2,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+        color: AnalogColor.stageSurface2,
+        borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
       ),
       child: Icon(icon, color: color, size: 20),
     );
   }
 }
 
-/// A ghost `sc` icon-button with a `sc` tooltip — the standard trailing action
-/// (pause/resume/cancel/remove) across PKG-D rows.
+/// The standard trailing action (pause/resume/cancel/remove) across PKG-D rows.
+///
+/// [tooltip] doubles as the control's accessible name — see [AnalogIconButton],
+/// which is why it was already required here.
 class MediaRowIconButton extends StatelessWidget {
   const MediaRowIconButton({
     super.key,
     required this.icon,
     required this.tooltip,
     this.onPressed,
-    this.color = AppColors.text,
+    this.color,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
-  final Color color;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    return sc.Tooltip(
-      tooltip: (context) => sc.TooltipContainer(child: Text(tooltip)),
-      child: sc.IconButton.ghost(
-        icon: Icon(icon, color: color, size: 18),
-        onPressed: onPressed,
-      ),
+    return AnalogIconButton(
+      icon: icon,
+      tooltip: tooltip,
+      onPressed: onPressed,
+      color: color,
     );
   }
 }
@@ -228,14 +248,11 @@ class MediaRowSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return sc.Card(
-      filled: true,
-      fillColor: AppColors.surface,
-      borderColor: AppColors.line,
-      borderRadius: BorderRadius.circular(AppSpacing.radius),
+    return AnalogPanel(
+      lift: AnalogLift.flush,
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
+        horizontal: AnalogSpace.lgPx,
+        vertical: AnalogSpace.mdPx,
       ),
       child: Row(
         children: [
@@ -243,9 +260,9 @@ class MediaRowSkeleton extends StatelessWidget {
             const LoadingSkeleton(
               width: 46,
               height: 69,
-              borderRadius: AppSpacing.radiusSm,
+              borderRadius: AnalogPoster.radiusPx,
             ),
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: AnalogSpace.mdPx),
           ],
           const Expanded(
             child: Column(
@@ -253,15 +270,15 @@ class MediaRowSkeleton extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 LoadingSkeleton(height: 13, width: 180),
-                SizedBox(height: AppSpacing.md),
+                SizedBox(height: AnalogSpace.mdPx),
                 SizedBox(
                   width: double.infinity,
                   child: LoadingSkeleton(
-                    height: 6,
-                    borderRadius: AppSpacing.radiusPill,
+                    height: AnalogHairline.idlePx,
+                    borderRadius: 0,
                   ),
                 ),
-                SizedBox(height: AppSpacing.sm),
+                SizedBox(height: AnalogSpace.smPx),
                 LoadingSkeleton(height: 10, width: 120),
               ],
             ),

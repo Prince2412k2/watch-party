@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/detail_screen.dart';
 import 'package:watchparty/cache/media_cache_proxy.dart';
 import 'package:watchparty/data/mock_api_client.dart';
@@ -67,11 +67,7 @@ void main() {
           child: MaterialApp.router(
             theme: AppTheme.dark,
             routerConfig: router,
-            builder: (context, child) => sc.ShadcnLayer(
-              theme: AppShadcnTheme.dark,
-              themeMode: sc.ThemeMode.dark,
-              child: child!,
-            ),
+            builder: (context, child) => AnalogToastHost(child: child!),
           ),
         ),
       );
@@ -131,11 +127,7 @@ void main() {
         child: MaterialApp.router(
           theme: AppTheme.dark,
           routerConfig: router,
-          builder: (context, child) => sc.ShadcnLayer(
-            theme: AppShadcnTheme.dark,
-            themeMode: sc.ThemeMode.dark,
-            child: child!,
-          ),
+          builder: (context, child) => AnalogToastHost(child: child!),
         ),
       ),
     );
