@@ -1,0 +1,800 @@
+/* Discover's own chrome, on top of the analog kit.
+ *
+ * Everything Discover shares with the rest of the stage — the backdrop, the
+ * detail block, the rail, the poster, the mode slider, the nav — is analogKit.css
+ * and is NOT restated here. What is here is the four things only Discover has: a
+ * search field, suggestion chips, acquisition state on the stage, and the sheets
+ * its four decisions open in.
+ *
+ * Every value is a generated custom property. The only literals are structural. */
+
+/* ── search ──────────────────────────────────────────────────────────────── */
+
+/* Sits in the stage head's top row, where Movies puts its Back button — the one
+   place on this stage that is above the copy rather than part of it. */
+.an-dsearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: min(420px, 100%);
+}
+
+.an-dsearch-glyph {
+  position: absolute;
+  left: var(--an-space-md-px);
+  display: grid;
+  place-items: center;
+  color: var(--an-color-ink-faint);
+  pointer-events: none;
+}
+
+.an-dsearch input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 var(--an-space-xxl-px) 0 var(--an-space-xxl-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-surface);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+  box-shadow: var(--an-elevation-rest-offset-xpx) var(--an-elevation-rest-offset-ypx)
+    var(--an-elevation-rest-blur-px) var(--an-color-shadow-cast);
+  transition: border-color var(--an-motion-chrome-fade-ms) var(--an-motion-chrome-fade-ease);
+}
+
+/* The browser's own search affordance is a second, differently-styled clear
+   button next to ours. */
+.an-dsearch input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.an-dsearch input::placeholder {
+  color: var(--an-color-ink-faint);
+}
+
+.an-dsearch input:hover:not(:disabled),
+.an-dsearch input:focus-visible {
+  border-color: var(--an-color-line-strong);
+}
+
+.an-dsearch input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.an-dsearch-clear {
+  position: absolute;
+  right: var(--an-space-xs-px);
+  display: grid;
+  place-items: center;
+  width: var(--an-hairline-hit-px);
+  height: var(--an-hairline-hit-px);
+  border: 0;
+  border-radius: var(--an-radius-chrome-px);
+  background: transparent;
+  color: var(--an-color-ink-faint);
+  cursor: pointer;
+}
+
+.an-dsearch-clear:hover,
+.an-dsearch-clear:focus-visible {
+  color: var(--an-color-ink);
+}
+
+/* Progress, not decoration: a ring that turns while a request is in flight, in
+   the same position the clear button occupies when it is not. */
+.an-dsearch-busy,
+.an-dpulse {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: var(--an-hairline-idle-px) solid var(--an-color-line-strong);
+  border-top-color: var(--an-color-accent);
+  border-radius: var(--an-radius-pill-px);
+  animation: an-dspin 700ms linear infinite;
+}
+
+.an-dsearch-busy {
+  position: absolute;
+  right: var(--an-space-md-px);
+}
+
+@keyframes an-dspin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* "Reduced-motion mode must preserve all state changes without spatial effects."
+   The busy state still reads — as a static accented arc rather than a turning
+   one. */
+@media (prefers-reduced-motion: reduce) {
+  .an-dsearch-busy,
+  .an-dpulse {
+    animation: none;
+  }
+}
+
+/* ── suggestions ─────────────────────────────────────────────────────────── */
+
+.an-dsuggest {
+  display: grid;
+  gap: var(--an-space-sm-px);
+  min-width: 0;
+}
+
+.an-dsuggest-head {
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.an-dsuggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--an-space-sm-px);
+}
+
+.an-dsuggest-chips button {
+  min-height: 32px;
+  padding: 0 var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-dim);
+  background: var(--an-color-stage-surface);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12.5px;
+  transition: color var(--an-motion-chrome-fade-ms) var(--an-motion-chrome-fade-ease);
+}
+
+.an-dsuggest-chips button:hover,
+.an-dsuggest-chips button:focus-visible {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+}
+
+/* ── rail badges ─────────────────────────────────────────────────────────── */
+
+/* A rail poster is 68px wide on a phone. The badge is kept terse in
+   `cardState.ts`, and clipped here so a longer one degrades to an ellipsis
+   rather than spilling across the artwork it sits on. */
+.an-discover .an-poster-badge {
+  max-width: calc(100% - var(--an-space-md-px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── on-stage state ──────────────────────────────────────────────────────── */
+
+.an-dstate {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--an-space-sm-px);
+  margin: var(--an-space-md-px) 0 0;
+  color: var(--an-color-ink-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.an-dstate[data-tone='warn'] {
+  color: var(--an-color-status-danger);
+}
+
+.an-dprogress {
+  display: grid;
+  gap: var(--an-space-sm-px);
+  max-width: 420px;
+  margin-top: var(--an-space-md-px);
+}
+
+/* A precision line, not a filled capsule — the same hairline the timeline and
+   the poster's progress mark use. */
+.an-dprogress-bar {
+  height: var(--an-hairline-active-px);
+  background: var(--an-color-line-strong);
+}
+
+.an-dprogress-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--an-color-accent);
+  transition: width var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
+}
+
+/* Nothing has been measured yet, so the bar says "started", not "15% done". */
+.an-dprogress-bar > i[data-indeterminate='true'] {
+  background: var(--an-color-ink-faint);
+}
+
+/* A state with nothing to press still occupies the action row, so the block does
+   not jump when a download starts. */
+.an-action.is-static {
+  cursor: default;
+  color: var(--an-color-ink-dim);
+  background: var(--an-color-stage-surface2);
+}
+
+.an-action.is-danger {
+  border-color: var(--an-color-status-danger);
+  color: var(--an-color-status-danger);
+}
+
+.an-action.is-icon[data-tone='danger'] {
+  color: var(--an-color-status-danger);
+}
+
+.an-action.is-small {
+  min-height: 32px;
+  padding: 0 var(--an-space-md-px);
+  font-size: 12.5px;
+}
+
+.an-action.is-wide {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── sheets ──────────────────────────────────────────────────────────────── */
+
+.an-dsheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--an-z-scrim);
+  display: grid;
+  place-items: center;
+  padding: var(--an-space-lg-px);
+  background: var(--an-color-backdrop-scrim);
+  animation: an-dfade var(--an-motion-chrome-fade-ms) var(--an-motion-chrome-fade-ease) both;
+}
+
+@keyframes an-dfade {
+  from {
+    opacity: 0;
+  }
+}
+
+.an-dsheet {
+  z-index: var(--an-z-sheet);
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: min(86vh, 720px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-sheet-px);
+  background: var(--an-color-stage-surface);
+  color: var(--an-color-ink);
+  font-family: var(--an-type-sans);
+  box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+    var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+  animation: an-dsheet-in var(--an-motion-drawer-ms) var(--an-motion-drawer-ease) both;
+}
+
+.an-dsheet:focus {
+  outline: none;
+}
+
+@keyframes an-dsheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .an-dsheet-scrim,
+  .an-dsheet {
+    animation: none;
+  }
+}
+
+.an-dsheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--an-space-md-px);
+  padding: var(--an-space-lg-px);
+  border-bottom: var(--an-poster-frame-px) solid var(--an-color-line);
+}
+
+/* Square and unrounded, like every other poster in this app — the sheet's
+   thumbnail is the variant that quietly reintroduces a radius. */
+.an-dsheet-poster {
+  flex: none;
+  width: 56px;
+}
+
+.an-dsheet-headline {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.an-dsheet-headline h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.an-dsheet-eyebrow,
+.an-dsheet-sub {
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.an-dsheet-sub {
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-size: 11.5px;
+}
+
+.an-dsheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: var(--an-space-lg-px);
+  display: grid;
+  gap: var(--an-space-md-px);
+  align-content: start;
+}
+
+.an-dsheet-foot {
+  padding: var(--an-space-lg-px);
+  border-top: var(--an-poster-frame-px) solid var(--an-color-line);
+}
+
+.an-dsheet-section {
+  margin: var(--an-space-sm-px) 0 0;
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.an-dempty,
+.an-dhint {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  margin: 0;
+  color: var(--an-color-ink-dim);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.an-dhint {
+  color: var(--an-color-ink-faint);
+  font-size: 12.5px;
+}
+
+.an-dnotice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--an-space-sm-px);
+  margin: 0;
+  padding: var(--an-space-sm-px) var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Tone is carried by the edge as well as the ink, so it survives monochrome. */
+.an-dnotice[data-tone='error'] {
+  border-color: var(--an-color-status-danger);
+  color: var(--an-color-status-danger);
+}
+
+.an-dnotice[data-tone='warn'] {
+  border-color: var(--an-color-line-strong);
+  color: var(--an-color-ink);
+}
+
+.an-dnotice[data-tone='ok'] {
+  border-color: var(--an-color-status-success);
+  color: var(--an-color-status-success);
+}
+
+.an-drecovery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--an-space-sm-px);
+}
+
+/* ── sheet forms ─────────────────────────────────────────────────────────── */
+
+.an-dfield {
+  display: grid;
+  gap: var(--an-space-xs-px);
+  min-width: 0;
+}
+
+.an-dfield-label {
+  color: var(--an-color-ink-dim);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.an-dfield-hint {
+  color: var(--an-color-ink-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.an-dgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--an-space-md-px);
+}
+
+.an-dinput,
+.an-dselect {
+  width: 100%;
+  min-height: 40px;
+  padding: var(--an-space-sm-px) var(--an-space-md-px);
+  box-sizing: border-box;
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-surface2);
+  font-family: inherit;
+  font-size: 13.5px;
+  outline: none;
+}
+
+.an-dinput.is-mono {
+  font-family: var(--an-type-mono);
+  font-size: 12.5px;
+}
+
+textarea.an-dinput {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.an-dinput:focus-visible,
+.an-dselect:focus-visible {
+  border-color: var(--an-color-line-strong);
+}
+
+.an-dinput:disabled {
+  opacity: 0.5;
+}
+
+.an-dselect {
+  cursor: pointer;
+}
+
+/* Two positions, one choice — the same detent-rule treatment the mode slider
+   uses, laid out horizontally because it belongs to the form below it. */
+.an-dmodes {
+  display: flex;
+  gap: var(--an-space-lg-px);
+  margin-bottom: var(--an-space-sm-px);
+}
+
+.an-dmodes button {
+  display: grid;
+  gap: var(--an-space-xs-px);
+  justify-items: start;
+  min-height: var(--an-hairline-hit-px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--an-color-ink-faint);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.an-dmodes button.is-active {
+  color: var(--an-color-ink);
+}
+
+.an-dmodes button::after {
+  content: '';
+  display: block;
+  width: 18px;
+  height: var(--an-hairline-idle-px);
+  background: currentColor;
+  transition: width var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
+}
+
+.an-dmodes button.is-active::after {
+  width: 100%;
+  background: var(--an-color-accent);
+}
+
+.an-dtoggle {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-md-px);
+  width: 100%;
+  padding: var(--an-space-sm-px) var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface2);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.an-dtoggle:hover,
+.an-dtoggle:focus-visible {
+  border-color: var(--an-color-line-strong);
+}
+
+.an-dtoggle-copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.an-dtoggle-copy strong {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.an-dtoggle-copy > span {
+  color: var(--an-color-ink-faint);
+  font-size: 11.5px;
+}
+
+.an-dtoggle-track {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 20px;
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-pill-px);
+  background: transparent;
+}
+
+.an-dtoggle-track > i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--an-radius-pill-px);
+  background: var(--an-color-ink-faint);
+  transition:
+    left var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease),
+    background var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
+}
+
+/* On is a position AND a fill, never a tint alone. */
+.an-dtoggle[aria-checked='true'] .an-dtoggle-track {
+  border-color: var(--an-color-accent);
+}
+
+.an-dtoggle[aria-checked='true'] .an-dtoggle-track > i {
+  left: 21px;
+  background: var(--an-color-accent);
+}
+
+/* ── seasons ─────────────────────────────────────────────────────────────── */
+
+.an-dseason-all {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-md-px);
+  flex-wrap: wrap;
+  color: var(--an-color-ink-faint);
+  font-size: 11.5px;
+}
+
+.an-dseasons {
+  display: grid;
+  gap: var(--an-space-sm-px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.an-dseason {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-md-px);
+  padding: var(--an-space-sm-px) var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface2);
+}
+
+.an-dseason[data-specials] {
+  opacity: 0.82;
+}
+
+.an-dseason-name {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.an-dseason-name strong {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.an-dseason-name > span {
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 11.5px;
+}
+
+.an-dseason-action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+}
+
+.an-dpill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  min-height: 28px;
+  padding: 0 var(--an-space-sm-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ── releases ────────────────────────────────────────────────────────────── */
+
+.an-dreleases {
+  display: grid;
+  gap: var(--an-space-sm-px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.an-drelease {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-md-px);
+  padding: var(--an-space-sm-px) var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface2);
+}
+
+/* Rejected rows are dimmed AND carry their reason; they are never simply
+   hidden, because "why did the auto-picker skip this" is the question the
+   picker exists to answer. */
+.an-drelease[data-rejected] {
+  opacity: 0.58;
+  background: transparent;
+}
+
+.an-drelease-body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: var(--an-space-xs-px);
+}
+
+.an-drelease-title {
+  overflow: hidden;
+  color: var(--an-color-ink);
+  font-family: var(--an-type-mono);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.an-drelease-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--an-space-xs-px) var(--an-space-md-px);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 11.5px;
+}
+
+.an-drelease-indexer {
+  overflow: hidden;
+  max-width: 150px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.an-dchip {
+  padding: 1px var(--an-space-sm-px);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface3);
+  color: var(--an-color-ink-dim);
+}
+
+.an-dseeds {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  color: var(--an-color-ink-dim);
+}
+
+.an-dseeds > i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--an-radius-pill-px);
+  background: currentColor;
+}
+
+.an-dseeds[data-tone='none'] {
+  color: var(--an-color-status-danger);
+}
+
+/* Unknown is not zero: a hollow dot rather than a red one, so an indexer that
+   does not report seeders is not mistaken for a dead release. */
+.an-dseeds[data-tone='unknown'] > i {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--an-poster-frame-px) currentColor;
+}
+
+.an-drelease-reason {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  overflow: hidden;
+  color: var(--an-color-ink-dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── phone ───────────────────────────────────────────────────────────────── */
+
+.an-stage[data-size='phone'] .an-dsearch {
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .an-dsheet {
+    max-height: 92vh;
+  }
+
+  .an-dgrid {
+    grid-template-columns: 1fr;
+  }
+
+  .an-drelease {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .an-dseason {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* A short viewport has room for the rail, the actions and the title — the
+   suggestion chips are the one block that can go without losing a state. */
+@media (max-height: 560px) {
+  .an-dsuggest {
+    display: none;
+  }
+}
