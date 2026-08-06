@@ -106,6 +106,51 @@ export function getViews(token, userId) {
   return jfetch(`/Users/${userId}/Views`, { token })
 }
 
+// Movie collections / franchises. Jellyfin models these as `BoxSet` items, which
+// getItems() deliberately excludes (it asks for Movie,Series), so they need
+// their own query rather than a parameter tweak.
+//
+// `ParentId` scopes them to one library view. Without it a BoxSet search is
+// server-wide and the Movies tab would list collections belonging to Shows or
+// any other library. `Recursive` is required because box sets do not sit at the
+// top level of the view.
+export function getCollections(token, userId, parentId, limit = 100) {
+  const qs = new URLSearchParams({
+    SortBy: 'SortName',
+    SortOrder: 'Ascending',
+    IncludeItemTypes: 'BoxSet',
+    Recursive: 'true',
+    Fields: 'PrimaryImageAspectRatio,SortName,Overview,Genres,ChildCount',
+    ImageTypeLimit: '1',
+    EnableImageTypes: 'Primary,Backdrop,Banner,Thumb',
+    StartIndex: '0',
+    Limit: String(limit),
+  })
+  if (parentId) qs.set('ParentId', parentId)
+  return jfetch(`/Users/${userId}/Items?${qs}`, { token })
+}
+
+// The parts of one collection. Ordered by release date rather than SortName:
+// a franchise reads chronologically, and a title-sorted Harry Potter puts
+// "Chamber of Secrets" before "Philosopher's Stone".
+//
+// Asks for the full detail field set because the analog stage renders a part's
+// description, rating, runtime and resume position inline while it is focused —
+// there is no separate detail fetch to fill them in later.
+export function getCollectionItems(token, userId, collectionId) {
+  const qs = new URLSearchParams({
+    ParentId: collectionId,
+    SortBy: 'PremiereDate,SortName',
+    SortOrder: 'Ascending',
+    Fields: [
+      'MediaSources', 'Overview', 'Genres', 'ProductionYear', 'PremiereDate',
+      'UserData', 'People', 'OfficialRating', 'CommunityRating', 'RunTimeTicks',
+    ].join(','),
+    EnableImageTypes: 'Primary,Backdrop,Thumb',
+  })
+  return jfetch(`/Users/${userId}/Items?${qs}`, { token })
+}
+
 // Partially-watched items → "Continue Watching"
 export function getResumeItems(token, userId, limit = 12) {
   const qs = new URLSearchParams({

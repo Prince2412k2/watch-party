@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   buildHlsUrl, getTrickplayProfile, normalizePlaybackInfo,
   resolveMediaSourceId, selectTrickplayProfile,
+  getCollections, getCollectionItems,
 } from './jellyfin.js'
 
 test('media-source lookup includes playable episodes', async t => {
@@ -113,4 +114,63 @@ test('invalid trickplay profile values are rejected', () => {
   item.Trickplay['source-a'][320].TileWidth = 5
   item.Trickplay['source-a'][320].Width = 640
   assert.equal(getTrickplayProfile(item, 'source-a', 320), null)
+})
+
+// ── collections / franchises ─────────────────────────────────────────────────
+
+/** Runs `call` with fetch stubbed, and hands back the URL it requested. */
+async function captureRequest(t, call, body = { Items: [] }) {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  let requestedUrl
+  globalThis.fetch = async url => {
+    requestedUrl = new URL(url)
+    return new Response(JSON.stringify(body), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })
+  }
+  await call()
+  return requestedUrl
+}
+
+test('collections are queried as BoxSets, scoped to one library view', async t => {
+  const url = await captureRequest(t, () => getCollections('token', 'user-id', 'view-id'))
+
+  // getItems() asks for Movie,Series and would never return a box set, so this
+  // has to be its own query rather than a parameter tweak.
+  assert.equal(url.searchParams.get('IncludeItemTypes'), 'BoxSet')
+  // Without ParentId the search is server-wide and the Movies tab would list
+  // collections belonging to other libraries.
+  assert.equal(url.searchParams.get('ParentId'), 'view-id')
+  // Box sets do not sit at the top level of a view.
+  assert.equal(url.searchParams.get('Recursive'), 'true')
+  assert.match(url.pathname, /\/Users\/user-id\/Items$/)
+})
+
+test('a collection query without a library still asks Jellyfin for box sets', async t => {
+  const url = await captureRequest(t, () => getCollections('token', 'user-id', undefined))
+
+  assert.equal(url.searchParams.get('IncludeItemTypes'), 'BoxSet')
+  assert.equal(url.searchParams.get('ParentId'), null)
+})
+
+test('collection parts are ordered by release date, not title', async t => {
+  const url = await captureRequest(t, () => getCollectionItems('token', 'user-id', 'set-id'))
+
+  // A title sort puts "Chamber of Secrets" before "Philosopher's Stone"; a
+  // franchise has to read chronologically.
+  assert.equal(url.searchParams.get('SortBy'), 'PremiereDate,SortName')
+  assert.equal(url.searchParams.get('SortOrder'), 'Ascending')
+  assert.equal(url.searchParams.get('ParentId'), 'set-id')
+})
+
+test('collection parts carry the metadata the stage renders inline', async t => {
+  const url = await captureRequest(t, () => getCollectionItems('token', 'user-id', 'set-id'))
+  const fields = (url.searchParams.get('Fields') ?? '').split(',')
+
+  // The analog stage shows a focused part's description, rating, runtime and
+  // resume position without a second fetch, so the list query must carry them.
+  for (const field of ['Overview', 'CommunityRating', 'RunTimeTicks', 'UserData', 'MediaSources']) {
+    assert.ok(fields.includes(field), `expected Fields to include ${field}`)
+  }
 })

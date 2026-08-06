@@ -4,9 +4,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/app_shell.dart';
+import 'package:watchparty/data/catalog_repository.dart';
+import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
+
+/// Counts browse-catalog fetches, which is the only thing the launch warm does.
+class _CountingApi extends MockApiClient {
+  int itemCalls = 0;
+
+  @override
+  Future<List<LibraryItem>> items({String? parentId}) async {
+    itemCalls++;
+    return const [];
+  }
+}
 
 /// AppShell chrome renders shadcn tooltips/badges, so it needs a shadcn `Theme`
 /// ancestor — mirror the app's `ShadcnLayer` wrap here.
@@ -72,6 +85,51 @@ void main() {
     expect(find.text('Discover'), findsNothing);
     // Top-right chrome is the login control, not the profile avatar.
     expect(find.byIcon(Icons.login), findsOneWidget);
+  });
+
+  group('catalog warm on launch', () {
+    Future<_CountingApi> launch(WidgetTester tester, String location) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      final api = _CountingApi();
+      final container = ProviderContainer(
+        overrides: [
+          ..._signedIn(),
+          catalogNamespaceProvider.overrideWithValue('server|user'),
+          catalogRepositoryProvider.overrideWithValue(
+            CatalogRepository(api: api),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: AppTheme.dark,
+            builder: _shadcn,
+            home: AppShell(location: location, child: const SizedBox()),
+          ),
+        ),
+      );
+      await tester.pump();
+      await container.read(catalogPrefetcherProvider).settle();
+      return api;
+    }
+
+    testWidgets('coming up away from browse warms the catalog', (tester) async {
+      expect((await launch(tester, '/downloads')).itemCalls, 1);
+    });
+
+    testWidgets('coming up on browse leaves the fetch to the screen', (
+      tester,
+    ) async {
+      // The browse screen subscribes to the same key as it builds; warming it
+      // underneath would be a second request for a payload already in flight.
+      expect((await launch(tester, '/movies')).itemCalls, 0);
+      expect((await launch(tester, '/series')).itemCalls, 0);
+    });
   });
 
   group('shellSectionTitle', () {

@@ -5,6 +5,7 @@ import { requireAuth, getJellyfin } from './auth.js'
 import {
   getItems, getItemChildren, buildHlsUrl, BASE,
   getViews, getResumeItems, getNextUp, getLatest, getItemDetail,
+  getCollections, getCollectionItems,
   getPlaybackInfo, normalizePlaybackInfo,
   selectTrickplayProfile, getTrickplayProfile,
 } from './jellyfin.js'
@@ -230,6 +231,41 @@ export function registerLibraryRoutes(app) {
     } catch (err) {
       console.error('library/items', err.message)
       res.status(502).json({ error: 'Failed to fetch library' })
+    }
+  })
+
+  // Movie collections / franchises for the Movies tab's Collections mode.
+  // `parentId` is the Movies view id; omitting it would return every box set on
+  // the server, including ones belonging to other libraries.
+  app.get('/api/library/collections', requireAuth, async (req, res) => {
+    const { token, userId } = getJellyfin(req)
+    const { parentId } = req.query
+    if (parentId != null && !isJellyfinId(parentId)) return res.status(400).end()
+    try {
+      await sendCachedJson(req, res, `collections:${parentId ?? ''}`, 300, async () => {
+        const data = await getCollections(token, userId, parentId)
+        return data.Items ?? []
+      })
+    } catch (err) {
+      console.error('library/collections', err.message)
+      res.status(502).json({ error: 'Failed to fetch collections' })
+    }
+  })
+
+  // The parts of one collection, release-ordered. Separate from
+  // `/items/:id/children` because that one only asks for MediaSources, and the
+  // analog stage renders each part's full metadata while it is focused.
+  app.get('/api/library/collections/:id/items', requireAuth, async (req, res) => {
+    const { token, userId } = getJellyfin(req)
+    if (!isJellyfinId(req.params.id)) return res.status(400).end()
+    try {
+      await sendCachedJson(req, res, `collection-items:${req.params.id}`, 300, async () => {
+        const data = await getCollectionItems(token, userId, req.params.id)
+        return data.Items ?? []
+      })
+    } catch (err) {
+      console.error('library/collection-items', err.message)
+      res.status(502).json({ error: 'Failed to fetch collection items' })
     }
   })
 
