@@ -12,6 +12,7 @@
 import 'package:flutter/material.dart';
 
 import '../../ui/analog_tokens.dart';
+import '../chrome/analog_toast.dart' show AnalogToastSurface;
 import '../player_core.dart';
 
 class AnalogToastStack extends StatelessWidget {
@@ -38,7 +39,7 @@ class AnalogToastStack extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (view.collapsedCount > 0)
-              _ToastSurface(
+              AnalogToastSurface(
                 opaque: media.highContrast,
                 child: Text(
                   '+${view.collapsedCount} earlier '
@@ -86,7 +87,7 @@ class _ChatToast extends StatelessWidget {
         liveRegion: true,
         label: '${toast.sender} says ${toast.preview}',
         excludeSemantics: true,
-        child: _ToastSurface(
+        child: AnalogToastSurface(
           opaque: opaque,
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -128,32 +129,6 @@ class _ChatToast extends StatelessWidget {
       builder: (context, value, child) =>
           Opacity(opacity: value, child: child),
       child: surface,
-    );
-  }
-}
-
-class _ToastSurface extends StatelessWidget {
-  const _ToastSurface({required this.opaque, required this.child});
-
-  final bool opaque;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(top: AnalogSpace.smPx),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AnalogSpace.mdPx,
-        vertical: AnalogSpace.smPx,
-      ),
-      decoration: BoxDecoration(
-        // Reduced-transparency mode swaps the semi-transparent surface for an
-        // opaque one of equivalent contrast rather than dropping the toast.
-        color: opaque ? AnalogColor.stageSurface2 : AnalogColor.backdropScrim,
-        borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-        border: Border.all(color: AnalogColor.line),
-      ),
-      child: child,
     );
   }
 }

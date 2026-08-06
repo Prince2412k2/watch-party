@@ -3,7 +3,6 @@ library;
 
 export 'motion.dart';
 export 'palette.dart';
-export 'shadcn_theme.dart';
 export 'theme.dart';
 export 'theme_mode.dart';
 export 'tokens.dart';

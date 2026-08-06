@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:window_manager/window_manager.dart';
 
+import '../../analog/chrome/analog_button.dart';
 import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../player/offline_playback.dart';
@@ -102,10 +102,11 @@ class _GuestOfflineDetailBody extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          sc.IconButton.ghost(
+          AnalogIconButton(
+            icon: Icons.arrow_back,
+            tooltip: 'Back',
             onPressed: () =>
                 context.canPop() ? context.pop() : context.go('/movies'),
-            icon: Icon(Icons.arrow_back, color: wp.dim),
           ),
           const SizedBox(height: AppSpacing.xl),
           Text(

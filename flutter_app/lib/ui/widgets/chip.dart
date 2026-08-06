@@ -1,19 +1,22 @@
-import 'package:flutter/material.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:flutter/widgets.dart';
 
-import '../palette.dart';
-import '../tokens.dart';
+import '../../analog/chrome/analog_badge.dart';
+import '../../ui/analog_tokens.dart';
 
 /// Semantic tone for [AppChip]. [neutral] is the default surface chip (genre,
 /// filter, tag). [live]/[danger] use the single reserved red. [success] uses
-/// the sparse green tick color.
+/// the sparse green tick colour.
 enum AppChipTone { neutral, live, danger, success }
 
-/// A small flat label pill — genre tags, quality badges, the LIVE/REC dot,
-/// filter toggles. Rebuilt on shadcn: interactive/neutral chips use `sc.Chip`
-/// (outline when idle, secondary fill when selected); status tones render as an
-/// `sc.OutlineBadge` so the monochrome frame stays and only the reserved
-/// red/green shows through the dot + label. Signature is frozen.
+/// A small flat label — genre tags, quality badges, the LIVE/REC dot, filter
+/// toggles. Signature is frozen.
+///
+/// Interactive/neutral chips are an [AnalogChip], which is focusable and
+/// Enter/Space-operable and marks selection with a filled plate, a doubled
+/// hairline and a bolder label before it uses any colour. Status tones are
+/// non-interactive, so they render as an [AnalogBadge.outline] whose monochrome
+/// frame stays put and lets only the reserved red/green through the dot and the
+/// label.
 class AppChip extends StatelessWidget {
   const AppChip({
     super.key,
@@ -32,12 +35,14 @@ class AppChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wp = context.wp;
     final (fg, dot) = switch (tone) {
-      AppChipTone.neutral => (selected ? wp.text : wp.dim, null),
-      AppChipTone.live => (AppColors.red, AppColors.live),
-      AppChipTone.danger => (AppColors.red, null),
-      AppChipTone.success => (AppColors.green, null),
+      AppChipTone.neutral => (
+        selected ? AnalogColor.ink : AnalogColor.inkDim,
+        null,
+      ),
+      AppChipTone.live => (AnalogColor.statusDanger, AnalogColor.statusLive),
+      AppChipTone.danger => (AnalogColor.statusDanger, null),
+      AppChipTone.success => (AnalogColor.statusSuccess, null),
     };
 
     Widget? leading;
@@ -51,23 +56,26 @@ class AppChip extends StatelessWidget {
       leading = Icon(icon, size: 13, color: fg);
     }
 
-    final content = Text(
-      label,
-      style: TextStyle(color: fg, fontSize: 12, fontWeight: FontWeight.w600),
-    );
-
     if (tone == AppChipTone.neutral) {
-      return sc.Chip(
-        onPressed: onTap,
-        style: selected
-            ? sc.ButtonVariance.secondary
-            : sc.ButtonVariance.outline,
+      return AnalogChip(
+        label: label,
         leading: leading,
-        child: content,
+        selected: selected,
+        onPressed: onTap,
       );
     }
 
-    // Status tones are non-interactive labels.
-    return sc.OutlineBadge(leading: leading, child: content);
+    return AnalogBadge.outline(
+      leading: leading,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: AnalogType.sansFamily,
+          color: fg,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
   }
 }

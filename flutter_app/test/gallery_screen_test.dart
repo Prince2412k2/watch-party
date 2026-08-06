@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/app/screens/gallery_screen.dart';
 import 'package:watchparty/ui/ui.dart';
 
-/// The rebuilt primitives render on shadcn components, which need a shadcn
-/// `Theme` ancestor — the real app supplies it via `ShadcnLayer` in app.dart's
-/// builder; standalone pumps mirror that here (assertions are unchanged).
-Widget _shadcn(BuildContext context, Widget? child) => sc.ShadcnLayer(
-  theme: AppShadcnTheme.dark,
-  themeMode: sc.ThemeMode.dark,
-  child: child!,
-);
+/// The rebuilt primitives need the theme and an [AnalogToastHost] ancestor —
+/// the real app supplies both from app.dart's builder; standalone pumps mirror
+/// that here (assertions are unchanged).
+Widget _analog(BuildContext context, Widget? child) =>
+    Theme(data: AppTheme.dark, child: AnalogToastHost(child: child!));
 
 void main() {
   testWidgets('gallery renders every core widget without error', (
@@ -22,7 +19,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
 
     await tester.pumpWidget(
-      MaterialApp(theme: null, builder: _shadcn, home: const GalleryScreen()),
+      MaterialApp(theme: null, builder: _analog, home: const GalleryScreen()),
     );
     await tester.pump();
 
@@ -41,7 +38,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark,
-        builder: _shadcn,
+        builder: _analog,
         home: Builder(
           builder: (context) => Scaffold(
             body: Center(
