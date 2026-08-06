@@ -229,3 +229,65 @@ export function resolveSeasonArtwork(input: SeasonArtworkInput): SeasonArtwork {
     label: input.seasonNumber === null ? '—' : `S${input.seasonNumber}`,
   }
 }
+
+// ── fixed-cursor rail window ────────────────────────────────────────────────
+//
+// The rail does not move a highlight along a stationary row. The cursor is
+// pinned to the first slot and the ROW translates underneath it, the way an
+// old console menu works. So "which item is selected" and "how far the row has
+// scrolled" are the same number: `offset`.
+//
+// That makes the visible set trivially derivable, which is what prefetch needs:
+// the native client can warm artwork for the items about to slide into view
+// instead of decoding them on arrival. Both clients compute the same window
+// from the same inputs, so "snappy" is a contract rather than each client
+// guessing its own lookahead.
+
+export interface RailWindowInput {
+  /** Items in the rail. */
+  total: number
+  /** Index rendered in the pinned first slot. */
+  offset: number
+  /** Slots visible on screen at once. */
+  slots: number
+  /** Items past the last visible slot to warm ahead of arrival. */
+  lookahead?: number
+  /** Items before the cursor to keep warm, so scrolling back is not a stall. */
+  behind?: number
+}
+
+export interface RailWindow {
+  /** Indices currently on screen, left to right. */
+  visible: number[]
+  /** Indices to warm but not render. Never overlaps `visible`. */
+  prefetch: number[]
+}
+
+export const RAIL_LOOKAHEAD = 6
+export const RAIL_BEHIND = 2
+
+export function railWindow(input: RailWindowInput): RailWindow {
+  const { total, slots } = input
+  const lookahead = input.lookahead ?? RAIL_LOOKAHEAD
+  const behind = input.behind ?? RAIL_BEHIND
+  if (total <= 0 || slots <= 0) return { visible: [], prefetch: [] }
+
+  // A rail scrolled to its end still fills its slots rather than trailing empty
+  // space, so the offset is clamped against the last full page.
+  const maxOffset = Math.max(0, total - slots)
+  const start = Math.max(0, Math.min(input.offset, maxOffset))
+  const end = Math.min(total, start + slots)
+
+  const visible: number[] = []
+  for (let index = start; index < end; index += 1) visible.push(index)
+
+  const prefetch: number[] = []
+  for (let index = Math.max(0, start - behind); index < start; index += 1) prefetch.push(index)
+  for (let index = end; index < Math.min(total, end + lookahead); index += 1) prefetch.push(index)
+
+  return { visible, prefetch }
+}
+
+/** Clamp an offset the way `railWindow` does, for callers stepping the rail. */
+export const clampRailOffset = (offset: number, total: number, slots: number): number =>
+  Math.max(0, Math.min(offset, Math.max(0, total - slots)))

@@ -19,6 +19,7 @@ import {
   steppedScroll,
   restoreFocus,
   resolveSeasonArtwork,
+  railWindow,
   type SteppedScrollConfig,
   type FocusMemory,
   type ShelfSnapshot,
@@ -167,4 +168,12 @@ test('the toast and auto-hide timings come from the design tokens', () => {
   assert.equal(analogTokens.timing.toastLifetimeMs, 4000, 'toast lifetime')
   assert.equal(analogTokens.timing.chromeAutoHideMs, 3000, 'chrome auto-hide')
   assert.equal(analogTokens.timing.toastMaxStack, 3, 'toast stack depth')
+})
+
+test('the fixed-cursor rail window matches the shared interaction cases', () => {
+  for (const testCase of fixture.railWindow.cases) {
+    const window = railWindow(testCase.input)
+    assert.deepEqual(window.visible, testCase.expect.visible, `${testCase.name}: visible`)
+    assert.deepEqual(window.prefetch, testCase.expect.prefetch, `${testCase.name}: prefetch`)
+  }
 })
