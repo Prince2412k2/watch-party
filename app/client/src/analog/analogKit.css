@@ -193,15 +193,19 @@
    with a detent rule sliding under the current one. Not a segmented control —
    this is a position on a slider, not a pair of buttons. */
 .an-modes {
-  display: inline-flex;
-  gap: var(--an-space-xl-px);
+  display: grid;
+  gap: var(--an-space-xs-px);
+  justify-items: end;
 }
 
 .an-modes button {
-  display: grid;
-  gap: var(--an-space-sm-px);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 13px;
   min-height: var(--an-hairline-hit-px);
   padding: 0;
+  text-align: right;
   border: 0;
   background: transparent;
   color: var(--an-color-ink-faint);
@@ -219,25 +223,56 @@
   color: var(--an-color-ink-dim);
 }
 
+/* Three channels, not one: colour, a longer rule, and a larger label. The
+   references rule out selection by colour alone, and the season rail this
+   mirrors steps 15px -> 18px for the same reason. */
 .an-modes button.is-active {
   color: var(--an-color-ink);
+  font-size: 14px;
 }
 
 .an-modes button:disabled {
   cursor: default;
 }
 
-/* The rule's slot is always reserved, so switching position moves the rail
-   underneath and nothing else. */
+/* The rule sits beside the label and lengthens on selection, mirroring the
+   Shows season rail. Both positions always draw one, so the row's width does
+   not jump as selection moves — only the rule's length changes. */
 .an-modes button > i {
   display: block;
-  height: var(--an-hairline-active-px);
-  background: transparent;
-  transition: background var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
+  width: 22px;
+  height: 1px;
+  background: currentColor;
+  transition: width var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
 }
 
 .an-modes button.is-active > i {
-  background: var(--an-color-accent);
+  width: 34px;
+}
+
+/* Right-edge rail, clear of the profile toolbox above and the party widget
+   below. Vertically centred rather than pinned, so it reads as belonging to the
+   stage rather than to either corner. */
+.an-stage-side {
+  position: absolute;
+  right: var(--an-k-gutter, var(--an-space-stage-gutter-px));
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: var(--an-z-shelf);
+}
+
+/* A phone has no room for a right rail beside the details block, so the modes
+   return to the flow above the title. */
+.an-stage[data-size='phone'] .an-stage-side {
+  position: static;
+  transform: none;
+  margin-bottom: var(--an-space-md-px);
+}
+
+.an-stage[data-size='phone'] .an-modes {
+  grid-auto-flow: column;
+  justify-items: start;
+  gap: var(--an-space-xl-px);
 }
 
 .an-back {
