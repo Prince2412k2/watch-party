@@ -8,9 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:window_manager/window_manager.dart';
 
+import '../../analog/chrome/chrome.dart';
 import '../../analog/player/auto_hide_controller.dart';
 import '../../analog/player_core.dart';
 import '../../models/models.dart';
@@ -752,8 +752,8 @@ class _AvIconButtonState extends State<_AvIconButton> {
           )
         : Icon(widget.icon, size: 19, color: color);
 
-    return sc.Tooltip(
-      tooltip: (context) => sc.TooltipContainer(child: Text(widget.tooltip)),
+    return AnalogTooltip(
+      message: widget.tooltip,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
@@ -881,10 +881,10 @@ class _LiveKitErrorBanner extends ConsumerWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Flexible(
-              child: sc.SurfaceCard(
-                surfaceBlur: AppBlur.overlay,
-                surfaceOpacity: 0.9,
-                borderColor: AppColors.line2,
+              child: AnalogPanel(
+                translucent: true,
+                blur: AppBlur.overlay,
+                lift: AnalogLift.over,
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.md,
                   vertical: AppSpacing.sm,
@@ -1679,17 +1679,11 @@ class _MediaPickerSheet extends ConsumerWidget {
               children: [
                 const Text('Choose a movie', style: AppTheme.titleLarge),
                 const Spacer(),
-                sc.Tooltip(
-                  tooltip: (context) =>
-                      const sc.TooltipContainer(child: Text('Close')),
-                  child: sc.IconButton.ghost(
-                    icon: const Icon(
-                      Icons.close,
-                      color: AppColors.dim,
-                      size: 20,
-                    ),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
+                AnalogIconButton(
+                  icon: Icons.close,
+                  tooltip: 'Close',
+                  iconSize: 20,
+                  onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
             ),
@@ -1763,7 +1757,7 @@ class _PickerSkeletonCell extends StatelessWidget {
 }
 
 /// The shareable room code + participant count, on an acrylic surface with an
-/// `sc.SecondaryBadge` count.
+/// [AnalogBadge] count.
 class _RoomCodePill extends StatelessWidget {
   const _RoomCodePill({required this.code, required this.count});
   final String code;
@@ -1771,11 +1765,11 @@ class _RoomCodePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return sc.SurfaceCard(
-      surfaceBlur: AppBlur.overlay,
-      surfaceOpacity: 0.9,
-      borderColor: AppColors.line2,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+    return AnalogPanel(
+      translucent: true,
+      blur: AppBlur.overlay,
+      lift: AnalogLift.over,
+      radius: AppSpacing.radiusPill,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
         AppSpacing.sm,
@@ -1801,7 +1795,7 @@ class _RoomCodePill extends StatelessWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.md),
-          sc.SecondaryBadge(
+          AnalogBadge(
             leading: Container(
               width: 6,
               height: 6,
@@ -1833,11 +1827,11 @@ class _JoinRequests extends ConsumerWidget {
     return Reveal(
       child: SizedBox(
         width: 268,
-        child: sc.SurfaceCard(
-          surfaceBlur: AppBlur.overlay,
-          surfaceOpacity: 0.9,
-          borderColor: AppColors.line2,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+        child: AnalogPanel(
+          translucent: true,
+          blur: AppBlur.overlay,
+          lift: AnalogLift.over,
+          radius: AppSpacing.radiusLg,
           padding: EdgeInsets.zero,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1883,29 +1877,17 @@ class _JoinRequests extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      sc.Tooltip(
-                        tooltip: (context) =>
-                            const sc.TooltipContainer(child: Text('Reject')),
-                        child: sc.IconButton.ghost(
-                          icon: const Icon(
-                            Icons.close,
-                            color: AppColors.red,
-                            size: 18,
-                          ),
-                          onPressed: () => notifier.reject(w.userId),
-                        ),
+                      AnalogIconButton(
+                        icon: Icons.close,
+                        tooltip: 'Reject',
+                        color: AppColors.red,
+                        onPressed: () => notifier.reject(w.userId),
                       ),
-                      sc.Tooltip(
-                        tooltip: (context) =>
-                            const sc.TooltipContainer(child: Text('Approve')),
-                        child: sc.IconButton.ghost(
-                          icon: const Icon(
-                            Icons.check,
-                            color: AppColors.green,
-                            size: 18,
-                          ),
-                          onPressed: () => notifier.approve(w.userId),
-                        ),
+                      AnalogIconButton(
+                        icon: Icons.check,
+                        tooltip: 'Approve',
+                        color: AppColors.green,
+                        onPressed: () => notifier.approve(w.userId),
                       ),
                     ],
                   ),
@@ -1981,17 +1963,10 @@ class _ChatSlideOver extends StatelessWidget {
                         ],
                       ),
                     ),
-                    sc.Tooltip(
-                      tooltip: (context) =>
-                          const sc.TooltipContainer(child: Text('Close chat')),
-                      child: sc.IconButton.ghost(
-                        icon: const Icon(
-                          Icons.close,
-                          color: AppColors.dim,
-                          size: 18,
-                        ),
-                        onPressed: onClose,
-                      ),
+                    AnalogIconButton(
+                      icon: Icons.close,
+                      tooltip: 'Close chat',
+                      onPressed: onClose,
                     ),
                   ],
                 ),
@@ -2057,13 +2032,11 @@ class _HostControlsDialog extends ConsumerWidget {
                     ),
                   ),
                   const Spacer(),
-                  sc.Tooltip(
-                    tooltip: (context) =>
-                        const sc.TooltipContainer(child: Text('Close')),
-                    child: sc.IconButton.ghost(
-                      icon: Icon(Icons.close, color: wp.dim, size: 18),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
+                  AnalogIconButton(
+                    icon: Icons.close,
+                    tooltip: 'Close',
+                    color: wp.dim,
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
               ),
@@ -2117,9 +2090,10 @@ class _HostControlsDialog extends ConsumerWidget {
                           ),
                         ),
                         const SizedBox(width: AppSpacing.md),
-                        sc.Switch(
+                        AnalogSwitch(
                           value: party.collaborativeControl,
                           onChanged: (v) => notifier.setCollaborative(v),
+                          semanticLabel: 'Collaborative control',
                         ),
                       ],
                     ),
@@ -2263,7 +2237,7 @@ class _HostControlsDialog extends ConsumerWidget {
 }
 
 /// One participant in the Watch Party menu roster. Transfer-host / kick (inline
-/// + a right-click [sc.ContextMenu]) appear only when the VIEWER is the host and
+/// + a right-click [AnalogContextMenu]) appear only when the VIEWER is the host and
 /// the row is a guest.
 class _RosterRow extends StatelessWidget {
   const _RosterRow({
@@ -2301,7 +2275,7 @@ class _RosterRow extends StatelessWidget {
           ),
         ),
         if (p.isHost)
-          const sc.SecondaryBadge(
+          const AnalogBadge(
             child: Text(
               'HOST',
               style: TextStyle(
@@ -2312,21 +2286,17 @@ class _RosterRow extends StatelessWidget {
             ),
           )
         else if (showActions) ...[
-          sc.Tooltip(
-            tooltip: (context) =>
-                const sc.TooltipContainer(child: Text('Make host')),
-            child: sc.IconButton.ghost(
-              icon: Icon(Icons.swap_horiz, color: wp.faint, size: 18),
-              onPressed: () => notifier.transferHost(p.userId),
-            ),
+          AnalogIconButton(
+            icon: Icons.swap_horiz,
+            tooltip: 'Make host',
+            color: wp.faint,
+            onPressed: () => notifier.transferHost(p.userId),
           ),
-          sc.Tooltip(
-            tooltip: (context) =>
-                const sc.TooltipContainer(child: Text('Kick')),
-            child: sc.IconButton.ghost(
-              icon: Icon(Icons.logout, color: _dangerColor(wp), size: 18),
-              onPressed: () => notifier.kick(p.userId),
-            ),
+          AnalogIconButton(
+            icon: Icons.logout,
+            tooltip: 'Kick',
+            color: _dangerColor(wp),
+            onPressed: () => notifier.kick(p.userId),
           ),
         ],
       ],
@@ -2334,17 +2304,18 @@ class _RosterRow extends StatelessWidget {
 
     if (!showActions) return row;
 
-    return sc.ContextMenu(
-      items: [
-        sc.MenuButton(
-          leading: const Icon(Icons.swap_horiz, size: 16),
-          onPressed: (_) => notifier.transferHost(p.userId),
-          child: const Text('Make host'),
+    return AnalogContextMenu(
+      actions: [
+        AnalogMenuAction(
+          label: 'Make host',
+          icon: Icons.swap_horiz,
+          onSelected: () => notifier.transferHost(p.userId),
         ),
-        sc.MenuButton(
-          leading: Icon(Icons.logout, color: _dangerColor(wp), size: 16),
-          onPressed: (_) => notifier.kick(p.userId),
-          child: Text('Kick', style: TextStyle(color: _dangerColor(wp))),
+        AnalogMenuAction(
+          label: 'Kick',
+          icon: Icons.logout,
+          danger: true,
+          onSelected: () => notifier.kick(p.userId),
         ),
       ],
       child: row,
@@ -2355,9 +2326,9 @@ class _RosterRow extends StatelessWidget {
 Color _dangerColor(WpPalette wp) =>
     wp.brightness == Brightness.dark ? kSemanticRed : const Color(0xFFB4232E);
 
-/// The sync-mode segmented control, an `sc.ButtonGroup` of `sc.Toggle`s. Tapping
-/// the already-selected segment is a no-op (radio semantics), so a mode can
-/// never be deselected into an invalid empty state.
+/// The sync-mode segmented control, an [AnalogSegmented]. Tapping the
+/// already-selected segment is a no-op (radio semantics), so a mode can never be
+/// deselected into an invalid empty state.
 class _SyncModeToggle extends StatelessWidget {
   const _SyncModeToggle({required this.value, required this.onChanged});
   final String value;
@@ -2365,51 +2336,19 @@ class _SyncModeToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    sc.Toggle seg(String id, String label) => sc.Toggle(
-      value: value == id,
-      style: const sc.ButtonStyle.outline(),
-      onChanged: (on) {
-        if (on) onChanged(id);
-      },
-      child: Text(label),
-    );
-
-    return sc.ButtonGroup(
-      children: [seg('hopping', 'Hopping'), seg('dragging', 'Dragging')],
+    return AnalogSegmented<String>(
+      semanticLabel: 'Sync mode',
+      value: value,
+      onChanged: onChanged,
+      segments: const [
+        AnalogSegment(value: 'hopping', label: 'Hopping'),
+        AnalogSegment(value: 'dragging', label: 'Dragging'),
+      ],
     );
   }
 }
 
-/// Shows a transient shadcn toast through the app-wide `ToastLayer` (provided by
-/// the root `ShadcnLayer`).
+/// Shows a transient notice on the app-wide [AnalogToastHost].
 void _showPartyToast(BuildContext context, String message) {
-  final wp = context.wp;
-  sc.showToast(
-    context: context,
-    location: sc.ToastLocation.topCenter,
-    builder: (context, overlay) => sc.SurfaceCard(
-      surfaceBlur: AppBlur.overlay,
-      surfaceOpacity: 0.9,
-      borderColor: wp.line2,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.check_circle_outline, size: 16, color: kSuccessGreen),
-          const SizedBox(width: AppSpacing.sm),
-          Text(
-            message,
-            style: TextStyle(
-              color: wp.text,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+  showAnalogToast(context, message, tone: AnalogToastTone.success);
 }

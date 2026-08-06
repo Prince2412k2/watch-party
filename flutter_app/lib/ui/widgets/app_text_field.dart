@@ -1,12 +1,12 @@
-import 'package:flutter/material.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:flutter/widgets.dart';
 
-import '../palette.dart';
-import '../tokens.dart';
+import '../../analog/chrome/analog_text_field.dart';
 
-/// FROZEN CONTRACT (PLAN §3.6). Rebuilt on `sc.TextField` (animated focus ring
-/// comes for free); the label/error scaffolding around it is preserved so the
-/// public signature and the cinematic layout are unchanged.
+/// FROZEN CONTRACT (PLAN §3.6). Now an [AnalogTextField]: the label/error
+/// scaffolding the old wrapper built around the input moved *into* the
+/// component, so the public signature is unchanged and every input in the app
+/// gets the same frame, the same thickening focus hairline, and the same
+/// marked error line.
 class AppTextField extends StatelessWidget {
   const AppTextField({
     super.key,
@@ -33,41 +33,16 @@ class AppTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasError = errorText != null;
-    final wp = context.wp;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (label != null) ...[
-          Text(
-            label!,
-            style: TextStyle(
-              color: wp.dim,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-        ],
-        sc.TextField(
-          controller: controller,
-          obscureText: obscureText,
-          autofocus: autofocus,
-          enabled: enabled,
-          onSubmitted: onSubmitted,
-          onChanged: onChanged,
-          placeholder: hint != null ? Text(hint!) : null,
-          border: hasError ? Border.all(color: AppColors.red) : null,
-        ),
-        if (hasError) ...[
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            errorText!,
-            style: const TextStyle(color: AppColors.red, fontSize: 12.5),
-          ),
-        ],
-      ],
+    return AnalogTextField(
+      controller: controller,
+      label: label,
+      hint: hint,
+      obscureText: obscureText,
+      errorText: errorText,
+      onSubmitted: onSubmitted,
+      onChanged: onChanged,
+      autofocus: autofocus,
+      enabled: enabled,
     );
   }
 }

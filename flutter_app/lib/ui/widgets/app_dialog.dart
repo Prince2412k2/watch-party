@@ -1,13 +1,13 @@
-import 'package:flutter/material.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:flutter/widgets.dart';
 
-import '../palette.dart';
-import '../tokens.dart';
+import '../../analog/chrome/analog_dialog.dart';
+import '../analog_tokens.dart';
 import 'app_button.dart';
 
-/// FROZEN CONTRACT (PLAN §3.6). A modal surface, rebuilt on shadcn's
-/// `sc.AlertDialog` + `sc.showDialog` (scale+fade in, acrylic backdrop). [show]
-/// stays the stable entry point and keeps returning a `Future<T?>`.
+/// FROZEN CONTRACT (PLAN §3.6). A modal surface, now an [AnalogDialog] on an
+/// ordinary [showGeneralDialog] route — so Escape, the barrier and
+/// `Navigator.pop` all behave the way the rest of the router does. [show] stays
+/// the stable entry point and keeps returning a `Future<T?>`.
 class AppDialog extends StatelessWidget {
   const AppDialog({
     super.key,
@@ -22,8 +22,6 @@ class AppDialog extends StatelessWidget {
   final List<Widget> actions;
   final Widget? child;
 
-  /// Convenience presenter — now routes through shadcn's dialog so it inherits
-  /// the acrylic backdrop + theme.
   static Future<T?> show<T>(
     BuildContext context, {
     required String title,
@@ -31,7 +29,7 @@ class AppDialog extends StatelessWidget {
     List<Widget> actions = const [],
     Widget? child,
   }) {
-    return sc.showDialog<T>(
+    return showAnalogDialog<T>(
       context: context,
       builder: (_) =>
           AppDialog(title: title, body: body, actions: actions, child: child),
@@ -40,42 +38,25 @@ class AppDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wp = context.wp;
-    return sc.AlertDialog(
-      surfaceBlur: AppBlur.overlay,
-      surfaceOpacity: 0.9,
-      title: Text(title, style: kDialogTitleStyle.copyWith(color: wp.text)),
-      content: (body != null || child != null)
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (body != null)
-                  Text(
-                    body!,
-                    style: TextStyle(color: wp.dim, fontSize: 14, height: 1.5),
-                  ),
-                if (child != null) ...[
-                  const SizedBox(height: AppSpacing.lg),
-                  child!,
-                ],
-              ],
-            )
-          : null,
-      actions: actions.isEmpty ? null : actions,
+    return AnalogDialog(
+      title: title,
+      body: body,
+      actions: actions,
+      child: child,
     );
   }
 }
 
-/// Local title style (kept here to avoid a theme import cycle in the stub).
+/// Local title style, kept for the callers that still reference it.
 const TextStyle kDialogTitleStyle = TextStyle(
+  fontFamily: AnalogType.sansFamily,
   fontSize: 18,
   fontWeight: FontWeight.w700,
-  color: AppColors.text,
+  color: AnalogColor.ink,
   letterSpacing: -0.3,
 );
 
-/// A tiny confirm helper many epics will reuse.
+/// A tiny confirm helper many epics reuse.
 Future<bool> showConfirm(
   BuildContext context, {
   required String title,

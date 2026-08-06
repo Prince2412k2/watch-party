@@ -2,7 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/ui/ui.dart';
 import 'package:watchparty/ui/widgets/party_widget.dart';
 
@@ -89,11 +89,7 @@ void main() {
       ProviderScope(
         child: MaterialApp(
           theme: AppTheme.light,
-          builder: (context, child) => sc.ShadcnLayer(
-            theme: AppShadcnTheme.light,
-            themeMode: sc.ThemeMode.light,
-            child: child!,
-          ),
+          builder: (context, child) => AnalogToastHost(child: child!),
           home: const MediaQuery(
             data: MediaQueryData(size: Size(300, 240)),
             child: Scaffold(body: Align(child: PartyWidget())),

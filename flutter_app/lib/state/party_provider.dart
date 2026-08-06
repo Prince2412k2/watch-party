@@ -1,17 +1,15 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../analog/chrome/analog_toast.dart';
 import '../app/router.dart';
 import '../models/models.dart';
 import '../net/events.dart';
 import '../net/socket_client.dart';
 import '../sync/sync_engine.dart';
 import '../sync/sync_engine_impl.dart';
-import '../ui/tokens.dart';
 import 'chat_provider.dart';
 import 'livekit_provider.dart';
 import 'player_provider.dart';
@@ -850,42 +848,15 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   void _toast(String message, {String level = 'info'}) {
     final ctx = rootNavigatorKey.currentContext;
     if (ctx == null) return;
-    final Color dot = switch (level) {
-      'success' => AppColors.green,
-      'warning' || 'error' => AppColors.red,
-      _ => AppColors.faint,
-    };
-    sc.showToast(
-      context: ctx,
-      location: sc.ToastLocation.topCenter,
-      builder: (context, overlay) => sc.SurfaceCard(
-        surfaceBlur: AppBlur.overlay,
-        surfaceOpacity: 0.9,
-        borderColor: AppColors.line2,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Text(
-              message,
-              style: const TextStyle(
-                color: AppColors.text,
-                fontSize: 13.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
+    showAnalogToast(
+      ctx,
+      message,
+      tone: switch (level) {
+        'success' => AnalogToastTone.success,
+        'warning' => AnalogToastTone.warning,
+        'error' => AnalogToastTone.danger,
+        _ => AnalogToastTone.info,
+      },
     );
   }
 

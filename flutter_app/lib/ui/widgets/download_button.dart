@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../../analog/chrome/analog_button.dart';
+import '../../analog/chrome/analog_progress.dart';
 import '../../models/models.dart';
 import '../../state/downloads_provider.dart';
 import '../../state/offline_provider.dart';
 import '../../state/providers.dart';
-import '../theme.dart';
-import '../tokens.dart';
+import '../analog_tokens.dart';
 import 'app_button.dart';
 import 'chip.dart';
 
@@ -53,15 +53,11 @@ class DownloadButton extends ConsumerWidget {
             tone: AppChipTone.success,
             icon: Icons.check,
           ),
-          const SizedBox(width: AppSpacing.sm),
-          sc.Tooltip(
-            tooltip: (context) =>
-                const sc.TooltipContainer(child: Text('Remove download')),
-            child: sc.IconButton.ghost(
-              icon: const Icon(Icons.delete_outline, color: AppColors.faint),
-              onPressed: () =>
-                  ref.read(offlineProvider.notifier).remove(itemId),
-            ),
+          const SizedBox(width: AnalogSpace.smPx),
+          AnalogIconButton(
+            icon: Icons.delete_outline,
+            tooltip: 'Remove download',
+            onPressed: () => ref.read(offlineProvider.notifier).remove(itemId),
           ),
         ],
       );
@@ -89,10 +85,14 @@ class DownloadButton extends ConsumerWidget {
               download.error ?? 'Download failed',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.red, fontSize: 12.5),
+              style: const TextStyle(
+                fontFamily: AnalogType.sansFamily,
+                color: AnalogColor.statusDanger,
+                fontSize: 12.5,
+              ),
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: AnalogSpace.smPx),
           AppButton(
             label: 'Retry',
             icon: Icons.refresh,
@@ -171,49 +171,40 @@ class _ProgressRow extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: sc.Progress(
-                  progress: record.progress > 0
+                child: AnalogProgress(
+                  value: record.progress > 0
                       ? record.progress.clamp(0.0, 1.0)
                       : null,
-                  color: paused ? AppColors.faint : AppColors.accent,
-                  backgroundColor: AppColors.line2,
+                  semanticLabel: 'Download progress',
+                  // Paused is carried by the icon swapping to Play as well as
+                  // by the line dimming, so it survives without the colour.
+                  ink: paused ? AnalogColor.inkFaint : AnalogColor.ink,
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: AnalogSpace.smPx),
               Text(
                 '${(record.progress * 100).round()}%',
-                style: AppTheme.caption,
+                style: const TextStyle(
+                  fontFamily: AnalogType.monoFamily,
+                  fontSize: 11.5,
+                  color: AnalogColor.inkDim,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: AnalogSpace.smPx),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              sc.Tooltip(
-                tooltip: (context) => sc.TooltipContainer(
-                  child: Text(paused ? 'Resume' : 'Pause'),
-                ),
-                child: sc.IconButton.ghost(
-                  icon: Icon(
-                    paused ? Icons.play_arrow : Icons.pause,
-                    color: AppColors.text,
-                    size: 18,
-                  ),
-                  onPressed: paused ? onResume : onPause,
-                ),
+              AnalogIconButton(
+                icon: paused ? Icons.play_arrow : Icons.pause,
+                tooltip: paused ? 'Resume' : 'Pause',
+                onPressed: paused ? onResume : onPause,
               ),
-              sc.Tooltip(
-                tooltip: (context) =>
-                    const sc.TooltipContainer(child: Text('Cancel')),
-                child: sc.IconButton.ghost(
-                  icon: const Icon(
-                    Icons.close,
-                    color: AppColors.faint,
-                    size: 18,
-                  ),
-                  onPressed: onCancel,
-                ),
+              AnalogIconButton(
+                icon: Icons.close,
+                tooltip: 'Cancel',
+                onPressed: onCancel,
               ),
             ],
           ),

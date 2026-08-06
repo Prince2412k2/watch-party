@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../analog/chrome/analog_command_palette.dart';
 import '../models/models.dart';
 import '../state/state.dart';
-import 'tokens.dart';
 import 'widgets/nav_rail.dart' show NavDestination;
 
-/// The app command palette (Ctrl/Cmd-K). A `sc.command` modal that fuzzy-searches
-/// the library — reusing [libraryProvider] read-only — and offers quick-nav to
-/// every shell destination.
+/// The app command palette (Ctrl/Cmd-K and `/`). An [showAnalogCommandPalette]
+/// modal that fuzzy-searches the library — reusing [libraryProvider] read-only
+/// — and offers quick-nav to every shell destination.
 ///
 /// Kept decoupled from the router: the caller supplies the shell [destinations]
 /// and an [onNavigate] callback, so this can be opened both from the shell
@@ -21,21 +20,21 @@ Future<void> showCommandPalette({
   required List<NavDestination> destinations,
   required void Function(String route) onNavigate,
 }) {
-  return sc.showCommandDialog(
+  return showAnalogCommandPalette(
     context: context,
-    // Snappier than the 500ms default — this is a local list, not a network
+    hint: 'Search your library',
+    // Snappier than half a second — this is a local list, not a network
     // search, so results should feel instant.
-    debounceDuration: const Duration(milliseconds: 140),
-    builder: (dialogContext, query) =>
-        _results(dialogContext, ref, destinations, onNavigate, query),
+    debounce: const Duration(milliseconds: 140),
+    results: (query) => _results(context, ref, destinations, onNavigate, query),
   );
 }
 
-/// Yields results in two passes (sc.command *accumulates* successive yields):
+/// Yields results in two passes (the palette *accumulates* successive yields):
 /// the quick-nav list first (instant), then the library matches once the flat
 /// library resolves. Emitting deltas — never the full list twice — keeps the
 /// accumulator from duplicating the nav category.
-Stream<List<Widget>> _results(
+Stream<List<AnalogCommandCategory>> _results(
   BuildContext context,
   WidgetRef ref,
   List<NavDestination> destinations,
@@ -50,18 +49,18 @@ Stream<List<Widget>> _results(
   }
 
   // Pass 1 — quick navigation (always available, filtered by the query).
-  final navItems = <Widget>[
+  final navItems = <AnalogCommandItem>[
     for (final d in destinations)
       if (_fuzzyScore(q, d.label) != null)
-        sc.CommandItem(
-          leading: Icon(d.icon, size: 16),
-          title: Text(d.label),
-          onTap: () => run(d.route),
+        AnalogCommandItem(
+          icon: d.icon,
+          label: d.label,
+          onSelected: () => run(d.route),
         ),
   ];
   yield [
     if (navItems.isNotEmpty)
-      sc.CommandCategory(title: const Text('Go to'), children: navItems),
+      AnalogCommandCategory(title: 'Go to', items: navItems),
   ];
 
   // Pass 2 — library search only kicks in once the user types.
@@ -75,23 +74,18 @@ Stream<List<Widget>> _results(
     }
     ranked.sort((a, b) => a.$1.compareTo(b.$1));
 
-    final libItems = <Widget>[
+    final libItems = <AnalogCommandItem>[
       for (final (_, item) in ranked.take(20))
-        sc.CommandItem(
-          leading: Icon(_iconForType(item.type), size: 16),
-          title: Text(item.name),
-          trailing: item.productionYear != null
-              ? Text(
-                  '${item.productionYear}',
-                  style: const TextStyle(fontFamily: AppFonts.mono),
-                )
-              : null,
-          onTap: () => run('/detail/${item.id}'),
+        AnalogCommandItem(
+          icon: _iconForType(item.type),
+          label: item.name,
+          trailing: item.productionYear?.toString(),
+          onSelected: () => run('/detail/${item.id}'),
         ),
     ];
     yield [
       if (libItems.isNotEmpty)
-        sc.CommandCategory(title: const Text('Library'), children: libItems),
+        AnalogCommandCategory(title: 'Library', items: libItems),
     ];
   } catch (_) {
     // Offline or signed out: the library isn't reachable — the quick-nav list
