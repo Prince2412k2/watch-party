@@ -1,5 +1,5 @@
-import Avatar from './Avatar'
-import { useMemberAvatar } from '../hooks/useMemberAvatar'
+import Avatar from './Avatar.tsx'
+import { useMemberAvatar } from '../hooks/useMemberAvatar.ts'
 
 /**
  * The opaque face of a tile that has been collapsed to a circle. Its own

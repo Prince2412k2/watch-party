@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
-import { useParty } from '../context/PartyContext'
-import { glass } from '../glass'
-import { Z } from '../watchLayers'
-import type { ChatMessage } from '../types'
+import { useParty } from '../context/PartyContext.tsx'
+import { glass } from '../glass.tsx'
+import { Z } from '../watchLayers.ts'
+import type { ChatMessage } from '../types.ts'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 

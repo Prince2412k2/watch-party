@@ -1,5 +1,5 @@
-import { T, TYPE, EASE } from '../theme'
-import { Icon, Ic } from './Icon'
+import { T, TYPE, EASE } from '../theme.ts'
+import { Icon, Ic } from './Icon.tsx'
 import type { ReactNode } from 'react'
 
 /**

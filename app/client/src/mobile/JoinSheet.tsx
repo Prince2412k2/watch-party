@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { navigate } from '../router'
-import { T, MONO, TYPE, R, EASE } from './theme'
-import { Sheet } from './ui/Sheet'
-import { Icon, Ic } from './ui/Icon'
+import { navigate } from '../router.ts'
+import { T, MONO, TYPE, R, EASE } from './theme.ts'
+import { Sheet } from './ui/Sheet.tsx'
+import { Icon, Ic } from './ui/Icon.tsx'
 
 // Party codes are 8-char uppercase hex (server: randomUUID().slice(0,8).toUpperCase()).
 const CODE_RE = /^[0-9A-F]{8}$/

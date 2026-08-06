@@ -1,4 +1,4 @@
-import { T, R } from '../theme'
+import { T, R } from '../theme.ts'
 import type { CSSProperties } from 'react'
 
 /**

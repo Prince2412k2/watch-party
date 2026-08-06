@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { useSocket } from '../hooks/useSocket'
-import { navigate } from '../router'
-import { mirror } from '../mirror'
-import type { BrowseEntry, BrowserInputEvent, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types'
-import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards'
-import { browseTabRoute, partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority'
+import { useSocket } from '../hooks/useSocket.ts'
+import { navigate } from '../router.ts'
+import { mirror } from '../mirror.ts'
+import type { BrowseEntry, BrowserInputEvent, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types.ts'
+import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards.ts'
+import { browseTabRoute, partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority.ts'
 
 const PartyContext = createContext<PartyContextValue | null>(null)
 

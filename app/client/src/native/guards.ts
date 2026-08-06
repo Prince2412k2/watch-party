@@ -1,5 +1,5 @@
-import type { DownloadRecord } from './contract'
-import type { DownloadDonePayload, DownloadErrorPayload, DownloadProgressPayload } from './offline/reconcile'
+import type { DownloadRecord } from './contract.ts'
+import type { DownloadDonePayload, DownloadErrorPayload, DownloadProgressPayload } from './offline/reconcile.ts'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

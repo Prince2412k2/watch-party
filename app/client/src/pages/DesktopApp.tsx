@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useAuth } from '../context/AuthContext'
-import { jget } from '../lib/api'
-import { apiJson, arrayOf, isRecord } from '../types/guards'
-import { fmtSize } from '../lib/format'
+import { useAuth } from '../context/AuthContext.tsx'
+import { jget } from '../lib/api.ts'
+import { apiJson, arrayOf, isRecord } from '../types/guards.ts'
+import { fmtSize } from '../lib/format.ts'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 

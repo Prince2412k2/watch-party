@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import { useSocket } from './useSocket'
-import { useServerClock } from './useServerClock'
+import { useSocket } from './useSocket.ts'
+import { useServerClock } from './useServerClock.ts'
 import {
   decideSyncAction, predictPosition, TICKS, CONTROL_MS,
   BUFFER_AHEAD_SEC, PAUSED_BUFFER_AHEAD_SEC, SEEK_TIMEOUT_MS, BUFFER_TIMEOUT_MS,
   HARD_SEEK_COOLDOWN_MS,
-} from '../sync/syncCore'
-import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../sync/bufferSeek'
-import { mayAuthor } from '../sync/transportCommand'
-import type { CommandOrigin } from '../sync/transportCommand'
-import type { SyncIntent, SyncSchedule } from '../sync/syncCore'
+} from '../sync/syncCore.ts'
+import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../sync/bufferSeek.ts'
+import { mayAuthor } from '../sync/transportCommand.ts'
+import type { CommandOrigin } from '../sync/transportCommand.ts'
+import type { SyncIntent, SyncSchedule } from '../sync/syncCore.ts'
 
 const STRUGGLE_WINDOW_MS = 15_000
 const STRUGGLE_HARD_SEEKS = 3

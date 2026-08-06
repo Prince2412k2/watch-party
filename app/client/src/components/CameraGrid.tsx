@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Rnd } from 'react-rnd'
-import CameraTile from './CameraTile'
-import CollapsedFace from './CollapsedFace'
+import CameraTile from './CameraTile.tsx'
+import CollapsedFace from './CollapsedFace.tsx'
 
 type CameraParticipant = {
   identity: string

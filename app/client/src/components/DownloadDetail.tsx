@@ -9,11 +9,11 @@
 // match the codebase's inline, per-surface style.
 
 import { useEffect, useState } from 'react'
-import { useIsMobile } from '../hooks/useIsMobile'
-import { C, SANS, MONO, Ic, Icon } from '../lib/ui'
-import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, isPausedState } from '../lib/format'
-import { jpost } from '../lib/api'
-import { apiJson, arrayOf, isRecord } from '../types/guards'
+import { useIsMobile } from '../hooks/useIsMobile.ts'
+import { C, SANS, MONO, Ic, Icon } from '../lib/ui.tsx'
+import { fmtSize, fmtSpeed, fmtEta, fmtRuntimeFromMinutes, isPausedState } from '../lib/format.ts'
+import { jpost } from '../lib/api.ts'
+import { apiJson, arrayOf, isRecord } from '../types/guards.ts'
 
 /* ── Monochrome tokens local to this file. Progress is white on a white-alpha
    track; the only color is a single muted red used strictly for the "active
