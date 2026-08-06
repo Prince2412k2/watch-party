@@ -6,6 +6,7 @@ import { activeTorrents, useDownloadsHub } from '../context/DownloadsContext'
 import { isActiveState } from '../hooks/useTorrents'
 import { navigate } from '../router'
 import { mirror } from '../mirror'
+import { canDriveBrowse } from '../partyAuthority'
 import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
 import Avatar from '../components/Avatar'
 import type { AvatarConfig } from '../lib/avatar'
@@ -156,7 +157,12 @@ export default function Library({
   const failingCount = hub.failingCount
 
   const partyBrowsing = !embedded && party.session != null
-  if (partyBrowsing) canDrive = party.role === 'host'
+  // canDriveBrowse, not a bare host check: the host always drives, but so does a
+  // guest once collaborative control is on — which is what PartyPanel's
+  // "Let guests browse, play, pause & seek" switch hands out, and what
+  // mobile/screens/Home.tsx has always done. A plain `role === 'host'` here left
+  // desktop and phone disagreeing about the same session.
+  if (partyBrowsing) canDrive = canDriveBrowse(party.session, party.role)
   const stack = embedded ? (extStack ?? []) : partyBrowsing ? (party.session?.browse?.stack ?? []) : internalStack
   const setStack = (updater: StackUpdater) => {
     const next = typeof updater === 'function' ? updater(stack) : updater

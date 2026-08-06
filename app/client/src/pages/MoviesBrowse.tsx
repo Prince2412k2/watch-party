@@ -6,6 +6,7 @@ import { useDownloadsHub } from '../context/DownloadsContext'
 import { navigate } from '../router'
 import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../types/guards'
 import { fmtRuntimeFromTicks } from '../lib/format'
+import { canDriveBrowse } from '../partyAuthority'
 import { AnalogStage } from '../analog/AnalogStage'
 import { AnalogShelf, type AnalogShelfItem } from '../analog/AnalogShelf'
 import { AnalogNav } from '../analog/AnalogNav'
@@ -90,7 +91,11 @@ export default function MoviesBrowse() {
   const [internalStack, setInternalStack] = useState<StackLevel[]>([])
 
   const partyBrowsing = party.session != null
-  const canDrive = !partyBrowsing || party.role === 'host'
+  // Outside a party you always drive yourself. Inside one, defer to the tested
+  // predicate that mirrors the server's canDrive() — a plain host check silently
+  // drops the collaborative-control case, which is exactly what PartyPanel's
+  // "Let guests browse, play, pause & seek" switch hands out.
+  const canDrive = !partyBrowsing || canDriveBrowse(party.session, party.role)
 
   // The shared stack wins when the host has published one; otherwise this
   // client's own. A guest whose host has not browsed yet still gets a stage
