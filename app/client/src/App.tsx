@@ -121,16 +121,23 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
     if (path === '/login') {
       const saved = sessionStorage.getItem('returnTo')
       sessionStorage.removeItem('returnTo')
-      const returnTo = saved && saved !== '/' && !saved.startsWith('/login') ? saved : '/library'
+      const returnTo = saved && saved !== '/' && !saved.startsWith('/login') ? saved : '/movies'
       navigate(returnTo)
     }
   }, [path])
 
+  // '/library' was the old canonical landing route and is still what eleven
+  // call sites mean by "go home" — PartyContext's five exits, the lobby, the
+  // watch surface, RoomControls, the phone tab bar. Rather than rewrite all of
+  // them, it now redirects onto the analog Movies stage, so exactly one
+  // implementation renders the movie library. #66's IA gives Home its own
+  // curated surface (Continue Watching, active parties, Next Up, Recently
+  // Added); until that exists, Home and Movies are the same place.
   useEffect(() => {
-    if (path === '/') navigate('/library')
+    if (path === '/' || path === '/library') navigate('/movies')
   }, [path])
 
-  if (path === '/' || path === '/login') return null
+  if (path === '/' || path === '/library' || path === '/login') return null
 
   // (1) Party routes — ONE shared, mount-stable element for desktop AND phone.
   // Rendered above the device branch so a usePhone() flip on rotation never
@@ -166,7 +173,6 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // removed until parity is verified, and it is the phone shell's Home tab.
   const screen = path === '/movies' ? <MoviesBrowse />
     : phone ? <MobileApp path={path} />
-    : path === '/library' ? shell('movies', <Library libraryType="movies" />)
     : path === '/series' ? shell('series', <Library libraryType="series" />)
     : path === '/discover' ? shell('discover', <FindDownload />)
     : path === '/downloads' ? shell('downloads', <Downloads />)
