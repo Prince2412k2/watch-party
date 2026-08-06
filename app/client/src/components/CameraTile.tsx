@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import Avatar from './Avatar'
-import { useMemberAvatar } from '../hooks/useMemberAvatar'
+import Avatar from './Avatar.tsx'
+import { useMemberAvatar } from '../hooks/useMemberAvatar.ts'
 
 interface AttachableTrack {
   attach: (element: HTMLMediaElement) => unknown

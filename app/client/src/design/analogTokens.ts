@@ -1,0 +1,162 @@
+// GENERATED FILE — DO NOT EDIT.
+//
+// Source:    app/shared/design/analog-tokens.json
+// Generator: node app/shared/design/generate.mjs
+//
+// Edit the JSON and regenerate. A parity test in each client re-runs the
+// generator and compares against these bytes, so hand-edits fail the suite.
+
+export const analogTokens = {
+  /** Warm blacks and softly tinted neutrals — never pure black, never pure
+   *  white. R > G > B on every neutral. */
+  color: {
+    stageVoid: "#070605",
+    stageGround: "#0E0C0A",
+    stageSurface: "#16130F",
+    stageSurface2: "#201C18",
+    stageSurface3: "#2B2621",
+    ink: "#F4EFE6",
+    inkDim: "#F4EFE6A3",
+    inkFaint: "#F4EFE661",
+    line: "#F4EFE61A",
+    lineStrong: "#F4EFE62E",
+    edgeLight: "#FFF6E83D",
+    edgeShade: "#0000008C",
+    shadowCast: "#120A0499",
+    shadowCastStrong: "#120A04C4",
+    backdropScrim: "#0E0C0AD9",
+    backdropVignette: "#070605B3",
+    accent: "#F4EFE6",
+    onAccent: "#0E0C0A",
+    statusDanger: "#E0655E",
+    statusSuccess: "#5AB98A",
+    statusLive: "#E0655E",
+    statusPartyLive: "#78C99F",
+  },
+
+  /** Fine, low-contrast film grain over the stage. Must never reduce text or
+   *  artwork clarity. */
+  grain: {
+    opacityPct: 3.5,
+    tilePx: 128,
+    focusedBoostPct: 1.5,
+  },
+
+  /** Square, unrounded artwork at EVERY size — including skeletons,
+   *  placeholders, season cards and selected states. radiusPx is 0 and is
+   *  asserted by tests in both clients. */
+  poster: {
+    radiusPx: 0,
+    aspectW: 2,
+    aspectH: 3,
+    framePx: 1,
+    gapPx: 14,
+    shelfPeekPx: 64,
+  },
+
+  /** Depth through scale, framing, light and position. No perspective tilt, no
+   *  bounce. */
+  selection: {
+    restScale: 1,
+    focusScale: 1.06,
+    focusLiftPx: 6,
+    focusBackdropDarkenPct: 22,
+    sceneLightAngleDeg: 315,
+  },
+
+  /** Directional cast shadows keyed to sceneLightAngleDeg (light above-left =>
+   *  shadow below-right). */
+  elevation: {
+    restBlurPx: 18,
+    restOffsetXPx: 4,
+    restOffsetYPx: 8,
+    focusBlurPx: 34,
+    focusOffsetXPx: 8,
+    focusOffsetYPx: 18,
+  },
+
+  /** Mechanical and weighty: short travel, clear detents, restrained easing. No
+   *  elastic overshoot anywhere. */
+  motion: {
+    focusStepMs: 170,
+    focusStepEase: [0.22, 0.61, 0.36, 1],
+    backdropCrossMs: 420,
+    backdropCrossEase: [0.4, 0, 0.2, 1],
+    chromeFadeMs: 160,
+    chromeFadeEase: [0.4, 0, 0.2, 1],
+    detentMs: 90,
+    detentEase: [0.3, 0, 0.1, 1],
+    drawerMs: 260,
+    drawerEase: [0.22, 0.61, 0.36, 1],
+  },
+
+  /** Timeline and volume are precision lines, not filled bars. The visible line
+   *  is thin; the hit target is not. */
+  hairline: {
+    idlePx: 2,
+    activePx: 4,
+    hitPx: 24,
+    handlePx: 10,
+    handleFocusPx: 14,
+    rangeGapPx: 2,
+  },
+
+  /** Behavioural constants fixed by the design references; the interaction
+   *  cores in app/shared/design/interaction.json are driven by these same
+   *  numbers. */
+  timing: {
+    chromeAutoHideMs: 3000,
+    toastLifetimeMs: 4000,
+    toastMaxStack: 3,
+  },
+
+  space: {
+    xsPx: 4,
+    smPx: 8,
+    mdPx: 12,
+    lgPx: 16,
+    xlPx: 24,
+    xxlPx: 32,
+    stageGutterPx: 48,
+    stageGutterPhonePx: 20,
+  },
+
+  /** Artwork is always square. These radii are for chrome only (buttons,
+   *  sheets, toasts) and must never be applied to a poster, still, skeleton or
+   *  placeholder. */
+  radius: {
+    chromePx: 4,
+    sheetPx: 8,
+    pillPx: 999,
+  },
+
+  type: {
+    sans: "'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    mono: "'JetBrains Mono', ui-monospace, monospace",
+    sansFamily: "CircularXX",
+    monoFamily: "JetBrains Mono",
+  },
+
+  /** Stage layering. The player owns its own bands; these are the browse shell. */
+  z: {
+    backdrop: 0,
+    grain: 5,
+    shelf: 10,
+    nav: 20,
+    toolbox: 30,
+    scrim: 40,
+    sheet: 50,
+    toast: 60,
+  },
+
+  breakpoint: {
+    phoneMaxPx: 719,
+    tabletMaxPx: 1023,
+  },
+} as const
+
+export type AnalogTokens = typeof analogTokens
+
+/** `[x1, y1, x2, y2]` -> a CSS `cubic-bezier(...)` string. */
+export const ease = (curve: readonly [number, number, number, number]): string =>
+  `cubic-bezier(${curve.join(", ")})`

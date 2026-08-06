@@ -1,5 +1,5 @@
-import type { AuthUser, BrowseEntry, ChatMessage, MirrorPoint, PartyBrowse, PartyBrowserState, PartySession, PartyUser, SubtitlePreferences, UserProfile } from './types'
-import type { AvatarConfig } from './lib/avatar'
+import type { AuthUser, BrowseEntry, ChatMessage, MirrorPoint, PartyBrowse, PartyBrowserState, PartySession, PartyUser, SubtitlePreferences, UserProfile } from './types.ts'
+import type { AvatarConfig } from './lib/avatar.ts'
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

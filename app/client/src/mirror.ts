@@ -4,7 +4,7 @@
 // we keep it in a module-level pub/sub and let followers apply it imperatively
 // (scrollTop + a ghost-cursor transform) via a single rAF loop.
 
-import type { MirrorPoint } from './types'
+import type { MirrorPoint } from './types.ts'
 
 type MirrorState = Required<MirrorPoint>
 const listeners = new Set<(value: MirrorState) => void>()

@@ -1,10 +1,10 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import QRCode from 'qrcode'
-import { useParty } from '../context/PartyContext'
-import Avatar from './Avatar'
-import { useMemberAvatar } from '../hooks/useMemberAvatar'
-import type { PartyUser } from '../types'
+import { useParty } from '../context/PartyContext.tsx'
+import Avatar from './Avatar.tsx'
+import { useMemberAvatar } from '../hooks/useMemberAvatar.ts'
+import type { PartyUser } from '../types.ts'
 
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
 

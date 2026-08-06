@@ -1,8 +1,7 @@
-import { navigate } from '../router'
-import { useTorrents } from '../hooks/useTorrents'
-import { useFailingCount } from '../hooks/useFailingDownloads'
-import { T, MONO, EASE, Z, SANS } from './theme'
-import { Icon, Ic } from './ui/Icon'
+import { navigate } from '../router.ts'
+import { useDownloadsHub } from '../context/DownloadsContext.tsx'
+import { T, MONO, EASE, Z, SANS } from './theme.ts'
+import { Icon, Ic } from './ui/Icon.tsx'
 
 /**
  * Flush bottom tab bar. Edge-to-edge with a hairline top border, sitting over
@@ -26,9 +25,9 @@ function isActive(path: string | undefined, tabPath?: string) {
 }
 
 export function TabBar({ path, onParty }: { path?: string; onParty?: () => void } = {}) {
-  // Reuse the existing pollers so the Downloads badge matches every surface.
-  const { activeCount } = useTorrents(true)
-  const failing = useFailingCount(true)
+  // Read the shared hub — the tab bar is mounted alongside whichever screen is
+  // showing, so owning pollers here meant every phone ran two of each.
+  const { activeCount, failingCount } = useDownloadsHub()
 
   return (
     <nav
@@ -49,7 +48,7 @@ export function TabBar({ path, onParty }: { path?: string; onParty?: () => void 
         {TABS.map((t) => {
           if (t.center) return <PartyTab key={t.key} onClick={onParty} />
           const active = isActive(path, t.path)
-          const badge = t.key === 'downloads' ? <DownloadDot active={activeCount} failing={failing} /> : null
+          const badge = t.key === 'downloads' ? <DownloadDot active={activeCount} failing={failingCount} /> : null
           return (
             <button
               key={t.key}

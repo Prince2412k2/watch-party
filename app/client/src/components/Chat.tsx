@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
-import { useParty } from '../context/PartyContext'
-import { glass } from '../glass'
-import type { ChatMessage } from '../types'
+import { useParty } from '../context/PartyContext.tsx'
+import { glass } from '../glass.tsx'
+import { Z } from '../watchLayers.ts'
+import type { ChatMessage } from '../types.ts'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
@@ -55,7 +56,11 @@ export default function Chat({ top = 76, mobileSheet = false }: { top?: number; 
     <div style={{
       ...glass('light'),
       ...frame,
-      zIndex: 22, borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'var(--text)',
+      // Was a hardcoded 22, which put the desktop panel BELOW the control bar
+      // (30) and the buffering overlay (25) — the drawer was painted over by
+      // the chrome it is supposed to sit beside. watchLayers has always said
+      // 40; this is that number.
+      zIndex: Z.chat, borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'var(--text)',
     }}>
       {/* Header — minimal: label + alert toggle + close */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px 12px 16px', borderBottom: '1px solid var(--stroke)' }}>

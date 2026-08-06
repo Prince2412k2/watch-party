@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/api_client.dart';
 import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/download_poster.dart';
@@ -18,8 +19,14 @@ import '../../ui/widgets/download_ring.dart';
 /// falling back to the enriched fields. Pushed on the root navigator so it
 /// covers the shell chrome.
 class DownloadDetailScreen extends ConsumerStatefulWidget {
-  const DownloadDetailScreen({super.key, required this.hash});
+  const DownloadDetailScreen({super.key, required this.hash, this.onClose});
   final String hash;
+
+  /// How to leave this screen. Null pops the enclosing route, which is right
+  /// when the queue pushed this on the root navigator; the `/downloads/:id`
+  /// route passes its own, because a deep link straight to this screen has no
+  /// route under it to pop back to.
+  final VoidCallback? onClose;
 
   @override
   ConsumerState<DownloadDetailScreen> createState() =>
@@ -30,10 +37,21 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
   bool _busy = false;
   bool _sawTorrent = false;
 
+  void _close() {
+    if (!mounted) return;
+    final onClose = widget.onClose;
+    if (onClose != null) {
+      onClose();
+    } else {
+      Navigator.of(context).maybePop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    final snap = ref.watch(servarrDownloadsPollProvider).valueOrNull;
+    final poll = ref.watch(servarrDownloadsPollProvider);
+    final snap = poll.valueOrNull;
     final torrent = snap?.list.cast<ServarrDownload?>().firstWhere(
           (t) => t?.hash == widget.hash,
           orElse: () => null,
@@ -43,8 +61,22 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
       // The download finished + left the queue (or was removed) → close.
       if (_sawTorrent) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) Navigator.of(context).maybePop();
+          if (mounted) _close();
         });
+      } else if (snap != null || poll.hasError) {
+        // Never seen, and the queue has now answered: this hash is not in it.
+        // Reached by a deep link to a download that has already finished or
+        // was removed — which used to sit on the spinner below forever.
+        return Scaffold(
+          backgroundColor: wp.bg,
+          body: EmptyState(
+            title: 'That download is not in the queue',
+            message: 'It may have finished or been removed.',
+            icon: Icons.download_done_outlined,
+            actionLabel: 'Back to downloads',
+            onAction: _close,
+          ),
+        );
       }
       return Scaffold(
         backgroundColor: wp.bg,
@@ -74,7 +106,7 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
     final runtime = fmtRuntimeFromMinutes(detail?.runtime);
     final infoLine = <String>[
       if (detail?.year != null) detail!.year!,
-      if (runtime != null) runtime,
+      ?runtime,
       if (detail?.certification != null && detail!.certification!.isNotEmpty)
         detail.certification!,
       if (detail?.network != null && detail!.network!.isNotEmpty) detail.network!,
@@ -207,7 +239,7 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
           Positioned(
             top: 18,
             left: 18,
-            child: _BackChevron(onTap: () => Navigator.of(context).maybePop()),
+            child: _BackChevron(onTap: _close),
           ),
         ],
       ),
@@ -215,29 +247,58 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
   }
 
   Future<void> _pauseResume() async {
-    final actions = ref.read(servarrQueueActionsProvider);
-    final t = ref.read(servarrDownloadsPollProvider).valueOrNull?.list.firstWhere(
-          (t) => t.hash == widget.hash,
-          orElse: () => ServarrDownload({'hash': widget.hash}),
-        );
-    if (t == null) return;
+    // Same nullable lookup as [build]. The previous `orElse` invented an
+    // unpaused torrent when the hash had left the queue, so the button acted
+    // on a download that no longer existed and reported nothing.
+    final torrent = ref
+        .read(servarrDownloadsPollProvider)
+        .valueOrNull
+        ?.list
+        .cast<ServarrDownload?>()
+        .firstWhere((t) => t?.hash == widget.hash, orElse: () => null);
+    if (torrent == null) return;
+
+    final resuming = torrent.isPaused;
     setState(() => _busy = true);
-    if (t.isPaused) {
-      await actions.resume(widget.hash);
-    } else {
-      await actions.pause(widget.hash);
+    try {
+      final actions = ref.read(servarrQueueActionsProvider);
+      if (resuming) {
+        await actions.resume(widget.hash);
+      } else {
+        await actions.pause(widget.hash);
+      }
+    } catch (error) {
+      _report(resuming ? 'Could not resume' : 'Could not pause', error);
+    } finally {
+      // In a `finally` because the alternative is what shipped: a request that
+      // threw left every button on this screen disabled until the user backed
+      // out and came in again, with nothing on screen to say why.
+      if (mounted) setState(() => _busy = false);
     }
-    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _delete(String name) async {
     final deleteFiles = await showDownloadDeleteDialog(context, name: name);
     if (deleteFiles == null || !mounted) return;
     setState(() => _busy = true);
-    await ref
-        .read(servarrQueueActionsProvider)
-        .deleteTorrent(widget.hash, deleteFiles: deleteFiles);
-    if (mounted) Navigator.of(context).maybePop();
+    try {
+      await ref
+          .read(servarrQueueActionsProvider)
+          .deleteTorrent(widget.hash, deleteFiles: deleteFiles);
+      _close();
+    } catch (error) {
+      _report('Could not delete', error);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _report(String what, Object error) {
+    if (!mounted) return;
+    final reason = error is ApiException ? error.message : '$error';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$what: $reason')));
   }
 }
 

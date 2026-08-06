@@ -1,0 +1,747 @@
+@import '../design/analog.css';
+
+/* Analog primitive kit.
+ *
+ * Every value here comes from the generated custom properties above. The only
+ * literals are structural (100%, flex, grid) or the noise tile's turbulence
+ * parameters, which are not a design token — the tile SIZE and OPACITY are.
+ *
+ * Per-instance values that must be computed in JS (poster width, motion
+ * durations under prefers-reduced-motion, the scene-light offsets) arrive as
+ * inline `--an-k-*` custom properties, never as hard-coded style objects. */
+
+/* ── stage ───────────────────────────────────────────────────────────────── */
+
+.an-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-ground);
+  font-family: var(--an-type-sans);
+}
+
+.an-stage-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-backdrop);
+  background: var(--an-color-stage-void);
+}
+
+/* Cross-fade, not a cut: a new layer is appended on top at opacity 0 and the
+   previous one is dropped once the transition has run. */
+.an-stage-layer {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  opacity: 0;
+  transform: scale(1.04);
+  filter: saturate(0.86) contrast(0.96);
+  transition:
+    opacity var(--an-k-backdrop-ms, var(--an-motion-backdrop-cross-ms)) var(--an-motion-backdrop-cross-ease);
+}
+
+.an-stage-layer.is-in {
+  opacity: 1;
+}
+
+/* Warm scrim + vignette. Artwork is the ground the interface sits on, so it is
+   pushed back far enough that ink over it stays legible without a panel. */
+.an-stage-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-backdrop);
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, var(--an-color-backdrop-scrim) 0%, transparent 62%),
+    linear-gradient(0deg, var(--an-color-backdrop-scrim) 0%, transparent 58%),
+    radial-gradient(120% 90% at 50% 42%, transparent 32%, var(--an-color-backdrop-vignette) 100%);
+}
+
+.an-stage-grain {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-grain);
+  pointer-events: none;
+  opacity: var(--an-grain-opacity-pct);
+  background-repeat: repeat;
+  background-size: var(--an-grain-tile-px) var(--an-grain-tile-px);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+/* One stage, three bands: the anchor's title fills whatever is left over, the
+   shelf that owns focus sits under it, and the modes stay on the bottom edge.
+   No panel, no sidebar, no second scroll region. */
+.an-stage-content {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-shelf);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  padding: var(--an-k-gutter, var(--an-space-stage-gutter-px));
+  padding-bottom: 0;
+}
+
+.an-stage-shelves {
+  min-width: 0;
+  display: grid;
+  gap: var(--an-space-xl-px);
+}
+
+/* A party guest mirrors the driver, so the shelf is inert for them — but the
+   modes and the toolboxes stay live, or a guest could not leave the mirrored
+   view. Same rule the phone shell applies to its tab bar. */
+.an-stage[data-inert='true'] .an-stage-shelves {
+  pointer-events: none;
+}
+
+/* ── title block ─────────────────────────────────────────────────────────── */
+
+.an-stage-title {
+  min-width: 0;
+  max-width: min(46ch, 52%);
+  align-self: end;
+  padding-bottom: var(--an-space-xl-px);
+}
+
+.an-stage-title h1 {
+  margin: 0;
+  color: var(--an-color-ink);
+  font-size: clamp(28px, 3.6vw, 52px);
+  font-weight: 300;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.an-stage-title p {
+  margin: var(--an-space-md-px) 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--an-color-ink-dim);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.an-stage-eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--an-space-sm-px) var(--an-space-md-px);
+  margin-bottom: var(--an-space-md-px);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* ── poster ──────────────────────────────────────────────────────────────── */
+
+.an-poster {
+  position: relative;
+  display: block;
+  width: 100%;
+  transform: translateY(0) scale(var(--an-selection-rest-scale));
+  transition:
+    transform var(--an-k-step-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-poster[data-focused='true'] {
+  transform: translateY(calc(-1 * var(--an-k-lift-px, var(--an-selection-focus-lift-px))))
+    scale(var(--an-k-focus-scale, var(--an-selection-focus-scale)));
+}
+
+/* Local backdrop shading: the stage darkens *around* the focused poster rather
+   than the poster gaining a glow. Separation, not decoration. */
+.an-poster-shade {
+  position: absolute;
+  /* Matched to the shelf track's padding, so the wash is never hard-clipped. */
+  inset: calc(-1 * var(--an-space-lg-px));
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    68% 58% at 50% 56%,
+    rgb(0 0 0 / var(--an-selection-focus-backdrop-darken-pct)),
+    transparent 78%
+  );
+  transition: opacity var(--an-k-step-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-poster[data-focused='true'] .an-poster-shade {
+  opacity: 1;
+}
+
+/* Square and unrounded at EVERY size — artwork, skeleton, placeholder, season
+   card and selected state alike. radiusPx is 0 and asserted in both clients;
+   --an-radius-* is chrome-only and must never appear in this block. */
+.an-poster-frame {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: var(--an-poster-aspect-w) / var(--an-poster-aspect-h);
+  border-radius: var(--an-poster-radius-px);
+  background: var(--an-color-stage-surface);
+  box-shadow:
+    inset var(--an-k-lit-x) var(--an-k-lit-y) 0 var(--an-k-frame-px, var(--an-poster-frame-px))
+      var(--an-color-edge-light),
+    inset var(--an-k-shade-x) var(--an-k-shade-y) 0 var(--an-k-frame-px, var(--an-poster-frame-px))
+      var(--an-color-edge-shade),
+    var(--an-elevation-rest-offset-xpx) var(--an-elevation-rest-offset-ypx)
+      var(--an-elevation-rest-blur-px) var(--an-color-shadow-cast);
+  transition: box-shadow var(--an-k-step-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-poster[data-focused='true'] .an-poster-frame {
+  box-shadow:
+    inset calc(var(--an-k-lit-x) * 2) calc(var(--an-k-lit-y) * 2) 0
+      calc(var(--an-k-frame-px, var(--an-poster-frame-px)) * 2) var(--an-color-edge-light),
+    inset var(--an-k-shade-x) var(--an-k-shade-y) 0 var(--an-k-frame-px, var(--an-poster-frame-px))
+      var(--an-color-edge-shade),
+    var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+      var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+}
+
+.an-poster-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.9);
+}
+
+/* Fixed size, so layout and focus do not move when artwork is missing. */
+.an-poster-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: var(--an-color-stage-surface2);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 22px;
+  letter-spacing: 0.08em;
+}
+
+.an-poster-skeleton {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-image: linear-gradient(
+    100deg,
+    var(--an-color-stage-surface) 30%,
+    var(--an-color-stage-surface2) 50%,
+    var(--an-color-stage-surface) 70%
+  );
+  background-size: 200% 100%;
+  animation: an-shim 1.4s linear infinite;
+}
+
+@keyframes an-shim {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.an-poster-badge {
+  position: absolute;
+  top: var(--an-space-sm-px);
+  left: var(--an-space-sm-px);
+  padding: 2px 6px;
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-edge-shade);
+  color: var(--an-color-ink);
+  font-family: var(--an-type-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.an-poster-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--an-hairline-idle-px);
+  background: var(--an-color-line-strong);
+}
+
+.an-poster-progress > i {
+  display: block;
+  height: 100%;
+  background: var(--an-color-accent);
+}
+
+/* min-height, not content height: a skeleton has no caption, and the shelf must
+   not change height as titles load in. */
+.an-poster-caption {
+  display: block;
+  overflow: hidden;
+  min-height: 1.35em;
+  margin-top: var(--an-space-md-px);
+  color: var(--an-color-ink-dim);
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-shelf-option[aria-selected='true'] .an-poster-caption {
+  color: var(--an-color-ink);
+}
+
+/* ── shelf ───────────────────────────────────────────────────────────────── */
+
+.an-shelf {
+  position: relative;
+  min-width: 0;
+  padding-bottom: var(--an-space-xl-px);
+}
+
+.an-shelf-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--an-space-md-px);
+  margin-bottom: var(--an-space-lg-px);
+}
+
+.an-shelf-head h2 {
+  margin: 0;
+  color: var(--an-color-ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.an-shelf-count {
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 11.5px;
+}
+
+.an-shelf-arrows {
+  display: flex;
+  gap: var(--an-space-sm-px);
+  margin-left: auto;
+}
+
+/* Always present, never revealed by hover. The rail arrows this replaces were
+   opacity-gated on section hover, which made them unreachable by touch, by
+   keyboard and by anyone driving with a remote. */
+.an-shelf-arrows button {
+  width: var(--an-hairline-hit-px);
+  height: var(--an-hairline-hit-px);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-dim);
+  background: var(--an-color-stage-surface);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-shelf-arrows button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.an-shelf-arrows button:not(:disabled):hover,
+.an-shelf-arrows button:focus-visible {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+}
+
+/* overflow:hidden, not auto. The shelf is moved by focus, never free-scrolled:
+   "no nested independent scroll areas on the main stage". It stays a scroll
+   container so the delta math in AnalogShelf can move it programmatically.
+   The padding (cancelled by an equal negative margin) is the room the focused
+   poster's lift, scale and cast shadow need — without it overflow:hidden
+   clips exactly the depth that communicates focus. */
+.an-shelf-track {
+  display: flex;
+  gap: var(--an-k-gap-px, var(--an-poster-gap-px));
+  overflow: hidden;
+  padding: var(--an-space-lg-px);
+  margin: calc(-1 * var(--an-space-lg-px));
+  scrollbar-width: none;
+  touch-action: pan-y;
+}
+
+.an-shelf-track::-webkit-scrollbar {
+  display: none;
+}
+
+.an-shelf-option {
+  flex: 0 0 var(--an-k-poster-px);
+  width: var(--an-k-poster-px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.an-shelf-option:focus {
+  outline: none;
+}
+
+.an-shelf-option:focus-visible .an-poster-frame {
+  outline: calc(var(--an-k-frame-px, var(--an-poster-frame-px)) * 2) solid var(--an-color-accent);
+  outline-offset: var(--an-space-xs-px);
+}
+
+.an-shelf-empty {
+  display: grid;
+  place-content: center;
+  gap: var(--an-space-sm-px);
+  min-height: 220px;
+  color: var(--an-color-ink-dim);
+  text-align: center;
+}
+
+.an-shelf-empty strong {
+  color: var(--an-color-ink);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+/* ── bottom nav ──────────────────────────────────────────────────────────── */
+
+.an-nav {
+  position: relative;
+  z-index: var(--an-z-nav);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--an-space-xs-px);
+  padding: var(--an-space-sm-px) 0 calc(var(--an-space-sm-px) + env(safe-area-inset-bottom, 0px));
+  border-top: var(--an-poster-frame-px) solid var(--an-color-line);
+  background: linear-gradient(0deg, var(--an-color-stage-ground), transparent);
+}
+
+.an-nav button {
+  position: relative;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  padding: var(--an-space-sm-px) var(--an-space-lg-px);
+  border: 0;
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-faint);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-nav button:hover,
+.an-nav button:focus-visible {
+  color: var(--an-color-ink-dim);
+}
+
+/* Selection is never colour alone: the active mode also carries a detent mark. */
+.an-nav button.is-active {
+  color: var(--an-color-ink);
+}
+
+.an-nav button.is-active::after {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--an-space-sm-px) - var(--an-poster-frame-px));
+  left: var(--an-space-lg-px);
+  right: var(--an-space-lg-px);
+  height: var(--an-hairline-active-px);
+  background: var(--an-color-accent);
+}
+
+.an-nav-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--an-radius-pill-px);
+  background: var(--an-color-accent);
+  color: var(--an-color-on-accent);
+  font-family: var(--an-type-mono);
+  font-size: 9.5px;
+}
+
+.an-nav-badge.is-alert {
+  background: var(--an-color-status-danger);
+  color: var(--an-color-ink);
+}
+
+/* ── toolbox ─────────────────────────────────────────────────────────────── */
+
+/* DOM order is panel-then-button, so the panel always opens AWAY from the
+   corner the control sits in: downwards from the top-right, upwards from the
+   bottom-right. */
+.an-toolbox {
+  position: fixed;
+  z-index: var(--an-z-toolbox);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--an-space-sm-px);
+  max-width: min(340px, calc(100vw - var(--an-space-xl-px) * 2));
+}
+
+.an-toolbox[data-corner='top-right'] {
+  top: var(--an-space-lg-px);
+  right: var(--an-space-lg-px);
+  flex-direction: column-reverse;
+}
+
+/* Sits clear of the bottom nav rather than over it — the expanded surface must
+   not compete with primary navigation. */
+.an-toolbox[data-corner='bottom-right'] {
+  right: var(--an-space-lg-px);
+  bottom: calc(var(--an-k-nav-px, 64px) + var(--an-space-lg-px) + env(safe-area-inset-bottom, 0px));
+}
+
+.an-toolbox-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  padding: 0 var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-dim);
+  background: var(--an-color-stage-surface);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  box-shadow: var(--an-elevation-rest-offset-xpx) var(--an-elevation-rest-offset-ypx)
+    var(--an-elevation-rest-blur-px) var(--an-color-shadow-cast);
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-toolbox-button:hover,
+.an-toolbox-button[aria-expanded='true'],
+.an-toolbox-button:focus-visible {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+}
+
+.an-toolbox-button.is-live {
+  border-color: var(--an-color-status-party-live);
+  color: var(--an-color-ink);
+}
+
+.an-toolbox-button .an-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--an-radius-pill-px);
+  background: var(--an-color-status-party-live);
+}
+
+.an-toolbox-panel {
+  width: min(320px, calc(100vw - var(--an-space-xl-px) * 2));
+  max-height: min(62vh, 520px);
+  overflow: hidden auto;
+  padding: var(--an-space-lg-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-sheet-px);
+  background: var(--an-color-stage-surface);
+  box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+    var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+  animation: an-toolbox-in var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
+}
+
+@keyframes an-toolbox-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.an-toolbox-panel h2 {
+  margin: 0 0 var(--an-space-xs-px);
+  color: var(--an-color-ink);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.an-toolbox-panel small {
+  display: block;
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.an-toolbox-panel p {
+  margin: var(--an-space-sm-px) 0 var(--an-space-lg-px);
+  color: var(--an-color-ink-dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.an-toolbox-action {
+  position: relative;
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  margin-top: var(--an-space-sm-px);
+  padding: 0 var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-surface2);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.an-toolbox-action:hover:not(:disabled),
+.an-toolbox-action:focus-visible {
+  border-color: var(--an-color-line-strong);
+  background: var(--an-color-stage-surface3);
+}
+
+.an-toolbox-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.an-toolbox-action.is-primary {
+  border-color: transparent;
+  background: var(--an-color-accent);
+  color: var(--an-color-on-accent);
+}
+
+.an-toolbox-action.is-danger {
+  border-color: var(--an-color-status-danger);
+  color: var(--an-color-status-danger);
+  background: transparent;
+}
+
+/* Host-only actions are visibly distinct from controls every participant has:
+   a dashed edge and a HOST tag, not just a different tint. */
+.an-toolbox-action.is-host-only {
+  border-style: dashed;
+  border-color: var(--an-color-line-strong);
+}
+
+.an-host-tag {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.an-toolbox-rows {
+  display: grid;
+  gap: var(--an-space-sm-px);
+  margin-top: var(--an-space-md-px);
+  padding-top: var(--an-space-md-px);
+  border-top: var(--an-poster-frame-px) solid var(--an-color-line);
+}
+
+.an-toolbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  color: var(--an-color-ink-dim);
+  font-size: 13px;
+}
+
+.an-toolbox-row small {
+  display: inline;
+  margin-left: auto;
+}
+
+.an-toolbox-code {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  margin-top: var(--an-space-sm-px);
+  color: var(--an-color-ink);
+  font-family: var(--an-type-mono);
+  font-size: 18px;
+  letter-spacing: 0.18em;
+}
+
+.an-toolbox-qr {
+  display: grid;
+  place-items: center;
+  margin-top: var(--an-space-md-px);
+  padding: var(--an-space-md-px);
+  background: var(--an-color-ink);
+}
+
+.an-toolbox-error {
+  margin-top: var(--an-space-sm-px);
+  color: var(--an-color-status-danger);
+  font-size: 12.5px;
+}
+
+/* ── phone ───────────────────────────────────────────────────────────────── */
+
+.an-stage[data-size='phone'] .an-stage-title {
+  max-width: none;
+}
+
+.an-stage[data-size='phone'] .an-stage-title h1 {
+  font-size: 26px;
+}
+
+.an-stage[data-size='phone'] .an-stage-title p {
+  -webkit-line-clamp: 2;
+}
+
+.an-stage[data-size='phone'] .an-nav {
+  justify-content: space-between;
+  gap: 0;
+}
+
+.an-stage[data-size='phone'] .an-nav button {
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--an-space-sm-px) var(--an-space-xs-px);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.an-stage[data-size='phone'] .an-nav button.is-active::after {
+  left: var(--an-space-xs-px);
+  right: var(--an-space-xs-px);
+}
+
+.an-stage[data-size='phone'] .an-toolbox {
+  max-width: calc(100vw - var(--an-space-lg-px) * 2);
+}

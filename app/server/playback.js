@@ -49,13 +49,3 @@ export async function refreshPlayback(session, {
   return session.playback
 }
 
-export function buildPlaybackChoices(playback) {
-  const audioStreams = playback?.audioStreams ?? []
-  const subtitleStreams = playback?.subtitleStreams ?? []
-  return {
-    audioStreams,
-    subtitleStreams,
-    selectedAudioIndex: playback?.selectedAudioIndex ?? null,
-    selectedSubtitleIndex: playback?.selectedSubtitleIndex ?? null,
-  }
-}

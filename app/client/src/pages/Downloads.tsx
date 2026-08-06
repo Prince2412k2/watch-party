@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { useIsMobile } from '../hooks/useIsMobile'
-import { useTorrents } from '../hooks/useTorrents'
-import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
-import { C, SANS, MONO, Ic, Icon, Spinner } from '../lib/ui'
-import { fmtSize, fmtSpeed, stateInfo } from '../lib/format'
-import { jget } from '../lib/api'
-import { apiJson, arrayOf, booleanValue, isQueueJson, isRecord } from '../types/guards'
+import { useIsMobile } from '../hooks/useIsMobile.ts'
+import { useDownloadsHub } from '../context/DownloadsContext.tsx'
+import type { DownloadsHub } from '../context/DownloadsContext.tsx'
+import { failureReasons, queueTitle } from '../hooks/useFailingDownloads.ts'
+import type { FailingQueueItem, FailingQueueState } from '../hooks/useFailingDownloads.ts'
+import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail.tsx'
+import { C, SANS, MONO, Ic, Icon, Spinner } from '../lib/ui.tsx'
+import { fmtSize, fmtSpeed, stateInfo } from '../lib/format.ts'
+import type { ServiceHealth } from '../hooks/downloadsCore.ts'
 
 /* ── Cinematic-minimal, monochrome tokens local to this screen. `ui.jsx`'s
    palette still carries the old liquid-glass colors (out of scope here), so
@@ -22,99 +24,15 @@ type Torrent = {
   hash: string; name?: string; state?: string; progress?: number; dlspeed?: number; upspeed?: number
   displayTitle?: string; subtitle?: string; posterUrl?: string; kind?: string
 }
-type QueueItem = {
-  id: number | string; service: string; failing?: boolean; title?: string; statusMessages?: string[]
-  errorMessage?: string; indexer?: string; size?: number
-}
-type HealthService = { configured?: boolean; reachable?: boolean }
-type Health = { services?: { qbittorrent?: HealthService; radarr?: HealthService; sonarr?: HealthService } }
-function parseHealth(value: unknown): Health {
-  if (!isRecord(value) || !isRecord(value.services)) return { services: {} }
-  const service = (raw: unknown): HealthService | undefined => isRecord(raw) ? {
-    configured: booleanValue(raw.configured), reachable: booleanValue(raw.reachable),
-  } : undefined
-  return { services: { qbittorrent: service(value.services.qbittorrent), radarr: service(value.services.radarr), sonarr: service(value.services.sonarr) } }
-}
-type TorrentControls = {
-  list: Torrent[]; torrents: Torrent[] | null; activeCount: number; loadError: boolean; busy: Set<string>
-  pause: (torrent: Torrent) => void; resume: (torrent: Torrent) => void; remove: (hash: string, deleteFiles: boolean) => void
-}
-
-/* ── Failing queue items (Radarr/Sonarr) poller ──────────────────────────────
-   Visibility-aware ~6s polling of both *arr queues for items stuck in a
-   warning/failed state, with a single shared AbortController so an in-flight
-   poll is cancelled on the next tick / unmount and never lands stale state. A
-   failed poll flags a subtle reconnect and keeps the last good list; remove()
-   is optimistic and re-polls to confirm. */
-function useFailingQueue(enabled: boolean) {
-  const [items, setItems] = useState<QueueItem[] | null>(null)   // null = never loaded
-  const [loadError, setLoadError] = useState(false)
-  const [busy, setBusy] = useState<Set<QueueItem['id']>>(() => new Set())
-  const abortRef = useRef<AbortController | null>(null)
-
-  const poll = useCallback(() => {
-    abortRef.current?.abort()
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    return Promise.all([
-      jget('/api/servarr/radarr/queue', ctrl.signal).then((r) => (r.ok ? apiJson(r) : Promise.reject(r))).catch(() => null),
-      jget('/api/servarr/sonarr/queue', ctrl.signal).then((r) => (r.ok ? apiJson(r) : Promise.reject(r))).catch(() => null),
-    ]).then(([a, b]) => {
-      if (ctrl.signal.aborted) return
-      if (a == null && b == null) { setLoadError(true); return }
-      const merged: QueueItem[] = [...arrayOf(a, isQueueJson), ...arrayOf(b, isQueueJson)]
-      setItems(merged.filter((q) => q.failing))
-      setLoadError(false)
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!enabled) { setItems(null); return }
-    let timer: ReturnType<typeof setInterval> | null = null
-    const start = () => { if (timer == null) { poll(); timer = setInterval(poll, 6000) } }
-    const stop = () => { if (timer != null) { clearInterval(timer); timer = null } abortRef.current?.abort() }
-    const onVis = () => (document.hidden ? stop() : start())
-    if (!document.hidden) start()
-    document.addEventListener('visibilitychange', onVis)
-    return () => { document.removeEventListener('visibilitychange', onVis); stop() }
-  }, [enabled, poll])
-
-  const remove = (item: QueueItem, blocklist: boolean) => {
-    setBusy((prev) => new Set(prev).add(item.id))
-    setItems((cur) => cur?.filter((q) => q.id !== item.id) ?? null)
-    fetch(`/api/servarr/${item.service}/queue/${item.id}`, {
-      method: 'DELETE', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocklist: !!blocklist }),
-    }).catch(() => {}).finally(() => {
-      setBusy((prev) => { const n = new Set(prev); n.delete(item.id); return n })
-      poll()
-    })
-  }
-
-  return { items, loadError, busy, remove }
-}
 
 export default function Downloads() {
   const mobile = useIsMobile()
 
-  const [health, setHealth] = useState<Health | null>(null)
-  const [healthLoading, setHealthLoading] = useState(true)
-
-  useEffect(() => {
-    setHealthLoading(true)
-    jget('/api/servarr/health')
-      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
-      .then((value) => setHealth(parseHealth(value)))
-      .catch(() => setHealth({ services: {} }))
-      .finally(() => setHealthLoading(false))
-  }, [])
-
-  const qbitReady = !!health?.services?.qbittorrent?.configured && !!health?.services?.qbittorrent?.reachable
-  const arrReady = (!!health?.services?.radarr?.configured && !!health?.services?.radarr?.reachable)
-    || (!!health?.services?.sonarr?.configured && !!health?.services?.sonarr?.reachable)
-
-  const dl = useTorrents(qbitReady)
-  const failing = useFailingQueue(arrReady)
+  // Health, the live torrent list, and the *arr failing queue all come from the
+  // shared hub (context/DownloadsContext) — this page used to run its own copy of
+  // each, including a verbatim duplicate of the phone screen's queue poller.
+  const dl = useDownloadsHub()
+  const { health, healthLoading, qbitReady, arrReady, failing } = dl
   return (
     <div style={{ position: 'absolute', inset: 0, background: C.bg, color: C.text, fontFamily: SANS, overflow: 'hidden' }}>
       <div style={{
@@ -134,7 +52,7 @@ export default function Downloads() {
    torrent, so it never shows up in the section below. Branding purity takes a
    back seat here — the real failure reason is what makes this actionable. ── */
 function NeedsAttention({ healthLoading, arrReady, failing }: {
-  healthLoading: boolean; arrReady: boolean; failing: ReturnType<typeof useFailingQueue>
+  healthLoading: boolean; arrReady: boolean; failing: FailingQueueState
 }) {
   if (healthLoading || (arrReady && failing.items === null)) return null
   if (!arrReady) return null
@@ -170,9 +88,9 @@ function NeedsAttention({ healthLoading, arrReady, failing }: {
   )
 }
 
-function FailingRow({ q, busy, onRemove }: { q: QueueItem; busy: boolean; onRemove: (blocklist: boolean) => void }) {
+function FailingRow({ q, busy, onRemove }: { q: FailingQueueItem; busy: boolean; onRemove: (blocklist: boolean) => void }) {
   const [confirm, setConfirm] = useState(false)
-  const reasons = (q.statusMessages?.length ?? 0) > 0 ? q.statusMessages! : (q.errorMessage ? [q.errorMessage] : ['No reason given.'])
+  const reasons = failureReasons(q)
   return (
     <div style={{ padding: '15px 18px', borderRadius: 14, ...FLAT, border: `1px solid ${DANGER_BORDER}` }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -181,7 +99,7 @@ function FailingRow({ q, busy, onRemove }: { q: QueueItem; busy: boolean; onRemo
           <Icon path={Ic.alert} size={17} stroke={DANGER} sw={2} />
         </div>
         <div style={{ flex: 1, minWidth: 180 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{q.title}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{queueTitle(q)}</div>
           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
             {reasons.map((r: string, i: number) => (
               <span key={i} style={{ fontSize: 12.5, color: DANGER }}>{r}</span>
@@ -224,7 +142,7 @@ function pillBtnStyle(danger: boolean) {
 
 /* ── Active qBittorrent-backed downloads ─────────────────────────────────── */
 function ActiveDownloads({ mobile, healthLoading, qbitReady, qbit, dl }: {
-  mobile: boolean; healthLoading: boolean; qbitReady: boolean; qbit?: HealthService; dl: TorrentControls
+  mobile: boolean; healthLoading: boolean; qbitReady: boolean; qbit?: ServiceHealth; dl: DownloadsHub
 }) {
   const [confirmDel, setConfirmDel] = useState<Torrent | null>(null)
   const [detail, setDetail] = useState<Torrent | null>(null)   // download-detail overlay target
