@@ -19,7 +19,7 @@ interface ModeSpec {
 }
 
 export const ANALOG_MODES: readonly ModeSpec[] = [
-  { id: 'home', label: 'Home', href: '/library', icon: 'home' },
+  { id: 'home', label: 'Home', href: '/movies', icon: 'home' },
   { id: 'movies', label: 'Movies', href: '/movies', icon: 'film' },
   { id: 'shows', label: 'Shows', href: '/series', icon: 'tv' },
   { id: 'discover', label: 'Discover', href: '/discover', icon: 'compass' },
