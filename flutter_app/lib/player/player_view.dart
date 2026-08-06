@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../analog/player_core.dart' show ToastMessage;
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
@@ -41,6 +42,8 @@ class PlayerView extends StatelessWidget {
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
+    this.chatOpen = false,
+    this.chatToasts = const [],
   });
 
   /// Ready-made controller supplied by the caller (party/detail inject one).
@@ -90,6 +93,11 @@ class PlayerView extends StatelessWidget {
   final VoidCallback? onPushToTalkStart;
   final VoidCallback? onPushToTalkStop;
 
+  /// Party chat state for the over-player message toasts — forwarded straight
+  /// to [PlayerChrome]. Empty in solo playback.
+  final bool chatOpen;
+  final List<ToastMessage> chatToasts;
+
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
@@ -121,6 +129,8 @@ class PlayerView extends StatelessWidget {
             onToggleChat: onToggleChat,
             onPushToTalkStart: onPushToTalkStart,
             onPushToTalkStop: onPushToTalkStop,
+            chatOpen: chatOpen,
+            chatToasts: chatToasts,
           ),
         ],
       ),
