@@ -25,8 +25,8 @@ abstract final class AnalogColor {
   static const Color edgeShade = Color(0x8C000000);
   static const Color shadowCast = Color(0x99120A04);
   static const Color shadowCastStrong = Color(0xC4120A04);
-  static const Color backdropScrim = Color(0xD90E0C0A);
-  static const Color backdropVignette = Color(0xB3070605);
+  static const Color backdropScrim = Color(0xA60E0C0A);
+  static const Color backdropVignette = Color(0x80070605);
   static const Color accent = Color(0xFFF4EFE6);
   static const Color onAccent = Color(0xFF0E0C0A);
   static const Color statusDanger = Color(0xFFE0655E);

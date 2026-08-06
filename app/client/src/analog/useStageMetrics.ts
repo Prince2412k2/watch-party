@@ -36,6 +36,13 @@ export interface StageMetrics {
   layout: StageLayout
   motion: MotionProfile
   reducedMotion: boolean
+  /**
+   * Viewport width in CSS pixels. Surfaces that size a row themselves — the
+   * Movies stage's bottom rail is not the half-height shelf `stageLayout`
+   * returns — need the raw width rather than a second resize subscription of
+   * their own, which would settle a frame apart from this one.
+   */
+  viewportWidthPx: number
 }
 
 export function useStageMetrics(): StageMetrics {
@@ -46,5 +53,6 @@ export function useStageMetrics(): StageMetrics {
     layout: stageLayout(width, height, phone),
     motion: motionProfile(reducedMotion),
     reducedMotion,
+    viewportWidthPx: width,
   }
 }
