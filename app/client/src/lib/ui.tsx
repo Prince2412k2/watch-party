@@ -5,8 +5,8 @@
 // DownloadDetail.jsx — this is the single reconciled source.
 import { useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { navigate } from '../router'
-import { glass } from '../glass'
+import { navigate } from '../router.ts'
+import { glass } from '../glass.tsx'
 
 /* ── Cinematic minimal — dark, flat, monochrome ──────────────────────────────
    Content is the interface (Apple TV / Max). Neutral near-black -> near-white

@@ -1,6 +1,6 @@
-import type { BrowseEntry, PartyBrowse } from '../types'
-import type { BrowseTab } from '../partyAuthority'
-import type { MobileItem } from './types'
+import type { BrowseEntry, PartyBrowse } from '../types.ts'
+import type { BrowseTab } from '../partyAuthority.ts'
+import type { MobileItem } from './types.ts'
 
 /**
  * Shared-browsing translation for the phone tree.

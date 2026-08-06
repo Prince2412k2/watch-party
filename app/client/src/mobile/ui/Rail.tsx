@@ -1,4 +1,4 @@
-import { T, MONO, TYPE, SP } from '../theme'
+import { T, MONO, TYPE, SP } from '../theme.ts'
 import type { CSSProperties, ReactNode } from 'react'
 
 /**

@@ -1,13 +1,13 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { jget } from '../lib/api'
-import { apiJson } from '../types/guards'
-import { useTorrents, isActiveState } from '../hooks/useTorrents'
-import type { TorrentRecord } from '../hooks/useTorrents'
-import { useFailingQueue } from '../hooks/useFailingDownloads'
-import type { FailingQueueItem, FailingQueueState } from '../hooks/useFailingDownloads'
-import { arrQueueReady, parseHealth, serviceReady } from '../hooks/downloadsCore'
-import type { Health } from '../hooks/downloadsCore'
+import { jget } from '../lib/api.ts'
+import { apiJson } from '../types/guards.ts'
+import { useTorrents, isActiveState } from '../hooks/useTorrents.ts'
+import type { TorrentRecord } from '../hooks/useTorrents.ts'
+import { useFailingQueue } from '../hooks/useFailingDownloads.ts'
+import type { FailingQueueItem, FailingQueueState } from '../hooks/useFailingDownloads.ts'
+import { arrQueueReady, parseHealth, serviceReady } from '../hooks/downloadsCore.ts'
+import type { Health } from '../hooks/downloadsCore.ts'
 
 /**
  * ONE download hub for the whole signed-in app.

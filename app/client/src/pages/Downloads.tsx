@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { useIsMobile } from '../hooks/useIsMobile'
-import { useDownloadsHub } from '../context/DownloadsContext'
-import type { DownloadsHub } from '../context/DownloadsContext'
-import { failureReasons, queueTitle } from '../hooks/useFailingDownloads'
-import type { FailingQueueItem, FailingQueueState } from '../hooks/useFailingDownloads'
-import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail'
-import { C, SANS, MONO, Ic, Icon, Spinner } from '../lib/ui'
-import { fmtSize, fmtSpeed, stateInfo } from '../lib/format'
-import type { ServiceHealth } from '../hooks/downloadsCore'
+import { useIsMobile } from '../hooks/useIsMobile.ts'
+import { useDownloadsHub } from '../context/DownloadsContext.tsx'
+import type { DownloadsHub } from '../context/DownloadsContext.tsx'
+import { failureReasons, queueTitle } from '../hooks/useFailingDownloads.ts'
+import type { FailingQueueItem, FailingQueueState } from '../hooks/useFailingDownloads.ts'
+import { DownloadPoster, DownloadDetail } from '../components/DownloadDetail.tsx'
+import { C, SANS, MONO, Ic, Icon, Spinner } from '../lib/ui.tsx'
+import { fmtSize, fmtSpeed, stateInfo } from '../lib/format.ts'
+import type { ServiceHealth } from '../hooks/downloadsCore.ts'
 
 /* ── Cinematic-minimal, monochrome tokens local to this screen. `ui.jsx`'s
    palette still carries the old liquid-glass colors (out of scope here), so

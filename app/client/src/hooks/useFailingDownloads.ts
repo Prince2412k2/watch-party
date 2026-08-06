@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { jget } from '../lib/api'
-import { apiJson, arrayOf, isQueueJson, type QueueJson } from '../types/guards'
+import { jget } from '../lib/api.ts'
+import { apiJson, arrayOf, isQueueJson, type QueueJson } from '../types/guards.ts'
 
 export interface FailingQueueItem {
   id: string | number

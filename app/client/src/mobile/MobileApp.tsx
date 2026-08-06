@@ -1,12 +1,12 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
-import { T } from './theme'
-import { ShellContext } from './shellContext'
-import { TabBar } from './TabBar'
-import { JoinSheet } from './JoinSheet'
-import { useParty } from '../context/PartyContext'
-import { canDriveBrowse, isBrowseFollower } from '../partyAuthority'
-import { tabForMobilePath } from './sharedBrowse'
+import { T } from './theme.ts'
+import { ShellContext } from './shellContext.ts'
+import { TabBar } from './TabBar.tsx'
+import { JoinSheet } from './JoinSheet.tsx'
+import { useParty } from '../context/PartyContext.tsx'
+import { canDriveBrowse, isBrowseFollower } from '../partyAuthority.ts'
+import { tabForMobilePath } from './sharedBrowse.ts'
 
 /* Screens are split per route (they are the bulk of the phone bundle: Browse and
  * Downloads alone are ~1.8k lines of presentation). Only the screen a member

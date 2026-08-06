@@ -1,5 +1,5 @@
-import type { PlaybackTrack } from './types/media'
-import type { AvatarConfig } from './lib/avatar'
+import type { PlaybackTrack } from './types/media.ts'
+import type { AvatarConfig } from './lib/avatar.ts'
 
 export type PartyRole = 'host' | 'guest' | 'waiting' | null
 

@@ -1,7 +1,7 @@
-import { navigate } from '../router'
-import { useDownloadsHub } from '../context/DownloadsContext'
-import { T, MONO, EASE, Z, SANS } from './theme'
-import { Icon, Ic } from './ui/Icon'
+import { navigate } from '../router.ts'
+import { useDownloadsHub } from '../context/DownloadsContext.tsx'
+import { T, MONO, EASE, Z, SANS } from './theme.ts'
+import { Icon, Ic } from './ui/Icon.tsx'
 
 /**
  * Flush bottom tab bar. Edge-to-edge with a hairline top border, sitting over

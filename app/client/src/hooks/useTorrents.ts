@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiJson, arrayOf, isTorrentJson } from '../types/guards'
+import { apiJson, arrayOf, isTorrentJson } from '../types/guards.ts'
 
 const jpost = (url: string, body: unknown) => fetch(url, {
   method: 'POST', credentials: 'include',

@@ -1,10 +1,10 @@
 import { Component, Suspense, lazy, useEffect, useState } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { AuthProvider, useAuth } from './context/AuthContext'
-import { navigate } from './router'
-import { usePhone } from './hooks/useIsMobile'
-import { PartyProvider } from './context/PartyContext'
-import { DownloadsProvider } from './context/DownloadsContext'
+import { AuthProvider, useAuth } from './context/AuthContext.tsx'
+import { navigate } from './router.ts'
+import { usePhone } from './hooks/useIsMobile.ts'
+import { PartyProvider } from './context/PartyContext.tsx'
+import { DownloadsProvider } from './context/DownloadsContext.tsx'
 
 /* Route-level code splitting. Every screen used to be a static import, so the
  * whole app — video pipeline (videojs + hls.js), WebRTC (livekit-client),

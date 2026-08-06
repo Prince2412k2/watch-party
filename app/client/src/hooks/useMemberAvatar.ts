@@ -1,6 +1,6 @@
-import { useAuth } from '../context/AuthContext'
-import { useParty } from '../context/PartyContext'
-import type { AvatarConfig } from '../lib/avatar'
+import { useAuth } from '../context/AuthContext.tsx'
+import { useParty } from '../context/PartyContext.tsx'
+import type { AvatarConfig } from '../lib/avatar.ts'
 
 /**
  * The saved avatar for someone in the current party: mine from my own profile,

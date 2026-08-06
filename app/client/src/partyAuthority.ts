@@ -1,4 +1,4 @@
-import type { PartyBrowse, PartyRole, PartySession } from './types'
+import type { PartyBrowse, PartyRole, PartySession } from './types.ts'
 
 export type BrowseTab = NonNullable<PartyBrowse['tab']>
 

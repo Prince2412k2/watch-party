@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Room, RoomEvent, Track } from 'livekit-client'
-import { isObject } from '../guards'
-import { apiJson } from '../types/guards'
-import { createLifecycleRun, isAbortError } from './liveKitLifecycle'
-import { mediaErrorMessage } from '../lib/mediaError'
+import { isObject } from '../guards.ts'
+import { apiJson } from '../types/guards.ts'
+import { createLifecycleRun, isAbortError } from './liveKitLifecycle.ts'
+import { mediaErrorMessage } from '../lib/mediaError.ts'
 
 export interface LiveKitParticipantView {
   identity: string
