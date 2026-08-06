@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/party_screen.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
@@ -29,11 +29,8 @@ class _NoopLiveKitRoomService extends LiveKitRoomService {
   Future<void> disconnect() async {}
 }
 
-Widget _shadcn(BuildContext context, Widget? child) => sc.ShadcnLayer(
-  theme: AppShadcnTheme.dark,
-  themeMode: sc.ThemeMode.dark,
-  child: child!,
-);
+Widget _analog(BuildContext context, Widget? child) =>
+    Theme(data: AppTheme.dark, child: AnalogToastHost(child: child!));
 
 void main() {
   Future<(ProviderContainer, MockSocketClient, GoRouter)> pumpParty(
@@ -82,7 +79,7 @@ void main() {
         container: container,
         child: MaterialApp.router(
           theme: AppTheme.dark,
-          builder: _shadcn,
+          builder: _analog,
           routerConfig: router,
         ),
       ),

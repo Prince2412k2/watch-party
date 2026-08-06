@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../../analog/chrome/analog_button.dart';
+import '../../analog/chrome/analog_dialog.dart';
+import '../../analog/chrome/analog_panel.dart';
 import '../../state/state.dart';
+import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
 
 /// Login (W2b owns). Jellyfin username/password against the real
@@ -42,10 +45,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _configureServer() async {
     final current = ref.read(serverConfigProvider) ?? '';
     final controller = TextEditingController(text: current);
-    // Design-system dialog (acrylic shadcn surface) with AppButton actions,
-    // replacing the raw Material AlertDialog + TextButtons. The builder context
-    // (`ctx`) owns the dialog route, so popping it closes the dialog.
-    final saved = await sc.showDialog<bool>(
+    // The design-system dialog with AppButton actions, on an ordinary modal
+    // route. The builder context (`ctx`) owns that route, so popping it closes
+    // the dialog.
+    final saved = await showAnalogDialog<bool>(
       context: context,
       builder: (ctx) => AppDialog(
         title: 'Server URL',
@@ -91,11 +94,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: SingleChildScrollView(
               child: SizedBox(
                 width: 380,
-                child: sc.Card(
-                  filled: true,
-                  fillColor: wp.surface,
-                  borderColor: wp.line,
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                child: AnalogPanel(
+                  radius: AnalogRadius.sheetPx,
+                  lift: AnalogLift.over,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 36,
                     vertical: 48,
@@ -263,14 +264,12 @@ class _ServerConfigButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wp = context.wp;
-    return sc.Button.ghost(
+    return AnalogButton(
+      label: host.isEmpty ? 'Set server' : host,
+      icon: Icons.dns_outlined,
+      tone: AnalogButtonTone.ghost,
+      dense: true,
       onPressed: onTap,
-      leading: Icon(Icons.dns_outlined, size: 16, color: wp.faint),
-      child: Text(
-        host.isEmpty ? 'Set server' : host,
-        style: TextStyle(color: wp.faint, fontSize: 12),
-      ),
     );
   }
 }

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:go_router/go_router.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:watchparty/app/screens/app_shell.dart';
 import 'package:watchparty/data/catalog_repository.dart';
 import 'package:watchparty/data/mock_api_client.dart';
@@ -21,13 +21,11 @@ class _CountingApi extends MockApiClient {
   }
 }
 
-/// AppShell chrome renders shadcn tooltips/badges, so it needs a shadcn `Theme`
-/// ancestor — mirror the app's `ShadcnLayer` wrap here.
-Widget _shadcn(BuildContext context, Widget? child) => sc.ShadcnLayer(
-  theme: AppShadcnTheme.dark,
-  themeMode: sc.ThemeMode.dark,
-  child: child!,
-);
+/// AppShell chrome renders analog tooltips/badges and can raise notices, so it
+/// needs the theme plus an [AnalogToastHost] above it — mirror app.dart's
+/// builder wrap here.
+Widget _analog(BuildContext context, Widget? child) =>
+    Theme(data: AppTheme.dark, child: AnalogToastHost(child: child!));
 
 /// A bare `ProviderScope` defaults `authProvider` to its un-initialized,
 /// logged-out `AuthState()`. Signed-in tests need an authenticated override to
@@ -48,7 +46,7 @@ Widget _shell({
   String location = '/movies',
 }) => MaterialApp(
   theme: AppTheme.dark,
-  builder: _shadcn,
+  builder: _analog,
   home: ProviderScope(
     overrides: overrides,
     child: AppShell(location: location, child: const SizedBox()),
@@ -108,7 +106,7 @@ void main() {
           container: container,
           child: MaterialApp(
             theme: AppTheme.dark,
-            builder: _shadcn,
+            builder: _analog,
             home: AppShell(location: location, child: const SizedBox()),
           ),
         ),
@@ -165,7 +163,7 @@ void main() {
     container: container,
     child: MaterialApp.router(
       theme: AppTheme.dark,
-      builder: _shadcn,
+      builder: _analog,
       routerConfig: GoRouter(
         initialLocation: '/movies',
         routes: [

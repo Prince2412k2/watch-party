@@ -3,12 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/app/screens/detail_screen.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
-import 'package:watchparty/ui/ui.dart';
 
 class _ZeroRuntimeApi extends MockApiClient {
   @override
@@ -104,11 +103,7 @@ void main() {
           }),
         ],
         child: MaterialApp(
-          builder: (context, child) => sc.ShadcnLayer(
-            theme: AppShadcnTheme.dark,
-            themeMode: sc.ThemeMode.dark,
-            child: child!,
-          ),
+          builder: (context, child) => AnalogToastHost(child: child!),
           home: const DetailScreen(itemId: 'mock-item-0'),
         ),
       ),
@@ -156,11 +151,7 @@ void main() {
           }),
         ],
         child: MaterialApp(
-          builder: (context, child) => sc.ShadcnLayer(
-            theme: AppShadcnTheme.dark,
-            themeMode: sc.ThemeMode.dark,
-            child: child!,
-          ),
+          builder: (context, child) => AnalogToastHost(child: child!),
           home: const DetailScreen(itemId: 'series'),
         ),
       ),
