@@ -11,7 +11,8 @@ import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc.ts'
 import { AnalogStage } from '../analog/AnalogStage.tsx'
 import { AnalogNav } from '../analog/AnalogNav.tsx'
-import { AnalogPartyToolbox, AnalogProfileToolbox } from '../analog/AnalogToolbox.tsx'
+import { AnalogProfileTray } from '../analog/AnalogProfileTray.tsx'
+import { AnalogPartyWidget } from '../analog/AnalogPartyWidget.tsx'
 import { AnalogRail, type AnalogRailItem } from '../analog/AnalogRail.tsx'
 import { AnalogModeSlider } from '../analog/AnalogModeSlider.tsx'
 import { AnalogDetails } from '../analog/AnalogDetails.tsx'
@@ -109,8 +110,6 @@ export default function MoviesStage() {
   const [details, setDetails] = useState<Record<string, StageItem>>({})
   const [error, setError] = useState('')
   const [selection, setSelection] = useState(0)
-  const [profileOpen, setProfileOpen] = useState(false)
-  const [partyOpen, setPartyOpen] = useState(false)
 
   const partyBrowsing = party.session != null
   // Outside a party you always drive yourself. Inside one, defer to the tested
@@ -511,19 +510,14 @@ export default function MoviesStage() {
         }
         toolboxes={
           <>
-            <AnalogProfileToolbox
-              open={profileOpen}
-              onOpenChange={setProfileOpen}
+            <AnalogProfileTray
               userId={user?.userId}
               name={profile?.displayName || user?.name}
               avatar={profile?.avatar}
-              onEditProfile={() => {
-                setProfileOpen(false)
-                navigate('/profile')
-              }}
+              onSettings={() => navigate('/profile')}
               onSignOut={() => void logout()}
             />
-            <AnalogPartyToolbox open={partyOpen} onOpenChange={setPartyOpen} />
+            <AnalogPartyWidget />
           </>
         }
       >

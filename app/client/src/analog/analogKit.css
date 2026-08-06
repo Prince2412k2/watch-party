@@ -1010,222 +1010,328 @@
   color: var(--an-color-ink);
 }
 
-/* ── toolbox ─────────────────────────────────────────────────────────────── */
+/* ── corner widgets ──────────────────────────────────────────────────────── */
 
-/* DOM order is panel-then-button, so the panel always opens AWAY from the
-   corner the control sits in: downwards from the top-right, upwards from the
-   bottom-right. */
-.an-toolbox {
+/* Profile takes the upper-right corner and Watch Party the lower-right. Both
+   are icon-only triggers that expand a surface AWAY from their corner, so the
+   surface never lands on the shelf that owns focus or on the bottom modes.
+   DOM order is trigger-first in both, and the reversed flex direction is what
+   puts the surface on the far side — so Tab leads out of the trigger and into
+   the controls rather than jumping past them. */
+.an-corner {
   position: fixed;
   z-index: var(--an-z-toolbox);
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
   gap: var(--an-space-sm-px);
-  max-width: min(340px, calc(100vw - var(--an-space-xl-px) * 2));
 }
 
-.an-toolbox[data-corner='top-right'] {
-  top: var(--an-space-lg-px);
+.an-corner[data-corner='top-right'] {
+  top: calc(var(--an-space-lg-px) + env(safe-area-inset-top, 0px));
   right: var(--an-space-lg-px);
-  flex-direction: column-reverse;
+  flex-direction: row-reverse;
+  align-items: center;
 }
 
-/* Sits clear of the bottom nav rather than over it — the expanded surface must
-   not compete with primary navigation. */
-.an-toolbox[data-corner='bottom-right'] {
+/* Clear of the bottom nav rather than over it: the expanded surface must not
+   compete with primary navigation. --an-k-nav-px is the nav's measured height. */
+.an-corner[data-corner='bottom-right'] {
   right: var(--an-space-lg-px);
   bottom: calc(var(--an-k-nav-px, 64px) + var(--an-space-lg-px) + env(safe-area-inset-bottom, 0px));
+  flex-direction: column-reverse;
+  align-items: flex-end;
 }
 
-.an-toolbox-button {
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--an-space-sm-px);
-  padding: 0 var(--an-space-md-px);
+/* Icon only, and small: a 34px disc rather than a labelled pill. */
+.an-corner-trigger {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border: var(--an-poster-frame-px) solid var(--an-color-line);
-  border-radius: var(--an-radius-chrome-px);
+  border-radius: var(--an-radius-pill-px);
   color: var(--an-color-ink-dim);
   background: var(--an-color-stage-surface);
   cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
   box-shadow: var(--an-elevation-rest-offset-xpx) var(--an-elevation-rest-offset-ypx)
     var(--an-elevation-rest-blur-px) var(--an-color-shadow-cast);
   transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
 }
 
-.an-toolbox-button:hover,
-.an-toolbox-button[aria-expanded='true'],
-.an-toolbox-button:focus-visible {
+.an-corner-trigger:hover,
+.an-corner-trigger[aria-expanded='true'],
+.an-corner-trigger:focus-visible {
   color: var(--an-color-ink);
   border-color: var(--an-color-line-strong);
 }
 
-.an-toolbox-button.is-live {
-  border-color: var(--an-color-status-party-live);
+/* A live room is legible without colour: the ring thickens as well as tints. */
+.an-corner-trigger.is-live {
   color: var(--an-color-ink);
+  border-width: var(--an-hairline-idle-px);
+  border-color: var(--an-color-status-party-live);
 }
 
-.an-toolbox-button .an-live-dot {
-  width: 7px;
-  height: 7px;
+.an-corner-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
   border-radius: var(--an-radius-pill-px);
-  background: var(--an-color-status-party-live);
+  background: var(--an-color-status-danger);
+  color: var(--an-color-ink);
+  font-family: var(--an-type-mono);
+  font-size: 9px;
 }
 
-.an-toolbox-panel {
-  width: min(320px, calc(100vw - var(--an-space-xl-px) * 2));
-  max-height: min(62vh, 520px);
+/* ── the icon buttons both surfaces are made of ──────────────────────────── */
+
+.an-icon-button {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: var(--an-poster-frame-px) solid transparent;
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-dim);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-icon-button:hover:not(:disabled),
+.an-icon-button:focus-visible {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+  background: var(--an-color-stage-surface2);
+}
+
+.an-icon-button[aria-pressed='true'] {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+  background: var(--an-color-stage-surface3);
+}
+
+.an-icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.an-icon-button[data-tone='danger'] {
+  color: var(--an-color-status-danger);
+}
+
+/* Host-only actions are visibly distinct from what every participant can
+   reach — a dashed edge plus an accent mark, not a different tint, so the
+   distinction survives a monochrome display. Their accessible name says
+   "(host only)" as well; see cornerWidgets.ts. */
+.an-icon-button[data-host-only='true'] {
+  border-style: dashed;
+  border-color: var(--an-color-line-strong);
+}
+
+.an-icon-button[data-host-only='true']::after {
+  content: '';
+  position: absolute;
+  left: var(--an-space-sm-px);
+  right: var(--an-space-sm-px);
+  bottom: 2px;
+  height: var(--an-hairline-idle-px);
+  background: var(--an-color-accent);
+}
+
+/* ── profile tray ────────────────────────────────────────────────────────── */
+
+/* Slides out of the trigger rather than dropping a panel of labelled rows. */
+.an-tray {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  padding: 3px;
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-pill-px);
+  background: var(--an-color-stage-surface);
+  box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+    var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+  transform-origin: right center;
+  animation: an-tray-out var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
+}
+
+@keyframes an-tray-out {
+  from {
+    opacity: 0;
+    transform: translateX(14px) scaleX(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── watch-party widget ──────────────────────────────────────────────────── */
+
+/* Expands in place, upward out of the corner.
+ *
+ * A grid rather than a block: the rail sets the width and every sheet under it
+ * then stretches to that width, so the roster's right-aligned actions line up
+ * with the rail's last button instead of with the middle of the panel. */
+.an-widget {
+  width: max-content;
+  max-width: min(300px, calc(100vw - var(--an-space-lg-px) * 2));
+  max-height: min(56vh, 460px);
   overflow: hidden auto;
-  padding: var(--an-space-lg-px);
+  display: grid;
+  gap: var(--an-space-sm-px);
+  padding: var(--an-space-sm-px);
   border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
   border-radius: var(--an-radius-sheet-px);
   background: var(--an-color-stage-surface);
   box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
     var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
-  animation: an-toolbox-in var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
+  transform-origin: bottom right;
+  animation: an-widget-up var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
 }
 
-@keyframes an-toolbox-in {
+@keyframes an-widget-up {
   from {
     opacity: 0;
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
+    transform: none;
   }
 }
 
-.an-toolbox-panel h2 {
-  margin: 0 0 var(--an-space-xs-px);
-  color: var(--an-color-ink);
-  font-size: 15px;
-  font-weight: 500;
-}
-
-.an-toolbox-panel small {
-  display: block;
-  color: var(--an-color-ink-faint);
-  font-family: var(--an-type-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.an-toolbox-panel p {
-  margin: var(--an-space-sm-px) 0 var(--an-space-lg-px);
-  color: var(--an-color-ink-dim);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.an-toolbox-action {
-  position: relative;
-  width: 100%;
-  min-height: 42px;
+.an-widget-rail {
   display: flex;
   align-items: center;
-  gap: var(--an-space-sm-px);
-  margin-top: var(--an-space-sm-px);
-  padding: 0 var(--an-space-md-px);
-  border: var(--an-poster-frame-px) solid var(--an-color-line);
-  border-radius: var(--an-radius-chrome-px);
-  color: var(--an-color-ink);
-  background: var(--an-color-stage-surface2);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-  text-align: left;
+  gap: var(--an-space-xs-px);
 }
 
-.an-toolbox-action:hover:not(:disabled),
-.an-toolbox-action:focus-visible {
-  border-color: var(--an-color-line-strong);
-  background: var(--an-color-stage-surface3);
-}
-
-.an-toolbox-action:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.an-toolbox-action.is-primary {
-  border-color: transparent;
-  background: var(--an-color-accent);
-  color: var(--an-color-on-accent);
-}
-
-.an-toolbox-action.is-danger {
-  border-color: var(--an-color-status-danger);
-  color: var(--an-color-status-danger);
-  background: transparent;
-}
-
-/* Host-only actions are visibly distinct from controls every participant has:
-   a dashed edge and a HOST tag, not just a different tint. */
-.an-toolbox-action.is-host-only {
-  border-style: dashed;
-  border-color: var(--an-color-line-strong);
-}
-
-.an-host-tag {
-  margin-left: auto;
-  padding: 1px 5px;
-  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
-  border-radius: var(--an-radius-chrome-px);
-  color: var(--an-color-ink-faint);
-  font-family: var(--an-type-mono);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-}
-
-.an-toolbox-rows {
+.an-widget-sheet {
   display: grid;
+  justify-items: center;
   gap: var(--an-space-sm-px);
-  margin-top: var(--an-space-md-px);
-  padding-top: var(--an-space-md-px);
+  padding-top: var(--an-space-sm-px);
   border-top: var(--an-poster-frame-px) solid var(--an-color-line);
 }
 
-.an-toolbox-row {
-  display: flex;
-  align-items: center;
-  gap: var(--an-space-sm-px);
-  color: var(--an-color-ink-dim);
-  font-size: 13px;
-}
-
-.an-toolbox-row small {
-  display: inline;
-  margin-left: auto;
-}
-
-.an-toolbox-code {
-  display: flex;
-  align-items: center;
-  gap: var(--an-space-sm-px);
-  margin-top: var(--an-space-sm-px);
-  color: var(--an-color-ink);
-  font-family: var(--an-type-mono);
-  font-size: 18px;
-  letter-spacing: 0.18em;
-}
-
-.an-toolbox-qr {
+/* The QR is a code, not artwork, so it takes a chrome radius and the pale end
+   of the neutral ramp — dark ink on warm white keeps it scannable. */
+.an-widget-qr {
   display: grid;
   place-items: center;
-  margin-top: var(--an-space-md-px);
-  padding: var(--an-space-md-px);
+  padding: var(--an-space-sm-px);
+  border-radius: var(--an-radius-chrome-px);
   background: var(--an-color-ink);
 }
 
-.an-toolbox-error {
-  margin-top: var(--an-space-sm-px);
+.an-widget-qr svg {
+  display: block;
+}
+
+/* The room's own id, under its QR. The only glyphs on the widget, and they are
+   the invite itself rather than a label for a control. */
+.an-widget-id {
+  color: var(--an-color-ink-dim);
+  font-family: var(--an-type-mono);
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  user-select: all;
+}
+
+.an-widget-code {
+  width: 9.5em;
+  height: 34px;
+  padding: 0 var(--an-space-sm-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-surface2);
+  font-family: var(--an-type-mono);
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.an-widget-code::placeholder {
+  color: var(--an-color-ink-faint);
+}
+
+.an-roster {
+  display: grid;
+  gap: var(--an-space-xs-px);
+  width: 100%;
+}
+
+.an-roster-row {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  padding: 2px;
+  border: var(--an-poster-frame-px) solid transparent;
+  border-radius: var(--an-radius-chrome-px);
+}
+
+/* Someone knocking is not the same as someone in the room. */
+.an-roster-row[data-waiting='true'] {
+  border-color: var(--an-color-status-danger);
+}
+
+.an-roster-row > .an-icon-button {
+  margin-left: auto;
+}
+
+.an-roster-row > .an-icon-button ~ .an-icon-button {
+  margin-left: 0;
+}
+
+/* The host's own face carries the same accent mark their controls do. */
+.an-roster-avatar {
+  position: relative;
+  display: grid;
+  flex: none;
+}
+
+.an-roster-avatar[data-host='true']::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 -3px;
+  height: var(--an-hairline-idle-px);
+  background: var(--an-color-accent);
+}
+
+.an-corner-error {
+  margin: 0;
+  max-width: 24ch;
   color: var(--an-color-status-danger);
-  font-size: 12.5px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* "Reduced-motion mode must preserve all state changes without spatial
+   effects." Both surfaces still appear and disappear; they simply stop
+   travelling to get there. */
+@media (prefers-reduced-motion: reduce) {
+  .an-tray,
+  .an-widget {
+    animation: none;
+  }
+
+  .an-corner-trigger,
+  .an-icon-button {
+    transition: none;
+  }
 }
 
 /* ── phone ───────────────────────────────────────────────────────────────── */
@@ -1297,6 +1403,6 @@
   right: var(--an-space-xs-px);
 }
 
-.an-stage[data-size='phone'] .an-toolbox {
+.an-stage[data-size='phone'] .an-corner {
   max-width: calc(100vw - var(--an-space-lg-px) * 2);
 }
