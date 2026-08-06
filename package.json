@@ -1,13 +1,12 @@
 {
   "name": "watch_party",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Repo-root tooling only. The app lives in app/ (server + React client) and flutter_app/ (desktop client), each with its own package.json and test suite; this manifest exists to carry the dependencies of scripts/party-smoke.mjs. There is deliberately no root `test` script — `cd app && npm test`, `cd app/client && npm test`, `cd flutter_app && flutter test`.",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "smoke:party": "node scripts/party-smoke.mjs"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "devDependencies": {
     "fetch-cookie": "^3.2.0",

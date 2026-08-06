@@ -247,7 +247,7 @@ key had never been exposed.
 - A staging environment; `dev` runs gates only.
 - Restarting or recreating any live `watchparty-*` container.
 - `docker-compose.yml` and `docker-compose.servarr.yml` (dev/optional stacks) except where
-  a change is needed for consistency.
+  a change is needed for consistency. (`docker-compose.servarr.yml` was removed in #63.)
 
 ## Assumptions
 
@@ -262,12 +262,14 @@ key had never been exposed.
 - **A-4:** `coturn` uses `network_mode: host`, so its ports cannot be bound selectively and
   are firewall-managed only.
 - **A-4a:** LiveKit media uses single-port UDP mux on 7882, confirmed from
-  `secrets/livekit.yaml` (`rtc.udp_port: 7882`, `use_external_ip: true`). `HANDOFF.md:428`
-  still claims a `50000-50020/udp` range must be open — that is stale, from the pre-mux
-  design in `HANDOFF.md:38-40`. FR-002 follows the live config, not the doc. Flagged
-  separately: an operator writing firewall rules from HANDOFF.md would open 21 wrong ports
-  and still not open the right one. HANDOFF.md is a historical brief, not current-state
-  reference — correcting it is outside #60.
+  `secrets/livekit.yaml` (`rtc.udp_port: 7882`, `use_external_ip: true`).
+  `docs/archive/HANDOFF.md:449` still claims a `50000-50020/udp` range must be open — that
+  is stale, from the pre-mux design in `docs/archive/HANDOFF.md:59-61`. FR-002 follows the
+  live config, not the doc. Flagged separately: an operator writing firewall rules from
+  HANDOFF.md would open 21 wrong ports and still not open the right one. HANDOFF.md is a
+  historical brief, not current-state reference — correcting it is outside #60.
+  (Resolved in #63: the brief moved to `docs/archive/` behind a header that names this
+  exact trap. Line numbers above are its post-move positions.)
 - **A-4b:** LiveKit's HTTP/WS port 7880 is deliberately **not** published in prod; the app
   reaches it as `ws://livekit:7880` over `watchparty-net`. The firewall script must not open
   it.

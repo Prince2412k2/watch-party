@@ -54,13 +54,6 @@ export function quarantine(partyId, leaseId, reason) {
   return true
 }
 
-export function releaseLease(partyId) {
-  const lease = loadLease()
-  if (!lease || lease.partyId !== partyId) return false
-  clearLease()
-  return true
-}
-
 export function releaseGeneration(partyId, leaseId) {
   const lease = loadLease()
   if (!lease || lease.partyId !== partyId || lease.leaseId !== leaseId) return false
@@ -76,10 +69,6 @@ export function forceClear() {
 
 export function getLease() {
   return loadLease()
-}
-
-export function holderOf() {
-  return loadLease()?.partyId ?? null
 }
 
 export function isHeldBy(partyId) {

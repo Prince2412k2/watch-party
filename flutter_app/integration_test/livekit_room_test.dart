@@ -1,6 +1,6 @@
 // Live A/V integration test for E6 LiveKitRoomService.
 //
-// Mirrors the de-risk spike (`spike/lib/main.dart`, S2): connect to the
+// Mirrors the de-risk spike's S2 sequence: connect to the
 // existing LiveKit room with a backend-issued token, then publish camera +
 // mic on this Linux box (which has a real /dev/video0), and assert the room
 // reaches `connected` with a local camera track published.
