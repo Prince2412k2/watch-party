@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { AnIcon } from './icons.tsx'
-import { eyebrowParts, metaLine, stageActions, type StageItem } from './movieDetails.ts'
+import { eyebrowParts, metaLine, stageActions, type StageActions, type StageItem } from './movieDetails.ts'
 
 /**
  * The focused title's details, on the browse stage itself.
@@ -18,6 +18,12 @@ export interface AnalogDetailsProps {
   fallbackTitle: string
   error?: string | null
   native: boolean
+  /**
+   * The action set, when this surface's rule is not the movie one. Shows passes
+   * `showActions`: a series opens rather than plays, so it offers neither a
+   * track menu nor a download. Omitted, the movie rule applies.
+   */
+  actions?: StageActions
   disabled?: boolean
   onPlay: () => void
   onDownload: () => void
@@ -41,6 +47,7 @@ export function AnalogDetails({
   fallbackTitle,
   error = null,
   native,
+  actions: actionsOverride,
   disabled = false,
   onPlay,
   onDownload,
@@ -49,7 +56,7 @@ export function AnalogDetails({
   downloadState = 'idle',
   children,
 }: AnalogDetailsProps) {
-  const actions = stageActions(item, native)
+  const actions = actionsOverride ?? stageActions(item, native)
   const eyebrow = item ? eyebrowParts(item, context) : context ? [context] : []
   const meta = item ? metaLine(item) : []
 

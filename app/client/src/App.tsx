@@ -17,16 +17,14 @@ import { DownloadsProvider } from './context/DownloadsContext.tsx'
  * never re-suspends. That is what keeps WatchRoute mount-stable through a
  * usePhone() flip on rotation (see the party branch below). */
 const Login = lazy(() => import('./pages/Login'))
-const PhoneLogin = lazy(() => import('./mobile/screens/Login'))
-const Library = lazy(() => import('./pages/Library'))
+const PhoneLogin = lazy(() => import('./pages/PhoneLogin'))
 const MoviesStage = lazy(() => import('./pages/MoviesStage'))
-const FindDownload = lazy(() => import('./pages/FindDownload'))
-const Downloads = lazy(() => import('./pages/Downloads'))
+const ShowsStage = lazy(() => import('./pages/ShowsStage'))
+const DiscoverStage = lazy(() => import('./pages/DiscoverStage'))
+const DownloadsStage = lazy(() => import('./pages/DownloadsStage'))
 const DesktopApp = lazy(() => import('./pages/DesktopApp'))
 const Profile = lazy(() => import('./pages/Profile'))
-const MobileApp = lazy(() => import('./mobile/MobileApp'))
-const WatchRoute = lazy(() => import('./mobile/screens/Watch'))
-const WebShell = lazy(() => import('./components/WebShell').then(m => ({ default: m.WebShell })))
+const WatchRoute = lazy(() => import('./pages/WatchRoute'))
 
 /* Splitting routes into chunks introduces one failure mode a single bundle did
  * not have: after a redeploy, an open tab still holds the previous index.html and
@@ -155,15 +153,6 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // (and discarding unsaved edits).
   if (path === '/profile') return <Suspense fallback={null}><Profile /></Suspense>
 
-  // (2) Phone shell — the mobile presentation tree (Home/Browse/Downloads).
-  // Coarse-pointer gated, so a narrow desktop window keeps desktop.
-  // (3) Desktop — the tab switch, wrapped in the same shell.
-  const shell = (active: 'movies' | 'series' | 'discover' | 'downloads', content: ReactNode) => (
-    <WebShell
-      active={active} userId={user.userId} profileAvatar={profile?.avatar}
-      profileName={profile?.displayName || user.name} logout={logout}
-    >{content}</WebShell>
-  )
 
   // Movies is the first surface rebuilt on the analog kit (issue #66). It brings
   // its own stage, bottom modes and corner toolboxes, so it is NOT wrapped in
@@ -171,11 +160,14 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // stage and focus behaviour at every size rather than a separate phone tree.
   // '/library' stays on the superseded implementations: nothing is removed until
   // parity is verified, and it is the phone shell's Home tab.
+  // Every browsing surface is an analog stage: the same full-stage model, the
+  // same fixed-cursor rail, the same bottom modes and corner toolboxes at every
+  // size. There is no separate phone tree any more — the stage is responsive,
+  // so `usePhone()` no longer picks a different component, only a layout.
   const screen = path === '/movies' ? <MoviesStage />
-    : phone ? <MobileApp path={path} />
-    : path === '/series' ? shell('series', <Library libraryType="series" />)
-    : path === '/discover' ? shell('discover', <FindDownload />)
-    : path === '/downloads' ? shell('downloads', <Downloads />)
+    : path === '/series' ? <ShowsStage />
+    : path === '/discover' ? <DiscoverStage />
+    : path === '/downloads' ? <DownloadsStage />
     : <div>404</div>
 
   // Every browsing surface shares ONE set of download pollers (see

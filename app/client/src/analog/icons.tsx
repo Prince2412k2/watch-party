@@ -33,6 +33,10 @@ export const AN_ICONS = {
   tracks: 'M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm11-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
   trash: 'M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13',
   back: 'm15 6-6 6 6 6',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm10 2-4.35-4.35',
+  // A warning triangle, for the states Discover has to be able to admit to: no
+  // release, an unreachable indexer, a rejected source.
+  alert: 'M12 3.2 22 20H2zM12 10v4.5M12 17.2v.1',
 } as const
 
 export type AnIconName = keyof typeof AN_ICONS

@@ -26,7 +26,7 @@ import {
   useChatToasts,
   useDisplayPreferences,
 } from '../analog/player/index.ts'
-import Library from './Library.tsx'
+import MoviesStage from './MoviesStage.tsx'
 import Lobby from './Lobby.tsx'
 import type { ChatMessage, PartySession, SubtitlePreferences } from '../types.ts'
 import { apiJson, stringField } from '../types/guards.ts'
@@ -165,18 +165,21 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
       // on its own (icon-rail sidebar + fluid poster grid). Portrait phones get
       // the same non-rotating RotateHint the watch screen uses.
       <div style={{ position: 'fixed', inset: 0, background: '#000', overflow: 'hidden' }}>
-        <Library
-          embedded
-          stack={session.browse?.stack ?? []}
-          onNavigate={navigateBrowse}
-          onPickMedia={(item: { Id: string }, tracks) => selectMedia(item.Id, isHost ? tracks : {})}
-          canDrive={canDrive}
-          onPointer={canDrive ? sendPointer : undefined}
-          mirrorSubscribe={!canDrive ? mirror.subscribe : undefined}
-          driverName={session.hostName}
-          headerRight={<CodePill code={session.id} count={participantCount} />}
-          banner={!canDrive ? <ChoosingBanner host={session.hostName} /> : null}
-        />
+        {/* The analog stage, not an embedded variant of it. It already reads
+            the party from context — it publishes and follows session.browse.stack,
+            gates driving on canDriveBrowse, and calls selectMedia on activation —
+            so the lobby needs no props at all. The stack/onNavigate/onPickMedia/
+            canDrive wiring the superseded Library needed here is now internal.
+
+            Pointer mirroring is gone with it: the ghost cursor addressed a
+            fraction of a freely-scrolling pane, and the stage has no such pane.
+            The code pill and the "host is choosing" banner ride on the stage's
+            own chrome rather than being injected through slots. */}
+        <MoviesStage />
+        <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 2 }}>
+          <CodePill code={session.id} count={participantCount} />
+        </div>
+        {!canDrive ? <ChoosingBanner host={session.hostName} /> : null}
 
         {layoutMode === 'float' && <CameraGrid {...cameraProps} />}
         {/* Chat: phones get the same dismissible slide-over sheet + scrim as the

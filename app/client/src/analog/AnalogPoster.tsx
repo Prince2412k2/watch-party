@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { analogTokens } from '../design/analogTokens.ts'
 import {
   artworkFailureVersion,
@@ -59,12 +59,36 @@ export interface AnalogPosterProps {
    * `loading="lazy"` would defer exactly those and undo it.
    */
   eager?: boolean
+  /**
+   * A ready-made image URL for artwork that does not live in the Jellyfin
+   * library. Discover browses the Radarr/Sonarr catalog, whose art is served
+   * through the same-origin `/api/servarr/remote-image` proxy — there is no
+   * library item id for `resolveArtwork` to chain through, so the URL arrives
+   * already resolved. `item` still supplies the placeholder's initials.
+   */
+  src?: string | null
 }
 
-export function AnalogPoster({ item, focused, motion, caption, badge, progressPct, eager = false }: AnalogPosterProps) {
+export function AnalogPoster({
+  item,
+  focused,
+  motion,
+  caption,
+  badge,
+  progressPct,
+  eager = false,
+  src: remoteSrc = null,
+}: AnalogPosterProps) {
   const failed = useFailedArtworkIds()
+  // The shared registry is keyed by library item id, which a catalog result does
+  // not have, so a broken remote URL is remembered here instead. One attempt per
+  // URL, then the placeholder — never a retry loop against someone else's CDN.
+  const [brokenSrc, setBrokenSrc] = useState<string | null>(null)
+  useEffect(() => setBrokenSrc(null), [remoteSrc])
+
   const artwork = item ? resolveArtwork(item, failed) : null
-  const src = artwork ? artworkSrc(artwork) : null
+  const remote = remoteSrc && remoteSrc !== brokenSrc ? remoteSrc : null
+  const src = remote ?? (artwork ? artworkSrc(artwork) : null)
 
   return (
     <span className="an-poster" data-focused={focused} style={posterCssVars(motion)}>
@@ -80,7 +104,7 @@ export function AnalogPoster({ item, focused, motion, caption, badge, progressPc
             draggable={false}
             loading={eager ? 'eager' : 'lazy'}
             decoding="async"
-            onError={() => noteArtworkFailure(artwork.itemId!)}
+            onError={() => (remote ? setBrokenSrc(remote) : noteArtworkFailure(artwork.itemId!))}
           />
         ) : (
           <span className="an-poster-placeholder" aria-hidden>
