@@ -16,7 +16,7 @@ import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../types/guards'
 import type { PlaybackTrack } from '../types/media'
 
 type ItemType = 'Movie' | 'Series' | 'Episode' | 'Season' | 'CollectionFolder' | 'Folder' | 'UserView' | string
-interface LibraryItem {
+export interface LibraryItem {
   Id: string; Name: string; Type: ItemType; CollectionType?: string; SeriesId?: string; SeriesName?: string
   ProductionYear?: number; ParentIndexNumber?: number; IndexNumber?: number
   ChildCount?: number; RecursiveItemCount?: number; CommunityRating?: number; CriticRating?: number
@@ -45,7 +45,7 @@ interface DetailPlayback {
   selectedAudioIndex?: number | null
   selectedSubtitleIndex?: number | null
 }
-interface DetailTrackSelection { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
+export interface DetailTrackSelection { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
 function parseDetailPlayback(value: unknown): DetailPlayback | null {
   if (!isRecord(value)) return null
   const tracks = (raw: unknown): PlaybackTrack[] => Array.isArray(raw)
@@ -1003,7 +1003,11 @@ function PosterCardFluid({ item, onClick, badge, selected, tabIndex, index, onSe
 }
 
 /* ── Cinematic movie / series / episode detail ──────────────────────────── */
-function Details({ itemId, onWatch, onOpen: _onOpen, onBack }: { itemId: string; onWatch: (item: LibraryItem, tracks?: DetailTrackSelection) => void; onOpen: (item: LibraryItem) => void; onBack: () => void }) {
+// Exported for the analog Movies stage (pages/MoviesBrowse.tsx). #66 phase 1
+// converts the BROWSE surface only; the detail stage is still this
+// implementation, so the two share it rather than the new surface growing a
+// second one that would have to be reconciled later.
+export function Details({ itemId, onWatch, onOpen: _onOpen, onBack }: { itemId: string; onWatch: (item: LibraryItem, tracks?: DetailTrackSelection) => void; onOpen: (item: LibraryItem) => void; onBack: () => void }) {
   const mobile = useIsMobile()
   const party = useParty()
   const [activeId, setActiveId] = useState(itemId)
