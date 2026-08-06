@@ -83,3 +83,24 @@ export const wireSelection = (selection: TrackSelection): TrackSelection => ({
   audioStreamIndex: selection.audioStreamIndex ?? null,
   subtitleStreamIndex: selection.subtitleStreamIndex ?? -1,
 })
+
+/**
+ * The player URL's query for a chosen title.
+ *
+ * The `-1` has to survive into the query string. Dropping the key because the
+ * value is "off" would let the player fall back to the file's default and turn
+ * subtitles back on for a viewer who has just turned them off — the same bug in
+ * reverse as omitting the audio index. A selection that was never made carries
+ * nothing at all, which is what leaves the player its own defaulting.
+ */
+export function playbackQuery(itemId: string, selection?: TrackSelection): URLSearchParams {
+  const query = new URLSearchParams({ itemId })
+  if (!selection) return query
+  if (Number.isInteger(selection.audioStreamIndex)) {
+    query.set('audioStreamIndex', String(selection.audioStreamIndex))
+  }
+  if (Number.isInteger(selection.subtitleStreamIndex)) {
+    query.set('subtitleStreamIndex', String(selection.subtitleStreamIndex))
+  }
+  return query
+}

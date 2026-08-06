@@ -275,6 +275,50 @@
   gap: var(--an-space-xl-px);
 }
 
+/* ── Season axis (Shows) ─────────────────────────────────────────────────── */
+
+/* The same control as the mode slider, reusing `.an-modes` outright rather than
+   restating its geometry — that geometry was lifted from the old
+   `.library-seasons` rail in the first place, so Shows is pointing back at
+   where it came from. What this adds is the selected season's poster above the
+   list: the one place season artwork appears, and therefore the one place the
+   season -> series -> placeholder chain is visible. */
+.an-seasons {
+  display: grid;
+  gap: var(--an-space-md-px);
+  justify-items: end;
+}
+
+.an-season-art {
+  display: block;
+  width: 92px;
+}
+
+/* A long-running show has more seasons than the right rail is tall. The list
+   scrolls inside itself rather than pushing the corner widgets apart. */
+.an-seasons .an-modes {
+  max-height: 42vh;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.an-seasons .an-modes::-webkit-scrollbar {
+  display: none;
+}
+
+/* A phone has no right rail: `.an-stage-side` returns to the flow above the
+   title and the positions become a horizontal row. A poster in that row would
+   own the screen, and the row itself has to scroll sideways past four seasons. */
+.an-stage[data-size='phone'] .an-season-art {
+  display: none;
+}
+
+.an-stage[data-size='phone'] .an-seasons .an-modes {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .an-back {
   display: inline-flex;
   align-items: center;
