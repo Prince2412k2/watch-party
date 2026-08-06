@@ -44,6 +44,13 @@ jobs:
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
+    # On a pull_request event the action lists the PR's commits to scope the
+    # scan, which needs more than the workflow-level `contents: read`. Without
+    # this it dies on `GET /pulls/{n}/commits` with 403 "Resource not accessible
+    # by integration" — a permissions failure that reads like a scan failure.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -93,6 +100,16 @@ jobs:
           cache-dependency-path: app/client/package-lock.json
 
       - working-directory: app/client
+        run: npm ci
+
+      # app/shared/avatar-derive.js imports @humation/core, and the client's
+      # tests reach it through lib/avatar.ts. Node resolves a bare specifier by
+      # walking up from the IMPORTING file, so from app/shared/ it looks in
+      # app/node_modules and never in app/client/node_modules — the package
+      # being listed in app/client/package.json does not help. The Dockerfile
+      # solves the same problem by copying the server's node_modules into the
+      # client build stage.
+      - working-directory: app
         run: npm ci
 
       - working-directory: app/client
