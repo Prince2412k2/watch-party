@@ -18,17 +18,21 @@ export const AN_ICONS = {
   x: 'M18 6 6 18M6 6l12 12',
   sound: 'M11 5 6 9H3v6h3l5 4zM16 9a4 4 0 0 1 0 6',
   mute: 'M11 5 6 9H3v6h3l5 4zM16 10l4 4m0-4-4 4',
+  play: 'M7 4.5v15l12.5-7.5z',
+  tracks: 'M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm11-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+  trash: 'M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13',
+  back: 'm15 6-6 6 6 6',
 } as const
 
 export type AnIconName = keyof typeof AN_ICONS
 
-export function AnIcon({ name, size = 18 }: { name: AnIconName; size?: number }) {
+export function AnIcon({ name, size = 18, filled = false }: { name: AnIconName; size?: number; filled?: boolean }) {
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={filled ? 'currentColor' : 'none'}
       stroke="currentColor"
       strokeWidth="1.6"
       strokeLinecap="round"
