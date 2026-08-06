@@ -1,0 +1,494 @@
+/* Downloads on the analog stage.
+ *
+ * The kit already owns the stage, the poster, the fixed-cursor rail, the bottom
+ * nav and the mode slider — this file is only the parts a download has that a
+ * library title does not: a gauge, a live stats block, a destructive
+ * confirmation, and a reconnecting mark.
+ *
+ * Same rules as analogKit.css. Every value is a generated custom property; the
+ * only literals are structural or a duration that belongs to a single
+ * decorative keyframe. Nothing here may put a radius on artwork: --an-radius-*
+ * is chrome-only and --an-poster-radius-px is 0. */
+
+/* ── head: artwork and gauge, with the detail block beside them ──────────── */
+
+/* Bottom-aligned like the Movies head, so the copy and the artwork it describes
+   sit together directly above the rail rather than floating apart. */
+.an-dl-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--an-space-xl-px);
+}
+
+/* Fixed width from the stage size, so the detail column beside it does not
+   reflow as artwork loads, fails, or is replaced by a placeholder. */
+.an-dl-art {
+  flex: none;
+  width: var(--an-k-dl-poster-px);
+  display: grid;
+  justify-items: center;
+  gap: var(--an-space-md-px);
+}
+
+/* The kit's `min(52ch, 54%)` is a share of the whole stage; inside this row the
+   percentage would resolve against the space left over from the poster and
+   shrink twice. The phone override still wins on specificity. */
+.an-dl-head .an-detail {
+  flex: 1;
+  max-width: 52ch;
+}
+
+/* ── the gauge ───────────────────────────────────────────────────────────── */
+
+/* Ring, percentage and the status word, in that order. The ring is a second
+   reading of the number inside it, and the word is a third of neither: state
+   must survive a monochrome display and a user who cannot read a shape. */
+.an-dl-gauge {
+  display: grid;
+  justify-items: center;
+  gap: var(--an-space-sm-px);
+}
+
+.an-dl-ring {
+  display: block;
+}
+
+.an-dl-ring-track {
+  fill: none;
+  stroke: var(--an-color-line-strong);
+}
+
+.an-dl-ring-arc {
+  fill: none;
+  stroke: var(--an-color-accent);
+  /* Butt, not round: a rounded cap draws a sliver of arc at 0% and reads as
+     progress that has not happened. */
+  stroke-linecap: butt;
+  transition: stroke-dashoffset var(--an-motion-backdrop-cross-ms) var(--an-motion-backdrop-cross-ease);
+}
+
+/* A stopped transfer is still legible, it just stops claiming the accent. */
+.an-dl-ring[data-muted='true'] .an-dl-ring-arc {
+  stroke: var(--an-color-ink-faint);
+}
+
+.an-dl-ring-label {
+  fill: var(--an-color-ink);
+  font-family: var(--an-type-mono);
+  font-size: var(--an-k-dl-ring-label-px);
+  font-weight: 500;
+}
+
+.an-dl-status {
+  color: var(--an-color-ink-dim);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* Semantic only — the two states that say something about the download itself.
+   Never applied for emphasis, and never the sole carrier of the state: the word
+   beside it is the same information in ink. */
+.an-dl-status[data-tone='danger'] {
+  color: var(--an-color-status-danger);
+}
+
+.an-dl-status[data-tone='success'] {
+  color: var(--an-color-status-success);
+}
+
+/* ── the catalog line ────────────────────────────────────────────────────── */
+
+/* Rating, runtime, year, certificate, network, genres — the copy the deleted
+   detail overlay carried. Dimmer than the meta line under it, because the live
+   numbers are the reason this screen is open and this is their context. */
+.an-dl-context {
+  color: var(--an-color-ink-faint);
+}
+
+.an-downloads .an-detail-meta + .an-detail-meta {
+  margin-top: var(--an-space-sm-px);
+}
+
+/* ── why a grab is stuck ─────────────────────────────────────────────────── */
+
+/* The reasons ARE the actionable content of the attention mode, so they get the
+   body slot rather than a tooltip. A rule in front of each keeps it a list when
+   the colour is gone. */
+.an-dl-reasons {
+  display: grid;
+  gap: var(--an-space-xs-px);
+  margin: var(--an-space-md-px) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--an-color-status-danger);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.an-dl-reasons li {
+  display: flex;
+  gap: var(--an-space-sm-px);
+}
+
+.an-dl-reasons li::before {
+  content: '';
+  flex: none;
+  width: 10px;
+  height: var(--an-poster-frame-px);
+  margin-top: 0.72em;
+  background: currentColor;
+}
+
+/* ── header row: aggregate throughput and the reconnecting mark ──────────── */
+
+.an-dl-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--an-space-sm-px) var(--an-space-md-px);
+  color: var(--an-color-ink-dim);
+  font-family: var(--an-type-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+}
+
+.an-dl-summary > span + span::before {
+  content: '·';
+  margin-right: var(--an-space-sm-px);
+  color: var(--an-color-ink-faint);
+}
+
+/* A poll that failed keeps the last good numbers on screen and says so quietly.
+   Deliberately not an error: the poller retries on its own every few seconds. */
+.an-dl-reconnect {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  margin-left: auto;
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.an-dl-reconnect > i {
+  display: block;
+  width: 18px;
+  height: var(--an-hairline-idle-px);
+  background: currentColor;
+  animation: an-dl-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes an-dl-breathe {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── loading ─────────────────────────────────────────────────────────────── */
+
+/* Same shimmer as the poster skeleton, and squared off for the same reason. */
+.an-dl-skeleton {
+  display: grid;
+  gap: var(--an-space-md-px);
+  max-width: 34ch;
+}
+
+.an-dl-skeleton > i {
+  display: block;
+  height: 15px;
+  background-image: linear-gradient(
+    100deg,
+    var(--an-color-stage-surface) 30%,
+    var(--an-color-stage-surface2) 50%,
+    var(--an-color-stage-surface) 70%
+  );
+  background-size: 200% 100%;
+  animation: an-shim 1.4s linear infinite;
+}
+
+.an-dl-skeleton > i:first-child {
+  height: 34px;
+}
+
+.an-dl-skeleton > i:last-child {
+  width: 60%;
+}
+
+/* ── destructive confirmation ────────────────────────────────────────────── */
+
+/* Opens UPWARDS out of the action row, like the track menu: the rail owns the
+   bottom of the stage and a panel dropped over it would cover the very thing
+   being removed. */
+.an-dl-confirm {
+  position: absolute;
+  z-index: var(--an-z-sheet);
+  bottom: calc(100% + var(--an-space-sm-px));
+  left: 0;
+  width: min(430px, calc(100vw - var(--an-space-xl-px) * 2));
+  /* The one place on this stage allowed its own scroll: a confirmation the user
+     cannot read to the end of is worse than a nested scroll area. */
+  max-height: min(56vh, 420px);
+  overflow: hidden auto;
+  display: grid;
+  gap: var(--an-space-sm-px);
+  padding: var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-sheet-px);
+  background: var(--an-color-stage-surface);
+  box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+    var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+  animation: an-dl-rise var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
+}
+
+@keyframes an-dl-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.an-dl-confirm > p {
+  margin: 0 0 var(--an-space-xs-px);
+  color: var(--an-color-ink-dim);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.an-dl-confirm > p > strong {
+  color: var(--an-color-ink);
+  font-weight: 500;
+}
+
+.an-dl-confirm-actions {
+  display: flex;
+  gap: var(--an-space-sm-px);
+  margin-top: var(--an-space-xs-px);
+}
+
+.an-dl-confirm-actions > .an-action {
+  flex: 1;
+  justify-content: center;
+}
+
+/* Destructive, and marked as such by a semantic border rather than a filled
+   red button — the accent stays with the safe primary action everywhere else on
+   the stage, so a red slab here would read as the recommended choice. */
+.an-action.is-danger {
+  border-color: var(--an-color-status-danger);
+  color: var(--an-color-status-danger);
+}
+
+.an-action.is-danger:hover:not(:disabled),
+.an-action.is-danger:focus-visible {
+  background: var(--an-color-stage-surface2);
+  border-color: var(--an-color-status-danger);
+}
+
+/* ── the opt-in that erases data ─────────────────────────────────────────── */
+
+.an-dl-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-md-px);
+  width: 100%;
+  min-height: 52px;
+  padding: var(--an-space-sm-px) var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface2);
+  color: var(--an-color-ink);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.an-dl-toggle > span {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.an-dl-toggle strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.an-dl-toggle small {
+  color: var(--an-color-ink-faint);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* A detent travelling along a rule, not a filled pill: the ON state is a
+   position AND a change of weight, so it is not carried by a tint. */
+.an-dl-toggle > i {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: var(--an-hairline-active-px);
+  background: var(--an-color-line-strong);
+}
+
+.an-dl-toggle > i::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  background: var(--an-color-ink-faint);
+  transition:
+    left var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease),
+    background var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
+}
+
+.an-dl-toggle > i[data-on='true']::after {
+  left: 24px;
+  width: 18px;
+  margin-left: -2px;
+  background: var(--an-color-ink);
+}
+
+/* Armed, and about to erase something that is already on disk. */
+.an-dl-toggle[aria-checked='true'] {
+  border-color: var(--an-color-status-danger);
+}
+
+/* ── the two ways out of a stuck grab ────────────────────────────────────── */
+
+.an-dl-choice {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: 52px;
+  padding: var(--an-space-sm-px) var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface2);
+  color: var(--an-color-ink);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.an-dl-choice:hover:not(:disabled),
+.an-dl-choice:focus-visible {
+  border-color: var(--an-color-status-danger);
+}
+
+.an-dl-choice:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.an-dl-choice > strong {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.an-dl-choice > small {
+  color: var(--an-color-ink-faint);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* ── rail ────────────────────────────────────────────────────────────────── */
+
+/* "Paused", "Completed" and "Failed" are words, not the two-character counts the
+   Movies rail badges, so the badge is clamped to its poster instead of setting
+   the slot's width. */
+.an-downloads .an-poster-badge {
+  max-width: calc(100% - var(--an-space-sm-px) * 2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.an-downloads .an-modes small {
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+
+/* The count belongs to the position it sits on, so it brightens with it. */
+.an-downloads .an-modes button.is-active small {
+  color: var(--an-color-ink-dim);
+}
+
+/* ── phone and short viewports ───────────────────────────────────────────── */
+
+/* Same stage, same gauge, same rail — the artwork on the stage is what gives
+   way, because on a phone it is the third copy of the same image: it is already
+   the backdrop behind this copy and the poster under the cursor in the rail.
+   The gauge is the half that carries state, so the gauge is the half that
+   stays. */
+.an-stage[data-size='phone'] .an-dl-head {
+  gap: var(--an-space-lg-px);
+}
+
+.an-stage[data-size='phone'] .an-dl-art,
+.an-stage[data-size='phone'] .an-dl-art > .an-poster {
+  width: auto;
+}
+
+.an-stage[data-size='phone'] .an-dl-art > .an-poster {
+  display: none;
+}
+
+.an-stage[data-size='phone'] .an-dl-confirm {
+  position: fixed;
+  right: var(--an-space-lg-px);
+  bottom: calc(var(--an-k-nav-px, 64px) + var(--an-space-lg-px));
+  left: var(--an-space-lg-px);
+  width: auto;
+}
+
+/* Anything held sideways: a phone in landscape is 390px tall and the rail plus
+   the nav already own most of it, so a 2:3 poster on the stage would push the
+   copy and the controls off the top. */
+@media (max-height: 620px) {
+  .an-dl-art {
+    width: auto;
+  }
+
+  .an-dl-art > .an-poster {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .an-dl-confirm {
+    animation: none;
+  }
+
+  .an-dl-reconnect > i,
+  .an-dl-skeleton > i {
+    animation: none;
+  }
+
+  .an-dl-ring-arc,
+  .an-dl-toggle > i::after {
+    transition: none;
+  }
+}
