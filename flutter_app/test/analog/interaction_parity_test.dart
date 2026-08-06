@@ -216,6 +216,24 @@ void main() {
     }
   });
 
+  test('the fixed-cursor rail window matches the shared interaction cases', () {
+    for (final testCase in _cases('railWindow')) {
+      final raw = testCase['input'] as Map<String, dynamic>;
+      final window = railWindow(RailWindowInput(
+        total: raw['total'] as int,
+        offset: raw['offset'] as int,
+        slots: raw['slots'] as int,
+        lookahead: raw['lookahead'] as int,
+        behind: raw['behind'] as int,
+      ));
+      final expected = testCase['expect'] as Map<String, dynamic>;
+      expect(window.visible, (expected['visible'] as List).cast<int>(),
+          reason: '${testCase['name']}: visible');
+      expect(window.prefetch, (expected['prefetch'] as List).cast<int>(),
+          reason: '${testCase['name']}: prefetch');
+    }
+  });
+
   test('the toast and auto-hide timings come from the design tokens', () {
     // The fixture hard-codes 4000ms / 3000ms / a stack of three. Those numbers
     // are design decisions that live in analog-tokens.json, so pin them
