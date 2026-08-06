@@ -10,7 +10,8 @@ import { canDriveBrowse } from '../partyAuthority.ts'
 import { AnalogStage } from '../analog/AnalogStage.tsx'
 import { AnalogShelf, type AnalogShelfItem } from '../analog/AnalogShelf.tsx'
 import { AnalogNav } from '../analog/AnalogNav.tsx'
-import { AnalogPartyToolbox, AnalogProfileToolbox } from '../analog/AnalogToolbox.tsx'
+import { AnalogProfileTray } from '../analog/AnalogProfileTray.tsx'
+import { AnalogPartyWidget } from '../analog/AnalogPartyWidget.tsx'
 import { useStageMetrics } from '../analog/useStageMetrics.ts'
 import { artworkSrc, backdropSrc, resolveArtwork } from '../analog/artwork.ts'
 import { planForSurface, rememberSurfaceFocus, shelfSnapshot, surfaceId, type StackLevel } from '../analog/surface.ts'
@@ -86,8 +87,6 @@ export default function MoviesBrowse() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [focusedIndex, setFocusedIndex] = useState(0)
-  const [profileOpen, setProfileOpen] = useState(false)
-  const [partyOpen, setPartyOpen] = useState(false)
   const [internalStack, setInternalStack] = useState<StackLevel[]>([])
 
   const partyBrowsing = party.session != null
@@ -258,19 +257,14 @@ export default function MoviesBrowse() {
         }
         toolboxes={
           <>
-            <AnalogProfileToolbox
-              open={profileOpen}
-              onOpenChange={setProfileOpen}
+            <AnalogProfileTray
               userId={user?.userId}
               name={profile?.displayName || user?.name}
               avatar={profile?.avatar}
-              onEditProfile={() => {
-                setProfileOpen(false)
-                navigate('/profile')
-              }}
+              onSettings={() => navigate('/profile')}
               onSignOut={() => void logout()}
             />
-            <AnalogPartyToolbox open={partyOpen} onOpenChange={setPartyOpen} />
+            <AnalogPartyWidget />
           </>
         }
       >
