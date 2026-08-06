@@ -1,4 +1,4 @@
-import { isRecord } from '../types/guards'
+import { isRecord } from '../types/guards.ts'
 
 /* Pure core behind the shared download/queue hub (context/DownloadsContext.tsx).
  * Every surface that shows download state used to parse /api/servarr/health and
