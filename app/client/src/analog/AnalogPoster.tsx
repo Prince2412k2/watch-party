@@ -52,9 +52,16 @@ export interface AnalogPosterProps {
   caption?: string | null
   badge?: string | null
   progressPct?: number | null
+  /**
+   * Load immediately rather than when the browser decides it is near the
+   * viewport. The fixed-cursor rail mounts a few posters just outside its own
+   * clipped viewport on purpose, so they are decoded a step before they arrive;
+   * `loading="lazy"` would defer exactly those and undo it.
+   */
+  eager?: boolean
 }
 
-export function AnalogPoster({ item, focused, motion, caption, badge, progressPct }: AnalogPosterProps) {
+export function AnalogPoster({ item, focused, motion, caption, badge, progressPct, eager = false }: AnalogPosterProps) {
   const failed = useFailedArtworkIds()
   const artwork = item ? resolveArtwork(item, failed) : null
   const src = artwork ? artworkSrc(artwork) : null
@@ -71,7 +78,7 @@ export function AnalogPoster({ item, focused, motion, caption, badge, progressPc
             src={src}
             alt=""
             draggable={false}
-            loading="lazy"
+            loading={eager ? 'eager' : 'lazy'}
             decoding="async"
             onError={() => noteArtworkFailure(artwork.itemId!)}
           />
