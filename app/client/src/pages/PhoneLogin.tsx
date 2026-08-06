@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
-import { useAuth } from '../../context/AuthContext.tsx'
-import { T, TYPE, R, EASE } from '../theme.ts'
-import { Icon, Ic } from '../ui/Icon.tsx'
+import { useAuth } from '../context/AuthContext.tsx'
+import { T, TYPE, R, EASE } from './phoneLoginTheme.ts'
+import { Icon, Ic } from './phoneLoginIcon.tsx'
 
 /**
  * Mobile Login (MOBILE-SPEC §3.1). Presentation-only layer over AuthContext —

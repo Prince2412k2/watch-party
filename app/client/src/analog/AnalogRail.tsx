@@ -3,6 +3,7 @@ import {
   useRef,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type TouchEvent as ReactTouchEvent,
 } from 'react'
 import { newSteppedScrollState, steppedScroll } from './browseCore.ts'
@@ -35,7 +36,12 @@ export interface AnalogRailItem {
   label: string
   badge?: string | null
   progressPct?: number | null
-  art: ArtworkItem
+  /**
+   * A Jellyfin item, for the surfaces whose artwork comes from the library
+   * proxy. Optional because not every rail's artwork does — see `artSrc` and
+   * `renderPoster`.
+   */
+  art?: ArtworkItem | null
   /**
    * A resolved artwork URL, for rails whose items are not Jellyfin library
    * items — Discover's catalog results come from the same-origin
@@ -61,6 +67,13 @@ export interface AnalogRailProps {
   emptyTitle?: string
   emptyHint?: string
   disabled?: boolean
+  /**
+   * Draw the artwork for one slot. Defaults to `AnalogPoster` over the item's
+   * Jellyfin `art`; a rail whose artwork comes from somewhere else supplies its
+   * own so the geometry, the gestures, the windowing and the keyboard contract
+   * stay in this one component rather than being copied per surface.
+   */
+  renderPoster?: (item: AnalogRailItem, focused: boolean) => ReactNode
 }
 
 export function AnalogRail({
@@ -78,6 +91,7 @@ export function AnalogRail({
   emptyTitle = 'Nothing here yet',
   emptyHint,
   disabled = false,
+  renderPoster,
 }: AnalogRailProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const scrollState = useRef(newSteppedScrollState())
@@ -249,16 +263,24 @@ export function AnalogRail({
                   onActivate(index)
                 }}
               >
-                <AnalogPoster
-                  item={item.art}
-                  src={item.artSrc}
-                  focused={index === selection}
-                  motion={motion}
-                  caption={item.label}
-                  badge={item.badge}
-                  progressPct={item.progressPct}
-                  eager
-                />
+                {/* Three artwork paths, narrowest first: a caller-supplied
+                    renderer (Downloads' *arr poster), a pre-resolved URL
+                    (Discover's proxied catalog art), or a Jellyfin item chained
+                    through the library proxy. */}
+                {renderPoster ? (
+                  renderPoster(item, index === selection)
+                ) : (
+                  <AnalogPoster
+                    item={item.art ?? null}
+                    src={item.artSrc}
+                    focused={index === selection}
+                    motion={motion}
+                    caption={item.label}
+                    badge={item.badge}
+                    progressPct={item.progressPct}
+                    eager
+                  />
+                )}
               </button>
             )
           })}

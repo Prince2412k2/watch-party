@@ -1,4 +1,4 @@
-import Party from '../../pages/Party.tsx'
+import Party from './Party.tsx'
 
 /**
  * Watch = WRAP, do not rebuild (MOBILE-SPEC §2.4). There is NO separate mobile
