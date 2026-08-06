@@ -11,6 +11,8 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:window_manager/window_manager.dart';
 
+import '../../analog/player/auto_hide_controller.dart';
+import '../../analog/player_core.dart';
 import '../../models/models.dart';
 import '../../player/player_view.dart';
 import '../../state/state.dart';
@@ -279,7 +281,6 @@ class _ImmersiveParty extends ConsumerStatefulWidget {
 
 class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   bool _chatOpen = false;
-  bool _chromeVisible = true;
   bool _isFullscreen = false;
 
   /// Camera layout: false = floating PiP tiles, true = docked left column.
@@ -292,11 +293,37 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   /// PTT-driven unmute from a manual one and guards key-repeat.
   bool _pttHolding = false;
 
-  Timer? _idleTimer;
+  /// The party's SINGLE chrome auto-hide clock, covering the player, the shared
+  /// browser and the top-right A/V cluster together. Same
+  /// `analog/player_core.dart` machine the solo player runs — the two used to
+  /// be separate hand-written timers.
+  late final AnalogAutoHideController _autoHide;
+
+  @override
+  void initState() {
+    super.initState();
+    _autoHide = AnalogAutoHideController()
+      ..addListener(_onAutoHide)
+      // The lobby has nothing to un-clutter, so the chrome is pinned there
+      // until the party reaches an immersive stage.
+      ..hold(_kLobbyHold);
+  }
+
+  void _onAutoHide() {
+    if (mounted) setState(() {});
+  }
+
+  /// Chat pins the chrome open while it is on screen (`!_chatOpen` used to be
+  /// checked inside the timer callback), and the non-immersive stages pin it
+  /// permanently.
+  static const String _kChatHold = 'chat';
+  static const String _kLobbyHold = 'lobby';
 
   @override
   void dispose() {
-    _idleTimer?.cancel();
+    _autoHide
+      ..removeListener(_onAutoHide)
+      ..dispose();
     // Don't leave the OS window stuck in fullscreen after navigating away. This
     // is purely a window-chrome toggle — it never touches party/LiveKit state.
     if (_isFullscreen) {
@@ -319,19 +346,27 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     if (mounted) setState(() => _isFullscreen = next);
   }
 
-  /// Wake the chrome and re-arm the SINGLE idle hide. Only auto-hides while
-  /// watching; in the lobby (no video) the chrome stays put, like the web.
-  /// Wake the chrome, and re-arm the idle timer on the stages that hide it.
+  /// Wake the chrome and re-arm the SINGLE idle hide.
   ///
   /// [immersive] is true for the player and the shared browser — the two stages
-  /// where chrome sits over content someone is looking at. The lobby keeps it up.
-  void _poke({required bool immersive}) {
-    _idleTimer?.cancel();
-    if (!_chromeVisible) setState(() => _chromeVisible = true);
-    if (!immersive) return;
-    _idleTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && !_chatOpen) setState(() => _chromeVisible = false);
-    });
+  /// where chrome sits over content someone is looking at. The lobby keeps it
+  /// up, now as a named hold rather than a timer that is simply never armed.
+  void _poke({required bool immersive, PlayerInputKind? kind}) {
+    if (immersive) {
+      _autoHide.release(_kLobbyHold);
+    } else {
+      _autoHide.hold(_kLobbyHold);
+    }
+    _autoHide.noteInput(kind ?? PlayerInputKind.pointer);
+  }
+
+  void _setChatOpen(bool open) {
+    setState(() => _chatOpen = open);
+    if (open) {
+      _autoHide.hold(_kChatHold);
+    } else {
+      _autoHide.release(_kChatHold);
+    }
   }
 
   // Push-to-talk (hold T): momentarily opens the mic, returning to muted on
@@ -403,10 +438,13 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     // no timeline, no sync engine, nothing to seek.
     final browsing = party.stage == 'browser';
 
-    // ONE unified auto-hide flag: chrome + transport bar fade together. Stays
-    // shown while chat is open or in the lobby. The browser counts as a stage
-    // worth un-cluttering, same as the player.
-    final chromeShown = _chromeVisible || _chatOpen || !(watching || browsing);
+    // ONE unified auto-hide flag: chrome + transport bar fade together. "Stays
+    // shown while chat is open / in the lobby" is now a pair of HOLDS on the
+    // shared controller rather than extra terms in this expression, so the rule
+    // lives in player_core alongside the player's. The lobby hold is released
+    // by the first _poke on an immersive stage, exactly as the old timer was
+    // only armed by the first _poke there.
+    final chromeShown = _autoHide.visible;
 
     final stage = browsing
         ? _SharedBrowserStage(
@@ -448,9 +486,25 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             // here) and the party key bindings (c = chat, hold-T = PTT).
             visible: chromeShown,
             onWake: () => _poke(immersive: true),
-            onToggleChat: () => setState(() => _chatOpen = !_chatOpen),
+            onToggleChat: () => _setChatOpen(!_chatOpen),
             onPushToTalkStart: _pttStart,
             onPushToTalkStop: _pttStop,
+            // Chat notifications over the player. The chrome owns the queue,
+            // the three-deep stack and the four second lifetime (player_core);
+            // this only supplies the log and whether the drawer is open.
+            chatOpen: _chatOpen,
+            chatToasts: [
+              for (final message in ref.watch(chatProvider))
+                ToastMessage(
+                  id: '${message.userId}:${message.timestamp}:'
+                      '${message.text.hashCode}',
+                  sender: message.name,
+                  preview: message.text,
+                  // Restamped by the chrome on its own clock; the server
+                  // timestamp only feeds the id.
+                  receivedAtMs: message.timestamp,
+                ),
+            ],
           )
         : _LobbyStage(party: party);
 
@@ -509,8 +563,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                       dock: _dock,
                       chatOpen: _chatOpen,
                       onBack: _minimize,
-                      onToggleChat: () =>
-                          setState(() => _chatOpen = !_chatOpen),
+                      onToggleChat: () => _setChatOpen(!_chatOpen),
                       onToggleLayout: () => setState(() => _dock = !_dock),
                     ),
                   ),
@@ -532,7 +585,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
               // chat never covers or blurs the movie.
               _ChatSlideOver(
                 open: _chatOpen,
-                onClose: () => setState(() => _chatOpen = false),
+                onClose: () => _setChatOpen(false),
               ),
             ],
           ),
