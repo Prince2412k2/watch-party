@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type ComponentType, type CSSProperties, type MouseEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
 import { createPlayer } from '@videojs/react'
 import { VideoSkin, videoFeatures } from '@videojs/react/video'
 import { HlsVideo } from '@videojs/react/media/hls-video'
@@ -16,6 +16,18 @@ import { MpvBackend } from '../native/MpvBackend'
 import { apiJson, stringField } from '../types/guards'
 import { parseTrickplayManifest, trickplayFrame, trickplaySheetUrl, type TrickplayManifest } from './trickplay'
 import { hlsIndexForJellyfin, subtitleContentUrl } from './subtitleTracks'
+import {
+  AnalogSettingsStack,
+  AnalogTimeline,
+  AnalogVolume,
+  CHROME_HOLD,
+  formatClock,
+  shouldToggleChatFromEvent,
+  useDisplayPreferences,
+  type TimeSpan,
+  type TimelinePreview,
+} from '../analog/player/index.ts'
+import { analogTokens } from '../design/analogTokens.ts'
 import type { SubtitlePreferences } from '../types'
 
 type LocalPhase = 'ready' | 'catchingUp' | 'buffering'
@@ -47,9 +59,19 @@ export interface PlayerProps {
   // no longer rendered by the redesigned web bars, but NativePlayer (the Tauri
   // docked chrome row) still consumes every one of them — do not drop them.
   onToggleLayout?: VoidCallback; onOpenChat?: VoidCallback; layoutMode?: 'float' | 'dock'; hideSelf?: boolean; onToggleHideSelf?: VoidCallback
+  // Ctrl+C toggles the drawer (guarded by playerCore's shouldToggleChat); plain
+  // 'c' still opens-and-focuses it through onOpenChat. Two callbacks because
+  // they are two different actions, not two names for one.
+  onToggleChat?: VoidCallback
   visible?: boolean; immersive?: boolean; enterImmersive?: VoidCallback; exitImmersive?: VoidCallback; phone?: boolean; camStripOpen?: boolean
   seekBridgeRef?: SeekBridgeRef; onSetPlaybackTracks?: (tracks: TrackSelection) => void
   subtitlePreferences?: SubtitlePreferences; onSetSubtitlePreferences?: (preferences: SubtitlePreferences) => void
+  // The chrome auto-hide lives in WatchView over playerCore's hold set. A menu
+  // or a scrub in progress takes a named hold so the bar cannot fade out from
+  // under the interaction that opened it.
+  onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
+  /** Playback state for the auto-hide rule "never hide while paused". */
+  onPlayingChange?: (playing: boolean) => void
 }
 
 // Fullscreen is owned by WatchView (Party.jsx) via a single `immersive` state and
@@ -136,10 +158,11 @@ export default function Player({
   hlsUrl, playback, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
   onToggleMic, onToggleCam, micOn, camOn,
   hideAllFeeds, onToggleHideAllFeeds,
-  onToggleLayout, onOpenChat, layoutMode,
+  onToggleLayout, onOpenChat, onToggleChat, layoutMode,
   hideSelf, onToggleHideSelf,
   visible = true, immersive, enterImmersive, exitImmersive,
   phone = false, camStripOpen, seekBridgeRef, onSetPlaybackTracks, subtitlePreferences, onSetSubtitlePreferences,
+  onHoldChrome, onReleaseChrome, onPlayingChange,
 }: PlayerProps = {}) {
   const canControl = Boolean(isHost || collaborativeControl)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -210,9 +233,9 @@ export default function Player({
 
         {/* Route all playback through SyncPlay + keyboard control */}
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
-          onOpenChat={onOpenChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
+          onOpenChat={onOpenChat} onToggleChat={onToggleChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
           seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
-          onToggleMuted={toggleMuted} onLocalPhase={setLocalPhase} />
+          userMuted={userMuted} onToggleMuted={toggleMuted} onLocalPhase={setLocalPhase} onPlayingChange={onPlayingChange} />
 
         {userMuted && !hostMuted && (
           <UnmuteButton onClick={toggleMuted} />
@@ -233,6 +256,8 @@ export default function Player({
             micOn={micOn} camOn={camOn}
             onToggleMic={onToggleMic} onToggleCam={onToggleCam}
             hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
+            userMuted={userMuted} onToggleMuted={toggleMuted}
+            onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
             visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
           />
         ) : (
@@ -245,9 +270,9 @@ export default function Player({
                 fight; phones keep play/pause in the bar instead. */}
             {canControl && <CenterTransport visible={visible} localPhase={localPhase} />}
 
-            {/* Scrubber row + one control row, pinned bottom, over the single
-                allowed black-alpha scrim. Read-only for guests (no thumb, no
-                pointer events on the scrubber) — canControl gates
+            {/* Timeline row + one control row, pinned bottom, over the single
+                allowed black-alpha scrim. Read-only for guests (no handle, no
+                pointer events on the timeline) — canControl gates
                 interactivity throughout. */}
             <DesktopControlBar
               mediaItemId={mediaItemId}
@@ -263,6 +288,7 @@ export default function Player({
               micOn={micOn} camOn={camOn}
               onToggleMic={onToggleMic} onToggleCam={onToggleCam}
               hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
+              onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
             />
           </>
         )}
@@ -478,10 +504,10 @@ function NativePlayer({
 // holdApplying/releaseApplying, buffer-aware seek, ABR wiring) and stays exactly
 // as it was. Only its own overlay render (buffering/switching-quality) at the
 // bottom was restyled to the neutral spinner spec.
-interface SyncBridgeProps extends Pick<PlayerProps, 'isHost' | 'collaborativeControl' | 'syncMode' | 'onStruggle' | 'onOpenChat' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'seekBridgeRef'> {
-  srcUrl?: string; onAutoplayBlocked?: VoidCallback; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
+interface SyncBridgeProps extends Pick<PlayerProps, 'isHost' | 'collaborativeControl' | 'syncMode' | 'onStruggle' | 'onOpenChat' | 'onToggleChat' | 'onPlayingChange' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'seekBridgeRef'> {
+  srcUrl?: string; onAutoplayBlocked?: VoidCallback; userMuted?: boolean; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
 }
-function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
+function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, onToggleChat, onPlayingChange, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
   const toggleFullscreen = () => (immersive ? exitImmersive?.() : enterImmersive?.())
   const media = VPlayer.useMedia() as unknown as MediaLike
   const mediaRef = useRef<MediaLike | null>(null)
@@ -659,6 +685,21 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       const k = e.key.toLowerCase()
       // Ctrl/Cmd+F → fullscreen (also plain 'f' below)
       if (k === 'f' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); toggleFullscreen(); return }
+      // Ctrl/Cmd+C → toggle chat, but only when it is not a copy. The blanket
+      // modifier bail below is what has kept copy working, so the one binding
+      // allowed past it goes through the shared guard: focus in an editable
+      // field, or any selection in the document, and the platform keeps the key.
+      // The cheap half of the test runs first — reading the document selection
+      // on every keystroke, for a handler bound at window capture, is not free.
+      if ((e.ctrlKey || e.metaKey) && k === 'c' && shouldToggleChatFromEvent(e, {
+        activeElement: document.activeElement,
+        selectionText: String(window.getSelection() ?? ''),
+      })) {
+        e.preventDefault()
+        onToggleChat?.()
+        e.stopPropagation()
+        return
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return
       if (!m) {
         if ([' ', 'k', 'arrowright', 'arrowleft', 'l', 'j'].includes(k)) return
@@ -673,7 +714,11 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
           if (!transport()) return; e.preventDefault(); seek(m!, (m!.currentTime || 0) - 5); break
         case 'l': if (transport()) seek(m!, (m!.currentTime || 0) + 10); break
         case 'j': if (transport()) seek(m!, (m!.currentTime || 0) - 10); break
-        case 'arrowup': if (m) { e.preventDefault(); m.volume = Math.min(1, (m.volume ?? 1) + 0.1); m.muted = false } break
+        // ↑ force-unmutes, and has to do it through the state that owns the
+        // element's `muted` prop as well as the element itself. Setting
+        // m.muted = false alone left `userMuted` true, so the bar still read
+        // "muted" and the next M press produced no change React could see.
+        case 'arrowup': if (m) { e.preventDefault(); m.volume = Math.min(1, (m.volume ?? 1) + 0.1); m.muted = false; if (userMuted) onToggleMuted?.() } break
         case 'arrowdown': if (m) { e.preventDefault(); m.volume = Math.max(0, (m.volume ?? 1) - 0.1) } break
         case 'm': onToggleMuted?.(); break
         case 'f': toggleFullscreen(); break
@@ -699,7 +744,23 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('watch:transport', onCommand)
     }
-  }, [canControl, onOpenChat, onToggleMuted, immersive, enterImmersive, exitImmersive, transport])
+  }, [canControl, onOpenChat, onToggleChat, userMuted, onToggleMuted, immersive, enterImmersive, exitImmersive, transport])
+
+  // Playback state for the chrome auto-hide, which must never hide over a
+  // paused frame. Read through the same localPhase guard the transport glyphs
+  // use: useSyncPlay pauses the element itself while catching up, and that is
+  // not the user pausing the movie.
+  useEffect(() => {
+    if (!media || !onPlayingChange) return
+    const sync = () => onPlayingChange(!(media.paused && phaseRef.current === 'ready'))
+    sync()
+    media.addEventListener('play', sync)
+    media.addEventListener('pause', sync)
+    return () => {
+      media.removeEventListener('play', sync)
+      media.removeEventListener('pause', sync)
+    }
+  }, [media, onPlayingChange, localPhase])
 
   // The desktop skin is third-party UI, so mark its pointer gestures before its
   // media mutations occur. Only the next matching event may author a command.
@@ -1268,16 +1329,29 @@ function levelLabel(l: HlsLevel | null | undefined) {
   return [h, mbps].filter(Boolean).join(' · ') || 'Auto'
 }
 
-// ── Read-only playback clock (position / duration / buffer) ─────────────────
+// ── Read-only playback clock (position / duration / buffered ranges) ────────
+//
+// The buffer used to be a single number — `buffered.end(length - 1)`, the
+// furthest loaded point — and the bar drew from zero to it. That painted every
+// hole in the buffer as loaded: after a forward seek, the whole span behind the
+// new position reads as buffered when none of it is. The real range list is read
+// here instead, and AnalogTimeline renders the holes.
+function readBufferedRanges(media: MediaLike | null | undefined): TimeSpan[] {
+  const ranges: TimeSpan[] = []
+  try {
+    const buffered = media?.buffered
+    if (buffered) {
+      for (let i = 0; i < buffered.length; i++) ranges.push({ start: buffered.start(i), end: buffered.end(i) })
+    }
+  } catch {}
+  return ranges
+}
+
 function useMediaClock(media: MediaLike | null | undefined) {
-  const [c, setC] = useState({ cur: 0, dur: 0, buf: 0 })
+  const [c, setC] = useState<{ cur: number; dur: number; ranges: TimeSpan[] }>({ cur: 0, dur: 0, ranges: [] })
   useEffect(() => {
     if (!media) return
-    const sync = () => {
-      let buf = 0
-      try { const b = media.buffered; if (b && b.length) buf = b.end(b.length - 1) } catch {}
-      setC({ cur: media.currentTime || 0, dur: media.duration || 0, buf })
-    }
+    const sync = () => setC({ cur: media.currentTime || 0, dur: media.duration || 0, ranges: readBufferedRanges(media) })
     sync()
     const evs = ['timeupdate', 'durationchange', 'progress', 'seeked', 'loadedmetadata']
     evs.forEach(e => media.addEventListener(e, sync))
@@ -1286,36 +1360,44 @@ function useMediaClock(media: MediaLike | null | undefined) {
   return c
 }
 
-function fmtClock(s: number) {
-  if (!Number.isFinite(s) || s < 0) s = 0
-  s = Math.floor(s)
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
-  const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
-  return `${h > 0 ? `${h}:` : ''}${mm}:${String(sec).padStart(2, '0')}`
-}
+// One clock format for the bar's own label and the scrub preview alike; see
+// analog/player/format.ts.
+const fmtClock = formatClock
 
-// ── The scrubber: thin (4px, 6px on hover/scrub), white played, white-alpha
-// buffered/track, round thumb visible only on hover/scrub. Read-only for
-// guests — no thumb, no pointer events, position/buffer still shown. Dragging
-// mutates media.currentTime directly (same authoring path the old skin
-// scrubber used); the surrounding row carries the `.watch-skin` class so the
-// pointerdown-arm listener in SyncBridge still arms before we mutate, and the
-// existing seeking/seeked → requestSeek pipeline authors the room exactly as
-// before.
-function Scrubber({ canControl, mediaItemId, mediaSourceId }: { canControl?: boolean; mediaItemId?: string; mediaSourceId?: string | null } = {}) {
+// ── The timeline: AnalogTimeline over the media element ─────────────────────
+//
+// One component for both bars (the desktop scrubber and the phone timeline row
+// were two near-identical implementations that had already drifted — the phone
+// one had no hover state and no thumb at all).
+//
+// What lives here rather than in the kit is everything that needs a media
+// element or the network: the trickplay manifest, and the seek itself. Dragging
+// still mutates media.currentTime directly, exactly as before — the surrounding
+// row carries the `.watch-skin` class so SyncBridge's capture-phase
+// pointerdown-arm fires before the mutation, and the existing seeking/seeked →
+// requestSeek pipeline authors the room unchanged.
+//
+// `cached` is left unset: there is no on-disk cache in this client to read time
+// spans from, so the layer renders empty rather than being faked out of the
+// network buffer.
+interface PlayerTimelineProps {
+  canControl?: boolean
+  mediaItemId?: string
+  mediaSourceId?: string | null
+  labels?: boolean
+  trailing?: ReactNode
+  onHoldChrome?: (reason: string) => void
+  onReleaseChrome?: (reason: string) => void
+}
+function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, labels, trailing, onHoldChrome, onReleaseChrome }: PlayerTimelineProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
-  const { cur, dur, buf } = useMediaClock(media)
-  const [hover, setHover] = useState(false)
-  const [dragging, setDragging] = useState(false)
+  const { cur, dur, ranges } = useMediaClock(media)
+  const preferences = useDisplayPreferences()
   const [manifest, setManifest] = useState<TrickplayManifest | null>(null)
-  const [preview, setPreview] = useState<{ time: number; x: number } | null>(null)
   const [failedSheet, setFailedSheet] = useState<number | null>(null)
-  const trackRef = useRef<HTMLDivElement | null>(null)
-  const dragCleanupRef = useRef<VoidCallback | null>(null)
 
   useEffect(() => {
     setManifest(null)
-    setPreview(null)
     setFailedSheet(null)
     if (!mediaItemId) return
     const controller = new AbortController()
@@ -1327,100 +1409,51 @@ function Scrubber({ canControl, mediaItemId, mediaSourceId }: { canControl?: boo
     return () => controller.abort()
   }, [mediaItemId, mediaSourceId])
 
-  useEffect(() => () => dragCleanupRef.current?.(), [])
-
-  const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
-  const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
-  const active = hover || dragging
-  const barH = active ? 6 : 4
-
-  const ratioFromEvent = (e: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
-    const el = trackRef.current
-    if (!el) return 0
-    const r = el.getBoundingClientRect()
-    const clientX = e.clientX
-    return Math.min(1, Math.max(0, (clientX - r.left) / r.width))
-  }
-
-  const updatePreview = (e: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
-    const el = trackRef.current
-    if (!el || dur <= 0) return
-    const rect = el.getBoundingClientRect()
-    setPreview({ time: ratioFromEvent(e) * dur, x: Math.min(rect.width, Math.max(0, e.clientX - rect.left)) })
-  }
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!canControl || !media) return
-    e.stopPropagation()
-    setDragging(true)
-    const seekTo = (ev: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
-      updatePreview(ev)
-      const dur2 = media.duration || 0
-      media.currentTime = ratioFromEvent(ev) * dur2
-    }
-    seekTo(e)
-    const move = (ev: PointerEvent) => seekTo(ev)
-    const up = () => {
-      setDragging(false)
-      setPreview(null)
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
-      dragCleanupRef.current = null
-    }
-    dragCleanupRef.current?.()
-    dragCleanupRef.current = up
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up, { once: true })
-    window.addEventListener('pointercancel', up, { once: true })
-  }
-
-
-  const candidateFrame = manifest && preview ? trickplayFrame(manifest, preview.time) : null
-  const frame = candidateFrame?.sheetIndex === failedSheet ? null : candidateFrame
-  const previewScale = manifest ? Math.min(1, 240 / manifest.width) : 1
-  const previewWidth = manifest ? manifest.width * previewScale : 0
-  const previewHeight = manifest ? manifest.height * previewScale : 0
-  const popupLeft = preview ? Math.min(Math.max(preview.x, previewWidth / 2), Math.max(previewWidth / 2, (trackRef.current?.clientWidth ?? 0) - previewWidth / 2)) : 0
-
-  return (
-    <div
-      ref={trackRef}
-      onPointerEnter={(e) => { setHover(true); updatePreview(e) }}
-      onPointerMove={updatePreview}
-      onPointerLeave={() => { setHover(false); if (!dragging) setPreview(null) }}
-      onPointerDown={onPointerDown}
-      style={{
-        position: 'relative', flex: 1, height: 16, display: 'flex', alignItems: 'center',
-        cursor: canControl ? 'pointer' : 'default',
-      }}
-    >
-      {frame && manifest && preview && (
+  // Titles with no trickplay manifest return null here and AnalogTimeline falls
+  // back to a bare time chip — those used to get no scrub preview at all.
+  const renderPreview = (time: number): TimelinePreview | null => {
+    if (!manifest) return null
+    const frame = trickplayFrame(manifest, time)
+    if (!frame || frame.sheetIndex === failedSheet) return null
+    const scale = Math.min(1, 240 / manifest.width)
+    const width = manifest.width * scale
+    const height = manifest.height * scale
+    return {
+      width,
+      node: (
         <div style={{
-          position: 'absolute', left: popupLeft, bottom: 22, width: previewWidth, transform: 'translateX(-50%)',
-          pointerEvents: 'none', overflow: 'hidden', borderRadius: 6, background: '#09090b',
-          boxShadow: '0 4px 18px rgba(0,0,0,.55)', border: '1px solid rgba(255,255,255,.16)',
+          width, overflow: 'hidden', borderRadius: analogTokens.radius.chromePx,
+          background: 'var(--an-color-stage-void)', border: '1px solid var(--an-color-line-strong)',
+          boxShadow: '0 4px 18px var(--an-color-shadow-cast)',
         }}>
-          <div style={{ position: 'relative', width: previewWidth, height: previewHeight, overflow: 'hidden' }}>
+          <div style={{ position: 'relative', width, height, overflow: 'hidden' }}>
             <img
               src={trickplaySheetUrl(manifest, frame.sheetIndex)} alt=""
               onError={() => setFailedSheet(frame.sheetIndex)}
-              style={{ position: 'absolute', width: manifest.width * frame.columns * previewScale, height: manifest.height * frame.rows * previewScale, left: -frame.x * previewScale, top: -frame.y * previewScale, maxWidth: 'none' }}
+              style={{ position: 'absolute', width: manifest.width * frame.columns * scale, height: manifest.height * frame.rows * scale, left: -frame.x * scale, top: -frame.y * scale, maxWidth: 'none' }}
             />
           </div>
-          <div style={{ padding: '5px 8px', textAlign: 'center', fontFamily: MONO_F, fontSize: 11, color: '#f4f4f5' }}>{fmtClock(preview.time)}</div>
+          <div style={{ padding: '5px 8px', textAlign: 'center', fontFamily: MONO_F, fontSize: 11, color: 'var(--an-color-ink)' }}>{fmtClock(time)}</div>
         </div>
-      )}
-      <div style={{ position: 'absolute', left: 0, right: 0, height: barH, borderRadius: 999, background: 'rgba(255,255,255,.14)', transition: 'height .15s' }} />
-      <div style={{ position: 'absolute', left: 0, height: barH, width: `${bufPct}%`, borderRadius: 999, background: 'rgba(255,255,255,.28)', transition: 'height .15s' }} />
-      <div style={{ position: 'absolute', left: 0, height: barH, width: `${pct}%`, borderRadius: 999, background: '#f4f4f5', transition: 'height .15s' }} />
-      {canControl && (
-        <div style={{
-          position: 'absolute', left: `${pct}%`, width: 10, height: 10, marginLeft: -5,
-          borderRadius: '50%', background: '#f4f4f5', opacity: active ? 1 : 0, transition: 'opacity .15s',
-        }} />
-      )}
-    </div>
+      ),
+    }
+  }
+
+  return (
+    <AnalogTimeline
+      positionSec={cur}
+      durationSec={dur}
+      buffered={ranges}
+      canControl={canControl}
+      onScrub={(seconds) => { if (media) media.currentTime = seconds }}
+      onScrubStart={() => onHoldChrome?.(CHROME_HOLD.scrubbing)}
+      onScrubEnd={() => onReleaseChrome?.(CHROME_HOLD.scrubbing)}
+      renderPreview={renderPreview}
+      labels={labels}
+      trailing={trailing}
+      preferences={preferences}
+      ariaLabel="Playback progress"
+    />
   )
 }
 
@@ -1433,57 +1466,66 @@ function HostControlsHint() {
   )
 }
 
-// Mute icon + volume slider as one left-aligned unit. Desktop only. The slider
-// is always shown now (it used to hover-reveal from 0 width) so the left cluster
-// reads as a single control instead of a glyph that grows a tail on hover.
+// Mute + the vertical volume hairline, over the media element.
+//
+// Replaces the horizontal `<input type="range">` that used to sit in the desktop
+// bar's LEFT cluster; the vertical control lives near the right edge instead,
+// per the reference. The phone bar had no volume control at all — it does now.
 //
 // Volume is purely local (media.volume) and — like the mute toggle itself — is
 // deliberately NOT gated on canControl: audio is independent of playback-control
 // permission, so a guest can unmute and set their own level.
-function VolumeControl({ userMuted, onToggleMuted }: { userMuted?: boolean; onToggleMuted?: VoidCallback } = {}) {
+//
+// The `volumechange` subscription is new. Without it the ↑/↓ keys moved the
+// element's volume while the control kept rendering its own stale copy, so the
+// two disagreed until the component happened to remount.
+function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal, onHoldChrome, onReleaseChrome }: {
+  userMuted?: boolean; onToggleMuted?: VoidCallback; size?: number; glyph?: number
+  reveal?: 'hover' | 'always'
+  onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
+} = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
+  const preferences = useDisplayPreferences()
   const [volume, setVolume] = useState(1)
 
   useEffect(() => {
     if (!media) return
-    setVolume(media.volume ?? 1)
+    const sync = () => setVolume(media.volume ?? 1)
+    sync()
+    media.addEventListener('volumechange', sync)
+    return () => media.removeEventListener('volumechange', sync)
   }, [media])
 
-  const muted = userMuted || volume === 0
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-      <IconBtn onClick={onToggleMuted} title={muted ? 'Unmute (M)' : 'Mute (M)'}>
-        {muted
-          ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M23 9l-6 6M17 9l6 6"/></svg>
-          : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 6a9 9 0 0 1 0 12"/></svg>}
-      </IconBtn>
-      <input
-        type="range" min={0} max={1} step={0.01} value={userMuted ? 0 : volume}
-        aria-label="Volume"
-        onChange={(e) => {
-          const v = Number(e.target.value)
-          setVolume(v)
-          if (media) media.volume = v
-          if (v > 0 && userMuted) onToggleMuted?.()
-          if (v === 0 && !userMuted) onToggleMuted?.()
-        }}
-        style={{ width: 76, accentColor: '#f4f4f5', height: 16, cursor: 'pointer' }}
-      />
-    </div>
+    <AnalogVolume
+      volume={volume}
+      muted={Boolean(userMuted) || volume === 0}
+      onSetVolume={(next) => { setVolume(next); if (media) media.volume = next }}
+      onToggleMute={() => onToggleMuted?.()}
+      reveal={reveal}
+      size={size}
+      glyph={glyph}
+      preferences={preferences}
+      onHold={() => onHoldChrome?.(CHROME_HOLD.volume)}
+      onRelease={() => onReleaseChrome?.(CHROME_HOLD.volume)}
+    />
   )
 }
 
 // ── Desktop control chrome ───────────────────────────────────────────────────
 // Two stacked rows over the one allowed black-alpha scrim, no box or border
 // around either:
-//   1. a full-width scrubber, edge to edge of the bar
-//   2. one control row in three clusters — left: mute + volume slider + a
-//      compact mono `current / total`; centre: hide-feeds, camera, mic;
-//      right: gear, fullscreen
-// Play/pause is NOT here any more: on desktop it's the big CenterTransport knob
-// over the middle of the frame. Guests get no transport at all, and the
-// "Host controls playback" hint sits in the left cluster instead.
-interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds'> {
+//   1. a full-width timeline hairline, edge to edge of the bar
+//   2. one control row in three clusters — left: a compact mono
+//      `current / total`; centre: hide-feeds, camera, mic; right: mute + the
+//      vertical volume hairline, gear, fullscreen
+// Volume moved from the left cluster to the right in the analog redesign: the
+// reference puts it "near the right edge" as a compact vertical control rather
+// than a long horizontal slider in the transport.
+// Play/pause is NOT here: on desktop it's the big CenterTransport knob over the
+// middle of the frame. Guests get no transport at all, and the "Host controls
+// playback" hint sits in the left cluster instead.
+interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds' | 'onHoldChrome' | 'onReleaseChrome'> {
   mediaElementRef?: RefObject<HTMLVideoElement | null>; canControl?: boolean; canManageMedia?: boolean; userMuted?: boolean; onToggleMuted?: VoidCallback; localPhase?: LocalPhase
 }
 function DesktopControlBar({
@@ -1491,6 +1533,7 @@ function DesktopControlBar({
   subtitlePreferences: canonicalSubtitlePreferences, onSetSubtitlePreferences,
   visible, canControl, canManageMedia, immersive, enterImmersive, exitImmersive,
   userMuted, onToggleMuted, micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds,
+  onHoldChrome, onReleaseChrome,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
@@ -1519,12 +1562,15 @@ function DesktopControlBar({
         position: 'relative', display: 'flex', flexDirection: 'column', gap: 2,
         padding: '0 18px 12px',
       }}>
-        {/* Row 1 — the scrubber, spanning the full width of the bar. The row
-            wrapper is a flex ROW on purpose: Scrubber sizes itself with
+        {/* Row 1 — the timeline, spanning the full width of the bar. The row
+            wrapper is a flex ROW on purpose: the track sizes itself with
             `flex: 1`, which would resolve against the column axis (and collapse
             its height to 0) if it were a direct child of the column above. */}
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <Scrubber canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId} />
+          <PlayerTimeline
+            canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId}
+            onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+          />
         </div>
 
         {/* Row 2 — three clusters. A 1fr/auto/1fr grid so the centre trio is
@@ -1532,7 +1578,6 @@ function DesktopControlBar({
             grow (long durations, the guest hint). */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <VolumeControl userMuted={userMuted} onToggleMuted={onToggleMuted} />
             <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', flexShrink: 0, whiteSpace: 'nowrap' }}>
               <span style={{ color: '#f4f4f5' }}>{fmtClock(cur)}</span> / {fmtClock(dur)}
             </span>
@@ -1548,11 +1593,20 @@ function DesktopControlBar({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+            {/* Volume moved here from the left cluster: "a compact vertical
+                control near the right edge rather than a long horizontal slider
+                in the bottom transport". */}
+            <PlayerVolume
+              userMuted={userMuted} onToggleMuted={onToggleMuted}
+              onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+            />
             <div style={{ position: 'relative' }}>
               <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
                 <GearGlyph size={18} />
               </IconBtn>
-              {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} />}
+              {/* Mounted only while open, as before: the menu's own view stack
+                  and search box reset each time it is opened. */}
+              {settingsOpen && <SettingsMenu open playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />}
             </div>
 
             <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
@@ -1591,6 +1645,7 @@ function MobileBottomBar({
   canManageMedia,
   canControl, localPhase, micOn, camOn, onToggleMic, onToggleCam,
   hideAllFeeds, onToggleHideAllFeeds, visible, immersive, enterImmersive, exitImmersive,
+  userMuted, onToggleMuted, onHoldChrome, onReleaseChrome,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
@@ -1660,9 +1715,29 @@ function MobileBottomBar({
       }}>
         {/* Timeline row: everyone on a phone sees position / progress / duration
             here. The skin's own scrubber is hidden on phones (watch-skin--nobar);
-            controllers can drag this one directly, or double-tap-seek. */}
+            controllers can drag this one directly, or double-tap-seek.
+            The mute + vertical volume control rides at the right END OF THIS ROW
+            rather than in the control row below it: a seventh 44px button does
+            not fit a 360px-wide phone alongside the six that are already there,
+            and this row is a stretchy track that simply gives up the width. */}
         <div style={{ padding: '2px 6px 0' }}>
-          <MobileTimelineRow canControl={canControl} />
+          <PlayerTimeline
+            canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId}
+            labels
+            onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+            trailing={
+              <>
+                {!canControl && <span style={{ fontSize: 10.5, color: 'rgba(244,244,245,.36)', flexShrink: 0 }}>Host controls</span>}
+                <PlayerVolume
+                  userMuted={userMuted} onToggleMuted={onToggleMuted}
+                  // Touch has no hover: the track is permanently revealed on a
+                  // phone, otherwise there is no gesture that opens it.
+                  reveal="always" size={44} glyph={19}
+                  onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+                />
+              </>
+            }
+          />
         </div>
 
         {/* The one control row — three clusters, centre trio truly centred via
@@ -1703,7 +1778,7 @@ function MobileBottomBar({
               <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
                 <GearGlyph size={19} />
               </BarBtn>
-              {settingsOpen && <SettingsMenu playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} compact />}
+              {settingsOpen && <SettingsMenu open playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} compact />}
             </div>
 
             {/* Fullscreen: reads the single `immersive` state and calls the
@@ -1726,86 +1801,6 @@ function MobileBottomBar({
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-// Compact mono time row for the mobile bar — time / scrubber / time, matching
-// the desktop scrubber but sized for the touch bar.
-// Draggable for controllers (canControl) — same direct media.currentTime
-// mutation the desktop Scrubber uses (see that component's own comment): the
-// seeking/seeked -> requestSeek listener that authors the room lives on the
-// media element itself, in SyncBridge, not inside either scrubber component,
-// so dragging this bar authors the shared timeline exactly the same way
-// dragging the desktop one does. Read-only for guests, same as before — no
-// pointer handling attached at all when canControl is false.
-function MobileTimelineRow({ canControl }: { canControl?: boolean } = {}) {
-  const media = VPlayer.useMedia() as unknown as MediaLike
-  const { cur, dur, buf } = useMediaClock(media)
-  const [dragging, setDragging] = useState(false)
-  const trackRef = useRef<HTMLDivElement | null>(null)
-  const dragCleanupRef = useRef<VoidCallback | null>(null)
-
-  useEffect(() => () => dragCleanupRef.current?.(), [])
-
-  const pct = dur > 0 ? Math.min(100, (cur / dur) * 100) : 0
-  const bufPct = dur > 0 ? Math.min(100, (buf / dur) * 100) : 0
-  const barH = dragging ? 6 : 4
-
-  const ratioFromEvent = (e: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
-    const el = trackRef.current
-    if (!el) return 0
-    const r = el.getBoundingClientRect()
-    return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width))
-  }
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!canControl || !media) return
-    e.stopPropagation()
-    setDragging(true)
-    const seekTo = (ev: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
-      const dur2 = media.duration || 0
-      media.currentTime = ratioFromEvent(ev) * dur2
-    }
-    seekTo(e)
-    const move = (ev: PointerEvent) => seekTo(ev)
-    const up = () => {
-      setDragging(false)
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
-      dragCleanupRef.current = null
-    }
-    dragCleanupRef.current?.()
-    dragCleanupRef.current = up
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up, { once: true })
-    window.addEventListener('pointercancel', up, { once: true })
-  }
-
-  return (
-    <div aria-label="Playback progress" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
-      <span style={{ fontFamily: MONO_F, fontSize: 11, fontVariantNumeric: 'tabular-nums', minWidth: 36, textAlign: 'right', color: '#f4f4f5', flexShrink: 0 }}>{fmtClock(cur)}</span>
-      <div
-        ref={trackRef}
-        onPointerDown={onPointerDown}
-        // A completed tap here is a separate `click` event, not something
-        // stopping propagation of pointerdown prevents — same guard every
-        // other bar control (BarBtn, the overflow menu) already uses so a
-        // seek-tap doesn't also bubble up and toggle chrome / register as
-        // half of a double-tap-seek on the surface below.
-        onClick={(e) => e.stopPropagation()}
-        // Extra invisible hit-area (24px tall) around the thin visual bar —
-        // a 4px-tall track is not a reasonable touch target on its own.
-        style={{ position: 'relative', flex: 1, height: 24, display: 'flex', alignItems: 'center', touchAction: canControl ? 'none' : undefined }}
-      >
-        <div style={{ position: 'relative', width: '100%', height: barH, borderRadius: 999, overflow: 'hidden', background: 'rgba(255,255,255,.14)', transition: 'height .12s ease' }}>
-          <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${bufPct}%`, background: 'rgba(255,255,255,.28)' }} />
-          <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${pct}%`, background: '#f4f4f5' }} />
-        </div>
-      </div>
-      <span style={{ fontFamily: MONO_F, fontSize: 11, fontVariantNumeric: 'tabular-nums', minWidth: 36, color: 'rgba(244,244,245,.62)', flexShrink: 0 }}>{fmtClock(dur)}</span>
-      {!canControl && <span style={{ fontSize: 10.5, color: 'rgba(244,244,245,.36)', flexShrink: 0 }}>Host controls</span>}
     </div>
   )
 }
@@ -1901,14 +1896,17 @@ const MENU_COMPACT: MenuScale = {
 }
 
 interface SettingsMenuProps {
+  open?: boolean
   playback?: PlayerPlayback; mediaItemId?: string; quality: QualityState; canManageMedia?: boolean
   onSetPlaybackTracks?: (tracks: TrackSelection) => void; onChooseAudio?: (jellyfinIndex: number) => void; onChooseSubtitle?: (jellyfinIndex: number | null) => void
   subtitlePreferences?: SubtitlePreferences; onUpdateSubtitlePreferences?: (patch: Partial<SubtitlePreferences>) => void; onResetSubtitlePreferences?: VoidCallback; onClose?: VoidCallback
+  onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
   /** Phone density (MobileBottomBar). Omitted/false keeps the desktop scale. */
   compact?: boolean
 }
-function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, subtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES, onUpdateSubtitlePreferences, onResetSubtitlePreferences, onClose, compact = false }: SettingsMenuProps) {
+function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageMedia, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, subtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES, onUpdateSubtitlePreferences, onResetSubtitlePreferences, onClose, onHoldChrome, onReleaseChrome, compact = false }: SettingsMenuProps) {
   const S = compact ? MENU_COMPACT : MENU_REGULAR
+  const displayPreferences = useDisplayPreferences()
   const [view, setView] = useState<'main' | 'quality' | 'subs' | 'subtitleStyle' | 'audio'>('main')
   const [q, setQ] = useState('')
   const [uploadingSub, setUploadingSub] = useState(false)
@@ -1978,14 +1976,7 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
   const curSub = selectedSubtitleIndex == null || selectedSubtitleIndex < 0 ? 'Off' : trackName(subtitleStreams.find(s => s.index === selectedSubtitleIndex) || {}, 0)
   const curAudio = audioStreams.length ? trackName(audioStreams.find(s => s.index === selectedAudioIndex) || {}, 0) : '—'
 
-  const panel: CSSProperties = {
-    backgroundColor: '#141416', border: '1px solid rgba(255,255,255,.08)',
-    position: 'absolute', bottom: S.bottom, right: S.right, zIndex: 31, width: S.width, maxHeight: S.maxHeight,
-    ...(S.maxWidth ? { maxWidth: S.maxWidth } : {}),
-    display: 'flex', flexDirection: 'column', borderRadius: S.radius, overflow: 'hidden', color: '#f4f4f5',
-    animation: 'up .18s ease both',
-  }
-  const navRow = (label: string, value: string, onClick: VoidCallback) => (
+  const navRow =(label: string, value: string, onClick: VoidCallback) => (
     <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: S.navGap, width: '100%', ...(S.rowMin ? { minHeight: S.rowMin } : {}), padding: S.navPad, border: 'none', cursor: 'pointer', background: 'transparent', color: '#f4f4f5', fontSize: S.navFont, fontWeight: 500, textAlign: 'left' }}>
       <span>{label}</span>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(244,244,245,.62)', fontSize: S.navValFont, maxWidth: S.navValMax, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -2031,9 +2022,26 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
   const rangeStyle: CSSProperties = { width: '100%', accentColor: '#f4f4f5', cursor: 'pointer' }
 
   return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
-      <div style={panel}>
+    // AnalogSettingsStack owns the anchoring, the upward entrance, the dismiss
+    // layer and the surface — "a compact vertical stack upward from the
+    // lower-right control area … not a full-screen modal". The tuned density
+    // numbers (S.bottom / S.right / S.width / S.maxHeight, and MENU_COMPACT's
+    // iOS-zoom and 44px touch-floor guards) are passed straight through: the
+    // container changed, the menu did not.
+    <AnalogSettingsStack
+      open={open}
+      onDismiss={() => onClose?.()}
+      bottom={S.bottom}
+      right={S.right}
+      width={S.width}
+      maxWidth={S.maxWidth}
+      maxHeight={S.maxHeight}
+      radius={S.radius}
+      preferences={displayPreferences}
+      onHold={() => onHoldChrome?.(CHROME_HOLD.settings)}
+      onRelease={() => onReleaseChrome?.(CHROME_HOLD.settings)}
+    >
+      <>
         {view === 'main' && (
           <div style={{ padding: S.mainPad }}>
             {navRow('Quality', curQuality, () => setView('quality'))}
@@ -2122,7 +2130,7 @@ function SettingsMenu({ playback, mediaItemId, quality, canManageMedia, onSetPla
             </div>
           </>
         )}
-      </div>
-    </>
+      </>
+    </AnalogSettingsStack>
   )
 }
