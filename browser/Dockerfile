@@ -5,7 +5,8 @@
 # is no gstreamer/pion/RTP code anywhere — the browser publishes itself into the
 # party's existing LiveKit room as an ordinary participant.
 #
-# Derived from spikes/remote-browser (see docs/specs/2026-08-04-remote-browser-spike.md).
+# Derived from the remote-browser spike harness (removed in #63); its findings
+# are in docs/specs/2026-08-04-remote-browser-spike.md.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive

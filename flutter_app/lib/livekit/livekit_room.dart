@@ -1,7 +1,8 @@
 // E6 T6.1 — LiveKit A/V room service.
 //
 // Wraps `livekit_client`'s [lk.Room] with the connect/publish/subscribe
-// sequence proven in the de-risk spike (`spike/lib/main.dart`): connect first,
+// sequence proven by the de-risk spike (the spike app itself is gone; its
+// conclusions are here and in docs/native/SPIKE-NOTES.md): connect first,
 // then enable mic/camera on the local participant, and refresh a flat
 // snapshot of tracks off every relevant room event. Callers (the
 // `livekitProvider`, in this app) get a stream of [LiveKitRoomSnapshot] plus
@@ -111,7 +112,7 @@ class LiveKitRoomService {
     if (!_controller.isClosed) _controller.add(next);
   }
 
-  /// Connect to [url] with [token], mirroring the spike's proven sequence:
+  /// Connect to [url] with [token] in the order the spike proved out:
   /// register listeners, connect, then best-effort enable mic + camera.
   /// Errors enabling a device are recorded in [LiveKitRoomSnapshot.error]
   /// but do not fail the connect.

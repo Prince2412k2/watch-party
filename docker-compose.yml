@@ -7,9 +7,9 @@
 #
 # Bring up:  docker compose up -d --build
 #
-# NOTE: docker-compose.servarr.yml is superseded by this file — the servarr
-# services below are the canonical definitions. Do not run both compose files
-# for the same services at once.
+# NOTE: the servarr services below are the canonical definitions. The separate
+# docker-compose.servarr.yml they superseded was removed in #63 — running both
+# would have started a second copy of every service over the same volumes.
 
 services:
   jellyfin:
@@ -306,7 +306,7 @@ services:
   # ── Media-acquisition stack (Servarr + qBittorrent) ────────────────────────
   # All on watchparty-net so the app reaches them by name and they reach each
   # other (Prowlarr -> Sonarr, Sonarr -> qBittorrent). Config + media bind
-  # mounts are preserved from the previous docker-compose.servarr.yml layout.
+  # mounts are preserved from the standalone servarr stack this replaced.
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: watchparty-prowlarr
