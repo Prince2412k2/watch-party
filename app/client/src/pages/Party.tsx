@@ -20,9 +20,15 @@ import { glass } from '../glass'
 import { mirror } from '../mirror'
 import { usePhone } from '../hooks/useIsMobile'
 import { Z } from '../watchLayers'
+import {
+  AnalogToastStack,
+  useAutoHideControls,
+  useChatToasts,
+  useDisplayPreferences,
+} from '../analog/player/index.ts'
 import Library from './Library'
 import Lobby from './Lobby'
-import type { PartySession, SubtitlePreferences } from '../types'
+import type { ChatMessage, PartySession, SubtitlePreferences } from '../types'
 import { apiJson, stringField } from '../types/guards'
 import { partyJoinTransition } from '../partyAuthority'
 
@@ -46,8 +52,9 @@ type SeekBridge = {
 export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } } = {}) {
   const { socket } = useSocket()
   const party = useParty()
+  const { user } = useAuth()
   const {
-    session, role, layoutMode, chatOpen, chatRipple, alertMode,
+    session, role, messages, layoutMode, chatOpen, chatRipple, alertMode,
     setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks, setSubtitlePreferences,
   } = party
 
@@ -214,7 +221,8 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
     <WatchView
       session={session} isHost={isHost} cameraProps={cameraProps} lk={lk}
       chatOpen={chatOpen} chatRipple={chatRipple} alertMode={alertMode}
-      layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat}
+      messages={messages} selfUserId={user?.userId}
+      layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat} toggleChat={toggleChat}
       setPlaybackTracks={setPlaybackTracks}
       setSubtitlePreferences={setSubtitlePreferences}
       hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf}
@@ -337,12 +345,22 @@ function BrowserStage({
   )
 }
 
+// The column the desktop chat drawer occupies: its own `right: 12` inset, its
+// `min(300px, …)` width, and 12px of clearance from the frame. The watch stage
+// gives this up while chat is open rather than letting the drawer cover it.
+const CHAT_DRAWER_W = 324
+
+// A shared empty log, so an unsupplied `messages` prop does not hand the toast
+// feed a new array identity on every render.
+const NO_MESSAGES: ChatMessage[] = []
+
 // The immersive watch screen: real fullscreen (whole container, feeds stay
 // visible), and chrome that auto-hides after idle and returns on mouse move
 // (desktop) or a tap (phone). See watchLayers.js for the z-index scale.
 function WatchView({
   session, isHost, cameraProps, lk, chatOpen, chatRipple = 0, alertMode, layoutMode,
-  setLayout = () => {}, openChat = () => {}, closeChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
+  messages = NO_MESSAGES, selfUserId,
+  setLayout = () => {}, openChat = () => {}, closeChat = () => {}, toggleChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
 }: {
   session: PartySession
   isHost?: boolean
@@ -351,10 +369,13 @@ function WatchView({
   chatOpen?: boolean
   chatRipple?: number
   alertMode?: 'focus' | 'on' | 'mute'
+  messages?: ChatMessage[]
+  selfUserId?: string
   layoutMode?: 'float' | 'dock'
   setLayout?: (mode: 'float' | 'dock') => void
   openChat?: (focus?: boolean) => void
   closeChat?: () => void
+  toggleChat?: () => void
   setPlaybackTracks?: (tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   setSubtitlePreferences?: (preferences: SubtitlePreferences) => void
   hideSelf?: boolean
@@ -362,8 +383,14 @@ function WatchView({
 }) {
   const phone = usePhone()
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const hideTimer = useRef<number | null>(null)
-  const [visible, setVisible] = useState(true)
+  // Playback state, reported up by the player, purely so the chrome can obey
+  // "controls hide after three seconds DURING PLAYBACK" — a paused frame keeps
+  // its controls.
+  const [playing, setPlaying] = useState(true)
+  const chrome = useAutoHideControls({ playing })
+  const visible = chrome.visible
+  const displayPreferences = useDisplayPreferences()
+  const toasts = useChatToasts({ messages, chatOpen, selfUserId })
   // Single "are we in the app's fullscreen presentation?" state. Derived from
   // whichever mechanism the platform supports (element FS today; iOS faux-FS in
   // Phase B). Drives the button icon, orientation lock, and the control-layer poke.
@@ -395,20 +422,17 @@ function WatchView({
     if (chatRipple > 0 && alertMode === 'on' && !chatOpen) setRipple(r => r + 1)
   }, [chatRipple]) // eslint-disable-line
 
-  const poke = () => {
-    setVisible(true)
-    if (hideTimer.current != null) window.clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => setVisible(false), 3000)
-  }
-  useEffect(() => { poke(); return () => { if (hideTimer.current != null) window.clearTimeout(hideTimer.current) } }, [])
+  // The 3000ms lived here as a bare setTimeout with one blocker (an open
+  // settings menu, ORed in locally by each bar). It is now playerCore's
+  // `tickAutoHide`, shared with the Flutter player and driven by the same
+  // interaction cases: the timeout is a token, holds pin the chrome open
+  // mid-interaction, and a paused movie keeps its controls.
+  const poke = () => chrome.note('pointer')
 
   // On phones a tap on the video TOGGLES the control layer (show → hide); when
   // shown it re-arms the idle timer. On desktop a click only wakes the chrome.
-  const toggleChrome = () => {
-    if (visible) { setVisible(false); if (hideTimer.current != null) window.clearTimeout(hideTimer.current) }
-    else poke()
-  }
-  const onSurfaceTap = () => poke()   // desktop click-to-wake
+  const toggleChrome = () => chrome.toggle()
+  const onSurfaceTap = () => chrome.note('tap')   // desktop click-to-wake
 
   // ── Phone surface gestures (Phase F) ──────────────────────────────────────
   // Single tap = toggle chrome; double-tap on the LEFT third = seek −10s, RIGHT
@@ -591,7 +615,15 @@ function WatchView({
 
       {/* On desktop the dock shrinks the video; on phones the video stays full-bleed
           and cameras float as a compact strip so the movie is never letterboxed. */}
-      <div style={{ position: 'absolute', inset: 0, marginLeft: (!phone && !hideAllFeeds && layoutMode === 'dock') ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
+      <div style={{
+        position: 'absolute', inset: 0,
+        marginLeft: (!phone && !hideAllFeeds && layoutMode === 'dock') ? 210 : 0,
+        // "The movie stage yields enough horizontal space for the drawer rather
+        // than being covered by it." The stage gives up the drawer's column
+        // instead of the drawer being painted over the frame.
+        marginRight: (!phone && chatOpen) ? CHAT_DRAWER_W : 0,
+        transition: 'margin-left .3s cubic-bezier(.2,0,.1,1), margin-right .3s cubic-bezier(.2,0,.1,1)',
+      }}>
         <HlsPlayer
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
           onSetPlaybackTracks={setPlaybackTracks}
@@ -602,10 +634,11 @@ function WatchView({
           hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={() => setHideAllFeeds(v => !v)}
           onToggleLayout={() => setLayout(layoutMode === 'float' ? 'dock' : 'float')}
           hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-          onOpenChat={() => openChat(true)} layoutMode={layoutMode}
+          onOpenChat={() => openChat(true)} onToggleChat={toggleChat} layoutMode={layoutMode}
           visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
           phone={phone} camStripOpen={camStripOpen}
           seekBridgeRef={seekBridgeRef}
+          onHoldChrome={chrome.hold} onReleaseChrome={chrome.release} onPlayingChange={setPlaying}
         />
         {/* Desktop camera layouts */}
         {!phone && !hideAllFeeds && layoutMode === 'float' && <CameraGrid {...cameraProps} />}
@@ -657,6 +690,25 @@ function WatchView({
           </span>
         </div>
       )}
+
+      {/* Chat toasts. Anchored under the top-right room cluster, which is the
+          one region of the stage that is not spoken for: the transport and the
+          subtitles own the bottom, the chat toggle and the room menu own the
+          top-right ABOVE this, floating camera tiles default to the top-left
+          (and the phone camera popup to the bottom-right), and the desktop dock
+          is a left column. Deliberately NOT tied to the auto-hide `visible`
+          layer — a notification that only arrives when the controls happen to
+          be up is not a notification. */}
+      <AnalogToastStack
+        view={toasts}
+        preferences={displayPreferences}
+        width={phone ? 232 : 280}
+        style={{
+          zIndex: Z.controlBar,
+          top: phone ? 'calc(var(--sa-t) + 68px)' : 76,
+          right: phone ? 'calc(var(--sa-r) + 8px)' : 14,
+        }}
+      />
 
       {/* Chat: persistent panel on desktop; dismissible slide-over sheet on phone
           (with a scrim) so it never permanently occludes the video or controls. */}
