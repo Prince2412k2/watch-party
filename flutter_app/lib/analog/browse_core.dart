@@ -304,3 +304,78 @@ SeasonArtwork resolveSeasonArtwork(SeasonArtworkInput input) {
     label: number == null ? '—' : 'S$number',
   );
 }
+
+// ── fixed-cursor rail window ────────────────────────────────────────────────
+//
+// The rail does not move a highlight along a stationary row. The cursor is
+// pinned to the first slot and the ROW translates underneath it, the way an old
+// console menu works. So "which item is selected" and "how far the row has
+// scrolled" are the same number: [offset].
+//
+// That makes the visible set trivially derivable, which is what prefetch needs:
+// this client can warm artwork through ArtworkCache for the items about to
+// slide into view instead of decoding them on arrival. Both clients compute the
+// same window from the same inputs, so "snappy" is a contract rather than each
+// client guessing its own lookahead.
+
+class RailWindowInput {
+  const RailWindowInput({
+    required this.total,
+    required this.offset,
+    required this.slots,
+    this.lookahead = kRailLookahead,
+    this.behind = kRailBehind,
+  });
+
+  /// Items in the rail.
+  final int total;
+
+  /// Index rendered in the pinned first slot.
+  final int offset;
+
+  /// Slots visible on screen at once.
+  final int slots;
+
+  /// Items past the last visible slot to warm ahead of arrival.
+  final int lookahead;
+
+  /// Items before the cursor to keep warm, so scrolling back is not a stall.
+  final int behind;
+}
+
+class RailWindow {
+  const RailWindow({required this.visible, required this.prefetch});
+
+  /// Indices currently on screen, left to right.
+  final List<int> visible;
+
+  /// Indices to warm but not render. Never overlaps [visible].
+  final List<int> prefetch;
+}
+
+const int kRailLookahead = 6;
+const int kRailBehind = 2;
+
+RailWindow railWindow(RailWindowInput input) {
+  if (input.total <= 0 || input.slots <= 0) {
+    return const RailWindow(visible: [], prefetch: []);
+  }
+
+  // A rail scrolled to its end still fills its slots rather than trailing empty
+  // space, so the offset is clamped against the last full page.
+  final maxOffset = math.max(0, input.total - input.slots);
+  final start = math.max(0, math.min(input.offset, maxOffset));
+  final end = math.min(input.total, start + input.slots);
+
+  final visible = <int>[for (var i = start; i < end; i++) i];
+  final prefetch = <int>[
+    for (var i = math.max(0, start - input.behind); i < start; i++) i,
+    for (var i = end; i < math.min(input.total, end + input.lookahead); i++) i,
+  ];
+
+  return RailWindow(visible: visible, prefetch: prefetch);
+}
+
+/// Clamp an offset the way [railWindow] does, for callers stepping the rail.
+int clampRailOffset(int offset, int total, int slots) =>
+    math.max(0, math.min(offset, math.max(0, total - slots)));

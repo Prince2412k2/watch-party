@@ -1,6 +1,5 @@
 {
   "$about": "Canonical behaviour cases for the analog interaction cores. Driven by app/client/src/analog/*.test.ts (JS) and flutter_app/test/analog/interaction_parity_test.dart (Dart). Editing a case to match one client fails the other.",
-
   "steppedScroll": {
     "$about": "One deliberate gesture moves focus one item; the momentum tail is discarded. `expect` is the focus movement produced by that single event.",
     "config": {
@@ -12,117 +11,314 @@
     "cases": [
       {
         "name": "a notched wheel click steps once",
-        "events": [{ "deltaPx": 100, "atMs": 0, "expect": 1 }]
+        "events": [
+          {
+            "deltaPx": 100,
+            "atMs": 0,
+            "expect": 1
+          }
+        ]
       },
       {
         "name": "small trackpad deltas accumulate to exactly one step",
         "events": [
-          { "deltaPx": 12, "atMs": 0, "expect": 0 },
-          { "deltaPx": 12, "atMs": 16, "expect": 0 },
-          { "deltaPx": 12, "atMs": 32, "expect": 0 },
-          { "deltaPx": 12, "atMs": 48, "expect": 1 },
-          { "deltaPx": 12, "atMs": 64, "expect": 0 }
+          {
+            "deltaPx": 12,
+            "atMs": 0,
+            "expect": 0
+          },
+          {
+            "deltaPx": 12,
+            "atMs": 16,
+            "expect": 0
+          },
+          {
+            "deltaPx": 12,
+            "atMs": 32,
+            "expect": 0
+          },
+          {
+            "deltaPx": 12,
+            "atMs": 48,
+            "expect": 1
+          },
+          {
+            "deltaPx": 12,
+            "atMs": 64,
+            "expect": 0
+          }
         ]
       },
       {
         "name": "the decaying momentum tail after a step is absorbed",
         "events": [
-          { "deltaPx": 60, "atMs": 0, "expect": 1 },
-          { "deltaPx": 30, "atMs": 16, "expect": 0 },
-          { "deltaPx": 18, "atMs": 32, "expect": 0 },
-          { "deltaPx": 10, "atMs": 48, "expect": 0 },
-          { "deltaPx": 6, "atMs": 64, "expect": 0 },
-          { "deltaPx": 4, "atMs": 80, "expect": 0 },
-          { "deltaPx": 2, "atMs": 96, "expect": 0 }
+          {
+            "deltaPx": 60,
+            "atMs": 0,
+            "expect": 1
+          },
+          {
+            "deltaPx": 30,
+            "atMs": 16,
+            "expect": 0
+          },
+          {
+            "deltaPx": 18,
+            "atMs": 32,
+            "expect": 0
+          },
+          {
+            "deltaPx": 10,
+            "atMs": 48,
+            "expect": 0
+          },
+          {
+            "deltaPx": 6,
+            "atMs": 64,
+            "expect": 0
+          },
+          {
+            "deltaPx": 4,
+            "atMs": 80,
+            "expect": 0
+          },
+          {
+            "deltaPx": 2,
+            "atMs": 96,
+            "expect": 0
+          }
         ]
       },
       {
         "name": "a sustained scroll keeps stepping once the cooldown clears",
         "events": [
-          { "deltaPx": 60, "atMs": 0, "expect": 1 },
-          { "deltaPx": 60, "atMs": 120, "expect": 1 },
-          { "deltaPx": 60, "atMs": 240, "expect": 1 }
+          {
+            "deltaPx": 60,
+            "atMs": 0,
+            "expect": 1
+          },
+          {
+            "deltaPx": 60,
+            "atMs": 120,
+            "expect": 1
+          },
+          {
+            "deltaPx": 60,
+            "atMs": 240,
+            "expect": 1
+          }
         ]
       },
       {
         "name": "a gap ends the gesture and clears the accumulator",
         "events": [
-          { "deltaPx": 30, "atMs": 0, "expect": 0 },
-          { "deltaPx": 30, "atMs": 200, "expect": 0 }
+          {
+            "deltaPx": 30,
+            "atMs": 0,
+            "expect": 0
+          },
+          {
+            "deltaPx": 30,
+            "atMs": 200,
+            "expect": 0
+          }
         ]
       },
       {
         "name": "reversing direction restarts accumulation rather than cancelling",
         "events": [
-          { "deltaPx": 30, "atMs": 0, "expect": 0 },
-          { "deltaPx": -30, "atMs": 16, "expect": 0 }
+          {
+            "deltaPx": 30,
+            "atMs": 0,
+            "expect": 0
+          },
+          {
+            "deltaPx": -30,
+            "atMs": 16,
+            "expect": 0
+          }
         ]
       },
       {
         "name": "scrolling the other way steps backwards",
-        "events": [{ "deltaPx": -100, "atMs": 0, "expect": -1 }]
+        "events": [
+          {
+            "deltaPx": -100,
+            "atMs": 0,
+            "expect": -1
+          }
+        ]
       },
       {
         "name": "zero deltas are ignored",
         "events": [
-          { "deltaPx": 0, "atMs": 0, "expect": 0 },
-          { "deltaPx": 100, "atMs": 16, "expect": 1 }
+          {
+            "deltaPx": 0,
+            "atMs": 0,
+            "expect": 0
+          },
+          {
+            "deltaPx": 100,
+            "atMs": 16,
+            "expect": 1
+          }
         ]
       }
     ]
   },
-
   "focusRestore": {
     "$about": "Back restores the exact shelf and item; the cases that matter are the ones where 'exact' no longer exists.",
     "cases": [
       {
         "name": "the remembered shelf and item both survive",
-        "memory": { "home": { "shelfId": "recent", "itemId": "y" } },
+        "memory": {
+          "home": {
+            "shelfId": "recent",
+            "itemId": "y"
+          }
+        },
         "surfaceId": "home",
         "rememberedIndex": 1,
         "shelves": [
-          { "shelfId": "continue", "itemIds": ["a", "b", "c"] },
-          { "shelfId": "recent", "itemIds": ["x", "y"] }
+          {
+            "shelfId": "continue",
+            "itemIds": [
+              "a",
+              "b",
+              "c"
+            ]
+          },
+          {
+            "shelfId": "recent",
+            "itemIds": [
+              "x",
+              "y"
+            ]
+          }
         ],
-        "expect": { "kind": "exact", "position": { "shelfId": "recent", "itemId": "y" } }
+        "expect": {
+          "kind": "exact",
+          "position": {
+            "shelfId": "recent",
+            "itemId": "y"
+          }
+        }
       },
       {
         "name": "a removed item holds its index in the shortened shelf",
-        "memory": { "home": { "shelfId": "continue", "itemId": "b" } },
+        "memory": {
+          "home": {
+            "shelfId": "continue",
+            "itemId": "b"
+          }
+        },
         "surfaceId": "home",
         "rememberedIndex": 1,
-        "shelves": [{ "shelfId": "continue", "itemIds": ["a", "c"] }],
-        "expect": { "kind": "nearest", "position": { "shelfId": "continue", "itemId": "c" } }
+        "shelves": [
+          {
+            "shelfId": "continue",
+            "itemIds": [
+              "a",
+              "c"
+            ]
+          }
+        ],
+        "expect": {
+          "kind": "nearest",
+          "position": {
+            "shelfId": "continue",
+            "itemId": "c"
+          }
+        }
       },
       {
         "name": "the held index clamps into a shelf that shrank past it",
-        "memory": { "home": { "shelfId": "continue", "itemId": "c" } },
+        "memory": {
+          "home": {
+            "shelfId": "continue",
+            "itemId": "c"
+          }
+        },
         "surfaceId": "home",
         "rememberedIndex": 2,
-        "shelves": [{ "shelfId": "continue", "itemIds": ["a"] }],
-        "expect": { "kind": "nearest", "position": { "shelfId": "continue", "itemId": "a" } }
+        "shelves": [
+          {
+            "shelfId": "continue",
+            "itemIds": [
+              "a"
+            ]
+          }
+        ],
+        "expect": {
+          "kind": "nearest",
+          "position": {
+            "shelfId": "continue",
+            "itemId": "a"
+          }
+        }
       },
       {
         "name": "a vanished shelf falls back to the default position",
-        "memory": { "home": { "shelfId": "gone", "itemId": "z" } },
+        "memory": {
+          "home": {
+            "shelfId": "gone",
+            "itemId": "z"
+          }
+        },
         "surfaceId": "home",
         "rememberedIndex": 0,
         "shelves": [
-          { "shelfId": "continue", "itemIds": ["a", "b"] },
-          { "shelfId": "recent", "itemIds": ["x"] }
+          {
+            "shelfId": "continue",
+            "itemIds": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "shelfId": "recent",
+            "itemIds": [
+              "x"
+            ]
+          }
         ],
-        "expect": { "kind": "default", "position": { "shelfId": "continue", "itemId": "a" } }
+        "expect": {
+          "kind": "default",
+          "position": {
+            "shelfId": "continue",
+            "itemId": "a"
+          }
+        }
       },
       {
         "name": "a remembered shelf that emptied falls back to the default position",
-        "memory": { "home": { "shelfId": "continue", "itemId": "a" } },
+        "memory": {
+          "home": {
+            "shelfId": "continue",
+            "itemId": "a"
+          }
+        },
         "surfaceId": "home",
         "rememberedIndex": 0,
         "shelves": [
-          { "shelfId": "continue", "itemIds": [] },
-          { "shelfId": "recent", "itemIds": ["x"] }
+          {
+            "shelfId": "continue",
+            "itemIds": []
+          },
+          {
+            "shelfId": "recent",
+            "itemIds": [
+              "x"
+            ]
+          }
         ],
-        "expect": { "kind": "default", "position": { "shelfId": "recent", "itemId": "x" } }
+        "expect": {
+          "kind": "default",
+          "position": {
+            "shelfId": "recent",
+            "itemId": "x"
+          }
+        }
       },
       {
         "name": "nothing remembered lands on the first focusable item",
@@ -130,10 +326,27 @@
         "surfaceId": "home",
         "rememberedIndex": 0,
         "shelves": [
-          { "shelfId": "continue", "itemIds": ["a", "b"] },
-          { "shelfId": "recent", "itemIds": ["x"] }
+          {
+            "shelfId": "continue",
+            "itemIds": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "shelfId": "recent",
+            "itemIds": [
+              "x"
+            ]
+          }
         ],
-        "expect": { "kind": "default", "position": { "shelfId": "continue", "itemId": "a" } }
+        "expect": {
+          "kind": "default",
+          "position": {
+            "shelfId": "continue",
+            "itemId": "a"
+          }
+        }
       },
       {
         "name": "the default position skips empty leading shelves",
@@ -141,22 +354,43 @@
         "surfaceId": "home",
         "rememberedIndex": 0,
         "shelves": [
-          { "shelfId": "continue", "itemIds": [] },
-          { "shelfId": "recent", "itemIds": ["x"] }
+          {
+            "shelfId": "continue",
+            "itemIds": []
+          },
+          {
+            "shelfId": "recent",
+            "itemIds": [
+              "x"
+            ]
+          }
         ],
-        "expect": { "kind": "default", "position": { "shelfId": "recent", "itemId": "x" } }
+        "expect": {
+          "kind": "default",
+          "position": {
+            "shelfId": "recent",
+            "itemId": "x"
+          }
+        }
       },
       {
         "name": "a surface with nothing focusable reports empty",
         "memory": {},
         "surfaceId": "home",
         "rememberedIndex": 0,
-        "shelves": [{ "shelfId": "continue", "itemIds": [] }],
-        "expect": { "kind": "empty", "position": null }
+        "shelves": [
+          {
+            "shelfId": "continue",
+            "itemIds": []
+          }
+        ],
+        "expect": {
+          "kind": "empty",
+          "position": null
+        }
       }
     ]
   },
-
   "seasonArtwork": {
     "$about": "season Primary -> series Primary -> fixed neutral placeholder. Both clients derive this from the same Jellyfin season item contract.",
     "cases": [
@@ -170,7 +404,12 @@
           "seriesImageTag": "tagB",
           "failedIds": []
         },
-        "expect": { "kind": "season", "itemId": "se1", "imageTag": "tagA", "label": null }
+        "expect": {
+          "kind": "season",
+          "itemId": "se1",
+          "imageTag": "tagA",
+          "label": null
+        }
       },
       {
         "name": "a season without art falls back to the series poster",
@@ -182,7 +421,12 @@
           "seriesImageTag": "tagB",
           "failedIds": []
         },
-        "expect": { "kind": "series", "itemId": "sr1", "imageTag": "tagB", "label": null }
+        "expect": {
+          "kind": "series",
+          "itemId": "sr1",
+          "imageTag": "tagB",
+          "label": null
+        }
       },
       {
         "name": "no artwork anywhere yields the numbered placeholder",
@@ -194,7 +438,12 @@
           "seriesImageTag": null,
           "failedIds": []
         },
-        "expect": { "kind": "placeholder", "itemId": null, "imageTag": null, "label": "S3" }
+        "expect": {
+          "kind": "placeholder",
+          "itemId": null,
+          "imageTag": null,
+          "label": "S3"
+        }
       },
       {
         "name": "season art that failed to load falls through to the series",
@@ -204,9 +453,16 @@
           "seasonImageTag": "tagA",
           "seriesId": "sr1",
           "seriesImageTag": "tagB",
-          "failedIds": ["se1"]
+          "failedIds": [
+            "se1"
+          ]
         },
-        "expect": { "kind": "series", "itemId": "sr1", "imageTag": "tagB", "label": null }
+        "expect": {
+          "kind": "series",
+          "itemId": "sr1",
+          "imageTag": "tagB",
+          "label": null
+        }
       },
       {
         "name": "both images failing yields the placeholder rather than looping",
@@ -216,9 +472,17 @@
           "seasonImageTag": "tagA",
           "seriesId": "sr1",
           "seriesImageTag": "tagB",
-          "failedIds": ["se1", "sr1"]
+          "failedIds": [
+            "se1",
+            "sr1"
+          ]
         },
-        "expect": { "kind": "placeholder", "itemId": null, "imageTag": null, "label": "S3" }
+        "expect": {
+          "kind": "placeholder",
+          "itemId": null,
+          "imageTag": null,
+          "label": "S3"
+        }
       },
       {
         "name": "an unnumbered season still gets a fixed-size placeholder",
@@ -230,89 +494,259 @@
           "seriesImageTag": null,
           "failedIds": []
         },
-        "expect": { "kind": "placeholder", "itemId": null, "imageTag": null, "label": "—" }
+        "expect": {
+          "kind": "placeholder",
+          "itemId": null,
+          "imageTag": null,
+          "label": "—"
+        }
       }
     ]
   },
-
   "toastQueue": {
     "$about": "Chat toasts while the drawer is closed. Ops run in order against one queue; `view` asserts the rendered stack.",
     "cases": [
       {
         "name": "a single message shows as a single toast",
         "ops": [
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "hi", "atMs": 0 },
-          { "op": "view", "toasts": ["m1"], "collapsedCount": 0 }
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "hi",
+            "atMs": 0
+          },
+          {
+            "op": "view",
+            "toasts": [
+              "m1"
+            ],
+            "collapsedCount": 0
+          }
         ]
       },
       {
         "name": "three messages stack without collapsing",
         "ops": [
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "one", "atMs": 0 },
-          { "op": "push", "id": "m2", "sender": "Bo", "preview": "two", "atMs": 100 },
-          { "op": "push", "id": "m3", "sender": "Cy", "preview": "three", "atMs": 200 },
-          { "op": "view", "toasts": ["m1", "m2", "m3"], "collapsedCount": 0 }
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "one",
+            "atMs": 0
+          },
+          {
+            "op": "push",
+            "id": "m2",
+            "sender": "Bo",
+            "preview": "two",
+            "atMs": 100
+          },
+          {
+            "op": "push",
+            "id": "m3",
+            "sender": "Cy",
+            "preview": "three",
+            "atMs": 200
+          },
+          {
+            "op": "view",
+            "toasts": [
+              "m1",
+              "m2",
+              "m3"
+            ],
+            "collapsedCount": 0
+          }
         ]
       },
       {
         "name": "a fourth message collapses the oldest into a count",
         "ops": [
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "one", "atMs": 0 },
-          { "op": "push", "id": "m2", "sender": "Bo", "preview": "two", "atMs": 100 },
-          { "op": "push", "id": "m3", "sender": "Cy", "preview": "three", "atMs": 200 },
-          { "op": "push", "id": "m4", "sender": "Di", "preview": "four", "atMs": 300 },
-          { "op": "view", "toasts": ["m2", "m3", "m4"], "collapsedCount": 1 }
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "one",
+            "atMs": 0
+          },
+          {
+            "op": "push",
+            "id": "m2",
+            "sender": "Bo",
+            "preview": "two",
+            "atMs": 100
+          },
+          {
+            "op": "push",
+            "id": "m3",
+            "sender": "Cy",
+            "preview": "three",
+            "atMs": 200
+          },
+          {
+            "op": "push",
+            "id": "m4",
+            "sender": "Di",
+            "preview": "four",
+            "atMs": 300
+          },
+          {
+            "op": "view",
+            "toasts": [
+              "m2",
+              "m3",
+              "m4"
+            ],
+            "collapsedCount": 1
+          }
         ]
       },
       {
         "name": "a toast lives for exactly four seconds",
         "ops": [
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "hi", "atMs": 0 },
-          { "op": "expire", "atMs": 3999 },
-          { "op": "view", "toasts": ["m1"], "collapsedCount": 0 },
-          { "op": "expire", "atMs": 4000 },
-          { "op": "view", "toasts": [], "collapsedCount": 0 }
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "hi",
+            "atMs": 0
+          },
+          {
+            "op": "expire",
+            "atMs": 3999
+          },
+          {
+            "op": "view",
+            "toasts": [
+              "m1"
+            ],
+            "collapsedCount": 0
+          },
+          {
+            "op": "expire",
+            "atMs": 4000
+          },
+          {
+            "op": "view",
+            "toasts": [],
+            "collapsedCount": 0
+          }
         ]
       },
       {
         "name": "each toast expires on its own clock",
         "ops": [
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "one", "atMs": 0 },
-          { "op": "push", "id": "m2", "sender": "Bo", "preview": "two", "atMs": 2000 },
-          { "op": "expire", "atMs": 4000 },
-          { "op": "view", "toasts": ["m2"], "collapsedCount": 0 }
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "one",
+            "atMs": 0
+          },
+          {
+            "op": "push",
+            "id": "m2",
+            "sender": "Bo",
+            "preview": "two",
+            "atMs": 2000
+          },
+          {
+            "op": "expire",
+            "atMs": 4000
+          },
+          {
+            "op": "view",
+            "toasts": [
+              "m2"
+            ],
+            "collapsedCount": 0
+          }
         ]
       },
       {
         "name": "opening chat dismisses toasts and closing does not resurrect them",
         "ops": [
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "hi", "atMs": 0 },
-          { "op": "chat", "open": true },
-          { "op": "view", "toasts": [], "collapsedCount": 0 },
-          { "op": "chat", "open": false },
-          { "op": "view", "toasts": [], "collapsedCount": 0 }
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "hi",
+            "atMs": 0
+          },
+          {
+            "op": "chat",
+            "open": true
+          },
+          {
+            "op": "view",
+            "toasts": [],
+            "collapsedCount": 0
+          },
+          {
+            "op": "chat",
+            "open": false
+          },
+          {
+            "op": "view",
+            "toasts": [],
+            "collapsedCount": 0
+          }
         ]
       },
       {
         "name": "messages arriving while chat is open are never queued",
         "ops": [
-          { "op": "chat", "open": true },
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "hi", "atMs": 0 },
-          { "op": "chat", "open": false },
-          { "op": "view", "toasts": [], "collapsedCount": 0 }
+          {
+            "op": "chat",
+            "open": true
+          },
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "hi",
+            "atMs": 0
+          },
+          {
+            "op": "chat",
+            "open": false
+          },
+          {
+            "op": "view",
+            "toasts": [],
+            "collapsedCount": 0
+          }
         ]
       },
       {
         "name": "a repeated message id is ignored",
         "ops": [
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "hi", "atMs": 0 },
-          { "op": "push", "id": "m1", "sender": "Ada", "preview": "hi", "atMs": 100 },
-          { "op": "view", "toasts": ["m1"], "collapsedCount": 0 }
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "hi",
+            "atMs": 0
+          },
+          {
+            "op": "push",
+            "id": "m1",
+            "sender": "Ada",
+            "preview": "hi",
+            "atMs": 100
+          },
+          {
+            "op": "view",
+            "toasts": [
+              "m1"
+            ],
+            "collapsedCount": 0
+          }
         ]
       }
     ]
   },
-
   "autoHide": {
     "$about": "Controls hide after three seconds without relevant input, and never while a hold is taken or playback is paused.",
     "cases": [
@@ -320,115 +754,391 @@
         "name": "controls hide after three seconds of no input",
         "startAtMs": 0,
         "ops": [
-          { "op": "tick", "atMs": 2999, "expectVisible": true },
-          { "op": "tick", "atMs": 3000, "expectVisible": false }
+          {
+            "op": "tick",
+            "atMs": 2999,
+            "expectVisible": true
+          },
+          {
+            "op": "tick",
+            "atMs": 3000,
+            "expectVisible": false
+          }
         ]
       },
       {
         "name": "pointer movement restores the chrome and restarts the timer",
         "startAtMs": 0,
         "ops": [
-          { "op": "tick", "atMs": 3000, "expectVisible": false },
-          { "op": "input", "kind": "pointer", "atMs": 3100 },
-          { "op": "tick", "atMs": 3100, "expectVisible": true },
-          { "op": "tick", "atMs": 6099, "expectVisible": true },
-          { "op": "tick", "atMs": 6100, "expectVisible": false }
+          {
+            "op": "tick",
+            "atMs": 3000,
+            "expectVisible": false
+          },
+          {
+            "op": "input",
+            "kind": "pointer",
+            "atMs": 3100
+          },
+          {
+            "op": "tick",
+            "atMs": 3100,
+            "expectVisible": true
+          },
+          {
+            "op": "tick",
+            "atMs": 6099,
+            "expectVisible": true
+          },
+          {
+            "op": "tick",
+            "atMs": 6100,
+            "expectVisible": false
+          }
         ]
       },
       {
         "name": "a media key restores the chrome without touching playback",
         "startAtMs": 0,
         "ops": [
-          { "op": "tick", "atMs": 3000, "expectVisible": false },
-          { "op": "input", "kind": "mediaKey", "atMs": 3000 },
-          { "op": "tick", "atMs": 3000, "expectVisible": true }
+          {
+            "op": "tick",
+            "atMs": 3000,
+            "expectVisible": false
+          },
+          {
+            "op": "input",
+            "kind": "mediaKey",
+            "atMs": 3000
+          },
+          {
+            "op": "tick",
+            "atMs": 3000,
+            "expectVisible": true
+          }
         ]
       },
       {
         "name": "a hold pins the chrome open indefinitely",
         "startAtMs": 0,
         "ops": [
-          { "op": "hold", "reason": "scrubbing" },
-          { "op": "tick", "atMs": 10000, "expectVisible": true }
+          {
+            "op": "hold",
+            "reason": "scrubbing"
+          },
+          {
+            "op": "tick",
+            "atMs": 10000,
+            "expectVisible": true
+          }
         ]
       },
       {
         "name": "releasing a hold grants the full three seconds again",
         "startAtMs": 0,
         "ops": [
-          { "op": "hold", "reason": "settings" },
-          { "op": "tick", "atMs": 10000, "expectVisible": true },
-          { "op": "release", "reason": "settings", "atMs": 10000 },
-          { "op": "tick", "atMs": 12999, "expectVisible": true },
-          { "op": "tick", "atMs": 13000, "expectVisible": false }
+          {
+            "op": "hold",
+            "reason": "settings"
+          },
+          {
+            "op": "tick",
+            "atMs": 10000,
+            "expectVisible": true
+          },
+          {
+            "op": "release",
+            "reason": "settings",
+            "atMs": 10000
+          },
+          {
+            "op": "tick",
+            "atMs": 12999,
+            "expectVisible": true
+          },
+          {
+            "op": "tick",
+            "atMs": 13000,
+            "expectVisible": false
+          }
         ]
       },
       {
         "name": "nested holds keep the chrome up until the last one releases",
         "startAtMs": 0,
         "ops": [
-          { "op": "hold", "reason": "settings" },
-          { "op": "hold", "reason": "scrubbing" },
-          { "op": "release", "reason": "settings", "atMs": 1000 },
-          { "op": "tick", "atMs": 10000, "expectVisible": true },
-          { "op": "release", "reason": "scrubbing", "atMs": 10000 },
-          { "op": "tick", "atMs": 13000, "expectVisible": false }
+          {
+            "op": "hold",
+            "reason": "settings"
+          },
+          {
+            "op": "hold",
+            "reason": "scrubbing"
+          },
+          {
+            "op": "release",
+            "reason": "settings",
+            "atMs": 1000
+          },
+          {
+            "op": "tick",
+            "atMs": 10000,
+            "expectVisible": true
+          },
+          {
+            "op": "release",
+            "reason": "scrubbing",
+            "atMs": 10000
+          },
+          {
+            "op": "tick",
+            "atMs": 13000,
+            "expectVisible": false
+          }
         ]
       },
       {
         "name": "paused playback keeps the chrome up",
         "startAtMs": 0,
         "ops": [
-          { "op": "playing", "value": false, "atMs": 0 },
-          { "op": "tick", "atMs": 10000, "expectVisible": true }
+          {
+            "op": "playing",
+            "value": false,
+            "atMs": 0
+          },
+          {
+            "op": "tick",
+            "atMs": 10000,
+            "expectVisible": true
+          }
         ]
       },
       {
         "name": "resuming restarts the timer from the resume",
         "startAtMs": 0,
         "ops": [
-          { "op": "playing", "value": false, "atMs": 0 },
-          { "op": "tick", "atMs": 10000, "expectVisible": true },
-          { "op": "playing", "value": true, "atMs": 10000 },
-          { "op": "tick", "atMs": 12999, "expectVisible": true },
-          { "op": "tick", "atMs": 13000, "expectVisible": false }
+          {
+            "op": "playing",
+            "value": false,
+            "atMs": 0
+          },
+          {
+            "op": "tick",
+            "atMs": 10000,
+            "expectVisible": true
+          },
+          {
+            "op": "playing",
+            "value": true,
+            "atMs": 10000
+          },
+          {
+            "op": "tick",
+            "atMs": 12999,
+            "expectVisible": true
+          },
+          {
+            "op": "tick",
+            "atMs": 13000,
+            "expectVisible": false
+          }
         ]
       }
     ]
   },
-
   "chatShortcut": {
     "$about": "Ctrl+C toggles chat, but must never shadow the platform copy command.",
     "cases": [
       {
         "name": "plain Ctrl+C toggles chat",
-        "context": { "ctrlOrMeta": true, "key": "c", "editable": false, "hasSelection": false },
+        "context": {
+          "ctrlOrMeta": true,
+          "key": "c",
+          "editable": false,
+          "hasSelection": false
+        },
         "expect": true
       },
       {
         "name": "Cmd+C toggles chat on mac",
-        "context": { "ctrlOrMeta": true, "key": "C", "editable": false, "hasSelection": false },
+        "context": {
+          "ctrlOrMeta": true,
+          "key": "C",
+          "editable": false,
+          "hasSelection": false
+        },
         "expect": true
       },
       {
         "name": "Ctrl+C inside a text field is left to the platform",
-        "context": { "ctrlOrMeta": true, "key": "c", "editable": true, "hasSelection": false },
+        "context": {
+          "ctrlOrMeta": true,
+          "key": "c",
+          "editable": true,
+          "hasSelection": false
+        },
         "expect": false
       },
       {
         "name": "Ctrl+C with a selection is left to copy",
-        "context": { "ctrlOrMeta": true, "key": "c", "editable": false, "hasSelection": true },
+        "context": {
+          "ctrlOrMeta": true,
+          "key": "c",
+          "editable": false,
+          "hasSelection": true
+        },
         "expect": false
       },
       {
         "name": "an unmodified c does nothing",
-        "context": { "ctrlOrMeta": false, "key": "c", "editable": false, "hasSelection": false },
+        "context": {
+          "ctrlOrMeta": false,
+          "key": "c",
+          "editable": false,
+          "hasSelection": false
+        },
         "expect": false
       },
       {
         "name": "a different modified key does nothing",
-        "context": { "ctrlOrMeta": true, "key": "v", "editable": false, "hasSelection": false },
+        "context": {
+          "ctrlOrMeta": true,
+          "key": "v",
+          "editable": false,
+          "hasSelection": false
+        },
         "expect": false
+      }
+    ]
+  },
+  "railWindow": {
+    "$about": "Fixed-cursor rail: the cursor is pinned to the first slot and the row translates under it, so 'selected' and 'scroll offset' are one number. `prefetch` is what the native client warms ahead of arrival.",
+    "cases": [
+      {
+        "name": "a full rail shows exactly its slots and warms ahead",
+        "input": {
+          "total": 20,
+          "offset": 0,
+          "slots": 5,
+          "lookahead": 3,
+          "behind": 2
+        },
+        "expect": {
+          "visible": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "prefetch": [
+            5,
+            6,
+            7
+          ]
+        }
+      },
+      {
+        "name": "scrolled in, it warms behind as well as ahead",
+        "input": {
+          "total": 20,
+          "offset": 6,
+          "slots": 5,
+          "lookahead": 3,
+          "behind": 2
+        },
+        "expect": {
+          "visible": [
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "prefetch": [
+            4,
+            5,
+            11,
+            12,
+            13
+          ]
+        }
+      },
+      {
+        "name": "the offset clamps so the last page stays full",
+        "input": {
+          "total": 8,
+          "offset": 99,
+          "slots": 5,
+          "lookahead": 3,
+          "behind": 2
+        },
+        "expect": {
+          "visible": [
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "prefetch": [
+            1,
+            2
+          ]
+        }
+      },
+      {
+        "name": "a rail shorter than its slots shows everything and warms nothing",
+        "input": {
+          "total": 3,
+          "offset": 0,
+          "slots": 5,
+          "lookahead": 3,
+          "behind": 2
+        },
+        "expect": {
+          "visible": [
+            0,
+            1,
+            2
+          ],
+          "prefetch": []
+        }
+      },
+      {
+        "name": "a negative offset is treated as the start",
+        "input": {
+          "total": 10,
+          "offset": -4,
+          "slots": 3,
+          "lookahead": 2,
+          "behind": 2
+        },
+        "expect": {
+          "visible": [
+            0,
+            1,
+            2
+          ],
+          "prefetch": [
+            3,
+            4
+          ]
+        }
+      },
+      {
+        "name": "an empty rail has no window at all",
+        "input": {
+          "total": 0,
+          "offset": 0,
+          "slots": 5,
+          "lookahead": 3,
+          "behind": 2
+        },
+        "expect": {
+          "visible": [],
+          "prefetch": []
+        }
       }
     ]
   }
