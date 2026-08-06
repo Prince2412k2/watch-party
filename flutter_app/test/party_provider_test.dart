@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/cache/media_cache_proxy.dart';
@@ -95,6 +97,51 @@ class _NoopPlayer implements PlayerController {
   bool get isBufferingNow => false;
 }
 
+/// A player whose `open` can be held mid-flight, and which logs every call in
+/// completion order. Lets the party-state → player races be forced explicitly:
+/// a second selection, or a leave, arrives while the first open is still
+/// loading, and the log shows which write actually landed last.
+class _GatedPlayer extends _NoopPlayer {
+  final events = <String>[];
+  final _gates = <String, Completer<void>>{};
+
+  /// Holds the open of [mediaId] until [release] is called for it.
+  void gate(String mediaId) => _gates[mediaId] = Completer<void>();
+
+  void release(String mediaId) => _gates.remove(mediaId)?.complete();
+
+  @override
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {
+    final mediaId = url.split('/').last.split('?').first;
+    await _gates[mediaId]?.future;
+    events.add('open:$mediaId');
+    return super.open(url, startAt: startAt, autoplay: autoplay);
+  }
+
+  @override
+  Future<void> pause() async {
+    events.add('pause');
+    return super.pause();
+  }
+
+  @override
+  Future<void> seek(Duration position) async => events.add('seek');
+}
+
+/// A cache proxy that mints URLs without binding a real local HTTP server —
+/// only the item id in the path matters to these tests.
+class _StubCacheProxy extends MediaCacheProxy {
+  _StubCacheProxy() : super(apiClient: _StubApiClient());
+
+  @override
+  String urlFor(String itemId, {String? mediaSourceId}) =>
+      'http://127.0.0.1/media/$itemId';
+}
+
 /// An [ApiClient] whose `livekitToken` never resolves usefully (party flows
 /// treat A/V as best-effort), keeping these tests focused on party/host logic.
 class _StubApiClient extends MockApiClient {
@@ -110,6 +157,7 @@ Map<String, dynamic> _session({
   String? mediaItemId,
   String? mediaSourceId,
   bool collaborativeControl = false,
+  String syncMode = 'hopping',
   List<Map<String, dynamic>> guests = const [],
   Map<String, dynamic>? playback,
   Map<String, dynamic>? subtitlePreferences,
@@ -122,7 +170,7 @@ Map<String, dynamic> _session({
   'mediaItemId': mediaItemId,
   'mediaSourceId': mediaSourceId,
   'collaborativeControl': collaborativeControl,
-  'syncMode': 'hopping',
+  'syncMode': syncMode,
   'guests': guests,
   'schedule': {},
   'browse': {'stack': []},
@@ -141,9 +189,10 @@ void main() {
     String myUserId,
     Map<String, dynamic> Function(String, Object?) responder, {
     MediaCacheProxy? proxy,
+    _NoopPlayer? withPlayer,
   }) {
     socket = _ScriptedSocket(responder);
-    player = _NoopPlayer();
+    player = withPlayer ?? _NoopPlayer();
     final c = ProviderContainer(
       overrides: [
         socketClientProvider.overrideWithValue(socket),
@@ -607,6 +656,169 @@ void main() {
       expect(engine.isHost, isFalse);
     },
   );
+
+  // ── Shared-player serialization (audit #61) ─────────────────────────────
+  //
+  // Every one of these forces the interleaving with an explicitly held open
+  // rather than hoping for it: the failure mode is an ordering, so a test that
+  // does not control the ordering proves nothing.
+
+  test('a second media selection lands last even when the first open is '
+      'still loading', () async {
+    final gated = _GatedPlayer()..gate('movie-A');
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {
+          'status': 'joined',
+          'session': _session(
+            hostId: 'web-host',
+            stage: 'watching',
+            mediaItemId: 'movie-A',
+          ),
+        };
+      }
+      return {'ok': true};
+    }, proxy: _StubCacheProxy(), withPlayer: gated);
+
+    await container.read(partyProvider.notifier).join('party-1');
+    // The host switches titles while A is still opening.
+    socket.inject(
+      ServerEvent.partyState,
+      _session(hostId: 'web-host', stage: 'watching', mediaItemId: 'movie-B'),
+    );
+    await Future<void>.delayed(Duration.zero);
+    gated.release('movie-A');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    // B is what the room is watching, so B must be the last thing opened —
+    // unserialized, A completed after B and left this client on the old movie.
+    expect(gated.events, ['open:movie-A', 'open:movie-B']);
+    expect(gated.lastOpenedUrl, endsWith('/movie-B'));
+  });
+
+  test('leaving mid-open stops the player after the open, not before', () async {
+    final gated = _GatedPlayer()..gate('movie-A');
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {
+          'status': 'joined',
+          'session': _session(
+            hostId: 'web-host',
+            stage: 'watching',
+            mediaItemId: 'movie-A',
+          ),
+        };
+      }
+      return {'ok': true};
+    }, proxy: _StubCacheProxy(), withPlayer: gated);
+
+    final notifier = container.read(partyProvider.notifier);
+    await notifier.join('party-1');
+    // Leave while the open is in flight; it can only finish once released.
+    final leaving = notifier.leave();
+    await Future<void>.delayed(Duration.zero);
+    gated.release('movie-A');
+    await leaving;
+
+    // Ordered behind the open. Stopping first left the player to finish loading
+    // afterwards and sit there holding the movie of a party we had left.
+    expect(gated.events, ['open:movie-A', 'pause', 'seek']);
+    expect(container.read(partyProvider), isNull);
+  });
+
+  test('a solo-playback handoff is not torn down by the stop its old session '
+      'had queued', () async {
+    final gated = _GatedPlayer()..gate('movie-A');
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {
+          'partyId': 'party-1',
+          'session': _session(
+            hostId: 'host1',
+            stage: 'watching',
+            mediaItemId: 'movie-A',
+          ),
+        };
+      }
+      return {'ok': true};
+    }, proxy: _StubCacheProxy(), withPlayer: gated);
+
+    final notifier = container.read(partyProvider.notifier);
+    await notifier.create();
+    // Back to the lobby: queues a stop behind the open that is still loading.
+    socket.inject(ServerEvent.partyState, _session(hostId: 'host1'));
+    await Future<void>.delayed(Duration.zero);
+    // …and immediately convert what is playing into a fresh party. This claims
+    // the shared player, so the queued stop must stand down.
+    final handoff = notifier.createFromCurrentPlayback(
+      mediaItemId: 'movie-A',
+      position: const Duration(minutes: 12),
+    );
+    await Future<void>.delayed(Duration.zero);
+    gated.release('movie-A');
+    await handoff;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(gated.events, ['open:movie-A']);
+    expect(gated.openCalls, 1);
+  });
+
+  // ── Sync mode propagation (audit #61) ──────────────────────────────────
+
+  test('the room\'s syncMode reaches the engine on join', () async {
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {
+          'status': 'joined',
+          'session': _session(hostId: 'host1', syncMode: 'dragging'),
+        };
+      }
+      return {'ok': true};
+    });
+
+    await container.read(partyProvider.notifier).join('party-1');
+
+    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+    expect(engine.syncMode, 'dragging');
+  });
+
+  test('the room\'s syncMode is restored by resume()', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyResume) {
+        return {'session': _session(hostId: 'host1', syncMode: 'dragging')};
+      }
+      return {'ok': true};
+    });
+
+    expect(await container.read(partyProvider.notifier).resume(), isTrue);
+
+    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+    expect(engine.syncMode, 'dragging');
+  });
+
+  test('host:changed re-pushes the room\'s syncMode with the new role', () async {
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {
+          'status': 'joined',
+          'session': _session(hostId: 'host1', syncMode: 'dragging'),
+        };
+      }
+      return {'ok': true};
+    });
+
+    final notifier = container.read(partyProvider.notifier);
+    await notifier.join('party-1');
+    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+    // Force the engine back onto its default so the transfer has something to
+    // correct — the role push and the mode push have to travel together.
+    engine.syncMode = 'hopping';
+
+    socket.inject(ServerEvent.hostChanged, {'hostId': 'guest1'});
+
+    expect(notifier.isHost, isTrue);
+    expect(engine.syncMode, 'dragging');
+  });
 
   test(
     'party:ended stops a Flutter guest player and clears the room',

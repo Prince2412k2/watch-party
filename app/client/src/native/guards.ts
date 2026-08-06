@@ -1,5 +1,5 @@
-import type { DownloadRecord, OfflineRecord } from './contract'
-import type { DownloadDonePayload, DownloadErrorPayload, DownloadProgressPayload } from './offline/reconcile'
+import type { DownloadRecord } from './contract.ts'
+import type { DownloadDonePayload, DownloadErrorPayload, DownloadProgressPayload } from './offline/reconcile.ts'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -16,12 +16,6 @@ export function isDownloadRecord(value: unknown): value is DownloadRecord {
     ['queued', 'active', 'paused', 'done', 'error'].includes(String(value.state)) &&
     isFiniteNumber(value.receivedBytes) && isFiniteNumber(value.totalBytes) &&
     isFiniteNumber(value.parts)
-}
-
-export function isOfflineRecord(value: unknown): value is OfflineRecord {
-  return isRecord(value) && typeof value.itemId === 'string' &&
-    typeof value.title === 'string' && typeof value.path === 'string' &&
-    isFiniteNumber(value.sizeBytes) && typeof value.addedAt === 'string'
 }
 
 export function isDownloadProgress(value: unknown): value is DownloadProgressPayload {

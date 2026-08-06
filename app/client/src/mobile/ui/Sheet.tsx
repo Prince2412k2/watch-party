@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { T, R, EASE, Z, TYPE } from '../theme'
+import { T, R, EASE, Z, TYPE } from '../theme.ts'
 
 /**
  * Bottom sheet: a blurred scrim (scrimIn) behind a flat, solid `surface` panel

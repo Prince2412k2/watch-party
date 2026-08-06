@@ -1,0 +1,147 @@
+{
+  "$schema": "./analog-tokens.schema.md",
+  "$about": "Canonical analog design tokens. Edit ONLY this file, then run `node app/shared/design/generate.mjs`. See README.md.",
+
+  "color": {
+    "$about": "Warm blacks and softly tinted neutrals — never pure black, never pure white. R > G > B on every neutral.",
+
+    "stageVoid": "#070605",
+    "stageGround": "#0E0C0A",
+    "stageSurface": "#16130F",
+    "stageSurface2": "#201C18",
+    "stageSurface3": "#2B2621",
+
+    "ink": "#F4EFE6",
+    "inkDim": "#F4EFE6A3",
+    "inkFaint": "#F4EFE661",
+
+    "line": "#F4EFE61A",
+    "lineStrong": "#F4EFE62E",
+
+    "edgeLight": "#FFF6E83D",
+    "edgeShade": "#0000008C",
+
+    "shadowCast": "#120A0499",
+    "shadowCastStrong": "#120A04C4",
+
+    "backdropScrim": "#0E0C0AD9",
+    "backdropVignette": "#070605B3",
+
+    "accent": "#F4EFE6",
+    "onAccent": "#0E0C0A",
+
+    "statusDanger": "#E0655E",
+    "statusSuccess": "#5AB98A",
+    "statusLive": "#E0655E",
+    "statusPartyLive": "#78C99F"
+  },
+
+  "grain": {
+    "$about": "Fine, low-contrast film grain over the stage. Must never reduce text or artwork clarity.",
+    "opacityPct": 3.5,
+    "tilePx": 128,
+    "focusedBoostPct": 1.5
+  },
+
+  "poster": {
+    "$about": "Square, unrounded artwork at EVERY size — including skeletons, placeholders, season cards and selected states. radiusPx is 0 and is asserted by tests in both clients.",
+    "radiusPx": 0,
+    "aspectW": 2,
+    "aspectH": 3,
+    "framePx": 1,
+    "gapPx": 14,
+    "shelfPeekPx": 64
+  },
+
+  "selection": {
+    "$about": "Depth through scale, framing, light and position. No perspective tilt, no bounce.",
+    "restScale": 1.0,
+    "focusScale": 1.06,
+    "focusLiftPx": 6,
+    "focusBackdropDarkenPct": 22,
+    "sceneLightAngleDeg": 315
+  },
+
+  "elevation": {
+    "$about": "Directional cast shadows keyed to sceneLightAngleDeg (light above-left => shadow below-right).",
+    "restBlurPx": 18,
+    "restOffsetXPx": 4,
+    "restOffsetYPx": 8,
+    "focusBlurPx": 34,
+    "focusOffsetXPx": 8,
+    "focusOffsetYPx": 18
+  },
+
+  "motion": {
+    "$about": "Mechanical and weighty: short travel, clear detents, restrained easing. No elastic overshoot anywhere.",
+    "focusStepMs": 170,
+    "focusStepEase": [0.22, 0.61, 0.36, 1.0],
+    "backdropCrossMs": 420,
+    "backdropCrossEase": [0.4, 0.0, 0.2, 1.0],
+    "chromeFadeMs": 160,
+    "chromeFadeEase": [0.4, 0.0, 0.2, 1.0],
+    "detentMs": 90,
+    "detentEase": [0.3, 0.0, 0.1, 1.0],
+    "drawerMs": 260,
+    "drawerEase": [0.22, 0.61, 0.36, 1.0]
+  },
+
+  "hairline": {
+    "$about": "Timeline and volume are precision lines, not filled bars. The visible line is thin; the hit target is not.",
+    "idlePx": 2,
+    "activePx": 4,
+    "hitPx": 24,
+    "handlePx": 10,
+    "handleFocusPx": 14,
+    "rangeGapPx": 2
+  },
+
+  "timing": {
+    "$about": "Behavioural constants fixed by the design references; the interaction cores in app/shared/design/interaction.json are driven by these same numbers.",
+    "chromeAutoHideMs": 3000,
+    "toastLifetimeMs": 4000,
+    "toastMaxStack": 3
+  },
+
+  "space": {
+    "xsPx": 4,
+    "smPx": 8,
+    "mdPx": 12,
+    "lgPx": 16,
+    "xlPx": 24,
+    "xxlPx": 32,
+    "stageGutterPx": 48,
+    "stageGutterPhonePx": 20
+  },
+
+  "radius": {
+    "$about": "Artwork is always square. These radii are for chrome only (buttons, sheets, toasts) and must never be applied to a poster, still, skeleton or placeholder.",
+    "chromePx": 4,
+    "sheetPx": 8,
+    "pillPx": 999
+  },
+
+  "type": {
+    "sans": "'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "mono": "'JetBrains Mono', ui-monospace, monospace",
+    "sansFamily": "CircularXX",
+    "monoFamily": "JetBrains Mono"
+  },
+
+  "z": {
+    "$about": "Stage layering. The player owns its own bands; these are the browse shell.",
+    "backdrop": 0,
+    "grain": 5,
+    "shelf": 10,
+    "nav": 20,
+    "toolbox": 30,
+    "scrim": 40,
+    "sheet": 50,
+    "toast": 60
+  },
+
+  "breakpoint": {
+    "phoneMaxPx": 719,
+    "tabletMaxPx": 1023
+  }
+}

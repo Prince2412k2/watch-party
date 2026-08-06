@@ -1,9 +1,15 @@
 name: Main
 
+# Runs on dev and main, and on pull requests, so every gate below applies before
+# code reaches main — not just after. `deploy` still only fires on a push to
+# main (guarded explicitly on the job, since workflow_dispatch has no implicit
+# branch restriction).
 on:
   push:
     branches:
       - main
+      - dev
+  pull_request:
   workflow_dispatch:
     inputs:
       force_desktop:
@@ -15,14 +21,130 @@ permissions:
   contents: read
 
 concurrency:
-  group: main
+  # Was a single hardcoded "main" group, which only worked because main was the
+  # only trigger. With dev and pull_request added, two unrelated runs (e.g. a
+  # dev push and a PR) would now share one group and cancel each other.
+  # Scoping by ref keeps them independent.
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   FLUTTER_VERSION: "3.44.5"
+  # Matches the base image pinned in app/Dockerfile — see docs/deploy/pinning.md.
+  NODE_VERSION: "22.23.1"
   SERVER_BUILDS_PATH: ${{ vars.DESKTOP_BUILDS_PATH || '/opt/watch-party/builds/desktop' }}
 
 jobs:
+  # ── Gates ──────────────────────────────────────────────────────────────
+  # Every `uses:` below is pinned to a full commit SHA, with the human-readable
+  # tag in a trailing comment — a floating tag (@v4, @v2) can change what code
+  # runs in this workflow without a corresponding commit here. To bump a pin,
+  # resolve the new tag's commit and update both the SHA and the comment.
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    # On a pull_request event the action lists the PR's commits to scope the
+    # scan, which needs more than the workflow-level `contents: read`. Without
+    # this it dies on `GET /pulls/{n}/commits` with 403 "Resource not accessible
+    # by integration" — a permissions failure that reads like a scan failure.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      # Scans the commits in this push (or the PR diff) — not full history.
+      # Rewriting history to purge the historical LiveKit dev-default placeholder
+      # was explicitly declined (docs/security/livekit-credential-exposure.md);
+      # this stops a NEW secret from ever landing, which is the actual goal.
+      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  server-tests:
+    name: Server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - working-directory: app
+        run: npm ci
+
+      - working-directory: app
+        run: npm test
+
+      # --audit-level=high fails the step on high/critical, matching the "no
+      # high vulnerabilities" acceptance criterion, without blocking on the
+      # low body-parser advisory tracked separately in the spec.
+      - working-directory: app
+        run: npm audit --omit=dev --audit-level=high
+
+  client-checks:
+    name: Client checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: app/client/package-lock.json
+
+      - working-directory: app/client
+        run: npm ci
+
+      # app/shared/avatar-derive.js imports @humation/core, and the client's
+      # tests reach it through lib/avatar.ts. Node resolves a bare specifier by
+      # walking up from the IMPORTING file, so from app/shared/ it looks in
+      # app/node_modules and never in app/client/node_modules — the package
+      # being listed in app/client/package.json does not help. The Dockerfile
+      # solves the same problem by copying the server's node_modules into the
+      # client build stage.
+      - working-directory: app
+        run: npm ci
+
+      - working-directory: app/client
+        run: npm run typecheck
+
+      - working-directory: app/client
+        run: npm test
+
+      - working-directory: app/client
+        run: npm run build
+
+      - working-directory: app/client
+        run: npm audit --audit-level=high
+
+  flutter-checks:
+    name: Flutter checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - working-directory: flutter_app
+        run: flutter pub get
+
+      - working-directory: flutter_app
+        run: flutter analyze
+
+      - working-directory: flutter_app
+        run: flutter test
+
   # The desktop apps only need rebuilding when the Flutter sources (or this
   # workflow) change — a server-only push must not spend three runners on them.
   changes:
@@ -31,7 +153,7 @@ jobs:
     outputs:
       desktop: ${{ steps.filter.outputs.desktop }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -67,14 +189,26 @@ jobs:
   deploy:
     name: Deploy server
     runs-on: ubuntu-latest
+    needs: [secret-scan, server-tests, client-checks, flutter-checks]
+    # Explicit, not just inherited from the trigger filter: workflow_dispatch has
+    # no implicit branch restriction, and the trigger above now also fires on
+    # dev and on pull_request, neither of which should ever deploy.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Deploy and verify health
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
+          # One SSH session for pull, bring-up, and health check: the health
+          # check's rollback message needs ORIG_HEAD from the same `git pull`
+          # that just ran, and `set -e` means the step (and this job) goes red
+          # the moment any command — including health-check.sh — exits nonzero.
+          # There is deliberately no automated rollback here: see
+          # docs/deploy/rollback.md for why recovery stays a documented, manual
+          # step rather than a scripted one.
           script: |
             set -e
             cd /opt/watch-party
@@ -85,18 +219,24 @@ jobs:
               exit 1
             fi
 
+            sudo ./deploy/firewall.sh --verify
+
             docker compose --env-file secrets/.env -f docker-compose.prod.yml pull
             docker compose --env-file secrets/.env -f docker-compose.prod.yml up -d --build
+
+            ./deploy/health-check.sh
 
   macos:
     name: Build macOS DMG
     runs-on: macos-latest
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
@@ -134,7 +274,7 @@ jobs:
           hdiutil create -volname Watchparty -srcfolder dmg-stage -ov -format UDZO \
             "dist/Watchparty-${VERSION}-macos.dmg"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: watchparty-macos
           path: flutter_app/dist/*.dmg
@@ -145,8 +285,10 @@ jobs:
     runs-on: ubuntu-22.04
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install build dependencies
         run: |
@@ -155,7 +297,7 @@ jobs:
             clang cmake curl libayatana-appindicator3-dev libgtk-3-dev \
             liblzma-dev libmpv-dev ninja-build patchelf pkg-config
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
@@ -177,7 +319,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
         run: packaging/build-linux.sh appimage
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: watchparty-linux
           path: flutter_app/build/dist/*.AppImage
@@ -188,10 +330,12 @@ jobs:
     runs-on: windows-latest
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
@@ -258,7 +402,7 @@ jobs:
           & $iscc "/DMyAppVersion=$env:VERSION" "/DMySourceDir=$release" "/DMyOutputDir=$output" "/DMyOutputBase=Watchparty-$env:VERSION-windows-setup" 'packaging/windows/watchparty.iss'
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: watchparty-windows
           path: flutter_app/dist/*.exe
@@ -268,11 +412,13 @@ jobs:
     name: Publish desktop downloads
     needs: [changes, macos, linux, windows]
     if: needs.changes.outputs.desktop == 'true'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: desktop-builds
           merge-multiple: true
@@ -304,7 +450,7 @@ jobs:
             > release.json
 
       - name: Upload builds to server
-        uses: appleboy/scp-action@v1
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
@@ -315,7 +461,7 @@ jobs:
           strip_components: 1
 
       - name: Replace latest server builds
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}

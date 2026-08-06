@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useParty } from '../context/PartyContext'
-import { navigate } from '../router'
-import type { PartyUser } from '../types'
-import PartyPanel, { MONO } from './PartyPanel'
-import Avatar from './Avatar'
+import { useParty } from '../context/PartyContext.tsx'
+import { navigate } from '../router.ts'
+import type { PartyUser } from '../types.ts'
+import PartyPanel, { MONO } from './PartyPanel.tsx'
+import Avatar from './Avatar.tsx'
 
 /**
  * Room chrome: icon-only Host / Leave buttons (flat surfaces), toasts, and a

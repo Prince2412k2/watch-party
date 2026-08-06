@@ -1,6 +1,9 @@
 import { randomUUID } from 'crypto'
 import { authenticate } from './jellyfin.js'
 
+export const ADMIN_REVALIDATION_MS = 5 * 60 * 1000
+export const ADMIN_REVALIDATION_TIMEOUT_MS = 3_000
+
 export async function login(req, res) {
   const { username, password } = req.body || {}
   if (!username || !password) {
@@ -21,9 +24,10 @@ export async function login(req, res) {
       userId: data.User.Id,
       name: data.User.Name,
       isAdmin: data.User.Policy?.IsAdministrator ?? false,
+      adminCheckedAt: Date.now(),
       deviceId,
     }
-    const { accessToken: _, deviceId: __, ...safe } = req.session.jellyfin
+    const { accessToken: _, deviceId: __, adminCheckedAt: ___, ...safe } = req.session.jellyfin
     res.json(safe)
   } catch (err) {
     if (err.status === 401) return res.status(401).json({ error: 'Invalid username or password' })
@@ -47,15 +51,16 @@ export function testLogin(req, res) {
     userId,
     name,
     isAdmin: false,
+    adminCheckedAt: Date.now(),
     deviceId: `wp-test-${randomUUID().slice(0, 8)}`,
   }
-  const { accessToken: _, deviceId: __, ...safe } = req.session.jellyfin
+  const { accessToken: _, deviceId: __, adminCheckedAt: ___, ...safe } = req.session.jellyfin
   res.json(safe)
 }
 
 export function me(req, res) {
   if (!req.session.jellyfin) return res.status(401).json({ error: 'not authenticated' })
-  const { accessToken: _, deviceId: __, ...safe } = req.session.jellyfin
+  const { accessToken: _, deviceId: __, adminCheckedAt: ___, ...safe } = req.session.jellyfin
   res.json(safe)
 }
 
@@ -73,13 +78,76 @@ export function requireAuth(req, res, next) {
 // which login already captures. Adding, searching, and downloading stay open to
 // every signed-in member: the point of the app is that anyone in the house can
 // ask for a title. Only the irreversible half is restricted.
-export function requireAdmin(req, res, next) {
-  if (!req.session.jellyfin) return res.status(401).json({ error: 'not authenticated' })
-  if (!req.session.jellyfin.isAdmin) {
-    return res.status(403).json({ error: 'this action requires a Jellyfin administrator account' })
-  }
-  next()
+async function fetchAdminStatus({ accessToken, userId }, { signal } = {}) {
+  const baseUrl = process.env.JELLYFIN_URL || 'http://localhost:8096'
+  const response = await fetch(`${baseUrl}/Users/${encodeURIComponent(userId)}`, {
+    headers: { 'X-Emby-Token': accessToken },
+    signal,
+  })
+  if (!response.ok) throw new Error(`Jellyfin GET /Users/${userId} returned ${response.status}`)
+  const user = await response.json()
+  return user.Policy?.IsAdministrator === true
 }
+
+export function createRequireAdmin({
+  now = Date.now,
+  getAdminStatus = fetchAdminStatus,
+  refreshTimeoutMs = ADMIN_REVALIDATION_TIMEOUT_MS,
+} = {}) {
+  const refreshes = new Map()
+
+  function refreshAdminStatus(key, jellyfin) {
+    const current = refreshes.get(key)
+    if (current) return current
+
+    const controller = new AbortController()
+    let timeout
+    const refresh = Promise.race([
+      getAdminStatus(jellyfin, { signal: controller.signal }),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort()
+          reject(new Error('Jellyfin administrator check timed out'))
+        }, refreshTimeoutMs)
+      }),
+    ]).finally(() => {
+      clearTimeout(timeout)
+      refreshes.delete(key)
+    })
+    refreshes.set(key, refresh)
+    return refresh
+  }
+
+  return async function requireFreshAdmin(req, res, next) {
+    const jellyfin = req.session.jellyfin
+    if (!jellyfin) return res.status(401).json({ error: 'not authenticated' })
+    if (typeof jellyfin.isAdmin !== 'boolean') {
+      return res.status(403).json({ error: 'this action requires a Jellyfin administrator account' })
+    }
+
+    const roleAge = now() - jellyfin.adminCheckedAt
+    if (Number.isFinite(roleAge) && roleAge >= 0 && roleAge <= ADMIN_REVALIDATION_MS) {
+      if (jellyfin.isAdmin) return next()
+      return res.status(403).json({ error: 'this action requires a Jellyfin administrator account' })
+    }
+
+    try {
+      const refreshKey = `${req.sessionID ?? 'unknown'}:${jellyfin.userId}`
+      jellyfin.isAdmin = await refreshAdminStatus(refreshKey, jellyfin)
+      jellyfin.adminCheckedAt = now()
+    } catch (error) {
+      console.error('admin revalidation failed', error.message)
+      return res.status(502).json({ error: 'could not verify Jellyfin administrator status' })
+    }
+
+    if (!jellyfin.isAdmin) {
+      return res.status(403).json({ error: 'this action requires a Jellyfin administrator account' })
+    }
+    next()
+  }
+}
+
+export const requireAdmin = createRequireAdmin()
 
 export function getJellyfin(req) {
   const j = req.session.jellyfin

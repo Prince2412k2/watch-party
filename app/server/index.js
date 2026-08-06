@@ -16,6 +16,7 @@ for (const file of ['.env', '.env.local']) {
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
+import { RoomServiceClient } from 'livekit-server-sdk'
 import cookieParser from 'cookie-parser'
 import session from 'express-session'
 import FileStoreFactory from 'session-file-store'
@@ -32,12 +33,15 @@ import { registerDesktopBuildRoutes } from './desktop-builds.js'
 import { refreshPlayback } from './playback.js'
 import {
   createSession, getSession, deleteSession,
-  findSessionBySocket, findSessionForMember, findSessionByHost,
+  findSessionBySocket, findSessionByUser, findSessionForMember, findSessionByHost,
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
   transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
-  validateSubtitlePreferences, effectiveName, publicMember,
+  validateSubtitlePreferences, effectiveName, publicMember, staleRoomIds,
 } from './session.js'
+import {
+  authorizeLiveKitUpgrade, createLiveKitTokenVerifier, isLiveKitUpgradePath,
+} from './_lk_probe.js'
 import { registerProfileRoutes } from './profile.js'
 import { registerAvatarRoutes } from './avatar.js'
 import { resolveMediaSourceId } from './jellyfin.js'
@@ -93,6 +97,41 @@ const ALLOWED_ORIGINS = [
 const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, credentials: true },
 })
+const partySocketIndex = new Map()
+const waitingSocketIndex = new Map()
+
+function indexedSocketIds(index, partyId, userId, create = false) {
+  let party = index.get(partyId)
+  if (!party && create) index.set(partyId, party = new Map())
+  let sockets = party?.get(userId)
+  if (!sockets && create) party.set(userId, sockets = new Set())
+  return sockets
+}
+
+function removeIndexedSocket(index, partyId, userId, socketId) {
+  if (!partyId || !userId) return
+  const party = index.get(partyId)
+  const sockets = party?.get(userId)
+  sockets?.delete(socketId)
+  if (sockets?.size === 0) party.delete(userId)
+  if (party?.size === 0) index.delete(partyId)
+}
+
+function setSocketParticipation(socket, { partyId = null, waitingPartyId = null }) {
+  const userId = socket.user?.userId
+  removeIndexedSocket(partySocketIndex, socket.partyId, userId, socket.id)
+  removeIndexedSocket(waitingSocketIndex, socket.waitingPartyId, userId, socket.id)
+  socket.partyId = partyId
+  socket.waitingPartyId = waitingPartyId
+  if (partyId) indexedSocketIds(partySocketIndex, partyId, userId, true).add(socket.id)
+  if (waitingPartyId) indexedSocketIds(waitingSocketIndex, waitingPartyId, userId, true).add(socket.id)
+}
+
+function indexedSockets(index, userId, partyId) {
+  return [...(indexedSocketIds(index, partyId, userId) ?? [])]
+    .map(socketId => io.sockets.sockets.get(socketId))
+    .filter(Boolean)
+}
 
 // The shared browser broadcasts party state of its own (a stream coming up, a
 // crash) so it needs the server, not a socket. Off unless BROWSER_ENABLED is set.
@@ -139,6 +178,12 @@ const sessionMiddleware = session({
 // Registered before the JSON body parser so streamed bodies pass through raw.
 const JELLYFIN_TARGET = process.env.JELLYFIN_URL || 'http://localhost:8096'
 const LIVEKIT_TARGET = (process.env.LIVEKIT_URL || 'ws://localhost:7880').replace(/^ws/, 'http')
+const livekitRoomService = process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET
+  ? new RoomServiceClient(LIVEKIT_TARGET, process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, { requestTimeout: 3 })
+  : null
+const livekitEvictions = new Set()
+
+const livekitEvictionKey = (partyId, userId) => `${partyId}:${userId}`
 
 // Session must be available BEFORE the proxies so requireAuth can gate them —
 // these expose internal services and must never be reachable unauthenticated.
@@ -165,10 +210,46 @@ const livekitProxy = createProxyMiddleware({
   pathRewrite: { '^/livekit': '' },
 })
 app.use('/livekit', requireAuth, livekitProxy)
-// Proxy the WebSocket upgrade for /livekit only. socket.io owns /socket.io
-// upgrades on the same server; the path filter keeps the two from colliding.
+const livekitTokenVerifier = createLiveKitTokenVerifier(
+  process.env.LIVEKIT_API_KEY,
+  process.env.LIVEKIT_API_SECRET,
+)
+
+function rejectUpgrade(socket, statusCode, message) {
+  socket.end(`HTTP/1.1 ${statusCode} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+}
+
+// Raw upgrade requests bypass Express. Parse the namespace exactly, hydrate the
+// session explicitly, and accept either that session or a signed LiveKit token.
 httpServer.on('upgrade', (req, socket, head) => {
-  if (req.url && req.url.startsWith('/livekit')) livekitProxy.upgrade(req, socket, head)
+  let url
+  try {
+    url = new URL(req.url ?? '/', 'http://localhost')
+  } catch {
+    return rejectUpgrade(socket, 400, 'Bad Request')
+  }
+  if (!isLiveKitUpgradePath(url.pathname)) {
+    if (url.pathname.startsWith('/livekit')) rejectUpgrade(socket, 404, 'Not Found')
+    return
+  }
+
+  const response = { getHeader: () => undefined, setHeader: () => {}, writeHead: () => {} }
+  sessionMiddleware(req, response, async (error) => {
+    if (error) return rejectUpgrade(socket, 401, 'Unauthorized')
+    const authorized = await authorizeLiveKitUpgrade({
+      session: req.session,
+      accessToken: url.searchParams.get('access_token'),
+      tokenVerifier: livekitTokenVerifier,
+      getParty: getSession,
+      isPartyMember: isMember,
+      isServiceIdentity: (identity, party) =>
+        identity === (process.env.BROWSER_IDENTITY || 'shared-browser') && Boolean(party.browser),
+      isTokenRevoked: (party, identity, notBefore) =>
+        Number(notBefore ?? 0) <= Number(party.livekitRevokedBefore?.get(identity) ?? 0),
+    })
+    if (!authorized) return rejectUpgrade(socket, 401, 'Unauthorized')
+    livekitProxy.upgrade(req, socket, head)
+  })
 })
 
 app.use(express.json())
@@ -283,6 +364,17 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const { userId, name, token, deviceId } = socket.user
 
+  const partySocketsForUser = (targetId, partyId) => indexedSockets(partySocketIndex, targetId, partyId)
+
+  const waitingSocketsForUser = (targetId, partyId) => indexedSockets(waitingSocketIndex, targetId, partyId)
+
+  const leavePartySockets = (targetId, partyId) => {
+    for (const candidate of partySocketsForUser(targetId, partyId)) {
+      candidate.leave(partyId)
+      setSocketParticipation(candidate, {})
+    }
+  }
+
   // Shared browser. Registered per connection like every other feature; with
   // BROWSER_ENABLED unset these become a flat refusal and nothing else exists.
   registerBrowserEvents(socket, {
@@ -293,6 +385,7 @@ io.on('connection', (socket) => {
   socket.on('party:resume', (_payload, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess) return ack?.({ session: null })
+    setSocketParticipation(socket, { partyId: sess.id })
     if (sess.originalHostId === userId && sess.hostId !== userId) {
       const previousHostId = sess.hostId
       reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
@@ -320,6 +413,7 @@ io.on('connection', (socket) => {
   socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     let sess = null
     try {
+      if (findSessionByUser(userId)) return ack?.({ error: 'already in a party' })
       // Room can start empty (lobby) — media is optional at creation.
       let mediaSourceId = null
       if (mediaItemId) {
@@ -332,6 +426,7 @@ io.on('connection', (socket) => {
         hostId: userId, hostToken: token, hostDeviceId: deviceId, hostName: name,
         hostSocketId: socket.id, mediaItemId, mediaSourceId,
       })
+      setSocketParticipation(socket, { partyId: sess.id })
       if (mediaItemId) {
         await refreshPlayback(sess, {
           token, userId, itemId: mediaItemId, mediaSourceId,
@@ -345,7 +440,10 @@ io.on('connection', (socket) => {
       ack?.({ partyId: sess.id, session: publicSession(sess) })
     } catch (err) {
       console.error('party:create', err.message)
-      if (sess) deleteSession(sess.id)
+      if (sess) {
+        deleteSession(sess.id)
+        setSocketParticipation(socket, {})
+      }
       ack?.({ error: err.message })
     }
   })
@@ -354,6 +452,16 @@ io.on('connection', (socket) => {
   socket.on('party:join', ({ partyId } = {}, ack) => {
     const sess = getSession(partyId)
     if (!sess) return ack?.({ error: 'party not found' })
+    const current = findSessionByUser(userId)
+    if (current && current.id !== sess.id) return ack?.({ error: 'already in a party' })
+
+    // Joining a DIFFERENT party must stop this socket receiving the previous
+    // one's broadcasts. Socket.IO rooms are additive, so without this a client
+    // that navigates from /party/AAA to /party/BBB gets both parties' chat and
+    // sync:schedule streams and the two timelines fight over its player. No-op
+    // for every ordinary join (reconnect, first join), which is already in this
+    // room or in none.
+    for (const room of staleRoomIds(socket.rooms, { socketId: socket.id, keepId: sess.id })) socket.leave(room)
 
     // Rejoining uses the same Socket instance on the client but a brand-new
     // Socket.IO id on the server. Restore every room-scoped channel here, then
@@ -361,6 +469,7 @@ io.on('connection', (socket) => {
     // particular, useSyncPlay stays mounted across a transport reconnect and
     // therefore does not emit its mount-time sync:hello again by itself.
     const restoreSocket = () => {
+      setSocketParticipation(socket, { partyId: sess.id })
       socket.join(sess.id)
       io.to(socket.id).emit('chat:history', sess.messages)
       io.to(socket.id).emit('sync:schedule', sess.schedule)
@@ -411,7 +520,7 @@ io.on('connection', (socket) => {
     }
 
     const added = addToWaiting(sess, { userId, name, socketId: socket.id, token, deviceId })
-    socket.join(partyId)
+    setSocketParticipation(socket, { waitingPartyId: sess.id })
     ack?.({ status: 'waiting' })
     // Only notify the host on a genuinely new request (avoids duplicate prompts)
     if (added) io.to(sess.hostSocketId).emit('party:waiting', publicMember({ userId, name }))
@@ -424,13 +533,21 @@ io.on('connection', (socket) => {
   socket.on('party:approve', async ({ userId: targetId } = {}, ack) => {
     const sess = findSessionByHost(userId)
     if (!sess) return ack?.({ error: 'not host' })
+    if (livekitEvictions.has(livekitEvictionKey(sess.id, targetId))) {
+      return ack?.({ error: 'participant eviction is still settling' })
+    }
 
     const guest = approveGuest(sess, targetId)
     if (!guest) return ack?.({ error: 'user not waiting' })
 
-    io.to(guest.socketId).emit('party:approved', { session: publicSession(sess) })
-    // Hand the joiner the current timeline so it locks straight onto the schedule
-    io.to(guest.socketId).emit('sync:schedule', sess.schedule)
+    const guestSockets = waitingSocketsForUser(targetId, sess.id)
+    if (guestSockets.length > 0) guest.socketId = guestSockets[0].id
+    for (const guestSocket of guestSockets) {
+      setSocketParticipation(guestSocket, { partyId: sess.id })
+      guestSocket.join(sess.id)
+      guestSocket.emit('party:approved', { session: publicSession(sess) })
+      guestSocket.emit('sync:schedule', sess.schedule)
+    }
     io.to(sess.id).emit('user:joined', publicMember(guest))
     persistSession(sess)
     // Position sync is handled by the per-second drift heartbeat + buffer-ahead
@@ -444,21 +561,41 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ error: 'not host' })
     const w = rejectGuest(sess, targetId)
     if (!w) return ack?.({ error: 'not waiting' })
-    io.to(w.socketId).emit('party:rejected', {})
+    for (const rejectedSocket of waitingSocketsForUser(targetId, sess.id)) {
+      setSocketParticipation(rejectedSocket, {})
+      rejectedSocket.leave(sess.id)
+      rejectedSocket.emit('party:rejected', {})
+    }
     persistSession(sess)
     ack?.({ ok: true })
   })
 
   // party:kick ──────────────────────────────────────────────────────────────
-  socket.on('party:kick', ({ userId: targetId } = {}, ack) => {
+  socket.on('party:kick', async ({ userId: targetId } = {}, ack) => {
     const sess = findSessionByHost(userId)
     if (!sess) return ack?.({ error: 'not host' })
     const g = removeGuest(sess, targetId)
     if (!g) return ack?.({ error: 'user not found' })
     sess.approved.delete(targetId)   // revoke — kicked users must re-request
+    const revokeTokenTs = BigInt(Math.floor(Date.now() / 1000) + 1)
+    sess.livekitRevokedBefore.set(targetId, Number(revokeTokenTs))
     // Control must not be stranded with someone who is no longer in the room.
     browserMemberGone(sess.id, targetId)
-    io.to(g.socketId).emit('party:kicked', { userId: targetId })
+    const kickedSockets = partySocketsForUser(targetId, sess.id)
+    leavePartySockets(targetId, sess.id)
+    for (const kickedSocket of kickedSockets) kickedSocket.emit('party:kicked', { userId: targetId })
+    if (livekitRoomService) {
+      const evictionKey = livekitEvictionKey(sess.id, targetId)
+      livekitEvictions.add(evictionKey)
+      try {
+        await livekitRoomService.removeParticipant(sess.id, targetId, { revokeTokenTs })
+        livekitEvictions.delete(evictionKey)
+      } catch (error) {
+        console.warn('livekit: participant removal failed:', error.message)
+        persistSession(sess)
+        return ack?.({ error: 'participant eviction failed; try again' })
+      }
+    }
     io.to(sess.id).emit('user:left', { userId: targetId, name: effectiveName(targetId, g.name) })
     persistSession(sess)
     ack?.({ ok: true })
@@ -474,10 +611,23 @@ io.on('connection', (socket) => {
     clearTimeout(sess.hostDisconnectTimer)
     clearTimeout(sess._stallTimer)
     socket.to(sess.id).emit('party:ended', {})
+    for (const waiting of sess.waiting) {
+      for (const waitingSocket of waitingSocketsForUser(waiting.userId, sess.id)) {
+        setSocketParticipation(waitingSocket, {})
+        waitingSocket.emit('party:ended', {})
+      }
+    }
     // Not awaited, and its failures are its own: a browser that refuses to die
     // must never stop a party from ending. If this teardown fails outright the
     // health monitor reclaims the browser once it sees the party is gone.
     void teardownBrowser(sess.id, 'party-ended')
+    for (const participant of io.sockets.adapter.rooms.get(sess.id) ?? []) {
+      const participantSocket = io.sockets.sockets.get(participant)
+      if (participantSocket) {
+        setSocketParticipation(participantSocket, {})
+        participantSocket.leave(sess.id)
+      }
+    }
     deleteSession(sess.id)
     ack?.({ ok: true })
   })
@@ -768,12 +918,40 @@ io.on('connection', (socket) => {
 
   // disconnect ──────────────────────────────────────────────────────────────
   socket.on('disconnect', () => {
-    const sess = findSessionBySocket(socket.id)
+    const sess = getSession(socket.partyId ?? socket.waitingPartyId) ?? findSessionBySocket(socket.id)
+    setSocketParticipation(socket, {})
     if (!sess) return
 
+    const waiting = sess.waiting.some(candidate => candidate.userId === userId)
+    if (waiting) {
+      const remainingSockets = waitingSocketsForUser(userId, sess.id)
+      if (remainingSockets.length === 0) {
+        rejectGuest(sess, userId)
+        persistSession(sess)
+        io.to(sess.hostSocketId).emit('party:state', publicSession(sess))
+      } else {
+        const entry = sess.waiting.find(candidate => candidate.userId === userId)
+        entry.socketId = remainingSockets[0].id
+      }
+      return
+    }
+
     if (sess.hostId === userId) {
+      const remainingHosts = partySocketsForUser(userId, sess.id)
+      if (remainingHosts.length > 0) {
+        sess.hostSocketId = remainingHosts[0].id
+        persistSession(sess)
+        return
+      }
       handleHostDisconnect(sess)
     } else {
+      const remainingSockets = partySocketsForUser(userId, sess.id)
+      if (remainingSockets.length > 0) {
+        const guest = sess.guests.find(candidate => candidate.userId === userId)
+        if (guest) guest.socketId = remainingSockets[0].id
+        persistSession(sess)
+        return
+      }
       const g = removeGuest(sess, userId)
       // Before anything else: a driver who disconnects hands the pointer back to
       // the host rather than leaving the browser unusable for everyone.

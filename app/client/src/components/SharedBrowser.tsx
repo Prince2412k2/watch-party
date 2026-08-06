@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, PointerEvent, ReactNode, WheelEvent } from 'react'
-import { useParty } from '../context/PartyContext'
-import { usePhone } from '../hooks/useIsMobile'
-import { Z } from '../watchLayers'
-import type { BrowserInputEvent, PartySession } from '../types'
+import { useParty } from '../context/PartyContext.tsx'
+import { usePhone } from '../hooks/useIsMobile.ts'
+import { Z } from '../watchLayers.ts'
+import type { BrowserInputEvent, PartySession } from '../types.ts'
 
 interface AttachableTrack {
   attach: (element: HTMLMediaElement) => unknown

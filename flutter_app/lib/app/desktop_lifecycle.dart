@@ -19,20 +19,146 @@
 //
 // Not wired on web/mobile: callers should only invoke this on
 // Platform.isLinux/isMacOS/isWindows.
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/widgets.dart' show Offset, Size;
+import 'package:flutter/widgets.dart' show Offset, Rect, Size;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
-const _kWindowX = 'desktop.window.x';
-const _kWindowY = 'desktop.window.y';
-const _kWindowW = 'desktop.window.w';
-const _kWindowH = 'desktop.window.h';
-const _kWindowMaximized = 'desktop.window.maximized';
+/// Persisted-geometry keys. Public because they are a storage schema — a rename
+/// silently drops everyone's window position — and the tests pin them.
+const kWindowXPref = 'desktop.window.x';
+const kWindowYPref = 'desktop.window.y';
+const kWindowWPref = 'desktop.window.w';
+const kWindowHPref = 'desktop.window.h';
+const kWindowMaximizedPref = 'desktop.window.maximized';
 
 const _defaultSize = Size(1280, 720);
 const _minSize = Size(960, 600);
+
+/// How long a move/resize burst may settle before the geometry is written. A
+/// drag emits a callback per frame, so without this one gesture across a 4K
+/// screen issues hundreds of read-then-write round trips.
+const _boundsDebounce = Duration(milliseconds: 400);
+
+/// A snapshot of what to persist about the window.
+///
+/// [normalBounds] is null while the window is maximized: `getBounds()` then
+/// reports the maximized frame, and storing that as the window's size loses the
+/// size it unmaximizes back to — the next launch would come up "restored" at
+/// full-screen dimensions and the user's real window size would be gone.
+class WindowGeometry {
+  const WindowGeometry({required this.normalBounds, required this.maximized});
+
+  /// The rule, kept apart from the `window_manager` call that supplies the
+  /// arguments so it can be stated and tested on its own: what comes back from
+  /// `getBounds()` is only the window's normal geometry when the window is not
+  /// maximized.
+  factory WindowGeometry.from({required Rect bounds, required bool maximized}) =>
+      WindowGeometry(
+        normalBounds: maximized ? null : bounds,
+        maximized: maximized,
+      );
+
+  final Rect? normalBounds;
+  final bool maximized;
+}
+
+/// Debounced, serialized writer for the window's persisted geometry.
+///
+/// Its own object because three separate races lived in the callbacks it
+/// replaces:
+///
+///  * `onWindowMoved`/`onWindowResized` fire once per frame, so every drag ran
+///    a full read-then-write per frame — [schedule] coalesces a burst into one;
+///  * those writes were not serialized. Each callback fired five independent
+///    `setDouble` futures and a `setBool`, and two overlapping callbacks could
+///    interleave into a stored geometry that was half one window and half
+///    another. Every write now queues behind the last one;
+///  * a close during a drag dropped the pending geometry entirely. [flush] is
+///    what the shutdown path awaits.
+class WindowGeometryRecorder {
+  WindowGeometryRecorder({
+    required Future<WindowGeometry> Function() read,
+    required Future<void> Function(WindowGeometry) write,
+    Duration debounce = _boundsDebounce,
+    // Keep public constructor parameters distinct from private storage fields.
+    // Initializing formals would force callers to pass `_read:`/`_write:`,
+    // leaking private names into the public API — same trade-off as the other
+    // recorders in this codebase.
+  }) :
+       // ignore: prefer_initializing_formals
+       _read = read,
+       // ignore: prefer_initializing_formals
+       _write = write,
+       // ignore: prefer_initializing_formals
+       _debounce = debounce;
+
+  final Future<WindowGeometry> Function() _read;
+  final Future<void> Function(WindowGeometry) _write;
+  final Duration _debounce;
+
+  Timer? _timer;
+  Future<void> _queue = Future<void>.value();
+
+  /// Whether a coalesced write is still waiting on its debounce.
+  bool get hasPendingWrite => _timer?.isActive ?? false;
+
+  /// Note that the geometry changed. Cheap enough to call on every frame of a
+  /// drag; the write happens once the gesture stops.
+  void schedule() {
+    _timer?.cancel();
+    _timer = Timer(_debounce, () {
+      _timer = null;
+      _persist();
+    });
+  }
+
+  /// Write now, and resolve once every queued write has landed. The shutdown
+  /// path awaits this so closing the window mid-drag still persists where the
+  /// window ended up.
+  Future<void> flush() {
+    _timer?.cancel();
+    _timer = null;
+    return _persist();
+  }
+
+  Future<void> _persist() {
+    // Chained, not fired: the read and the write are one indivisible step, and
+    // an earlier slow write landing on top of a newer one is the interleaving
+    // this exists to prevent.
+    final next = _queue.then((_) async {
+      try {
+        await _write(await _read());
+      } catch (_) {
+        // Window geometry is a convenience. A failed write must neither crash
+        // the app from a timer callback nor wedge the queue behind it.
+      }
+    });
+    _queue = next;
+    return next;
+  }
+}
+
+/// Writes [geometry] into [prefs].
+///
+/// A null [WindowGeometry.normalBounds] leaves the stored position and size
+/// alone — that is the maximized case, and the live bounds there describe the
+/// maximized frame rather than the window the user will get back.
+Future<void> persistWindowGeometry(
+  SharedPreferences prefs,
+  WindowGeometry geometry,
+) async {
+  final bounds = geometry.normalBounds;
+  if (bounds != null) {
+    await prefs.setDouble(kWindowXPref, bounds.left);
+    await prefs.setDouble(kWindowYPref, bounds.top);
+    await prefs.setDouble(kWindowWPref, bounds.width);
+    await prefs.setDouble(kWindowHPref, bounds.height);
+  }
+  await prefs.setBool(kWindowMaximizedPref, geometry.maximized);
+}
 
 /// Restores persisted window bounds, sets the min-size, and turns a window
 /// close into an orderly process exit. Call once during startup, before
@@ -43,6 +169,7 @@ class DesktopLifecycle with WindowListener {
 
   bool _quitting = false;
   SharedPreferences? _prefs;
+  WindowGeometryRecorder? _geometry;
 
   /// Invoked once, before the process exits: release the LiveKit room (the
   /// camera and mic), stop playback, and pause transfers. Set from `main.dart`
@@ -70,7 +197,9 @@ class DesktopLifecycle with WindowListener {
     _quitting = true;
     try {
       await _releaseResources();
-      await _persistBounds();
+      // Not schedule(): the process is about to exit, so a pending debounce
+      // would never fire and the last drag would be lost.
+      await _geometry?.flush();
       await windowManager.setPreventClose(false);
       await windowManager.destroy();
     } finally {
@@ -80,12 +209,17 @@ class DesktopLifecycle with WindowListener {
 
   Future<void> init() async {
     await windowManager.ensureInitialized();
-    _prefs = await SharedPreferences.getInstance();
+    final prefs = await SharedPreferences.getInstance();
+    _prefs = prefs;
+    _geometry = WindowGeometryRecorder(
+      read: _readGeometry,
+      write: (geometry) => persistWindowGeometry(prefs, geometry),
+    );
 
     final options = WindowOptions(
       size: _restoredSize(),
       minimumSize: _minSize,
-      center: _prefs!.getDouble(_kWindowX) == null,
+      center: prefs.getDouble(kWindowXPref) == null,
       title: 'Watchparty',
       titleBarStyle: Platform.isMacOS || Platform.isWindows
           ? TitleBarStyle.hidden
@@ -94,12 +228,14 @@ class DesktopLifecycle with WindowListener {
     );
 
     await windowManager.waitUntilReadyToShow(options, () async {
-      final x = _prefs!.getDouble(_kWindowX);
-      final y = _prefs!.getDouble(_kWindowY);
+      final x = prefs.getDouble(kWindowXPref);
+      final y = prefs.getDouble(kWindowYPref);
       if (x != null && y != null) {
         await windowManager.setPosition(Offset(x, y));
       }
-      if (_prefs!.getBool(_kWindowMaximized) ?? false) {
+      // Sized and positioned to the stored NORMAL bounds first, then maximized:
+      // the stored bounds are what unmaximizing has to give back.
+      if (prefs.getBool(kWindowMaximizedPref) ?? false) {
         await windowManager.maximize();
       }
       await windowManager.show();
@@ -113,21 +249,16 @@ class DesktopLifecycle with WindowListener {
   }
 
   Size _restoredSize() {
-    final w = _prefs?.getDouble(_kWindowW);
-    final h = _prefs?.getDouble(_kWindowH);
+    final w = _prefs?.getDouble(kWindowWPref);
+    final h = _prefs?.getDouble(kWindowHPref);
     if (w != null && h != null) return Size(w, h);
     return _defaultSize;
   }
 
-  Future<void> _persistBounds() async {
-    final bounds = await windowManager.getBounds();
-    final maximized = await windowManager.isMaximized();
-    await _prefs?.setDouble(_kWindowX, bounds.left);
-    await _prefs?.setDouble(_kWindowY, bounds.top);
-    await _prefs?.setDouble(_kWindowW, bounds.width);
-    await _prefs?.setDouble(_kWindowH, bounds.height);
-    await _prefs?.setBool(_kWindowMaximized, maximized);
-  }
+  static Future<WindowGeometry> _readGeometry() async => WindowGeometry.from(
+    bounds: await windowManager.getBounds(),
+    maximized: await windowManager.isMaximized(),
+  );
 
   // --- WindowListener ---
 
@@ -135,8 +266,17 @@ class DesktopLifecycle with WindowListener {
   void onWindowClose() => _shutdown();
 
   @override
-  void onWindowMoved() => _persistBounds();
+  void onWindowMoved() => _geometry?.schedule();
 
   @override
-  void onWindowResized() => _persistBounds();
+  void onWindowResized() => _geometry?.schedule();
+
+  // Maximize state is persisted separately from the bounds, so it needs its own
+  // trigger: the accompanying resize would record the flag too, but only these
+  // fire when a platform maximizes without a resize callback.
+  @override
+  void onWindowMaximize() => _geometry?.schedule();
+
+  @override
+  void onWindowUnmaximize() => _geometry?.schedule();
 }

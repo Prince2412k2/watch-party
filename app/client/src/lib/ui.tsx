@@ -5,8 +5,8 @@
 // DownloadDetail.jsx — this is the single reconciled source.
 import { useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { navigate } from '../router'
-import { glass } from '../glass'
+import { navigate } from '../router.ts'
+import { glass } from '../glass.tsx'
 
 /* ── Cinematic minimal — dark, flat, monochrome ──────────────────────────────
    Content is the interface (Apple TV / Max). Neutral near-black -> near-white
@@ -94,13 +94,12 @@ export function viewIcon(v: { CollectionType?: string }) {
 
 // Flat, quiet icon/pill button — solid surface, hairline border, no glass.
 export function GlassBtn({
-  onClick, title, children, pill, wide,
+  onClick, title, children, pill,
 }: {
   onClick?: () => void
   title?: string
   children?: ReactNode
   pill?: boolean
-  wide?: boolean
 } = {}) {
   const [h, setH] = useState(false)
   return (
@@ -167,7 +166,7 @@ export function NavRow({
 
 /* ── Floating glass sidebar for the download surfaces — Home → Jellyfin views →
    Browse → Downloads. `current` ('browse' | 'downloads') marks the active row;
-   library views come from the shared useLibraryViews hook so a library row
+   the caller passes the Jellyfin `views` it already loaded, so a library row
    appears here identically to the Library page. ──────────────────────────────── */
 export function Sidebar({
   mobile, width, views = [], downloadCount = 0, failingCount = 0, current,

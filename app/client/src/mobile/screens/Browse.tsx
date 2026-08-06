@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, Dispatch, FormEvent, ReactNode, SetStateAction } from 'react'
-import { glass } from '../../glass'
-import { navigate } from '../../router'
-import { useTorrents, isPausedState } from '../../hooks/useTorrents'
-import { T, SANS, MONO, R, EASE, TYPE, SP } from '../theme'
-import { Icon, Ic } from '../ui/Icon'
-import { Rail, RailItem } from '../ui/Rail'
-import { Sheet } from '../ui/Sheet'
-import { PosterSkeleton, RailSkeleton } from '../ui/Skeleton'
-import { apiJson, arrayOf, isRecord } from '../../types/guards'
+import { glass } from '../../glass.tsx'
+import { navigate } from '../../router.ts'
+import { isPausedState } from '../../hooks/useTorrents.ts'
+import { useDownloadsHub } from '../../context/DownloadsContext.tsx'
+import { serviceReady } from '../../hooks/downloadsCore.ts'
+import type { ServiceHealth } from '../../hooks/downloadsCore.ts'
+import { T, SANS, MONO, R, EASE, TYPE, SP } from '../theme.ts'
+import { Icon, Ic } from '../ui/Icon.tsx'
+import { Rail, RailItem } from '../ui/Rail.tsx'
+import { Sheet } from '../ui/Sheet.tsx'
+import { PosterSkeleton, RailSkeleton } from '../ui/Skeleton.tsx'
+import { apiJson, arrayOf, isRecord } from '../../types/guards.ts'
 
 /**
  * Mobile Browse / Discover (MOBILE-SPEC §3.3). A search-first sticky header
@@ -44,29 +47,20 @@ interface CatalogItem {
 }
 const isCatalogItem = (value: unknown): value is CatalogItem => isRecord(value) && typeof value.title === 'string'
 interface Torrent { name?: string; title?: string; state?: string; progress?: number; dlspeed?: number; eta?: number; numSeeds?: number }
-interface ServiceHealth { configured?: boolean; reachable?: boolean }
-interface Health { services?: Partial<Record<Service | 'qbittorrent', ServiceHealth>> }
 interface Profile { id: number }
 interface RootFolder { path: string }
 interface Meta { profiles: Profile[]; rootFolders: RootFolder[]; langProfiles: Profile[] }
 interface Popular { source: string; items: CatalogItem[] }
 interface Release { guid: string; indexerId: number; title: string; rejected?: boolean; rejections?: string[]; seeders?: number; quality?: string; size?: number; indexer?: string }
-interface ReleaseData { movieId: number; createdByPicker?: boolean; searchFailed?: boolean; releases?: Release[] }
+interface ReleaseData { movieId: number; createdByPicker?: boolean; cancellationToken?: string; searchFailed?: boolean; releases?: Release[] }
 type RequestBody = Record<string, unknown>
 const isProfile = (value: unknown): value is Profile => isRecord(value) && typeof value.id === 'number'
 const isRootFolder = (value: unknown): value is RootFolder => isRecord(value) && typeof value.path === 'string'
 const isRelease = (value: unknown): value is Release => isRecord(value) && typeof value.guid === 'string' && typeof value.indexerId === 'number' && typeof value.title === 'string'
-const parseHealth = (value: unknown): Health => {
-  if (!isRecord(value) || !isRecord(value.services)) return { services: {} }
-  const parse = (raw: unknown): ServiceHealth | undefined => isRecord(raw) ? {
-    configured: typeof raw.configured === 'boolean' ? raw.configured : undefined,
-    reachable: typeof raw.reachable === 'boolean' ? raw.reachable : undefined,
-  } : undefined
-  return { services: { radarr: parse(value.services.radarr), sonarr: parse(value.services.sonarr), qbittorrent: parse(value.services.qbittorrent) } }
-}
 const parseReleaseData = (value: unknown): ReleaseData => isRecord(value) && typeof value.movieId === 'number' ? {
   movieId: value.movieId,
   createdByPicker: typeof value.createdByPicker === 'boolean' ? value.createdByPicker : undefined,
+  cancellationToken: typeof value.cancellationToken === 'string' ? value.cancellationToken : undefined,
   searchFailed: typeof value.searchFailed === 'boolean' ? value.searchFailed : undefined,
   releases: arrayOf(value.releases, isRelease),
 } : { movieId: 0, releases: [] }
@@ -192,9 +186,6 @@ export default function Browse() {
   const [searchError, setSearchError] = useState('')
   const [hasSearched, setHasSearched] = useState(false)
 
-  const [health, setHealth] = useState<Health | null>(null)
-  const [healthLoading, setHealthLoading] = useState(true)
-
   // One detail sheet, two modes: 'detail' | 'releases' (movie release picker).
   const [detail, setDetail] = useState<CatalogItem | null>(null)   // retained through the close anim
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -204,21 +195,12 @@ export default function Browse() {
   const [addState, setAddState] = useState<Record<string, AddState>>({})
 
   const service = kind === 'movie' ? 'radarr' : 'sonarr'
+  // Health and the live download list come from the shared hub — this screen is
+  // mounted alongside the tab bar, so owning either meant polling twice.
+  const { health, healthLoading, list } = useDownloadsHub()
   const svcState = health?.services?.[service]
-  const svcReady = svcState?.configured && svcState?.reachable
-
-  const qbReady = !!health?.services?.qbittorrent?.configured && !!health?.services?.qbittorrent?.reachable
-  const dl = useTorrents(qbReady)
-  const torrents = dl.list.filter(isTorrent)
-
-  useEffect(() => {
-    setHealthLoading(true)
-    jget('/api/servarr/health')
-      .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
-      .then((value) => setHealth(parseHealth(value)))
-      .catch(() => setHealth({ services: {} }))
-      .finally(() => setHealthLoading(false))
-  }, [])
+  const svcReady = serviceReady(health, service)
+  const torrents = list.filter(isTorrent)
 
   // Reflect query + tab into the URL (replaceState — typing must not spam history).
   useEffect(() => {
@@ -597,7 +579,6 @@ function DetailBody({ item, kind, state, torrents, onDownload, onSeeSources }: {
   const torrentDownloading = active && pct < 100
   const downloading = state === 'grabbed' || torrentDownloading
   const searching = state === 'searching' && !torrentDownloading
-  const monitoring = state === 'monitoring' && !torrentDownloading
   const noRelease = state === 'no_release' && !torrentDownloading
   const searchFailed = state === 'search_failed' && !torrentDownloading
 
@@ -823,60 +804,100 @@ function SeasonRow({ season, state, disabled, specials, onRequest }: { season: S
 }
 
 /* ── Release picker (movies) — sheet sub-view ────────────────────────────── */
+async function cancelMobilePickerWithRetry(movieId: number, cancellationToken: string) {
+  const delays = [0, 250, 750, 1500, 3000]
+  for (const delay of delays) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+    try {
+      const response = await jpost('/api/servarr/radarr/releases/cancel', { movieId, cancellationToken })
+      if (response.status !== 503) return true
+    } catch { /* retry bounded transient failures */ }
+  }
+  return false
+}
+
 function ReleasePickerBody({ item, onBack, onGrabbed }: { item: CatalogItem; onBack: () => void; onGrabbed: (item: CatalogItem) => void }) {
   const [meta, setMeta] = useState({ loading: true, error: '' })
   const [data, setData] = useState<ReleaseData | null>(null)
   const [nonce, setNonce] = useState(0)
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [grabError, setGrabError] = useState('')
+  const operationId = useRef(crypto.randomUUID()).current
+  const requestGeneration = useRef(0)
 
-  const life = useRef<{ movieId: number | null; createdByPicker: boolean; settled: boolean }>({ movieId: null, createdByPicker: false, settled: false })
-  const cleanup = useCallback(() => {
-    const { movieId, createdByPicker, settled } = life.current
-    if (settled) return
-    life.current.settled = true
-    if (createdByPicker && movieId != null) jpost('/api/servarr/radarr/releases/cancel', { movieId, createdByPicker: true }).catch(() => {})
+  const life = useRef<{ movieId: number | null; cancellationToken: string | null; settled: boolean; cancelling: boolean; cleanupTimer: ReturnType<typeof setTimeout> | null }>({ movieId: null, cancellationToken: null, settled: false, cancelling: false, cleanupTimer: null })
+  const cancelNow = useCallback(() => {
+    const { movieId, cancellationToken, settled } = life.current
+    if (settled || life.current.cancelling) return
+    if (cancellationToken && movieId != null) {
+      life.current.cancelling = true
+      void cancelMobilePickerWithRetry(movieId, cancellationToken).then(terminal => {
+        life.current.settled = terminal
+        life.current.cancelling = false
+      })
+    }
   }, [])
+  const cleanup = useCallback(() => {
+    if (life.current.cleanupTimer) return
+    life.current.cleanupTimer = setTimeout(() => {
+      life.current.cleanupTimer = null
+      cancelNow()
+    }, 100)
+  }, [cancelNow])
 
   useEffect(() => {
     let cancelled = false
+    const generation = ++requestGeneration.current
     setMeta({ loading: true, error: '' }); setGrabError('')
     ;(async () => {
       const existing = life.current.movieId
-      let createdByPicker = life.current.createdByPicker
+      let cancellationToken = life.current.cancellationToken
       let body: RequestBody
-      if (existing != null) body = { movieId: existing }
-      else if (isAdded(item)) { body = { movieId: item.id }; createdByPicker = false }
+      if (existing != null) body = { movieId: existing, operationId }
+      else if (isAdded(item)) { body = { movieId: item.id, operationId }; cancellationToken = null }
       else {
         const m = await loadMeta('radarr')
         const qualityProfileId = m.profiles?.[0]?.id
         const rootFolderPath = m.rootFolders?.[0]?.path
         if (qualityProfileId == null || !rootFolderPath) throw new Error('meta')
-        body = { movie: item, qualityProfileId, rootFolderPath }
+        body = { movie: item, qualityProfileId, rootFolderPath, operationId }
       }
       const res = await jpost('/api/servarr/radarr/releases', body)
       if (!res.ok) throw new Error('releases')
       const d = parseReleaseData(await apiJson(res))
-      return { d, createdByPicker: existing != null ? createdByPicker : !!d.createdByPicker }
+      return { d, cancellationToken: existing != null ? cancellationToken : (d.cancellationToken ?? null) }
     })()
-      .then(({ d, createdByPicker }) => {
+      .then(({ d, cancellationToken }) => {
         if (cancelled) {
-          if (createdByPicker && d?.movieId != null) jpost('/api/servarr/radarr/releases/cancel', { movieId: d.movieId, createdByPicker: true }).catch(() => {})
+          if (generation === requestGeneration.current && cancellationToken && d?.movieId != null) {
+            void cancelMobilePickerWithRetry(d.movieId, cancellationToken)
+          }
           return
         }
-        life.current = { movieId: d.movieId, createdByPicker, settled: false }
+        life.current = { ...life.current, movieId: d.movieId, cancellationToken, settled: false }
         setData(d); setMeta({ loading: false, error: '' })
       })
       .catch(() => { if (!cancelled) setMeta({ loading: false, error: 'Couldn’t load sources right now. Please try again.' }) })
     return () => { cancelled = true }
-  }, [item, nonce])
+  }, [item, nonce, operationId])
 
-  useEffect(() => cleanup, [cleanup])
+  useEffect(() => {
+    if (life.current.cleanupTimer) {
+      clearTimeout(life.current.cleanupTimer)
+      life.current.cleanupTimer = null
+    }
+    return cleanup
+  }, [cleanup])
 
   const grab = (rel: Release) => {
     if (grabbing) return
     setGrabbing(rel.guid); setGrabError('')
-    jpost('/api/servarr/radarr/grab', { movieId: data?.movieId, guid: rel.guid, indexerId: rel.indexerId })
+    jpost('/api/servarr/radarr/grab', {
+      movieId: data?.movieId,
+      guid: rel.guid,
+      indexerId: rel.indexerId,
+      cancellationToken: life.current.cancellationToken,
+    })
       .then((r) => (r.ok ? apiJson(r) : Promise.reject(r)))
       .then(() => { life.current.settled = true; onGrabbed(item) })
       .catch(() => { setGrabbing(null); setGrabError('Couldn’t start that download. Try another source.') })

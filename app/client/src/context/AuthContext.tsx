@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AuthContextValue, AuthUser, UserProfile } from '../types'
-import { errorMessage, isAuthUser, isUserProfile } from '../guards'
-import { apiJson } from '../types/guards'
+import type { AuthContextValue, AuthUser, UserProfile } from '../types.ts'
+import { errorMessage, isAuthUser, isUserProfile } from '../guards.ts'
+import { apiJson } from '../types/guards.ts'
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 

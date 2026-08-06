@@ -1,5 +1,5 @@
-import type { PlaybackTrack } from './types/media'
-import type { AvatarConfig } from './lib/avatar'
+import type { PlaybackTrack } from './types/media.ts'
+import type { AvatarConfig } from './lib/avatar.ts'
 
 export type PartyRole = 'host' | 'guest' | 'waiting' | null
 
@@ -132,6 +132,12 @@ export interface PartyContextValue {
   createParty: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => Promise<string>
   createRoom: () => Promise<string>
   joinParty: (partyId: string) => Promise<string>
+  /**
+   * Drop the session this client is holding, without ending it for anyone else.
+   * Used when the party surface is re-pointed at a DIFFERENT party id, so the
+   * previous room's session/role/messages can't bleed into the new one.
+   */
+  leaveParty: () => void
   navigateBrowse: (stack: BrowseEntry[]) => void
   shareView: (patch: Partial<PartyBrowse>) => void
   sendPointer: (point: MirrorPoint) => void

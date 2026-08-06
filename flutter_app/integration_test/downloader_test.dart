@@ -32,7 +32,7 @@ void main() {
     const chunkSize = 10;
 
     var fetchCount = 0;
-    final pausingFetcher = (entry, start, end) async {
+    Future<void> pausingFetcher(CacheEntry entry, int start, int end) async {
       fetchCount++;
       await entry.write(start, List<int>.filled(end - start, 7));
       // Mirrors `MediaCacheProxy.fetchAndStore`, which the real fill loop
@@ -41,7 +41,7 @@ void main() {
       // real process restart.
       await entry.flushMetadata();
       if (fetchCount == 3) throw StateError('simulated crash mid-fill');
-    };
+    }
 
     // "Before restart": start filling, hit a simulated crash partway through.
     var store = RangeCacheStore(overrideDir: cacheDir);

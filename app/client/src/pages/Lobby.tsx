@@ -1,5 +1,5 @@
 import { DotLottieReact } from '@lottiefiles/dotlottie-react'
-import { navigate } from '../router'
+import { navigate } from '../router.ts'
 
 export default function Lobby({ partyId }: { partyId?: string } = {}) {
   return (

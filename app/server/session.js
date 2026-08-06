@@ -48,6 +48,7 @@ function durableState(session) {
     browser: session.browser,
     guests: session.guests.map(durableGuest),
     approved: [...session.approved],
+    livekitRevokedBefore: Object.fromEntries(session.livekitRevokedBefore),
     messages: session.messages,
     collaborativeControl: session.collaborativeControl,
     mediaGeneration: session.mediaGeneration,
@@ -88,6 +89,7 @@ function runtimeState(saved) {
     guests: (saved.guests ?? []).map(guest => ({ ...guest, socketId: null })),
     waiting: [],
     approved: new Set(saved.approved ?? [saved.hostId]),
+    livekitRevokedBefore: new Map(Object.entries(saved.livekitRevokedBefore ?? {})),
     messages: saved.messages ?? [],
     collaborativeControl: saved.collaborativeControl ?? false,
     hostDisconnectTimer: null,
@@ -118,6 +120,7 @@ export function persistSession(session) {
 }
 
 export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostSocketId, mediaItemId = null, mediaSourceId = null }) {
+  if (findSessionByUser(hostId)) throw new Error('already in a party')
   const id = randomUUID().slice(0, 8).toUpperCase()
   const session = {
     id,
@@ -143,6 +146,7 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     guests: [],       // [{ userId, name, socketId, joinedAt }]
     waiting: [],      // [{ userId, name, socketId }]
     approved: new Set([hostId]),  // userIds allowed to re-enter without asking (until kicked)
+    livekitRevokedBefore: new Map(), // userId -> unix seconds; tokens at/before this instant are invalid
     messages: [],     // capped 200
     collaborativeControl: false,
     hostDisconnectTimer: null,
@@ -321,6 +325,19 @@ export function isHost(session, userId) {
 
 export function isMember(session, userId) {
   return session.hostId === userId || session.guests.some(g => g.userId === userId)
+}
+
+/**
+ * The party rooms a socket should be dropped from when it joins `keepId`.
+ *
+ * Socket.IO membership is additive: a client that navigates straight from
+ * /party/AAA to /party/BBB stays in AAA's room, so it keeps receiving AAA's
+ * chat and — worse — AAA's sync:schedule stream interleaved with BBB's. Every
+ * room this server uses is a party id apart from the socket's own private room,
+ * which must never be left.
+ */
+export function staleRoomIds(rooms, { socketId, keepId }) {
+  return [...(rooms ?? [])].filter(room => room !== socketId && room !== keepId)
 }
 
 /** The name to show for a member: their own display name when they've set one,

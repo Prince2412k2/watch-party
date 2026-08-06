@@ -1,29 +1,36 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent, ReactNode } from 'react'
 import { Rnd } from 'react-rnd'
-import { useParty } from '../context/PartyContext'
-import { useAuth } from '../context/AuthContext'
-import { useSocket } from '../hooks/useSocket'
-import { useLiveKit } from '../hooks/useLiveKit'
-import type { LiveKitParticipantView } from '../hooks/useLiveKit'
-import { useHideSelf } from '../hooks/useHideSelf'
-import { navigate } from '../router'
-import Player from '../components/Player'
-import type { PlayerProps } from '../components/Player'
-import CameraGrid from '../components/CameraGrid'
-import Dock from '../components/Dock'
-import Chat from '../components/Chat'
-import RoomControls from '../components/RoomControls'
-import CameraTile from '../components/CameraTile'
-import SharedBrowser from '../components/SharedBrowser'
-import { glass } from '../glass'
-import { mirror } from '../mirror'
-import { usePhone } from '../hooks/useIsMobile'
-import { Z } from '../watchLayers'
-import Library from './Library'
-import Lobby from './Lobby'
-import type { PartySession, SubtitlePreferences } from '../types'
-import { apiJson, stringField } from '../types/guards'
+import { useParty } from '../context/PartyContext.tsx'
+import { useAuth } from '../context/AuthContext.tsx'
+import { useSocket } from '../hooks/useSocket.ts'
+import { useLiveKit } from '../hooks/useLiveKit.ts'
+import type { LiveKitParticipantView } from '../hooks/useLiveKit.ts'
+import { useHideSelf } from '../hooks/useHideSelf.ts'
+import { navigate } from '../router.ts'
+import Player from '../components/Player.tsx'
+import type { PlayerProps } from '../components/Player.tsx'
+import CameraGrid from '../components/CameraGrid.tsx'
+import Dock from '../components/Dock.tsx'
+import Chat from '../components/Chat.tsx'
+import RoomControls from '../components/RoomControls.tsx'
+import CameraTile from '../components/CameraTile.tsx'
+import SharedBrowser from '../components/SharedBrowser.tsx'
+import { glass } from '../glass.tsx'
+import { mirror } from '../mirror.ts'
+import { usePhone } from '../hooks/useIsMobile.ts'
+import { Z } from '../watchLayers.ts'
+import {
+  AnalogToastStack,
+  useAutoHideControls,
+  useChatToasts,
+  useDisplayPreferences,
+} from '../analog/player/index.ts'
+import Library from './Library.tsx'
+import Lobby from './Lobby.tsx'
+import type { ChatMessage, PartySession, SubtitlePreferences } from '../types.ts'
+import { apiJson, stringField } from '../types/guards.ts'
+import { partyJoinTransition } from '../partyAuthority.ts'
 
 type LiveKitState = ReturnType<typeof useLiveKit>
 type CameraProps = {
@@ -37,14 +44,17 @@ type CameraProps = {
 type SeekBridge = {
   canControl: boolean
   seekBy: (seconds: number) => void
-  guardToggle: (action: () => void | Promise<void>) => Promise<void>
+  // Returns a promise that REJECTS when the toggle failed — the caller is
+  // responsible for putting that in front of the user.
+  guardToggle: (action: () => unknown) => Promise<void>
 }
 
 export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } } = {}) {
   const { socket } = useSocket()
   const party = useParty()
+  const { user } = useAuth()
   const {
-    session, role, layoutMode, chatOpen, chatRipple, alertMode,
+    session, role, messages, layoutMode, chatOpen, chatRipple, alertMode,
     setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks, setSubtitlePreferences,
   } = party
 
@@ -61,21 +71,33 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   // coupling is strictly camera → self-view, never the reverse.
   useEffect(() => { setHideSelf(!lk.camOn) }, [lk.camOn, setHideSelf])
 
-  const joinedRef = useRef(false)
+  // Which party id this surface has actually created/joined. App.jsx renders ONE
+  // mount-stable <Party> for every /party/* URL, so navigating straight from
+  // /party/AAA to /party/BBB only changes the prop — with the old boolean latch
+  // that navigation was a no-op and the AAA session (its LiveKit room, its
+  // schedule, its chat) stayed live under the BBB URL. Keyed on the target so
+  // the same navigation leaves AAA and joins BBB, while StrictMode's
+  // double-invoke and ordinary re-renders still can't join twice.
+  const joinedFor = useRef<string | null>(null)
   useEffect(() => {
-    // Guard against StrictMode's double-invoke (would create/join twice)
-    if (joinedRef.current) return
-    joinedRef.current = true
-    if (isNew) {
+    const action = partyJoinTransition({ joinedFor: joinedFor.current, partyId, isNew })
+    if (action.kind === 'idle') return
+    joinedFor.current = action.target
+    if (action.leavePrevious) {
+      party.leaveParty()
+      setRemovedCameras(new Set())
+      setJoinError(null)
+    }
+    if (action.kind === 'create') {
       // itemId → room preloaded with a title; no itemId → empty lobby room
       const create = itemId ? party.createParty(itemId, initialTracks) : party.createRoom()
       create
         .then(id => window.history.replaceState({}, '', `/party/${id}`))
         .catch(() => navigate('/library'))
-    } else if (partyId) {
-      party.joinParty(partyId).catch(err => setJoinError(err?.message || 'not found'))
+    } else {
+      party.joinParty(action.target).catch(err => setJoinError(err?.message || 'not found'))
     }
-  }, []) // eslint-disable-line
+  }, [partyId, isNew]) // eslint-disable-line
 
   // Rules-of-Hooks: this must run UNCONDITIONALLY, above the joinError early
   // return below. A failed join (invalid/expired code — the common case for a
@@ -171,6 +193,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
             : <Chat top={124} />
         )}
 
+        <AVErrorBanner error={lk.error} />
         <LobbyAVBar lk={lk} chatOpen={chatOpen} onToggleChat={toggleChat} hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf} />
         <RoomControls stage="lobby" top={74} />
 
@@ -198,11 +221,38 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
     <WatchView
       session={session} isHost={isHost} cameraProps={cameraProps} lk={lk}
       chatOpen={chatOpen} chatRipple={chatRipple} alertMode={alertMode}
-      layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat}
+      messages={messages} selfUserId={user?.userId}
+      layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat} toggleChat={toggleChat}
       setPlaybackTracks={setPlaybackTracks}
       setSubtitlePreferences={setSubtitlePreferences}
       hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf}
     />
+  )
+}
+
+/**
+ * Camera / microphone / room failures, in front of the user.
+ *
+ * Rendered on EVERY stage — lobby, shared browser, watch. It used to exist only
+ * inside WatchView, so a denied camera permission in the lobby (where people
+ * first switch their camera on, before any title is picked) flagged an error the
+ * UI never showed: the button just did nothing. useLiveKit auto-dismisses the
+ * message after ~4.5s. Opaque and high-contrast so it stays readable over a
+ * bright frame.
+ */
+function AVErrorBanner({ error, top = 'calc(var(--sa-t) + 70px)' }: { error?: string | null; top?: string }) {
+  if (!error) return null
+  return (
+    <div role="alert" style={{
+      position: 'absolute', top, left: '50%', transform: 'translateX(-50%)', zIndex: Z.toast, maxWidth: '80vw',
+      display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 12,
+      background: 'rgba(224,101,94,.14)', border: '1px solid rgba(224,101,94,.4)', color: 'var(--text)',
+      fontSize: 13.5, fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,.55)',
+      animation: 'in .22s cubic-bezier(.2,0,.1,1)',
+    }}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
+      {error}
+    </div>
   )
 }
 
@@ -276,6 +326,8 @@ function BrowserStage({
           : <Chat top={76} />
       )}
 
+      <AVErrorBanner error={lk.error} />
+
       {/* The party keeps every control it has anywhere else — mic, camera,
           self-view, chat — plus the browser's own sound. Same bar as the lobby, so
           nothing about being on this stage costs the party a capability. */}
@@ -293,12 +345,22 @@ function BrowserStage({
   )
 }
 
+// The column the desktop chat drawer occupies: its own `right: 12` inset, its
+// `min(300px, …)` width, and 12px of clearance from the frame. The watch stage
+// gives this up while chat is open rather than letting the drawer cover it.
+const CHAT_DRAWER_W = 324
+
+// A shared empty log, so an unsupplied `messages` prop does not hand the toast
+// feed a new array identity on every render.
+const NO_MESSAGES: ChatMessage[] = []
+
 // The immersive watch screen: real fullscreen (whole container, feeds stay
 // visible), and chrome that auto-hides after idle and returns on mouse move
 // (desktop) or a tap (phone). See watchLayers.js for the z-index scale.
 function WatchView({
   session, isHost, cameraProps, lk, chatOpen, chatRipple = 0, alertMode, layoutMode,
-  setLayout = () => {}, openChat = () => {}, closeChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
+  messages = NO_MESSAGES, selfUserId,
+  setLayout = () => {}, openChat = () => {}, closeChat = () => {}, toggleChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
 }: {
   session: PartySession
   isHost?: boolean
@@ -307,10 +369,13 @@ function WatchView({
   chatOpen?: boolean
   chatRipple?: number
   alertMode?: 'focus' | 'on' | 'mute'
+  messages?: ChatMessage[]
+  selfUserId?: string
   layoutMode?: 'float' | 'dock'
   setLayout?: (mode: 'float' | 'dock') => void
   openChat?: (focus?: boolean) => void
   closeChat?: () => void
+  toggleChat?: () => void
   setPlaybackTracks?: (tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   setSubtitlePreferences?: (preferences: SubtitlePreferences) => void
   hideSelf?: boolean
@@ -318,8 +383,14 @@ function WatchView({
 }) {
   const phone = usePhone()
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const hideTimer = useRef<number | null>(null)
-  const [visible, setVisible] = useState(true)
+  // Playback state, reported up by the player, purely so the chrome can obey
+  // "controls hide after three seconds DURING PLAYBACK" — a paused frame keeps
+  // its controls.
+  const [playing, setPlaying] = useState(true)
+  const chrome = useAutoHideControls({ playing })
+  const visible = chrome.visible
+  const displayPreferences = useDisplayPreferences()
+  const toasts = useChatToasts({ messages, chatOpen, selfUserId })
   // Single "are we in the app's fullscreen presentation?" state. Derived from
   // whichever mechanism the platform supports (element FS today; iOS faux-FS in
   // Phase B). Drives the button icon, orientation lock, and the control-layer poke.
@@ -351,20 +422,17 @@ function WatchView({
     if (chatRipple > 0 && alertMode === 'on' && !chatOpen) setRipple(r => r + 1)
   }, [chatRipple]) // eslint-disable-line
 
-  const poke = () => {
-    setVisible(true)
-    if (hideTimer.current != null) window.clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => setVisible(false), 3000)
-  }
-  useEffect(() => { poke(); return () => { if (hideTimer.current != null) window.clearTimeout(hideTimer.current) } }, [])
+  // The 3000ms lived here as a bare setTimeout with one blocker (an open
+  // settings menu, ORed in locally by each bar). It is now playerCore's
+  // `tickAutoHide`, shared with the Flutter player and driven by the same
+  // interaction cases: the timeout is a token, holds pin the chrome open
+  // mid-interaction, and a paused movie keeps its controls.
+  const poke = () => chrome.note('pointer')
 
   // On phones a tap on the video TOGGLES the control layer (show → hide); when
   // shown it re-arms the idle timer. On desktop a click only wakes the chrome.
-  const toggleChrome = () => {
-    if (visible) { setVisible(false); if (hideTimer.current != null) window.clearTimeout(hideTimer.current) }
-    else poke()
-  }
-  const onSurfaceTap = () => poke()   // desktop click-to-wake
+  const toggleChrome = () => chrome.toggle()
+  const onSurfaceTap = () => chrome.note('tap')   // desktop click-to-wake
 
   // ── Phone surface gestures (Phase F) ──────────────────────────────────────
   // Single tap = toggle chrome; double-tap on the LEFT third = seek −10s, RIGHT
@@ -387,9 +455,17 @@ function WatchView({
   // pause/play the browser can emit while (re)acquiring a device via getUserMedia
   // never authors a pause/seek to the shared timeline — and any spurious local
   // pause of a playing movie is undone. Falls back to a plain call pre-wiring.
-  const guardedToggle = (fn: () => void) => {
+  //
+  // The guard used to `catch {}` whatever the toggle threw, so a device that
+  // failed outside useLiveKit's own try/catch (or before the room existed) left
+  // the user pressing a button that silently did nothing. Every rejection now
+  // lands in the same visible banner useLiveKit uses.
+  const guardedToggle = (fn: () => unknown) => {
     const g = seekBridgeRef.current?.guardToggle
-    return g ? g(fn) : fn()
+    const run = g ? g(fn) : Promise.resolve().then(fn)
+    return run.catch((err: unknown) => {
+      lk.reportError(err instanceof Error ? err.message : 'Could not change your camera or microphone.')
+    })
   }
   const DOUBLE_MS = 280                        // single/double discrimination window
   const MOVE_TOL = 12                          // px: past this a press is a drag/scroll, not a tap
@@ -535,24 +611,19 @@ function WatchView({
       onClick={phone ? onPhoneTap : onSurfaceTap}
       onPointerDownCapture={phone ? onPhonePointerDown : undefined}
       style={rootStyle}>
-      {lk.error && (
-        // Bug 8: opaque, high-contrast banner (was a see-through red wash that was
-        // hard to read over a bright frame). useLiveKit auto-dismisses it ~4.5s.
-        <div role="alert" style={{
-          position: 'absolute', top: 'calc(var(--sa-t) + 70px)', left: '50%', transform: 'translateX(-50%)', zIndex: Z.toast, maxWidth: '80vw',
-          display: 'flex', alignItems: 'center', gap: 9, padding: '11px 16px', borderRadius: 12,
-          background: 'rgba(224,101,94,.14)', border: '1px solid rgba(224,101,94,.4)', color: 'var(--text)',
-          fontSize: 13.5, fontWeight: 600, boxShadow: '0 10px 30px rgba(0,0,0,.55)',
-          animation: 'in .22s cubic-bezier(.2,0,.1,1)',
-        }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
-          {lk.error}
-        </div>
-      )}
+      <AVErrorBanner error={lk.error} />
 
       {/* On desktop the dock shrinks the video; on phones the video stays full-bleed
           and cameras float as a compact strip so the movie is never letterboxed. */}
-      <div style={{ position: 'absolute', inset: 0, marginLeft: (!phone && !hideAllFeeds && layoutMode === 'dock') ? 210 : 0, transition: 'margin-left .3s cubic-bezier(.2,0,.1,1)' }}>
+      <div style={{
+        position: 'absolute', inset: 0,
+        marginLeft: (!phone && !hideAllFeeds && layoutMode === 'dock') ? 210 : 0,
+        // "The movie stage yields enough horizontal space for the drawer rather
+        // than being covered by it." The stage gives up the drawer's column
+        // instead of the drawer being painted over the frame.
+        marginRight: (!phone && chatOpen) ? CHAT_DRAWER_W : 0,
+        transition: 'margin-left .3s cubic-bezier(.2,0,.1,1), margin-right .3s cubic-bezier(.2,0,.1,1)',
+      }}>
         <HlsPlayer
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
           onSetPlaybackTracks={setPlaybackTracks}
@@ -563,10 +634,11 @@ function WatchView({
           hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={() => setHideAllFeeds(v => !v)}
           onToggleLayout={() => setLayout(layoutMode === 'float' ? 'dock' : 'float')}
           hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-          onOpenChat={() => openChat(true)} layoutMode={layoutMode}
+          onOpenChat={() => openChat(true)} onToggleChat={toggleChat} layoutMode={layoutMode}
           visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
           phone={phone} camStripOpen={camStripOpen}
           seekBridgeRef={seekBridgeRef}
+          onHoldChrome={chrome.hold} onReleaseChrome={chrome.release} onPlayingChange={setPlaying}
         />
         {/* Desktop camera layouts */}
         {!phone && !hideAllFeeds && layoutMode === 'float' && <CameraGrid {...cameraProps} />}
@@ -618,6 +690,25 @@ function WatchView({
           </span>
         </div>
       )}
+
+      {/* Chat toasts. Anchored under the top-right room cluster, which is the
+          one region of the stage that is not spoken for: the transport and the
+          subtitles own the bottom, the chat toggle and the room menu own the
+          top-right ABOVE this, floating camera tiles default to the top-left
+          (and the phone camera popup to the bottom-right), and the desktop dock
+          is a left column. Deliberately NOT tied to the auto-hide `visible`
+          layer — a notification that only arrives when the controls happen to
+          be up is not a notification. */}
+      <AnalogToastStack
+        view={toasts}
+        preferences={displayPreferences}
+        width={phone ? 232 : 280}
+        style={{
+          zIndex: Z.controlBar,
+          top: phone ? 'calc(var(--sa-t) + 68px)' : 76,
+          right: phone ? 'calc(var(--sa-r) + 8px)' : 14,
+        }}
+      />
 
       {/* Chat: persistent panel on desktop; dismissible slide-over sheet on phone
           (with a scrim) so it never permanently occludes the video or controls. */}
