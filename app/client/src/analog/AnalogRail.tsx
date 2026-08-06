@@ -3,6 +3,7 @@ import {
   useRef,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type TouchEvent as ReactTouchEvent,
 } from 'react'
 import { newSteppedScrollState, steppedScroll } from './browseCore.ts'
@@ -35,7 +36,13 @@ export interface AnalogRailItem {
   label: string
   badge?: string | null
   progressPct?: number | null
-  art: ArtworkItem
+  /**
+   * A Jellyfin item, for the surfaces whose artwork comes from the library
+   * proxy. Optional because not every rail's artwork does: a download in flight
+   * is not in Jellyfin yet and its poster is a Radarr/Sonarr URL, which is what
+   * `renderPoster` is for.
+   */
+  art?: ArtworkItem | null
 }
 
 export interface AnalogRailProps {
@@ -55,6 +62,13 @@ export interface AnalogRailProps {
   emptyTitle?: string
   emptyHint?: string
   disabled?: boolean
+  /**
+   * Draw the artwork for one slot. Defaults to `AnalogPoster` over the item's
+   * Jellyfin `art`; a rail whose artwork comes from somewhere else supplies its
+   * own so the geometry, the gestures, the windowing and the keyboard contract
+   * stay in this one component rather than being copied per surface.
+   */
+  renderPoster?: (item: AnalogRailItem, focused: boolean) => ReactNode
 }
 
 export function AnalogRail({
@@ -72,6 +86,7 @@ export function AnalogRail({
   emptyTitle = 'Nothing here yet',
   emptyHint,
   disabled = false,
+  renderPoster,
 }: AnalogRailProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const scrollState = useRef(newSteppedScrollState())
@@ -243,15 +258,19 @@ export function AnalogRail({
                   onActivate(index)
                 }}
               >
-                <AnalogPoster
-                  item={item.art}
-                  focused={index === selection}
-                  motion={motion}
-                  caption={item.label}
-                  badge={item.badge}
-                  progressPct={item.progressPct}
-                  eager
-                />
+                {renderPoster ? (
+                  renderPoster(item, index === selection)
+                ) : (
+                  <AnalogPoster
+                    item={item.art ?? null}
+                    focused={index === selection}
+                    motion={motion}
+                    caption={item.label}
+                    badge={item.badge}
+                    progressPct={item.progressPct}
+                    eager
+                  />
+                )}
               </button>
             )
           })}
