@@ -31,6 +31,10 @@ import '../../ui/ui.dart';
 ///   axis to directional traversal. That is also D-pad/remote support, which
 ///   nothing in this tree had.
 /// * **Artwork is square and 2:3.** The old screen drew 3/5 with a 12px radius.
+/// * **The window ahead of the cursor is warmed.** Focus, shelf length and the
+///   measured slot count go to the artwork prefetcher, which asks [railWindow]
+///   which items are about to arrive and pulls their artwork into the cache
+///   before they do — see `_warm` below.
 class BrowseScreen extends ConsumerStatefulWidget {
   const BrowseScreen({super.key, required this.type});
 
@@ -59,6 +63,11 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
 
   String? _focusedShelfId;
   bool _restored = false;
+
+  /// The window the prefetcher was last driven with. A rebuild that changes
+  /// none of it — a backdrop cross-fade, a repaint, an ambient write — must not
+  /// re-drive the queue.
+  String? _warmedFor;
 
   String get _surfaceId => 'browse:${widget.type.name}';
 
@@ -166,6 +175,78 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
     context.go('/detail/${shelf.items[index].id}');
   }
 
+  /// Queue the warms for the current window, once per window.
+  ///
+  /// Called from `build` because [slots] is a measured quantity — it only
+  /// exists inside the [LayoutBuilder] — but the warm itself is deferred a
+  /// frame so it can never delay the paint it was measured from. The signature
+  /// covers everything that changes what should be warm: which shelf owns
+  /// focus, where the cursor is, how many slots fit, and how long the shelf is.
+  void _scheduleWarm(List<_Shelf> shelves, int slots) {
+    final shelfId = _focusedShelfId;
+    if (shelfId == null) return;
+    for (final shelf in shelves) {
+      if (shelf.id != shelfId || shelf.items.isEmpty) continue;
+      final index = (_itemIndex[shelf.id] ?? 0).clamp(0, shelf.items.length - 1);
+      final signature = '${shelf.id}/$index/$slots/${shelf.items.length}';
+      if (_warmedFor == signature) return;
+      _warmedFor = signature;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _warm(shelf, index, slots);
+      });
+      return;
+    }
+  }
+
+  /// Pull the artwork and detail the user has not asked for yet.
+  ///
+  /// Two artwork windows, both `railWindow(...).prefetch` and both keyed to
+  /// their own queue slot so neither cancels the other:
+  ///
+  /// * **Posters**, over the real window — the [slots] that fit on screen, the
+  ///   default lookahead past them and the default couple behind the cursor.
+  ///   These are the cards themselves, so warming them is what removes the
+  ///   pop-in as the shelf translates.
+  /// * **Backdrops**, over a one-slot window. The stage backdrop is the largest
+  ///   thing on screen and the only artwork that changes on *every* focus step,
+  ///   yet the item focus is about to land on is by definition already visible
+  ///   — so it is never in the poster window's prefetch set and its backdrop
+  ///   would always be cold. A window of one slot with a lookahead and a behind
+  ///   of one resolves to exactly "the item a single step away in each
+  ///   direction", which is precisely the two that can be needed next.
+  ///
+  /// Then the focused title's own detail, so pressing Enter opens `/detail/:id`
+  /// on cached JSON instead of a skeleton.
+  void _warm(_Shelf shelf, int index, int slots) {
+    final api = ref.read(apiClientProvider);
+    final artwork = ref.read(artworkPrefetcherProvider);
+    if (artwork != null) {
+      artwork.warmRail(
+        slot: 'browse-poster',
+        total: shelf.items.length,
+        offset: index,
+        slots: slots,
+        urlsFor: (i) => [
+          api.imageUrl(shelf.items[i].id, tag: shelf.items[i].imageTags?['Primary']),
+        ],
+      );
+      artwork.warmRail(
+        slot: 'browse-backdrop',
+        total: shelf.items.length,
+        offset: index,
+        slots: 1,
+        lookahead: 1,
+        behind: 1,
+        urlsFor: (i) => [
+          api.imageUrl(shelf.items[i].id, type: ImageType.backdrop),
+        ],
+      );
+    }
+    ref
+        .read(catalogPrefetcherProvider)
+        .warmItem(ref.read(catalogNamespaceProvider), shelf.items[index].id);
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = ref.watch(browseByTypeProvider(widget.type));
@@ -251,6 +332,16 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
       for (var i = 0; i < shelves.length; i++)
         _shelfWidget(api, shelves, i, posterWidth, slotHeight),
     ];
+
+    // How many whole slots a shelf shows at once — the only [railWindow] input
+    // the layout owns, and measured rather than assumed so the warmed window
+    // matches what the user can actually see at any window size. `n` slots
+    // occupy `n * width + (n - 1) * gap`, hence the gap added back before the
+    // divide.
+    const gap = AnalogPoster.gapPx;
+    final fit =
+        ((constraints.maxWidth - gutter + gap) / (posterWidth + gap)).floor();
+    _scheduleWarm(shelves, fit < 1 ? 1 : fit);
 
     return FocusTraversalGroup(
       policy: ReadingOrderTraversalPolicy(),
