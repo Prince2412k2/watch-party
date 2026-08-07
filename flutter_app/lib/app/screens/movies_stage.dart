@@ -33,6 +33,7 @@ import '../../analog/chrome/chrome.dart';
 import '../../analog/browse_core.dart';
 import '../../analog/movie_browse.dart';
 import '../../analog/stage_layout.dart';
+import '../../analog/type_mass.dart';
 import '../../analog/widgets/analog_rail.dart';
 import '../../analog/widgets/analog_stage.dart';
 import '../../data/api_client.dart';
@@ -49,7 +50,24 @@ class MoviesStage extends ConsumerStatefulWidget {
   ConsumerState<MoviesStage> createState() => _MoviesStageState();
 }
 
-class _MoviesStageState extends ConsumerState<MoviesStage> {
+class _MoviesStageState extends ConsumerState<MoviesStage>
+    with SingleTickerProviderStateMixin {
+  /// The copy's arrival. One controller for the whole block so every line
+  /// stays in step; the lines differ by riding different *intervals* of it,
+  /// weighted by their type size. Separate controllers would drift and there
+  /// would be nothing holding the block together.
+  late final AnimationController _copyEntry = AnimationController(
+    vsync: this,
+    duration: AnalogMotion.copySwapMs,
+    value: 1,
+  );
+
+  @override
+  void dispose() {
+    _copyEntry.dispose();
+    super.dispose();
+  }
+
   BrowseMode _mode = BrowseMode.singles;
 
   /// The franchise we have drilled into, or null at the list level.
@@ -108,11 +126,32 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
   /// Hand-rolling this is what made a flick jump several titles at once.
   final SteppedScrollState _scroll = SteppedScrollState();
 
+  /// When the last step landed, and which way it went. Together these give the
+  /// rail its momentum and the copy its travel direction — steps arriving
+  /// close together mean the row is being pushed hard.
+  DateTime? _lastStepAt;
+  int _stepDirection = 1;
+
+  /// 0..1, from the gap since the previous step.
+  double get _velocity {
+    final last = _lastStepAt;
+    if (last == null) return 0;
+    final gap = DateTime.now().difference(last).inMilliseconds;
+    final fast = AnalogMotion.fastStepMs.inMilliseconds;
+    if (gap >= fast) return 0;
+    return 1 - gap / fast;
+  }
+
   void _stepSelection(int direction, int total) {
     if (total <= 0) return;
     final next = (_selected + direction.sign).clamp(0, total - 1);
     if (next == _selected) return;
-    setState(() => _selected = next);
+    setState(() {
+      _stepDirection = direction.sign;
+      _lastStepAt = DateTime.now();
+      _selected = next;
+    });
+    _copyEntry.forward(from: 0);
   }
 
   /// Scrolling **anywhere on the stage** drives the rail, not just over it.
@@ -239,6 +278,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
                             // clips instead of throwing an overflow.
                             physics: const NeverScrollableScrollPhysics(),
                             child: _Details(
+                              key: ValueKey(detailed?.id ?? 'empty'),
                               item: detailed,
                               collection: _collection,
                               loading: async.isLoading,
@@ -246,8 +286,12 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
                                   ? 'Could not load this library'
                                   : null,
                               onBack: _collection == null ? null : _back,
-                            ),
-                          ),
+                              // Every line rides this one controller, each on
+                              // an interval weighted by its own type size.
+                              entry: _copyEntry,
+                              direction: _stepDirection,
+                              velocity: _velocity,
+                            ),                          ),
                         ),
                       ),
                       const SizedBox(width: TitleLayout.columnGap),
@@ -326,11 +370,15 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
 /// Title, meta line and overview for the selected item.
 class _Details extends StatelessWidget {
   const _Details({
+    super.key,
     required this.item,
     required this.collection,
     required this.loading,
     required this.error,
     required this.onBack,
+    required this.entry,
+    required this.direction,
+    required this.velocity,
   });
 
   final LibraryItem? item;
@@ -338,6 +386,16 @@ class _Details extends StatelessWidget {
   final bool loading;
   final String? error;
   final VoidCallback? onBack;
+
+  /// The block's shared arrival, 0..1.
+  final Animation<double> entry;
+
+  /// Which way the rail moved, so the copy comes in from that side.
+  final int direction;
+
+  /// 0..1 — how hard the row is being pushed, which sets how far the copy
+  /// travels. A fast scroll throws the text as far as the posters.
+  final double velocity;
 
 
 
@@ -392,30 +450,48 @@ class _Details extends StatelessWidget {
           // detail stage's opening line, and putting it anywhere else means
           // the block reorders halfway through the transition.
           if (current != null && current.genres.isNotEmpty) ...[
-            Text(
-              current.genres.take(3).join('  /  ').toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TitleType.breadcrumb.copyWith(color: AnalogColor.inkDim),
+            _Weighted(
+              entry: entry,
+              direction: direction,
+              velocity: velocity,
+              fontSizePx: TitleType.breadcrumb.fontSize ?? 10,
+              child: Text(
+                current.genres.take(3).join('  /  ').toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TitleType.breadcrumb.copyWith(color: AnalogColor.inkDim),
+              ),
             ),
             const SizedBox(height: 14),
           ],
 
-          Text(
-            current?.name ?? (loading ? '' : 'Nothing here'),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TitleType.heading.copyWith(color: AnalogColor.ink),
+          _Weighted(
+            entry: entry,
+            direction: direction,
+            velocity: velocity,
+            fontSizePx: TitleType.heading.fontSize ?? 52,
+            child: Text(
+              current?.name ?? (loading ? '' : 'Nothing here'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TitleType.heading.copyWith(color: AnalogColor.ink),
+            ),
           ),
 
           if (current != null) ...[
             if (current.taglines.isNotEmpty) ...[
               const SizedBox(height: 13),
-              Text(
-                current.taglines.first,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TitleType.tagline.copyWith(color: AnalogColor.inkDim),
+              _Weighted(
+                entry: entry,
+                direction: direction,
+                velocity: velocity,
+                fontSizePx: TitleType.tagline.fontSize ?? 15,
+                child: Text(
+                  current.taglines.first,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TitleType.tagline.copyWith(color: AnalogColor.inkDim),
+                ),
               ),
             ],
 
@@ -425,11 +501,19 @@ class _Details extends StatelessWidget {
                 constraints: const BoxConstraints(
                   maxWidth: TitleLayout.overviewMaxWidth,
                 ),
-                child: Text(
-                  current.overview!,
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: TitleType.overview.copyWith(color: AnalogColor.inkDim),
+                child: _Weighted(
+                  entry: entry,
+                  direction: direction,
+                  velocity: velocity,
+                  fontSizePx: TitleType.overview.fontSize ?? 16,
+                  child: Text(
+                    current.overview!,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: TitleType.overview.copyWith(
+                      color: AnalogColor.inkDim,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -438,11 +522,17 @@ class _Details extends StatelessWidget {
             // part of the line here rather than a separate mark, because that
             // is how the detail stage reads it and the two must not differ.
             const SizedBox(height: 18),
-            Text(
-              _metaLine(current),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TitleType.meta.copyWith(color: AnalogColor.inkDim),
+            _Weighted(
+              entry: entry,
+              direction: direction,
+              velocity: velocity,
+              fontSizePx: TitleType.meta.fontSize ?? 10,
+              child: Text(
+                _metaLine(current),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TitleType.meta.copyWith(color: AnalogColor.inkDim),
+              ),
             ),
 
           ],
@@ -556,6 +646,69 @@ class _ModeButton extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+
+/// One line of copy, arriving with the weight its type size implies.
+///
+/// Heavier text takes a later slice of the shared entry and travels further,
+/// so the block assembles from its lightest parts to its heaviest instead of
+/// appearing all at once. See `analog/type_mass.dart` for the law.
+class _Weighted extends StatelessWidget {
+  const _Weighted({
+    required this.entry,
+    required this.direction,
+    required this.velocity,
+    required this.fontSizePx,
+    required this.child,
+  });
+
+  final Animation<double> entry;
+  final int direction;
+  final double velocity;
+  final double fontSizePx;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final slice = typeSettleInterval(fontSizePx);
+
+    // Two curves over the same slice, and they must stay two.
+    //
+    // The travel overshoots — it carries past its mark and comes back, the
+    // same elasticity the rail settles with, so the text has weight rather
+    // than gliding to a stop. The fade cannot: an overshooting curve returns
+    // values above 1, and FadeTransition asserts on an opacity above 1. So the
+    // fade rides the plain slice and only the position gets the spring.
+    final fade = CurvedAnimation(parent: entry, curve: slice);
+    final settle = CurvedAnimation(
+      parent: entry,
+      curve: Interval(
+        slice.begin,
+        slice.end,
+        curve: AnalogMotion.settleEase,
+      ),
+    );
+
+    final travel =
+        (AnalogMotion.copySlidePct +
+            (AnalogMotion.copySlideFastPct - AnalogMotion.copySlidePct) *
+                velocity) /
+        100 *
+        typeTravelFactor(fontSizePx) *
+        direction;
+
+    return FadeTransition(
+      opacity: fade,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: Offset(travel, 0),
+          end: Offset.zero,
+        ).animate(settle),
+        child: child,
       ),
     );
   }

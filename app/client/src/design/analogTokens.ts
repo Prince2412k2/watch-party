@@ -91,12 +91,15 @@ export const analogTokens = {
     disabledContainerPct: 12,
   },
 
-  /** Mechanical and weighty: short travel, clear detents, restrained easing. No
-   *  elastic overshoot anywhere. The curves are Material 3's easing set -
-   *  standard for chrome, emphasized-decelerate for anything that travels a
-   *  distance (the cursor step, drawers). M3's curves suit this design
-   *  precisely because none of them overshoot; they only change how weight is
-   *  distributed across the move. */
+  /** Mechanical and weighty: short travel, clear detents. Chrome still uses
+   *  Material 3's easing set - standard for buttons and plates,
+   *  emphasized-decelerate for drawers - and none of those overshoot. The
+   *  BROWSE RAIL is the deliberate exception: it settles past its mark and
+   *  comes back, and the amount scales with how fast the row was moving. That
+   *  was asked for directly, and it replaces an earlier blanket ban on
+   *  overshoot. The distinction that keeps it coherent: things with mass
+   *  overshoot, chrome does not. A row of posters being flung has momentum; a
+   *  button does not. */
   motion: {
     focusStepMs: 170,
     focusStepEase: [0.05, 0.7, 0.1, 1],
@@ -112,6 +115,23 @@ export const analogTokens = {
     enterEase: [0.05, 0.7, 0.1, 1],
     exitMs: 200,
     exitEase: [0.3, 0, 0.8, 0.15],
+    slotLagMs: 26,
+    slotLagMaxMs: 130,
+    settleMs: 380,
+    settleEase: [0.22, 1.28, 0.36, 1],
+    settleFastMs: 620,
+    fastStepMs: 220,
+    anticipationMs: 60,
+    anticipationPct: 4,
+    copySwapMs: 260,
+    copyRisePx: 10,
+    copySlidePct: 11,
+    copySlideFastPct: 32,
+    typeMassRefPx: 16,
+    typeMassMaxPx: 52,
+    typeMassSettleMinPct: 58,
+    typeMassTravelMinPct: 55,
+    typeMassTravelMaxPct: 145,
   },
 
   /** Timeline and volume are precision lines, not filled bars. The visible line

@@ -92,12 +92,15 @@ abstract final class AnalogStateLayer {
   static const double disabledContainerPct = 12.0;
 }
 
-/// Mechanical and weighty: short travel, clear detents, restrained easing. No
-/// elastic overshoot anywhere. The curves are Material 3's easing set -
-/// standard for chrome, emphasized-decelerate for anything that travels a
-/// distance (the cursor step, drawers). M3's curves suit this design
-/// precisely because none of them overshoot; they only change how weight is
-/// distributed across the move.
+/// Mechanical and weighty: short travel, clear detents. Chrome still uses
+/// Material 3's easing set - standard for buttons and plates,
+/// emphasized-decelerate for drawers - and none of those overshoot. The
+/// BROWSE RAIL is the deliberate exception: it settles past its mark and
+/// comes back, and the amount scales with how fast the row was moving. That
+/// was asked for directly, and it replaces an earlier blanket ban on
+/// overshoot. The distinction that keeps it coherent: things with mass
+/// overshoot, chrome does not. A row of posters being flung has momentum; a
+/// button does not.
 abstract final class AnalogMotion {
   static const Duration focusStepMs = Duration(milliseconds: 170);
   static const Cubic focusStepEase = Cubic(0.05, 0.7, 0.1, 1.0);
@@ -113,6 +116,23 @@ abstract final class AnalogMotion {
   static const Cubic enterEase = Cubic(0.05, 0.7, 0.1, 1.0);
   static const Duration exitMs = Duration(milliseconds: 200);
   static const Cubic exitEase = Cubic(0.3, 0.0, 0.8, 0.15);
+  static const Duration slotLagMs = Duration(milliseconds: 26);
+  static const Duration slotLagMaxMs = Duration(milliseconds: 130);
+  static const Duration settleMs = Duration(milliseconds: 380);
+  static const Cubic settleEase = Cubic(0.22, 1.28, 0.36, 1.0);
+  static const Duration settleFastMs = Duration(milliseconds: 620);
+  static const Duration fastStepMs = Duration(milliseconds: 220);
+  static const Duration anticipationMs = Duration(milliseconds: 60);
+  static const double anticipationPct = 4.0;
+  static const Duration copySwapMs = Duration(milliseconds: 260);
+  static const double copyRisePx = 10.0;
+  static const double copySlidePct = 11.0;
+  static const double copySlideFastPct = 32.0;
+  static const double typeMassRefPx = 16.0;
+  static const double typeMassMaxPx = 52.0;
+  static const double typeMassSettleMinPct = 58.0;
+  static const double typeMassTravelMinPct = 55.0;
+  static const double typeMassTravelMaxPct = 145.0;
 }
 
 /// Timeline and volume are precision lines, not filled bars. The visible line
