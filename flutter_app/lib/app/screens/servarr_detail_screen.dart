@@ -3,7 +3,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../state/providers.dart';
 import '../../state/servarr_provider.dart';
 import '../../state/show_source.dart';
 import '../../ui/ui.dart';
@@ -77,7 +76,7 @@ class ServarrDetailView extends ConsumerWidget {
     final genres = item.genres.where((g) => g.isNotEmpty).take(3).toList();
     final infoLine = <String>[
       if (item.year != null) '${item.year}',
-      if (runtime != null) runtime,
+      ?runtime,
       if (item.certification != null && item.certification!.isNotEmpty)
         item.certification!,
       if (_isSeries && item.seasonCount != null)

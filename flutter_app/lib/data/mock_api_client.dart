@@ -58,6 +58,9 @@ class MockApiClient implements ApiClient {
   Future<void> logout() async {}
 
   @override
+  Future<void> clearSession() async {}
+
+  @override
   Future<Map<String, dynamic>> currentDesktopRelease() async =>
       throw StateError('No desktop release is configured');
 
@@ -77,6 +80,14 @@ class MockApiClient implements ApiClient {
 
   @override
   Future<List<LibraryItem>> items({String? parentId}) async => _catalog;
+
+  @override
+  Future<List<LibraryItem>> collections({String? parentId}) async =>
+      _catalog.where((i) => i.type == 'BoxSet').toList();
+
+  @override
+  Future<List<LibraryItem>> collectionItems(String collectionId) async =>
+      _catalog.where((i) => i.parentId == collectionId).toList();
 
   @override
   Future<List<LibraryItem>> children(String itemId) async =>

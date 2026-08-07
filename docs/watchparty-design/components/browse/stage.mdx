@@ -1,0 +1,72 @@
+---
+title: Stage
+kit: browse
+web: AnalogStage
+native: AnalogStage
+status: parity
+---
+
+# Stage
+
+The backdrop, the grain, and the slots everything else lives in.
+
+## Purpose
+
+Every browse surface is a stage. It owns the full-bleed backdrop, the
+vignette and scrim over it, the film grain, and the named regions —
+header, side, nav, toolboxes, content.
+
+Having one component own the layering is what keeps the z-order honest;
+`z.*` tokens exist precisely so nothing invents its own stacking.
+
+## Anatomy
+
+```
+┌──────────────────────────────────────────┐
+│ header                          [side]   │  z.nav
+│                                          │
+│              backdrop                    │  z.backdrop
+│              + vignette + scrim          │
+│              + grain                     │  z.grain
+│                                          │
+│  ▸ content (rail / shelves)              │  z.shelf
+│                                          │
+│ nav                          toolboxes   │  z.nav / z.toolbox
+└──────────────────────────────────────────┘
+```
+
+## API
+
+**Web** — `AnalogStage`
+
+| Prop | Type | Notes |
+| --- | --- | --- |
+| `backdropUrl` | `string \| null` | |
+| `backdropFallbackUrl` | `string \| null` | |
+| `layout` | `StageLayout` | From `stageLayout(size)` |
+| `motion` | `MotionProfile` | From `motionProfile(reducedMotion)` |
+| `inert` | `boolean?` | Suppresses interaction while a sheet is open |
+| `header` / `side` / `nav` / `toolboxes` / `children` | `ReactNode` | The slots |
+
+## The backdrop crossfade
+
+Backdrops cross-fade on `motion.backdropCrossMs` with
+`motion.backdropCrossEase`. Under reduced motion the backdrop **still
+changes** — it cuts instead of crossing. Removing the information because
+the animation was removed would be the wrong trade.
+
+## Tokens
+
+`color.stageVoid`, `stageGround`, `backdropScrim`, `backdropVignette` ·
+`grain.opacityPct` / `tilePx` / `focusedBoostPct` ·
+`z.backdrop` / `grain` / `shelf` / `nav` / `toolbox` / `scrim` / `sheet` /
+`toast` · `space.stageGutterPx` / `stageGutterPhonePx` ·
+`motion.backdropCrossMs` / `backdropCrossEase`
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Nothing invents its own z-index | `z.*` tokens |
+| 2 | Reduced motion cuts, it does not skip | `motionProfile` sets duration 0, not "no change" |
+| 3 | The scrim is light enough to read the backdrop through | `backdropScrim` was lightened from `D9` to `A6` for exactly this |

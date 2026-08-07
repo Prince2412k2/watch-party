@@ -2,13 +2,25 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../analog/browse_core.dart';
+import '../../analog/chrome/analog_select.dart';
+import '../../analog/chrome/chrome.dart';
+import '../../analog/stage_layout.dart';
+import '../../analog/widgets/analog_copy.dart';
+import '../../analog/widgets/analog_poster.dart';
+import '../../analog/widgets/analog_rail.dart';
 import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../state/state.dart';
+import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
+import '../../ui/widgets/bottom_nav.dart';
+import 'title_layout.dart';
 
 /// Track indices selected on the detail stage, handed to the player/party on
 /// Watch (mirrors the web `DetailTrackSelection`).
@@ -46,12 +58,47 @@ class DetailStage extends ConsumerStatefulWidget {
   ConsumerState<DetailStage> createState() => _DetailStageState();
 }
 
-class _DetailStageState extends ConsumerState<DetailStage> {
+class _DetailStageState extends ConsumerState<DetailStage>
+    with TickerProviderStateMixin {
+  /// The page's arrival.
+  ///
+  /// One controller so the parts land in a deliberate order rather than all
+  /// appearing on the same frame. The poster is already handled — it flies in
+  /// on a Hero from the rail — so this is for the furniture that has nowhere
+  /// to fly from: the cast rises from beneath, the actions come in from the
+  /// side, each on its own slice of the clock.
+  late final AnimationController _enter = AnimationController(
+    vsync: this,
+    duration: AnalogMotion.enterMs + AnalogMotion.copySwapMs,
+  )..forward();
+
+  /// The copy block's re-arrival when the episode cursor moves.
+  ///
+  /// Separate from [_enter], which is the page opening once. This one refires
+  /// on every step, exactly as the browse stage's does — "episodes follow the
+  /// same rule as movies do on the movies tab", and on that tab the text
+  /// swaps with the same weighted travel the rail settles with. Starts
+  /// settled so the first paint is not an animation from nothing.
+  late final AnimationController _copySwap = AnimationController(
+    vsync: this,
+    duration: AnalogMotion.copySwapMs,
+    value: 1,
+  );
+
+  /// Which way the cursor last moved, so the copy comes in from that side.
+  int _stepDirection = 1;
+
+  @override
+  void dispose() {
+    _enter.dispose();
+    _copySwap.dispose();
+    super.dispose();
+  }
+
   late String _activeId = widget.itemId;
   LibraryItem? _activeFallback;
   int? _selAudio;
   int? _selSubtitle;
-  bool _trackMenuOpen = false;
 
   /// The id we've already seeded default track selection for, so re-fetches
   /// (e.g. after a subtitle upload) don't clobber a user's choice.
@@ -62,8 +109,11 @@ class _DetailStageState extends ConsumerState<DetailStage> {
     setState(() {
       _activeId = item.id;
       _activeFallback = item;
-      _trackMenuOpen = false;
     });
+    // The copy re-arrives rather than cutting. Fired here rather than at each
+    // call site so every route into a new title — key, wheel, click — moves the
+    // text the same way.
+    _copySwap.forward(from: 0);
   }
 
   void _initTracks(String id, int? audio, int? subtitle) {
@@ -75,10 +125,160 @@ class _DetailStageState extends ConsumerState<DetailStage> {
     });
   }
 
+  // ── season / episode navigation ───────────────────────────────────────────
+  //
+  // Episodes get the Movies stage's input model, whole: the arrows and the
+  // wheel work ANYWHERE on the stage, not only over the strip the stills
+  // happen to occupy. On Movies the rail is the only thing that scrolls, so a
+  // wheel event landing on the backdrop meaning nothing is a dead zone rather
+  // than a feature — and that is just as true here.
+  //
+  // The one exception is the seasons column, which needs the wheel for itself.
+  // So there are two nested regions with two separate accumulators: the outer
+  // one covers the stage and steps episodes, the inner one covers the seasons
+  // and steps seasons.
+  //
+  // Nested listeners are exactly the shape that shipped a double-step, and the
+  // fix is not to un-nest them — it is [PointerSignalResolver], which awards
+  // one event to exactly one listener, the innermost that registered. Both
+  // regions go through it. Calling `onPointerSignal` directly in two nested
+  // listeners is what made every notch move two items, and hand-rolling the
+  // accumulator on top of that is what made a flick move four. Neither is done
+  // here: the arithmetic is [steppedScroll], shared with the web and pinned by
+  // the parity suite.
+
+  final SteppedScrollState _seasonScroll = SteppedScrollState();
+  final SteppedScrollState _episodeScroll = SteppedScrollState();
+
+  /// Arrows, from anywhere on the stage — the same map the Movies stage uses.
+  /// Left/Right walk the rail, Up/Down move the season slider, Enter plays,
+  /// Escape leaves. Bound at the stage rather than inside the rail so they
+  /// keep working after a click has moved focus to a season button.
+  KeyEventResult _onKey(
+    KeyEvent event,
+    List<SeasonEpisodes> rows,
+    List<LibraryItem> episodes,
+  ) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowLeft:
+        _stepEpisode(-1, episodes);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        _stepEpisode(1, episodes);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _stepSeason(-1, rows);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        _stepSeason(1, rows);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+      case LogicalKeyboardKey.select:
+        _watchEpisode(episodes, _episodeIndex(episodes, _activeId));
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        widget.onBack();
+        return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// When the last rail step landed. The rail's settle is scaled by this, so a
+  /// row being pushed hard carries further past its mark.
+  DateTime? _lastStepAt;
+
+  /// 0..1, from the gap since the previous step.
+  double get _velocity {
+    final last = _lastStepAt;
+    if (last == null) return 0;
+    final gap = DateTime.now().difference(last).inMilliseconds;
+    final fast = AnalogMotion.fastStepMs.inMilliseconds;
+    if (gap >= fast) return 0;
+    return 1 - gap / fast;
+  }
+
+  /// Whichever axis the hardware reported further on. A horizontal rail that
+  /// ignored a vertical wheel would read as frozen on every desktop mouse.
+  static double _wheelDelta(PointerScrollEvent event) =>
+      event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+      ? event.scrollDelta.dx
+      : event.scrollDelta.dy;
+
+  /// Route a wheel event to [onStep] through the resolver, so this region and
+  /// the other one cannot both claim it.
+  void _steppedSignal(
+    PointerSignalEvent event,
+    SteppedScrollState state,
+    void Function(int step) onStep,
+  ) {
+    if (event is! PointerScrollEvent) return;
+    GestureBinding.instance.pointerSignalResolver.register(event, (resolved) {
+      final step = steppedScroll(
+        state,
+        _wheelDelta(resolved as PointerScrollEvent),
+        resolved.timeStamp.inMicroseconds / 1000,
+      );
+      if (step != 0) onStep(step);
+    });
+  }
+
+  /// Move the season slider, landing on the new season's first episode — the
+  /// season IS the episode that is active, so there is no separate selection to
+  /// keep in sync and no way for the two to disagree.
+  void _stepSeason(int direction, List<SeasonEpisodes> rows) {
+    if (rows.isEmpty) return;
+    final current = _activeSeason(rows, _activeId);
+    var index = current == null ? 0 : rows.indexOf(current);
+    if (index < 0) index = 0;
+    final next = (index + direction.sign).clamp(0, rows.length - 1);
+    if (next == index) return;
+    _stepDirection = direction.sign;
+    _selectSeason(rows[next]);
+  }
+
+  void _selectSeason(SeasonEpisodes row) {
+    if (row.episodes.isEmpty) return;
+    _setActive(row.episodes.first);
+  }
+
+  /// Move the episode cursor. The rail is fixed-cursor, so this is both "which
+  /// episode is selected" and "how far the row has scrolled".
+  void _stepEpisode(int direction, List<LibraryItem> episodes) {
+    if (episodes.isEmpty) return;
+    final current = _episodeIndex(episodes, _activeId);
+    _selectEpisode(episodes, current + direction.sign);
+  }
+
+  void _selectEpisode(List<LibraryItem> episodes, int index) {
+    if (episodes.isEmpty) return;
+    final next = index.clamp(0, episodes.length - 1);
+    if (episodes[next].id == _activeId) return;
+    _stepDirection = next >= _episodeIndex(episodes, _activeId) ? 1 : -1;
+    _lastStepAt = DateTime.now();
+    _setActive(episodes[next]);
+  }
+
+  /// Enter on the cursor plays it. Selection and the active title are the same
+  /// thing on a fixed-cursor rail, so the track choices already on screen are
+  /// this episode's and ride along.
+  void _watchEpisode(List<LibraryItem> episodes, int index) {
+    if (index < 0 || index >= episodes.length) return;
+    final episode = episodes[index];
+    widget.onWatch(
+      episode,
+      DetailTrackSelection(
+        audioStreamIndex: episode.id == _activeId ? _selAudio : null,
+        subtitleStreamIndex: episode.id == _activeId
+            ? (_selSubtitle ?? -1)
+            : null,
+      ),
+    );
+  }
+
   void _selectAudio(int? index) => setState(() => _selAudio = index);
   void _selectSubtitle(int? index) => setState(() => _selSubtitle = index);
-  void _toggleTrackMenu() => setState(() => _trackMenuOpen = !_trackMenuOpen);
-  void _closeTrackMenu() => setState(() => _trackMenuOpen = false);
 
   @override
   Widget build(BuildContext context) {
@@ -168,6 +368,44 @@ class _StageBody extends ConsumerWidget {
       }
     }
 
+    final episodes =
+        _activeSeason(seasonRows, state._activeId)?.episodes ??
+        const <LibraryItem>[];
+
+    // The inner of the two wheel regions: the seasons column, which claims the
+    // event from the stage-wide one below. Both register through the resolver,
+    // which is what makes a nest safe — the innermost registrant wins and the
+    // outer one never sees it.
+    Widget seasonWheel(Widget child) => Listener(
+      onPointerSignal: (e) => state._steppedSignal(
+        e,
+        state._seasonScroll,
+        (step) => state._stepSeason(step, seasonRows),
+      ),
+      // The whole seasons column answers the wheel, not just the pixels the
+      // labels happen to cover.
+      behavior: HitTestBehavior.opaque,
+      child: child,
+    );
+
+    /// The Movies stage's input model, over the whole surface: arrows and the
+    /// wheel work wherever the pointer is, because the episode rail is the
+    /// only thing here that moves and a dead zone over the backdrop is not a
+    /// feature.
+    Widget stageInput(Widget child) => Focus(
+      autofocus: true,
+      onKeyEvent: (_, event) => state._onKey(event, seasonRows, episodes),
+      child: Listener(
+        onPointerSignal: (e) => state._steppedSignal(
+          e,
+          state._episodeScroll,
+          (step) => state._stepEpisode(step, episodes),
+        ),
+        behavior: HitTestBehavior.opaque,
+        child: child,
+      ),
+    );
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 860;
@@ -184,7 +422,7 @@ class _StageBody extends ConsumerWidget {
         );
 
         if (narrow) {
-          return Stack(
+          final body = Stack(
             fit: StackFit.expand,
             children: [
               Positioned.fill(child: Opacity(opacity: 0.16, child: backdrop)),
@@ -197,13 +435,15 @@ class _StageBody extends ConsumerWidget {
                     copy,
                     if (rootIsSeries) ...[
                       const SizedBox(height: 28),
-                      _SeasonSelector(
-                        state: state,
-                        rows: seasonRows,
-                        activeId: state._activeId,
+                      seasonWheel(
+                        _SeasonStrip(
+                          state: state,
+                          rows: seasonRows,
+                          activeId: state._activeId,
+                        ),
                       ),
                       const SizedBox(height: 20),
-                      _EpisodeDock(
+                      _EpisodeRail(
                         state: state,
                         api: api,
                         rows: seasonRows,
@@ -219,34 +459,58 @@ class _StageBody extends ConsumerWidget {
               ),
             ],
           );
+          return rootIsSeries ? stageInput(body) : body;
         }
 
-        return Stack(
+        final body = Stack(
           fit: StackFit.expand,
           children: [
             backdrop,
             const _Wash(),
             Padding(
               padding: EdgeInsets.fromLTRB(
-                64,
-                80,
-                64,
-                rootIsSeries ? 260 : 170,
+                TitleLayout.padLeft,
+                TitleLayout.padTop,
+                TitleLayout.padLeft,
+                // One reserve for both, from the browse stage's rail. A series
+                // used to hold back a hand-picked 260 and top-align, which put
+                // its title in a different place from every other title in the
+                // app and made the route in from the rail visibly drop the
+                // text. The number a title surface centres against is the
+                // browse rail's height, whatever sits under it here.
+                copyBottomReserve(MediaQuery.sizeOf(context)),
               ),
               child: Row(
-                crossAxisAlignment: rootIsSeries
-                    ? CrossAxisAlignment.start
-                    : CrossAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Expanded(flex: 92, child: SingleChildScrollView(child: copy)),
-                  const SizedBox(width: 80),
                   Expanded(
-                    flex: 108,
+                    flex: TitleLayout.copyFlex,
+                    // Centred within its column, not flush to the gutter —
+                    // matching the browse screen, where the copy sits about
+                    // 70px further in. That inset is the last visible
+                    // difference between the two surfaces.
+                    child: Center(child: SingleChildScrollView(child: copy)),
+                  ),
+                  const SizedBox(width: TitleLayout.columnGap),
+                  Expanded(
+                    flex: TitleLayout.asideFlex,
                     child: rootIsSeries
-                        ? _SeasonSelector(
-                            state: state,
-                            rows: seasonRows,
-                            activeId: state._activeId,
+                        ? seasonWheel(
+                            Align(
+                              alignment: Alignment.centerRight,
+                              // Not scrollable — the wheel here steps the
+                              // slider. Present only so a long-running series
+                              // on a short window clips instead of throwing.
+                              child: SingleChildScrollView(
+                                physics:
+                                    const NeverScrollableScrollPhysics(),
+                                child: _SeasonStrip(
+                                  state: state,
+                                  rows: seasonRows,
+                                  activeId: state._activeId,
+                                ),
+                              ),
+                            ),
                           )
                         : _RightPoster(api: api, item: active),
                   ),
@@ -257,25 +521,108 @@ class _StageBody extends ConsumerWidget {
               Positioned(
                 left: 64,
                 right: 40,
-                bottom: 70,
-                child: _CastStrip(api: api, people: hero.people),
+                // Lifted clear of the very bottom edge — the strip is tall
+                // enough now that sitting flush against the foot made it read
+                // as falling off the stage.
+                bottom: 88,
+                // Rises from beneath the fold, last of everything on the page:
+                // it is the least important thing here and arriving first
+                // would pull the eye down before the title has landed.
+                child: _Enter(
+                  controller: state._enter,
+                  slice: const Interval(0.45, 1),
+                  from: const Offset(0, 0.7),
+                  child: _CastStrip(api: api, people: hero.people),
+                ),
               ),
             if (rootIsSeries)
               Positioned(
-                left: 64,
-                right: 64,
-                bottom: 74,
-                child: _EpisodeDock(
-                  state: state,
-                  api: api,
-                  rows: seasonRows,
-                  activeId: state._activeId,
-                  loading: seasonsAsync.isLoading,
+                // Where the browse rail sits, to the pixel: the same gutters
+                // and the same foot reserve. This band is the one the poster
+                // rail occupies on the way in, so the episodes have to land in
+                // it rather than near it.
+                left: TitleLayout.padLeft,
+                right: TitleLayout.padLeft,
+                bottom: kBottomNavReservedPx,
+                // Rises from beneath the fold, last of everything on the page,
+                // exactly as the cast strip it replaces did.
+                child: _Enter(
+                  controller: state._enter,
+                  slice: const Interval(0.45, 1),
+                  from: const Offset(0, 0.7),
+                  child: _EpisodeRail(
+                    state: state,
+                    api: api,
+                    rows: seasonRows,
+                    activeId: state._activeId,
+                    loading: seasonsAsync.isLoading,
+                  ),
                 ),
               ),
           ],
         );
+        return rootIsSeries ? stageInput(body) : body;
       },
+    );
+  }
+}
+
+/// The poster's flight from the rail: an arc, with elasticity at the end.
+///
+/// Two of the twelve principles at once. [MaterialRectArcTween] gives the
+/// *arc* — real things do not travel in straight lines between two points, and
+/// a poster sliding on a diagonal is the tell that it is a rectangle being
+/// interpolated rather than an object moving. The curve on top gives the
+/// *settle*: it overshoots the destination and comes back, so the poster
+/// arrives with weight rather than decelerating perfectly into place.
+///
+/// The overshoot works because the curve returns values above 1 and the arc
+/// tween extrapolates past its end — the same property that makes an
+/// overshooting curve illegal on an opacity is what makes it work here.
+class _SettleRectTween extends MaterialRectArcTween {
+  _SettleRectTween({super.begin, super.end});
+
+  @override
+  Rect lerp(double t) => super.lerp(AnalogMotion.settleEase.transform(t));
+}
+
+/// One part of the page arriving, on its own slice of the shared entrance.
+///
+/// Staging, in the twelve-principles sense: the page assembles in an order
+/// that leads the eye — title, then actions, then cast — rather than every
+/// element appearing together, which reads as a screenshot fading up.
+///
+/// The travel overshoots and settles, matching the rail; the fade does not,
+/// because an overshooting curve returns values above 1 and an opacity above 1
+/// is an assertion failure rather than a look.
+class _Enter extends StatelessWidget {
+  const _Enter({
+    required this.controller,
+    required this.slice,
+    required this.from,
+    required this.child,
+  });
+
+  final Animation<double> controller;
+  final Interval slice;
+
+  /// Start offset as a fraction of the child's own size.
+  final Offset from;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final fade = CurvedAnimation(parent: controller, curve: slice);
+    final settle = CurvedAnimation(
+      parent: controller,
+      curve: Interval(slice.begin, slice.end, curve: AnalogMotion.settleEase),
+    );
+    return FadeTransition(
+      opacity: fade,
+      child: SlideTransition(
+        position: Tween<Offset>(begin: from, end: Offset.zero).animate(settle),
+        child: child,
+      ),
     );
   }
 }
@@ -305,7 +652,28 @@ class _CopyColumn extends StatelessWidget {
   Widget build(BuildContext context) {
     final wp = context.wp;
     final rootIsSeries = detailSeries != null;
-    final genres = hero.genres.take(3).toList();
+
+    // "Episodes follow the same rule as movies do on the movies tab." On that
+    // tab the copy is the CURSOR'S title — its name is the heading, its
+    // synopsis the prose, its facts the meta run. So here the subject is the
+    // selected episode, not the series that contains it, and the series drops
+    // to a breadcrumb above the heading exactly as a franchise does when you
+    // are looking at one of its parts.
+    //
+    // Before this the heading was the series at every cursor position and the
+    // episode was a mono line underneath, which meant stepping the rail barely
+    // changed the page — the opposite of the movies rule.
+    final subject = rootIsSeries && isEpisode ? active : hero;
+
+    // An episode carries no genres of its own; they belong to the series and
+    // are the same for every episode in it.
+    final genres = (subject.genres.isNotEmpty ? subject : hero).genres
+        .take(3)
+        .toList();
+
+    final seriesCrumb = rootIsSeries && isEpisode
+        ? detailSeries!.name
+        : null;
 
     // Play target: series root → first episode; otherwise the active title.
     final firstEpisode =
@@ -317,118 +685,155 @@ class _CopyColumn extends StatelessWidget {
     final resumeTicks = active.userData?.playbackPositionTicks ?? 0;
     final resumeLabel = resumeTicks > 0 ? _fmtRuntime(resumeTicks) : null;
 
+    final rating = subject.communityRating ?? hero.communityRating;
+    final certificate = subject.officialRating ?? hero.officialRating;
     final meta = <String>[
-      if (hero.communityRating != null)
-        '★ ${hero.communityRating!.toStringAsFixed(1)}',
-      if (hero.officialRating != null) hero.officialRating!,
+      if (rating != null) '★ ${rating.toStringAsFixed(1)}',
+      ?certificate,
+      // The episode's position, in the meta run rather than as a line of its
+      // own — it is a fact about the title like a year or a runtime, and the
+      // browse stage keeps all of those on one line.
+      if (rootIsSeries && isEpisode)
+        'S${active.parentIndexNumber ?? 0} E${active.indexNumber ?? 0}',
       ..._infoLine(active).take(3),
     ];
 
+    // On a series the copy follows the episode cursor, so it re-arrives on
+    // every step the way the browse stage's does. Everywhere else the block is
+    // fixed for the life of the page and there is nothing to animate: wrapping
+    // it anyway would run a transition nothing triggered.
+    Widget line(double fontSizePx, Widget child) => rootIsSeries
+        ? AnalogWeightedLine(
+            entry: state._copySwap,
+            direction: state._stepDirection,
+            velocity: state._velocity,
+            fontSizePx: fontSizePx,
+            child: child,
+          )
+        : child;
+
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 650),
+      constraints: const BoxConstraints(maxWidth: TitleLayout.copyMaxWidth),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
+          // The series a chosen episode belongs to, above everything, in the
+          // same slot the Movies stage puts a franchise's name.
+          if (seriesCrumb != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                seriesCrumb.toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TitleType.breadcrumb.copyWith(color: wp.dim),
+              ),
+            ),
           if (genres.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 14),
-              child: Text(
-                genres.join('  /  ').toUpperCase(),
-                style: AppTheme.mono.copyWith(
-                  color: wp.dim,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.3,
+              child: line(
+                TitleType.breadcrumb.fontSize ?? 10,
+                Text(
+                  genres.join('  /  ').toUpperCase(),
+                  style: TitleType.breadcrumb.copyWith(color: wp.dim),
                 ),
               ),
             ),
-          Text(
-            hero.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: AppTheme.displayLarge.copyWith(color: wp.text),
-          ),
-          if (isEpisode)
-            Padding(
-              padding: const EdgeInsets.only(top: 13),
-              child: Text(
-                '${active.seriesName ?? detailSeries?.name ?? ''} · '
-                'S${active.parentIndexNumber ?? 0} E${active.indexNumber ?? 0} · ${active.name}',
-                style: AppTheme.mono.copyWith(color: wp.dim, fontSize: 11),
-              ),
+          line(
+            TitleType.heading.fontSize ?? 52,
+            Text(
+              subject.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TitleType.heading.copyWith(color: wp.text),
             ),
-          if (hero.overview != null)
+          ),
+          // An episode without its own synopsis falls back to the series', so
+          // the block never collapses to a bare title mid-rail.
+          if ((subject.overview ?? hero.overview) case final overview?)
             Padding(
               padding: const EdgeInsets.only(top: 20),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 590),
-                child: Text(
-                  hero.overview!,
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body.copyWith(color: wp.dim),
+                constraints: const BoxConstraints(
+                  maxWidth: TitleLayout.overviewMaxWidth,
+                ),
+                child: line(
+                  TitleType.overview.fontSize ?? 16,
+                  Text(
+                    overview,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: TitleType.overview.copyWith(color: wp.dim),
+                  ),
                 ),
               ),
             ),
           if (meta.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 18),
-              child: _MetaLine(parts: meta),
+              child: line(
+                TitleType.meta.fontSize ?? 10,
+                _MetaLine(parts: meta),
+              ),
             ),
           if (playItem != null) ...[
             const SizedBox(height: 23),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                AppButton(
-                  label: resumeLabel != null && playItem.id == active.id
-                      ? 'Resume $resumeLabel'
-                      : rootIsSeries && !isEpisode
-                      ? 'Play first episode'
-                      : 'Watch now',
-                  icon: Icons.play_arrow,
-                  variant: AppButtonVariant.primary,
-                  onPressed: () {
-                    final pass = playItem.id == active.id;
-                    state.widget.onWatch(
-                      playItem,
-                      DetailTrackSelection(
-                        audioStreamIndex: pass ? state._selAudio : null,
-                        subtitleStreamIndex: pass
-                            ? (state._selSubtitle ?? -1)
-                            : null,
-                      ),
-                    );
-                  },
-                ),
-                if (active.type != 'Series') ...[
-                  _TrackButton(
-                    open: state._trackMenuOpen,
-                    onTap: state._toggleTrackMenu,
+            // The actions come in from the left, after the copy above them has
+            // settled — they are what the page is *for*, so they arrive last
+            // and land on a page that has stopped moving.
+            _Enter(
+              controller: state._enter,
+              slice: const Interval(0.35, 1),
+              from: const Offset(-0.18, 0),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  AppButton(
+                    label: resumeLabel != null && playItem.id == active.id
+                        ? 'Resume $resumeLabel'
+                        : rootIsSeries && !isEpisode
+                        ? 'Play first episode'
+                        : 'Watch now',
+                    icon: Icons.play_arrow,
+                    variant: AppButtonVariant.primary,
+                    onPressed: () {
+                      final pass = playItem.id == active.id;
+                      state.widget.onWatch(
+                        playItem,
+                        DetailTrackSelection(
+                          audioStreamIndex: pass ? state._selAudio : null,
+                          subtitleStreamIndex: pass
+                              ? (state._selSubtitle ?? -1)
+                              : null,
+                        ),
+                      );
+                    },
                   ),
-                  DownloadButton(
-                    itemId: active.id,
-                    title: active.name,
-                    runTimeTicks: active.runTimeTicks,
-                  ),
+                  if (active.type != 'Series') ...[
+                    _TrackButton(
+                      itemId: active.id,
+                      playback: playback,
+                      selectedAudio: state._selAudio,
+                      selectedSubtitle: state._selSubtitle,
+                      onSelectAudio: state._selectAudio,
+                      onSelectSubtitle: state._selectSubtitle,
+                    ),
+                    DownloadButton(
+                      itemId: active.id,
+                      title: active.name,
+                      runTimeTicks: active.runTimeTicks,
+                    ),
+                  ],
                 ],
-              ],
-            ),
-            if (state._trackMenuOpen && playback != null) ...[
-              const SizedBox(height: 12),
-              _TrackMenuPanel(
-                itemId: active.id,
-                playback: playback!,
-                selectedAudio: state._selAudio,
-                selectedSubtitle: state._selSubtitle,
-                onSelectAudio: state._selectAudio,
-                onSelectSubtitle: state._selectSubtitle,
-                onClose: state._closeTrackMenu,
               ),
-            ],
+            ),
+            // The menu is an OVERLAY now, opened by the button itself — it used
+            // to be an inline child right here, which is why it pushed the copy
+            // around when it opened and got clipped by this column.
           ],
         ],
       ),
@@ -443,11 +848,7 @@ class _MetaLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    final style = AppTheme.mono.copyWith(
-      color: wp.dim,
-      fontSize: 10,
-      letterSpacing: 0.6,
-    );
+    final style = TitleType.meta.copyWith(color: wp.dim);
     final children = <Widget>[];
     for (var i = 0; i < parts.length; i++) {
       if (i > 0) {
@@ -471,6 +872,17 @@ class _MetaLine extends StatelessWidget {
   }
 }
 
+/// The full-bleed artwork behind the copy.
+///
+/// Keyed to the SERIES, and deliberately not to the episode cursor.
+///
+/// The browse stage's backdrop follows its cursor because each movie there has
+/// its own, and the artwork changing is what makes the row read as travelling.
+/// Episodes are the opposite case: a Jellyfin episode almost never carries a
+/// backdrop, so following the cursor meant a request per step that mostly
+/// 404'd and fell back — the stage visibly reloading on every notch. The
+/// scenery a show is watched against is the show's, and holding it still is
+/// what lets the rail be the thing that moves.
 class _Backdrop extends StatelessWidget {
   const _Backdrop({required this.api, required this.heroId});
   final ApiClient api;
@@ -566,13 +978,22 @@ class _RightPoster extends StatelessWidget {
   Widget build(BuildContext context) {
     final wp = context.wp;
     return Align(
-      alignment: Alignment.centerRight,
+      // Nudged below centre. Dead centre put the poster's top edge above the
+      // copy's, which read as it floating away from the block it belongs to.
+      alignment: const Alignment(1, 0.18),
       child: Padding(
         padding: const EdgeInsets.only(right: 40),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 280),
           child: Hero(
             tag: 'poster-${item.id}',
+            // The poster arrives with the same elasticity the rail settles
+            // with: it carries a little past the corner and comes back,
+            // instead of gliding to a stop. Flutter takes the flight's shape
+            // from the DESTINATION hero, so this is the only place it needs
+            // to be declared — the rail's poster does not have to know.
+            createRectTween: (begin, end) =>
+                _SettleRectTween(begin: begin, end: end),
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: wp.surface,
@@ -595,8 +1016,14 @@ class _RightPoster extends StatelessWidget {
   }
 }
 
-class _SeasonSelector extends StatelessWidget {
-  const _SeasonSelector({
+/// The seasons, stacked down the side.
+///
+/// The same strip the Movies stage puts Singles ⇄ Collections in, down to the
+/// type size and the detent — the browse stage is the reference, and two
+/// sliders in the same corner of the same layout reading as different controls
+/// is the kind of drift `title_layout.dart` exists to stop.
+class _SeasonStrip extends StatelessWidget {
+  const _SeasonStrip({
     required this.state,
     required this.rows,
     required this.activeId,
@@ -607,37 +1034,24 @@ class _SeasonSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wp = context.wp;
-    final activeSeason = _activeSeason(rows, activeId);
-    return Align(
-      alignment: Alignment.topRight,
-      child: Padding(
-        padding: const EdgeInsets.only(right: 40),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 230),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < rows.length; i++)
-                _SeasonButton(
-                  label: rows[i].season.name.isNotEmpty
-                      ? rows[i].season.name
-                      : 'Season ${i + 1}',
-                  active: rows[i].season.id == activeSeason?.season.id,
-                  onTap: () {
-                    final first = rows[i].episodes.isNotEmpty
-                        ? rows[i].episodes.first
-                        : null;
-                    if (first != null) state._setActive(first);
-                  },
-                  color: wp.text,
-                  faint: wp.faint,
-                ),
-            ],
+    if (rows.isEmpty) return const SizedBox.shrink();
+    final active = _activeSeason(rows, activeId);
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[
+          _SeasonButton(
+            label: rows[i].season.name.isNotEmpty
+                ? rows[i].season.name
+                : 'Season ${i + 1}',
+            active: rows[i].season.id == active?.season.id,
+            onPressed: () => state._selectSeason(rows[i]),
           ),
-        ),
-      ),
+          if (i != rows.length - 1) const SizedBox(height: AnalogSpace.smPx),
+        ],
+      ],
     );
   }
 }
@@ -646,114 +1060,231 @@ class _SeasonButton extends StatelessWidget {
   const _SeasonButton({
     required this.label,
     required this.active,
-    required this.onTap,
-    required this.color,
-    required this.faint,
+    required this.onPressed,
   });
+
   final String label;
   final bool active;
-  final VoidCallback onTap;
-  final Color color;
-  final Color faint;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 40),
-        alignment: Alignment.centerRight,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
+    return AnalogPressable(
+      onPressed: onPressed,
+      semanticLabel: label,
+      selected: active,
+      button: false,
+      builder: (context, state) => AnalogFocusRing(
+        visible: state.focused,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AnalogSpace.smPx,
+            vertical: AnalogSpace.xsPx,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.right,
                 style: TextStyle(
-                  color: active ? color : faint,
-                  fontSize: active ? 18 : 15,
-                  fontWeight: FontWeight.w600,
+                  fontFamily: AnalogType.sansFamily,
+                  fontSize: 15,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                  color: active || state.lit
+                      ? AnalogColor.ink
+                      : AnalogColor.inkFaint,
                 ),
               ),
-            ),
-            const SizedBox(width: 13),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              width: active ? 34 : 22,
-              height: 1,
-              color: active ? color : faint,
-            ),
-          ],
+              const SizedBox(height: 3),
+              // The detent, not a tint: the active position is marked by
+              // geometry so it survives a monochrome display.
+              AnimatedContainer(
+                duration: AnalogMotion.detentMs,
+                curve: AnalogMotion.detentEase,
+                height: active ? AnalogHairline.activePx : AnalogHairline.idlePx,
+                width: active ? 34 : 14,
+                color: active ? AnalogColor.ink : AnalogColor.line,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _CastStrip extends StatelessWidget {
+class _CastStrip extends StatefulWidget {
   const _CastStrip({required this.api, required this.people});
   final ApiClient api;
   final List<Person> people;
 
+  /// The face. Large enough to actually recognise someone, which was the point
+  /// of the space under the copy going unused.
+  static const double _face = 136;
+
+  /// Card width. Sized to the face rather than to the longest name — the names
+  /// sit *under* the portrait now, so a card is as wide as its picture.
+  static const double _card = 152;
+
+  static const double _nameSize = 13;
+  static const double _roleSize = 12;
+
+  /// Line heights are pinned on the styles below rather than left to the
+  /// font's natural metrics, so this sum is exact. Estimating them is what
+  /// overflowed the card by 9px: the strip is inside a fixed-height box, and a
+  /// height derived from a guess about a typeface is wrong the moment the
+  /// typeface resolves to something else.
+  static const double _lineHeight = 1.3;
+  static const double _gap = 10;
+
+  static double _lineBox(double fontSize) =>
+      (fontSize * _lineHeight).ceilToDouble();
+
+  /// Face, gap, name line, role line.
+  static double get height =>
+      _face + _gap + _lineBox(_nameSize) + _lineBox(_roleSize);
+
+  /// The cast is supporting information, not the subject of the page. It sits
+  /// back until looked at rather than competing with the title above it.
+  static const double _restOpacity = 0.62;
+
+  @override
+  State<_CastStrip> createState() => _CastStripState();
+}
+
+class _CastStripState extends State<_CastStrip> {
+  final ScrollController _controller = ScrollController();
+
+  /// Where the strip is heading, which is not where it currently is.
+  ///
+  /// Holding a target separately from the live offset is what makes the glide
+  /// continuous: a second wheel notch arriving mid-flight extends the journey
+  /// instead of restarting it from wherever the strip happened to have reached.
+  double _target = 0;
+
+  /// How far past the raw wheel delta the strip carries. Above 1 it coasts —
+  /// this is the "low friction" part; the strip keeps going after the wheel
+  /// stops rather than halting under your finger.
+  static const double _glideGain = 2.6;
+
+  /// Long enough to read as coasting to a stop. The curve decelerates and does
+  /// NOT overshoot: carrying past where the wheel stopped is wanted, springing
+  /// back afterwards is not — that reads as the strip being yanked.
+  static const Duration _glide = Duration(milliseconds: 460);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// A horizontal ListView ignores a vertical mouse wheel — the axes do not
+  /// match, so Flutter drops the event and the strip appears frozen on
+  /// desktop. Mapping whichever axis the hardware reports onto the one axis
+  /// this list has is what actually makes it scrollable with a mouse.
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_controller.hasClients) return;
+    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+        ? event.scrollDelta.dx
+        : event.scrollDelta.dy;
+
+    // Re-anchor if the strip was dragged or has settled, so the target never
+    // drifts away from reality.
+    if (!_controller.position.isScrollingNotifier.value) {
+      _target = _controller.offset;
+    }
+
+    _target = (_target + delta * _glideGain).clamp(
+      0.0,
+      _controller.position.maxScrollExtent,
+    );
+    if (_target == _controller.offset) return;
+
+    _controller.animateTo(
+      _target,
+      duration: _glide,
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    // Was capped at 6, which silently hid most of a cast; the strip already
-    // scrolls horizontally, so the extra entries are reachable.
-    final cast = people.where((p) => p.type == 'Actor').take(14).toList();
+    // Was capped at 6, which silently hid most of a cast.
+    final cast = widget.people.where((p) => p.type == 'Actor').toList();
     if (cast.isEmpty) return const SizedBox.shrink();
+
     return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: cast.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 34),
-        itemBuilder: (context, i) {
-          final p = cast[i];
-          return SizedBox(
-            width: 190,
-            child: Row(
-              children: [
-                ClipOval(
-                  child: SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: AuthedNetworkImage(
-                      api.imageUrl(p.id, type: ImageType.primary),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => ColoredBox(
-                        color: wp.surface2,
-                        child: Center(
-                          child: Text(
-                            _initials(p.name),
-                            style: TextStyle(
-                              color: wp.dim,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
+      height: _CastStrip.height,
+      child: Listener(
+        onPointerSignal: _onPointerSignal,
+        child: ScrollConfiguration(
+          // Let a mouse drag the strip too, not just touch. Desktop users
+          // reach for the wheel first but the drag costs nothing to allow.
+          behavior: ScrollConfiguration.of(context).copyWith(
+            dragDevices: {
+              PointerDeviceKind.touch,
+              PointerDeviceKind.mouse,
+              PointerDeviceKind.trackpad,
+            },
+            scrollbars: false,
+          ),
+          child: ListView.separated(
+            controller: _controller,
+            scrollDirection: Axis.horizontal,
+            // Bouncing rather than clamping: a drag carries its momentum and
+            // the ends give a little instead of stopping dead against a wall.
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            itemCount: cast.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 40),
+            itemBuilder: (context, i) {
+              final p = cast[i];
+              return SizedBox(
+                width: _CastStrip._card,
+                child: Opacity(
+                  opacity: _CastStrip._restOpacity,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ClipOval(
+                        child: SizedBox(
+                          width: _CastStrip._face,
+                          height: _CastStrip._face,
+                          child: AuthedNetworkImage(
+                            widget.api.imageUrl(p.id, type: ImageType.primary),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => ColoredBox(
+                              color: wp.surface2,
+                              child: Center(
+                                child: Text(
+                                  _initials(p.name),
+                                  style: TextStyle(
+                                    color: wp.dim,
+                                    fontSize: 30,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                      const SizedBox(height: _CastStrip._gap),
                       Text(
                         p.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           color: wp.text,
-                          fontSize: 10,
+                          fontSize: _CastStrip._nameSize,
+                          height: _CastStrip._lineHeight,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -762,22 +1293,38 @@ class _CastStrip extends StatelessWidget {
                           p.role!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: wp.faint, fontSize: 10),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: wp.faint,
+                            fontSize: _CastStrip._roleSize,
+                            height: _CastStrip._lineHeight,
+                          ),
                         ),
                     ],
                   ),
                 ),
-              ],
-            ),
-          );
-        },
+              );
+            },
+          ),
+        ),
       ),
     );
   }
 }
 
-class _EpisodeDock extends StatelessWidget {
-  const _EpisodeDock({
+/// The season's episodes, as the Movies rail.
+///
+/// Not a list of cards with a highlight: the cursor is pinned to the first
+/// slot and the row travels under it, with the scale falloff, the trail
+/// dimming, the per-slot follow-through and the overshooting settle the browse
+/// stage has. "Episodes follow the same rule as movies do on the movies tab",
+/// and the cheapest way to guarantee that is to run the same widget over the
+/// same arithmetic rather than to re-describe the behaviour here.
+///
+/// Stills are 16:9 where a poster is 2:3, which is the rail's only parameter —
+/// see [AnalogRail.aspectRatio]. Everything else is shared.
+class _EpisodeRail extends StatelessWidget {
+  const _EpisodeRail({
     required this.state,
     required this.api,
     required this.rows,
@@ -792,250 +1339,88 @@ class _EpisodeDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wp = context.wp;
-    if (loading) {
-      return Container(
-        height: 150,
-        decoration: BoxDecoration(
-          color: wp.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radius),
-        ),
-      );
-    }
     final season = _activeSeason(rows, activeId);
-    if (season == null) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                season.season.name,
-                style: TextStyle(
-                  color: wp.text,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                '${season.episodes.length} episodes',
-                style: AppTheme.mono.copyWith(color: wp.faint, fontSize: 12),
-              ),
-            ],
+    final episodes = season?.episodes ?? const <LibraryItem>[];
+
+    final media = MediaQuery.of(context);
+    final size = stageLayout(media.size.width, media.size.height, false).size;
+
+    return AnalogRail(
+      // The one thing an episode does not share with a poster.
+      aspectRatio: AnalogPosterTile.stillAspect,
+      maxHeightPx: media.size.height * TitleLayout.railStageShare,
+      items: [
+        for (final ep in episodes)
+          AnalogRailItem(
+            id: ep.id,
+            label: ep.name,
+            subtitle: 'E${ep.indexNumber ?? '–'}',
+            // Thumb, not Primary: a still is a wide frame and Primary on an
+            // episode is not reliably one. Behind the session either way, so
+            // it goes through AuthedNetworkImage inside the tile — a plain
+            // Image.network here 401s.
+            imageUrl: api.imageUrl(ep.id, type: ImageType.thumb),
+            placeholderLabel: 'E${ep.indexNumber ?? '–'}',
+            progress: _progressOf(ep),
           ),
-        ),
-        SizedBox(
-          height: 158,
-          child: season.episodes.isEmpty
-              ? Text(
-                  'No episodes available.',
-                  style: TextStyle(color: wp.faint, fontSize: 13),
-                )
-              : ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  clipBehavior: Clip.none,
-                  itemCount: season.episodes.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 12),
-                  itemBuilder: (context, i) {
-                    final ep = season.episodes[i];
-                    return _EpisodeCard(
-                      api: api,
-                      episode: ep,
-                      selected: ep.id == activeId,
-                      onTap: () => state._setActive(ep),
-                    );
-                  },
-                ),
-        ),
       ],
+      selection: _episodeIndex(episodes, activeId),
+      size: size,
+      motion: motionProfile(media.disableAnimations),
+      velocity: state._velocity,
+      // Deliberately NOT autofocus: the stage above owns the arrows so they
+      // keep working after a click has moved focus elsewhere, exactly as they
+      // do on the Movies stage. Two autofocus nodes in one scope is also a
+      // coin toss over which one wins. These stay wired so the rail is still
+      // self-sufficient if something ever does focus it.
+      onCrossAxis: (direction) => state._stepSeason(direction, rows),
+      onEscape: state.widget.onBack,
+      onSelect: (i) => state._selectEpisode(episodes, i),
+      onActivate: (i) => state._watchEpisode(episodes, i),
+      emptyLabel: loading ? 'Loading…' : 'No episodes in this season',
     );
+  }
+
+  static double? _progressOf(LibraryItem item) {
+    final pct = item.userData?.playedPercentage;
+    if (pct == null || pct <= 0) return null;
+    return (pct / 100).clamp(0.0, 1.0);
   }
 }
 
-class _EpisodeCard extends StatelessWidget {
-  const _EpisodeCard({
-    required this.api,
-    required this.episode,
-    required this.selected,
-    required this.onTap,
-  });
-  final ApiClient api;
-  final LibraryItem episode;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    final progress = episode.userData?.playedPercentage;
-    return SizedBox(
-      width: 210,
-      child: GestureDetector(
-        onTap: onTap,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: selected ? wp.text : Colors.transparent,
-                      width: 2,
-                    ),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        AuthedNetworkImage(
-                          api.imageUrl(episode.id, type: ImageType.thumb),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => AuthedNetworkImage(
-                            api.imageUrl(episode.id, type: ImageType.primary),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) =>
-                                ColoredBox(color: wp.surface2),
-                          ),
-                        ),
-                        Positioned(
-                          left: 11,
-                          bottom: 9,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 7,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.68),
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                            child: Text(
-                              'E${episode.indexNumber ?? '?'}',
-                              style: AppTheme.mono.copyWith(
-                                color: Colors.white,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if ((progress ?? 0) > 0)
-                          Align(
-                            alignment: Alignment.bottomCenter,
-                            child: LinearProgressIndicator(
-                              value: (progress! / 100).clamp(0, 1),
-                              minHeight: 3,
-                              backgroundColor: Colors.white24,
-                              color: Colors.white,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 9),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    '${episode.indexNumber ?? '–'}',
-                    style: AppTheme.mono.copyWith(
-                      color: wp.faint,
-                      fontSize: 11.5,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      episode.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: wp.text,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TrackButton extends StatelessWidget {
-  const _TrackButton({required this.open, required this.onTap});
-  final bool open;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return Tooltip(
-      message: 'Audio and subtitles',
-      child: Material(
-        color: open ? wp.text : wp.surface.withValues(alpha: 0.6),
-        shape: CircleBorder(side: BorderSide(color: wp.line2)),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: SizedBox.square(
-            dimension: 44,
-            child: Icon(
-              Icons.music_note_outlined,
-              size: 18,
-              color: open ? wp.bg : wp.text,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Inline audio/subtitle track menu — folds the web `DetailTrackMenu`
-/// (selection + SRT/VTT upload/delete) into the detail stage. Reads/refreshes
-/// via [detailPlaybackProvider]; track selection updates the parent's state so
-/// it rides Watch into the player/party.
-class _TrackMenuPanel extends ConsumerStatefulWidget {
-  const _TrackMenuPanel({
+/// The audio/subtitle control: a glyph that opens the kit's dropdown.
+///
+/// This used to be a button plus a 430px panel rendered INLINE in the copy
+/// column. Opening it shoved the title and overview around, and the panel
+/// inherited the column's clip — so it was cut off at the bottom with nothing
+/// able to scroll it. The menu is an overlay now ([showAnalogSelect]), which
+/// is the actual fix; everything else here is the same upload/delete logic it
+/// always had.
+class _TrackButton extends ConsumerStatefulWidget {
+  const _TrackButton({
     required this.itemId,
     required this.playback,
     required this.selectedAudio,
     required this.selectedSubtitle,
     required this.onSelectAudio,
     required this.onSelectSubtitle,
-    required this.onClose,
   });
 
   final String itemId;
-  final PlaybackInfo playback;
+
+  /// Null while the probe is in flight — the button stays visible but inert
+  /// rather than popping into existence once playback info lands.
+  final PlaybackInfo? playback;
   final int? selectedAudio;
   final int? selectedSubtitle;
   final ValueChanged<int?> onSelectAudio;
   final ValueChanged<int?> onSelectSubtitle;
-  final VoidCallback onClose;
 
   @override
-  ConsumerState<_TrackMenuPanel> createState() => _TrackMenuPanelState();
+  ConsumerState<_TrackButton> createState() => _TrackButtonState();
 }
 
-class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
+class _TrackButtonState extends ConsumerState<_TrackButton> {
   bool _busy = false;
   String? _error;
 
@@ -1054,9 +1439,11 @@ class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
       if (file == null) return;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
       final api = ref.read(apiClientProvider);
-      final previous = widget.playback.subtitleStreams
-          .map((track) => track.index)
-          .toSet();
+      final previous =
+          widget.playback?.subtitleStreams
+              .map((track) => track.index)
+              .toSet() ??
+          const <int>{};
       await api.uploadSubtitle(widget.itemId, _toUtf8(bytes), file.name);
 
       PlaybackTrack? uploaded;
@@ -1099,183 +1486,79 @@ class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
+  final GlobalKey _anchor = GlobalKey();
+
+  /// One menu picks from two different lists, so a bare index cannot say which
+  /// one was chosen. `(kind, index)` can, and a record is cheaper than a pair
+  /// of sealed classes for something that never leaves this file.
+  void _open() {
     final pb = widget.playback;
-    return Container(
-      width: 430,
-      constraints: const BoxConstraints(maxHeight: 460),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: wp.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: wp.line2),
-        boxShadow: wp.cardShadow,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Playback tracks',
-                    style: TextStyle(
-                      color: wp.text,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                InkWell(
-                  onTap: widget.onClose,
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(Icons.close, size: 17, color: wp.dim),
-                  ),
-                ),
-              ],
-            ),
-            if (pb.audioStreams.isNotEmpty) ...[
-              _TrackHeading(label: 'Audio'),
+    if (pb == null) return;
+    showAnalogSelect<(String, int?)>(
+      context: context,
+      anchor: _anchor,
+      selected: _selectedKey(),
+      groups: [
+        if (pb.audioStreams.isNotEmpty)
+          AnalogChoiceGroup(
+            icon: Icons.graphic_eq,
+            choices: [
               for (var i = 0; i < pb.audioStreams.length; i++)
-                _TrackRow(
+                AnalogChoice(
+                  value: ('audio', pb.audioStreams[i].index),
                   label: _trackLabel(pb.audioStreams[i], 'Audio ${i + 1}'),
-                  selected: widget.selectedAudio == pb.audioStreams[i].index,
-                  onTap: () => widget.onSelectAudio(pb.audioStreams[i].index),
                 ),
-              const SizedBox(height: 12),
             ],
-            _TrackHeading(label: 'Subtitles'),
-            _TrackRow(
-              label: 'Off',
-              selected:
-                  widget.selectedSubtitle == null ||
-                  widget.selectedSubtitle! < 0,
-              onTap: () => widget.onSelectSubtitle(null),
-            ),
+          ),
+        AnalogChoiceGroup(
+          icon: Icons.closed_caption_outlined,
+          choices: [
+            const AnalogChoice(value: ('sub', null), label: 'Off'),
             for (var i = 0; i < pb.subtitleStreams.length; i++)
-              _TrackRow(
+              AnalogChoice(
+                value: ('sub', pb.subtitleStreams[i].index),
                 label: _trackLabel(pb.subtitleStreams[i], 'Subtitle ${i + 1}'),
-                selected:
-                    widget.selectedSubtitle == pb.subtitleStreams[i].index,
-                onTap: () =>
-                    widget.onSelectSubtitle(pb.subtitleStreams[i].index),
                 onDelete: pb.subtitleStreams[i].isExternal && !_busy
                     ? () => _delete(pb.subtitleStreams[i])
                     : null,
               ),
-            const SizedBox(height: 8),
-            AppButton(
-              label: _busy ? 'Working…' : 'Upload SRT or VTT',
-              variant: AppButtonVariant.secondary,
-              expand: true,
-              onPressed: _busy ? null : _upload,
-            ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: AppColors.red, fontSize: 12),
-                ),
-              ),
           ],
         ),
-      ),
+      ],
+      footerIcon: Icons.upload_file_outlined,
+      footerTooltip: 'Upload a subtitle file (SRT or VTT)',
+      onFooter: _busy ? null : _upload,
+      onSelected: (choice) {
+        if (choice.$1 == 'audio') {
+          widget.onSelectAudio(choice.$2);
+        } else {
+          widget.onSelectSubtitle(choice.$2);
+        }
+      },
     );
   }
-}
 
-class _TrackHeading extends StatelessWidget {
-  const _TrackHeading({required this.label});
-  final String label;
+  (String, int?) _selectedKey() {
+    final sub = widget.selectedSubtitle;
+    return ('sub', sub != null && sub >= 0 ? sub : null);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 5, 10, 5),
-      child: Text(
-        label.toUpperCase(),
-        style: AppTheme.mono.copyWith(
-          color: context.wp.faint,
-          fontSize: 10.5,
-          letterSpacing: 1.3,
-        ),
-      ),
-    );
-  }
-}
-
-class _TrackRow extends StatelessWidget {
-  const _TrackRow({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.onDelete,
-  });
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final VoidCallback? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return Container(
-      constraints: const BoxConstraints(minHeight: 44),
-      decoration: BoxDecoration(
-        color: selected ? wp.surface2 : Colors.transparent,
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: InkWell(
-              onTap: onTap,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 9,
-                ),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 15,
-                      child: selected
-                          ? Icon(Icons.check, size: 14, color: wp.text)
-                          : null,
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: selected ? wp.text : wp.dim,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (onDelete != null)
-            InkWell(
-              onTap: onDelete,
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Icon(Icons.delete_outline, size: 15, color: wp.faint),
-              ),
-            ),
-        ],
-      ),
+    // The upload failure has nowhere to print now that the panel is gone, so
+    // it rides the button's tooltip and turns the glyph red — the same
+    // treatment the party tray gives a failed shared browser.
+    return AnalogIconButton(
+      key: _anchor,
+      icon: _error != null
+          ? Icons.error_outline
+          : Icons.closed_caption_outlined,
+      tooltip: _error ?? 'Audio and subtitles',
+      tone: AnalogIconButtonTone.solid,
+      color: _error != null ? AppColors.red : null,
+      size: 44,
+      iconSize: 20,
+      onPressed: widget.playback == null || _busy ? null : _open,
     );
   }
 }
@@ -1326,6 +1609,17 @@ SeasonEpisodes? _activeSeason(List<SeasonEpisodes> rows, String activeId) {
   return rows.isEmpty ? null : rows.first;
 }
 
+/// Where the cursor sits in the season's row.
+///
+/// Falls back to 0 rather than -1: the active title is the series itself until
+/// an episode is picked, and a rail cannot render a negative selection.
+int _episodeIndex(List<LibraryItem> episodes, String activeId) {
+  for (var i = 0; i < episodes.length; i++) {
+    if (episodes[i].id == activeId) return i;
+  }
+  return 0;
+}
+
 int? _defaultAudio(PlaybackInfo info) {
   for (final t in info.audioStreams) {
     if (t.isDefault) return t.index;
@@ -1342,10 +1636,14 @@ int? _defaultSubtitle(PlaybackInfo info) {
 
 String _trackLabel(PlaybackTrack t, String fallback) {
   final base = t.displayTitle ?? t.title ?? t.language ?? fallback;
+  // Jellyfin's displayTitle usually ALREADY ends in "Default"/"Forced", so
+  // appending them unconditionally produced "AAC - Stereo - Default · Default".
+  // Only add a flag the base has not already said.
+  final lower = base.toLowerCase();
   return [
     base,
-    if (t.isDefault) 'Default',
-    if (t.isForced) 'Forced',
+    if (t.isDefault && !lower.contains('default')) 'Default',
+    if (t.isForced && !lower.contains('forced')) 'Forced',
   ].join(' · ');
 }
 

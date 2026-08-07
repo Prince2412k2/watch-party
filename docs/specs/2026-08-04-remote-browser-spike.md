@@ -1,6 +1,7 @@
 # Spike Decision Record — Remote Browser over LiveKit
 
-> Harness: `spikes/remote-browser/` (see its README for rationale and run order).
+> Harness: `spikes/remote-browser/`, removed in #63 once `browser/` productionized it.
+> This record is the surviving account of what it proved.
 > **Status: RUN 2026-08-04** against the live `watchparty-livekit` on
 > `watchparty-net`, LiveKit 1.13.2, Chromium 151.0.7922.71, host with 20 cores.
 > Stage: looping H.264 video (Sintel trailer, 854x480@24 upscaled to 1280x720)

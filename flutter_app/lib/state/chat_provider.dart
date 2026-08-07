@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,17 +15,31 @@ import 'providers.dart';
 const int chatRateMax = 5;
 const Duration chatRateWindow = Duration(milliseconds: 3000);
 
+/// How long a send waits for the server's `chat:message` ack before giving up.
+/// socket.io acks have no deadline of their own: a socket that dropped between
+/// the emit and the ack (or a server that never answers) left the send's future
+/// pending forever, so the composer stayed disabled with no way back.
+const Duration chatAckTimeout = Duration(seconds: 5);
+
+const String _rateLimitedMessage = 'Rate limited — slow down.';
+
 /// Party chat log (PLAN §3.8 / E7). Subscribes to the server's `chat:message`
 /// broadcast and sends outgoing messages via the client `chat:message` emit
 /// (ack `{ ok }` | `{ error: 'rate limited' }`). Tracks a local send-time
 /// window so the UI can show the same "rate limited" state without waiting on
 /// a round trip.
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
-  ChatNotifier(this._socket) : super(const []) {
+  ChatNotifier(this._socket, {this.ackTimeout = chatAckTimeout})
+      : super(const []) {
     _unsubscribe = _socket.on(ServerEvent.chatMessage, _onIncoming);
   }
 
   final SocketClient _socket;
+
+  /// How long [send] waits for the server ack. Injectable so a test doesn't
+  /// have to wait out the real [chatAckTimeout].
+  final Duration ackTimeout;
+
   void Function()? _unsubscribe;
   final Queue<DateTime> _sendTimes = Queue();
 
@@ -58,20 +73,45 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   }
 
   /// Send a chat message. Returns an error message on failure (rate limited,
-  /// empty text, or a server-side error), or null on success.
+  /// empty text, a dead/silent socket, or a server-side error), or null on
+  /// success.
+  ///
+  /// Retry policy: a send is never retried automatically. The ack is bounded by
+  /// [ackTimeout], and a timeout is genuinely ambiguous — the server may well
+  /// have accepted and broadcast the message — so resending would duplicate it
+  /// in every other client's log. The user retries by sending again, and the
+  /// attempt still counts against the local rate window either way.
   Future<String?> send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return null;
-    if (isRateLimited) return 'Rate limited — slow down.';
+    if (isRateLimited) return _rateLimitedMessage;
 
     _sendTimes.add(DateTime.now());
-    final resp = await _socket.emitWithAck(ClientEvent.chatMessage, {'text': trimmed});
-    if (resp is Map && resp['error'] != null) {
-      return resp['error'].toString() == 'rate limited'
-          ? 'Rate limited — slow down.'
-          : resp['error'].toString();
+    try {
+      final resp = await _socket
+          .emitWithAck(ClientEvent.chatMessage, {'text': trimmed})
+          .timeout(ackTimeout);
+      if (resp is Map && resp['error'] != null) {
+        final error = resp['error'].toString();
+        if (error != 'rate limited') return error;
+        // The server is already refusing: fill the local window so the composer
+        // blocks until it drains instead of hammering through every gap.
+        _saturateSendWindow();
+        return _rateLimitedMessage;
+      }
+      return null;
+    } on TimeoutException {
+      return 'No reply from the server — the message may not have been sent.';
+    } catch (_) {
+      return 'Could not send — check your connection.';
     }
-    return null;
+  }
+
+  void _saturateSendWindow() {
+    final now = DateTime.now();
+    while (_sendTimes.length < chatRateMax) {
+      _sendTimes.add(now);
+    }
   }
 
   void clear() => state = const [];

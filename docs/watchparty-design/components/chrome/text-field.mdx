@@ -1,0 +1,58 @@
+---
+title: Text field
+kit: chrome
+web: .an-field
+native: AnalogTextField
+status: parity
+---
+
+# Text field
+
+Single-line text entry.
+
+## Purpose
+
+Search, room codes, credentials, the chat composer. Wraps Material's
+`EditableText` deliberately — text editing is enormous (IME, selection
+handles, autofill, undo, platform shortcuts, accessibility) and none of it
+was ever the thing that looked wrong. **Only the paint is replaced.**
+
+## API
+
+**Native** — `AnalogTextField`
+
+| Param | Type | Default |
+| --- | --- | --- |
+| `controller` | `TextEditingController?` | `null` |
+| `focusNode` | `FocusNode?` | `null` |
+| `label` | `String?` | `null` |
+| `hint` | `String?` | `null` |
+| `obscureText` | `bool` | `false` |
+| `errorText` | `String?` | `null` |
+| `onChanged` / `onSubmitted` | `ValueChanged<String>?` | `null` |
+| `autofocus` | `bool` | `false` |
+| `enabled` | `bool` | `true` |
+| `leading` / `trailing` | `Widget?` | `null` |
+| `textInputAction` | `TextInputAction?` | `null` |
+| `textStyle` | `TextStyle?` | `null` |
+
+## States
+
+| State | Frame | Ink |
+| --- | --- | --- |
+| Rest | `line` | `ink` |
+| Focused | `lineStrong`, thicker | `ink` |
+| Error | `statusDanger`, 2× width | `ink`; message below in `statusDanger` |
+| Disabled | `line` | `inkFaint` |
+
+**Error doubles the frame** so the field is marked without relying on the
+red, and the message is always rendered — a red outline with no text is not
+an error message.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | An error always has words, not just a colour | `errorText` is what triggers the error state |
+| 2 | Never below 16px on touch targets | iOS zooms the page on focus for anything smaller |
+| 3 | Platform text behaviour is not reimplemented | Wraps Material's editing stack |

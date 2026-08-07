@@ -1,0 +1,181 @@
+/* GENERATED FILE — DO NOT EDIT.
+/*
+/* Source:    app/shared/design/analog-tokens.json
+/* Generator: node app/shared/design/generate.mjs
+/*
+/* Edit the JSON and regenerate. A parity test in each client re-runs the
+/* generator and compares against these bytes, so hand-edits fail the suite.
+*/
+
+:root {
+  /* Warm blacks and softly tinted neutrals — never pure black, never pure
+     white. R > G > B on every neutral. */
+  --an-color-stage-void: #070605;
+  --an-color-stage-ground: #0E0C0A;
+  --an-color-stage-surface: #16130F;
+  --an-color-stage-surface2: #201C18;
+  --an-color-stage-surface3: #2B2621;
+  --an-color-ink: #F4EFE6;
+  --an-color-ink-dim: #F4EFE6A3;
+  --an-color-ink-faint: #F4EFE661;
+  --an-color-line: #F4EFE61A;
+  --an-color-line-strong: #F4EFE62E;
+  --an-color-edge-light: #FFF6E83D;
+  --an-color-edge-shade: #0000008C;
+  --an-color-shadow-cast: #120A0499;
+  --an-color-shadow-cast-strong: #120A04C4;
+  --an-color-backdrop-scrim: #0E0C0AA6;
+  --an-color-backdrop-vignette: #07060580;
+  --an-color-accent: #F4EFE6;
+  --an-color-on-accent: #0E0C0A;
+  --an-color-status-danger: #E0655E;
+  --an-color-status-success: #5AB98A;
+  --an-color-status-live: #E0655E;
+  --an-color-status-party-live: #78C99F;
+
+  /* Fine, low-contrast film grain over the stage. Must never reduce text or
+     artwork clarity. */
+  --an-grain-opacity-pct: 3.5%;
+  --an-grain-tile-px: 128px;
+  --an-grain-focused-boost-pct: 1.5%;
+
+  /* Square, unrounded artwork at EVERY size — including skeletons,
+     placeholders, season cards and selected states. radiusPx is 0 and is
+     asserted by tests in both clients. */
+  --an-poster-radius-px: 0px;
+  --an-poster-aspect-w: 2;
+  --an-poster-aspect-h: 3;
+  --an-poster-frame-px: 1px;
+  --an-poster-gap-px: 14px;
+  --an-poster-shelf-peek-px: 64px;
+
+  /* Depth through scale, framing, light and position. No perspective tilt,
+     no bounce. */
+  --an-selection-rest-scale: 1;
+  --an-selection-focus-scale: 1.06;
+  --an-selection-focus-lift-px: 6px;
+  --an-selection-focus-backdrop-darken-pct: 22%;
+  --an-selection-scene-light-angle-deg: 315deg;
+
+  /* Directional cast shadows keyed to sceneLightAngleDeg (light above-left
+     => shadow below-right). */
+  --an-elevation-rest-blur-px: 18px;
+  --an-elevation-rest-offset-xpx: 4px;
+  --an-elevation-rest-offset-ypx: 8px;
+  --an-elevation-focus-blur-px: 34px;
+  --an-elevation-focus-offset-xpx: 8px;
+  --an-elevation-focus-offset-ypx: 18px;
+
+  /* Material 3's state-layer model: a translucent wash of the ink colour
+     over a control that has been reached, at a fixed opacity per state.
+     Adopted because it is the one interaction primitive that scales - every
+     control reads the same whatever its fill, so a chip, a menu row and an
+     icon button respond identically without each hand-rolling a fill swap.
+     The opacities are M3's; the colour washed over them is ours. */
+  --an-state-layer-hover-pct: 8%;
+  --an-state-layer-focus-pct: 10%;
+  --an-state-layer-pressed-pct: 10%;
+  --an-state-layer-selected-pct: 12%;
+  --an-state-layer-dragged-pct: 16%;
+  --an-state-layer-disabled-content-pct: 38%;
+  --an-state-layer-disabled-container-pct: 12%;
+
+  /* Mechanical and weighty: short travel, clear detents. Chrome still uses
+     Material 3's easing set - standard for buttons and plates,
+     emphasized-decelerate for drawers - and none of those overshoot. The
+     BROWSE RAIL is the deliberate exception: it settles past its mark and
+     comes back, and the amount scales with how fast the row was moving. That
+     was asked for directly, and it replaces an earlier blanket ban on
+     overshoot. The distinction that keeps it coherent: things with mass
+     overshoot, chrome does not. A row of posters being flung has momentum; a
+     button does not. */
+  --an-motion-focus-step-ms: 170ms;
+  --an-motion-focus-step-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --an-motion-backdrop-cross-ms: 420ms;
+  --an-motion-backdrop-cross-ease: cubic-bezier(0.2, 0, 0, 1);
+  --an-motion-chrome-fade-ms: 160ms;
+  --an-motion-chrome-fade-ease: cubic-bezier(0.2, 0, 0, 1);
+  --an-motion-detent-ms: 90ms;
+  --an-motion-detent-ease: cubic-bezier(0.2, 0, 0, 1);
+  --an-motion-drawer-ms: 260ms;
+  --an-motion-drawer-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --an-motion-enter-ms: 300ms;
+  --an-motion-enter-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --an-motion-exit-ms: 200ms;
+  --an-motion-exit-ease: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --an-motion-slot-lag-ms: 26ms;
+  --an-motion-slot-lag-max-ms: 130ms;
+  --an-motion-settle-ms: 500ms;
+  --an-motion-settle-ease: cubic-bezier(0.2, 1.26, 0.36, 1);
+  --an-motion-hero-flight-ms: 900ms;
+  --an-motion-hero-return-ms: 380ms;
+  --an-motion-settle-fast-ms: 820ms;
+  --an-motion-fast-step-ms: 220ms;
+  --an-motion-press-scale-pct: 4%;
+  --an-motion-hover-lift-px: 2px;
+  --an-motion-hover-scale-pct: 2%;
+  --an-motion-anticipation-ms: 60ms;
+  --an-motion-anticipation-pct: 4%;
+  --an-motion-copy-swap-ms: 260ms;
+  --an-motion-copy-rise-px: 10px;
+  --an-motion-copy-slide-pct: 11%;
+  --an-motion-copy-slide-fast-pct: 32%;
+  --an-motion-type-mass-ref-px: 16px;
+  --an-motion-type-mass-max-px: 52px;
+  --an-motion-type-mass-settle-min-pct: 58%;
+  --an-motion-type-mass-travel-min-pct: 55%;
+  --an-motion-type-mass-travel-max-pct: 145%;
+
+  /* Timeline and volume are precision lines, not filled bars. The visible
+     line is thin; the hit target is not. */
+  --an-hairline-idle-px: 2px;
+  --an-hairline-active-px: 4px;
+  --an-hairline-hit-px: 24px;
+  --an-hairline-handle-px: 10px;
+  --an-hairline-handle-focus-px: 14px;
+  --an-hairline-range-gap-px: 2px;
+
+  /* Behavioural constants fixed by the design references; the interaction
+     cores in app/shared/design/interaction.json are driven by these same
+     numbers. */
+  --an-timing-chrome-auto-hide-ms: 3000ms;
+  --an-timing-toast-lifetime-ms: 4000ms;
+  --an-timing-toast-max-stack: 3;
+
+  --an-space-xs-px: 4px;
+  --an-space-sm-px: 8px;
+  --an-space-md-px: 12px;
+  --an-space-lg-px: 16px;
+  --an-space-xl-px: 24px;
+  --an-space-xxl-px: 32px;
+  --an-space-stage-gutter-px: 48px;
+  --an-space-stage-gutter-phone-px: 20px;
+
+  /* Artwork is always square. These radii are for chrome only (buttons,
+     sheets, toasts) and must never be applied to a poster, still, skeleton
+     or placeholder. */
+  --an-radius-chrome-px: 4px;
+  --an-radius-sheet-px: 8px;
+  --an-radius-pill-px: 999px;
+  --an-radius-button-px: 999px;
+  --an-radius-card-px: 14px;
+
+  --an-type-sans: 'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --an-type-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --an-type-sans-family: CircularXX;
+  --an-type-mono-family: JetBrains Mono;
+
+  /* Stage layering. The player owns its own bands; these are the browse
+     shell. */
+  --an-z-backdrop: 0;
+  --an-z-grain: 5;
+  --an-z-shelf: 10;
+  --an-z-nav: 20;
+  --an-z-toolbox: 30;
+  --an-z-scrim: 40;
+  --an-z-sheet: 50;
+  --an-z-toast: 60;
+
+  --an-breakpoint-phone-max-px: 719px;
+  --an-breakpoint-tablet-max-px: 1023px;
+}

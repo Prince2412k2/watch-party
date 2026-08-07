@@ -1,16 +1,18 @@
-import 'package:flutter/material.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:flutter/widgets.dart';
 
-/// Button variants in the cinematic-minimal system.
-/// - [primary]: near-white pill, dark text (the "Play" affordance).
-/// - [secondary]: solid surface, hairline border (quiet default).
-/// - [ghost]: text-only, brightens on hover.
-/// - [danger]: red-tinted, for destructive actions.
+import '../../analog/chrome/analog_button.dart';
+
+/// Button variants in the analog system.
+/// - [primary]: the ink-coloured plate, dark label (the "Play" affordance).
+/// - [secondary]: surface plate, hairline frame (quiet default).
+/// - [ghost]: label only until reached.
+/// - [danger]: reserved red plus a doubled frame, for destructive actions.
 enum AppButtonVariant { primary, secondary, ghost, danger }
 
-/// FROZEN CONTRACT (PLAN §3.6). Rebuilt on `sc.Button` variants; the public
-/// signature (label/onPressed/variant/icon/busy/expand) is unchanged. shadcn
-/// owns the hover/press/focus states now, themed by [AppShadcnTheme].
+/// FROZEN CONTRACT (PLAN §3.6). The public signature
+/// (label/onPressed/variant/icon/busy/expand) is unchanged; only what draws it
+/// moved. [AnalogButton] owns hover/press/focus/disabled now, painting on the
+/// generated tokens rather than on a component library's theme bridge.
 class AppButton extends StatelessWidget {
   const AppButton({
     super.key,
@@ -31,43 +33,18 @@ class AppButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final onTap = busy ? null : onPressed;
-    final Widget? leading = busy
-        ? const SizedBox(
-            width: 15,
-            height: 15,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-        : (icon != null ? Icon(icon, size: 18) : null);
-
-    final child = Text(label);
-
-    final button = switch (variant) {
-      AppButtonVariant.primary => sc.Button.primary(
-        onPressed: onTap,
-        leading: leading,
-        child: child,
-      ),
-      AppButtonVariant.secondary => sc.Button.secondary(
-        onPressed: onTap,
-        leading: leading,
-        child: child,
-      ),
-      AppButtonVariant.ghost => sc.Button.ghost(
-        onPressed: onTap,
-        leading: leading,
-        child: child,
-      ),
-      AppButtonVariant.danger => sc.Button.destructive(
-        onPressed: onTap,
-        leading: leading,
-        child: child,
-      ),
-    };
-
-    if (expand) {
-      return SizedBox(width: double.infinity, child: button);
-    }
-    return button;
+    return AnalogButton(
+      label: label,
+      onPressed: onPressed,
+      icon: icon,
+      busy: busy,
+      expand: expand,
+      tone: switch (variant) {
+        AppButtonVariant.primary => AnalogButtonTone.primary,
+        AppButtonVariant.secondary => AnalogButtonTone.secondary,
+        AppButtonVariant.ghost => AnalogButtonTone.ghost,
+        AppButtonVariant.danger => AnalogButtonTone.danger,
+      },
+    );
   }
 }

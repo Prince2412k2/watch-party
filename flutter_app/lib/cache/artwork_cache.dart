@@ -114,7 +114,7 @@ class ArtworkCache {
     // outright rather than fetching it unauthenticated: the point isn't to
     // degrade gracefully, it's that this client must never be handed such a
     // URL in the first place.
-    if (!_isSameOrigin(url)) {
+    if (!isSameOrigin(url)) {
       throw StateError('Refusing to fetch cross-origin artwork: $url');
     }
     final response = await _dio.get<List<int>>(
@@ -127,9 +127,16 @@ class ArtworkCache {
     return Uint8List.fromList(response.data!);
   }
 
+  /// Whether [load] would be willing to fetch [url] at all.
+  ///
   /// A relative path resolves against `_dio`'s own baseUrl by definition; an
   /// absolute URL must match it exactly (scheme + host + port).
-  bool _isSameOrigin(String url) {
+  ///
+  /// Public because prefetch needs to ask *before* queueing: [_fetch] throws on
+  /// a cross-origin URL, and a queue slot spent on a guaranteed failure is one
+  /// the visible artwork wanted. Callers still get the same answer either way —
+  /// this only moves the refusal earlier.
+  bool isSameOrigin(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
     if (!uri.hasScheme && !uri.hasAuthority) return true;

@@ -297,4 +297,45 @@ void main() {
       engine.detach();
     });
   });
+
+  // Deliberately NOT fakeAsync, unlike every other test in this file.
+  //
+  // detach() awaits _playingSub.cancel(), and a broadcast StreamSubscription's
+  // cancel() future never completes inside fakeAsync — verified in isolation:
+  // a bare `StreamController.broadcast()` subscription's cancel() stays pending
+  // through flushMicrotasks() and through elapse(), while the same controller's
+  // close() does deliver onDone normally. So under fakeAsync dispose() hangs at
+  // `await detach()` and never reaches the stream close, meaning the assertions
+  // below would be measuring the harness rather than the engine.
+  //
+  // Real timers instead, kept short: the control loop is 200ms, so a ~300ms
+  // wait proves it is live and a ~500ms wait proves it stopped.
+  test('dispose() stops the control loop and closes the engine streams', () async {
+    final engine = engineWith(() => 2000.0);
+    final player = FakePlayer();
+    final socket = MockSocketClient();
+    var scheduleStreamDone = false;
+    engine.scheduleStream.listen(
+      (_) {},
+      onDone: () => scheduleStreamDone = true,
+    );
+
+    await engine.attach(
+        player: player, socket: socket, partyId: 'p', canControl: false);
+    socket.inject(ServerEvent.syncSchedule, playingSchedule());
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(player.calls, isNotEmpty, reason: 'the control loop is live');
+
+    await engine.dispose();
+
+    // Nothing may drive the player after disposal — the 200ms control loop,
+    // the applying timers and the user-seek timer all outlived the provider
+    // before, still holding the player and socket they were attached to.
+    player.calls.clear();
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+
+    expect(player.calls, isEmpty);
+    expect(engine.isDisposed, isTrue);
+    expect(scheduleStreamDone, isTrue);
+  });
 }

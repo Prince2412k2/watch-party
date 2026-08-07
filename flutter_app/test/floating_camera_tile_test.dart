@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
 import 'package:watchparty/ui/widgets/floating_camera_tile.dart';
@@ -19,11 +20,18 @@ void main() {
       expect(size.height, FloatingTileGeometry.headerHeight);
     });
 
-    test('width clamps to min and max', () {
+    test('width clamps to the minimum, and to the stage rather than a cap', () {
       expect(FloatingTileGeometry.clampWidth(10, stage),
           FloatingTileGeometry.minWidth);
-      expect(FloatingTileGeometry.clampWidth(9999, stage),
-          FloatingTileGeometry.maxWidth);
+
+      // There is no fixed maximum any more — a hard cap made the resize handle
+      // stop responding partway through a drag. The tile grows until it runs
+      // out of window, on whichever axis runs out first.
+      final huge = FloatingTileGeometry.clampWidth(9999, stage);
+      final tile = FloatingTileGeometry.tileSize(huge, collapsed: false);
+      expect(tile.width, lessThanOrEqualTo(stage.width));
+      expect(tile.height, lessThanOrEqualTo(stage.height));
+      expect(huge, greaterThan(FloatingTileGeometry.defaultWidth));
     });
 
     test('offset is clamped within stage bounds', () {
@@ -73,7 +81,7 @@ void main() {
       var offset = const Offset(100, 100);
       const size = Size(160, 146);
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(_withProviders(MaterialApp(
         home: Scaffold(
           body: StatefulBuilder(
             builder: (context, setState) => Stack(
@@ -96,7 +104,7 @@ void main() {
             ),
           ),
         ),
-      ));
+      )));
 
       final before = tester.getTopLeft(find.byType(FloatingCameraTile));
       // Drag on the header (top ~13px of the tile).
@@ -113,7 +121,7 @@ void main() {
         (tester) async {
       var resized = Offset.zero;
 
-      await tester.pumpWidget(MaterialApp(
+      await tester.pumpWidget(_withProviders(MaterialApp(
         home: Scaffold(
           body: Stack(
             children: [
@@ -134,7 +142,7 @@ void main() {
             ],
           ),
         ),
-      ));
+      )));
 
       await tester.drag(find.byIcon(Icons.south_east), const Offset(30, 30));
       await tester.pump();
@@ -143,3 +151,5 @@ void main() {
     });
   });
 }
+
+Widget _withProviders(Widget child) => ProviderScope(child: child);

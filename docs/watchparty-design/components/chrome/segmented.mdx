@@ -1,0 +1,83 @@
+---
+title: Segmented control
+kit: chrome
+web: .an-modes (AnalogModeSlider)
+native: AnalogSegmented
+status: parity
+---
+
+# Segmented control
+
+A small set of mutually exclusive positions, shown all at once.
+
+## Purpose
+
+For a choice between two or three named states where seeing the
+alternatives is part of the point — Singles/Collections, sync mode,
+Movies/Shows in Discover. Radio semantics, never a toggle.
+
+**Not for:** more than about four options (that is a menu), or a binary
+on/off setting (that is a [switch](./switch.mdx)).
+
+## Anatomy
+
+```
+┌───────────┬──────────────┐
+│  Hopping  │  Dragging    │   ← segments, min 72 wide, 34 tall
+│  ▁▁▁▁▁    │              │   ← detent under the selected one
+└───────────┴──────────────┘
+```
+
+## API
+
+**Native** — `AnalogSegmented<T>`
+
+| Param | Type | Notes |
+| --- | --- | --- |
+| `segments` | `List<AnalogSegment<T>>` | `{value, label}` |
+| `value` | `T` | The selected value |
+| `onChanged` | `ValueChanged<T>?` | Null disables the whole control |
+| `semanticLabel` | `String?` | Names the group |
+
+## Selection is marked three ways
+
+1. A filled plate (`stageSurface2`)
+2. A bolder label (`w700` vs `w500`)
+3. **The mechanical detent hairline underneath it** — the same
+   `hairline.idlePx` → `activePx` pair the bottom-edge mode strip uses
+
+Colour is the least of them.
+
+## Radio semantics
+
+Activating the already-selected segment is a **no-op**. There is no gesture
+that lands the control in an empty state:
+
+```dart
+onPressed: () { if (segments[i].value != value) onChanged!(segments[i].value); }
+```
+
+## A layout constraint worth knowing
+
+The enclosing `Row` is `mainAxisSize.min`, so each segment is laid out with
+an **unbounded** max width. The detent therefore cannot ask for
+`width: double.infinity` — it will throw. `IntrinsicWidth` resolves the
+column to the label's own width first, and the detent stretches to that.
+
+This is not a hypothetical: it threw 6,022 layout exceptions on the Discover
+screen before it was fixed.
+
+## Tokens
+
+`color.ink`, `inkDim`, `stageSurface`, `stageSurface2`, `line` ·
+`radius.chromePx` · `hairline.idlePx` / `activePx` ·
+`motion.chromeFadeMs` / `detentMs` / `detentEase` · `space.mdPx` / `smPx` /
+`xsPx` · `stateLayer.*`
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Cannot be deselected into an empty state | Re-selecting is a no-op |
+| 2 | Selection is not colour alone | Plate + weight + detent |
+| 3 | Survives unbounded width | `IntrinsicWidth`. Caught by `widget_test.dart` only because the Discover screen mounts one — **no direct regression test yet** |

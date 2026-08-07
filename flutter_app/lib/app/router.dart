@@ -2,23 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../state/show_source.dart';
 import '../state/state.dart';
+import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
-import '../ui/motion.dart';
 import 'screens/app_shell.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/gallery_screen.dart';
-import 'screens/browse_screen.dart';
+import 'screens/movies_stage.dart';
+import 'screens/shows_stage.dart';
 import 'screens/detail_screen.dart';
+import 'screens/download_detail_screen.dart';
 import 'screens/downloads_screen.dart';
 import 'screens/offline_screen.dart';
 import 'screens/servarr_screen.dart';
 import 'screens/servarr_queue_screen.dart';
 import 'screens/party_screen.dart';
 import 'screens/profile_screen.dart';
-import 'screens/show_stage.dart';
 
 /// The root Navigator's key. Exposed because some app-wide affordances resolve a
 /// below-router context via `rootNavigatorKey.currentContext` (e.g. the party
@@ -43,12 +43,6 @@ abstract final class Routes {
   /// Secondary shelled routes (reachable but not tabs).
   static const offline = '/offline';
   static const servarrQueue = '/servarr/queue';
-
-  /// `/discover/:id` — a Discover (servarr) title detail deep-link.
-  static const discoverDetail = '/discover';
-
-  /// `/downloads/:id` — a download detail deep-link.
-  static const downloadsDetail = '/downloads';
 
   /// The profile editor — reachable from the account menu on any screen.
   static const profile = '/profile';
@@ -135,14 +129,20 @@ GoRouter buildRouter(WidgetRef ref) {
       ),
 
       // Title detail is full-window too (leads into the player) — same
-      // fade-through. Movie + episode detail keep [DetailScreen]; a series
-      // renders the unified [ShowStage] instead (US-3/FR-012) — see
-      // [_LibraryDetailRoute].
+      // fade-through. Every library title, of every type, renders
+      // [DetailScreen] → `DetailStage`.
       GoRoute(
         path: '${Routes.detail}/:id',
         pageBuilder: (_, state) => fadeThroughPage(
           key: state.pageKey,
-          child: _LibraryDetailRoute(itemId: state.pathParameters['id']!),
+          // Long enough for the poster to arc across, carry past the corner
+          // and come back. The rest of the page is staged against the same
+          // clock, so it assembles while the poster is still travelling.
+          duration: AnalogMotion.heroFlightMs,
+          // Back to the library is much quicker: the poster is going home, not
+          // being introduced.
+          reverseDuration: AnalogMotion.heroReturnMs,
+          child: DetailScreen(itemId: state.pathParameters['id']!),
         ),
       ),
 
@@ -168,7 +168,7 @@ GoRouter buildRouter(WidgetRef ref) {
               child: Consumer(
                 builder: (_, ref, _) =>
                     ref.watch(authProvider.select((s) => s.isAuthenticated))
-                    ? const BrowseScreen(type: BrowseTypeFilter.movie)
+                    ? const MoviesStage()
                     : const HomeScreen(),
               ),
             ),
@@ -177,7 +177,7 @@ GoRouter buildRouter(WidgetRef ref) {
             path: Routes.series,
             pageBuilder: (_, state) => NoTransitionPage(
               key: state.pageKey,
-              child: const BrowseScreen(type: BrowseTypeFilter.series),
+              child: const ShowsStage(),
             ),
           ),
           GoRoute(
@@ -187,16 +187,13 @@ GoRouter buildRouter(WidgetRef ref) {
               child: const ServarrScreen(),
             ),
           ),
-          // Discover (servarr) title detail. Points at the existing Discover
-          // screen for now; W2d rebuilds the detail surface in place (as an
-          // overlay/deep-link keyed by :id).
-          GoRoute(
-            path: '${Routes.discover}/:id',
-            pageBuilder: (_, state) => NoTransitionPage(
-              key: state.pageKey,
-              child: const ServarrScreen(),
-            ),
-          ),
+          // NOTE: there is deliberately no `/discover/:id`. It existed and
+          // rendered a bare [ServarrScreen], discarding the id — a deep link
+          // to a title silently landed on the Discover rails instead. Honouring
+          // it needs a lookup-by-id the servarr client does not have (the
+          // detail surface is built from a [ServarrTitle] out of a discover or
+          // search response), so the route is gone rather than lying. It comes
+          // back with W2d's in-place detail surface.
           GoRoute(
             path: Routes.downloads,
             pageBuilder: (_, state) => NoTransitionPage(
@@ -204,13 +201,19 @@ GoRouter buildRouter(WidgetRef ref) {
               child: const DownloadsScreen(),
             ),
           ),
-          // Download detail. Points at the existing Downloads screen for now;
-          // W2d rebuilds the detail overlay in place (deep-link keyed by :id).
+          // Download detail, rendered for the hash that was asked for. Its own
+          // close action, because a deep link straight here has nothing
+          // underneath it to pop back to.
           GoRoute(
             path: '${Routes.downloads}/:id',
-            pageBuilder: (_, state) => NoTransitionPage(
+            pageBuilder: (context, state) => NoTransitionPage(
               key: state.pageKey,
-              child: const DownloadsScreen(),
+              child: DownloadDetailScreen(
+                hash: state.pathParameters['id']!,
+                onClose: () => context.canPop()
+                    ? context.pop()
+                    : context.go(Routes.downloads),
+              ),
             ),
           ),
           // Offline library — folded under Downloads in the nav, still routable
@@ -237,50 +240,29 @@ GoRouter buildRouter(WidgetRef ref) {
   );
 }
 
-/// `/detail/:id` dispatch (US-3/FR-012, "one show screen, two purposes"): an
-/// authenticated SERIES renders the unified [ShowStage] in place of the
-/// classic season-selector stage; a MOVIE, an EPISODE, a guest, or an
-/// item whose type hasn't resolved yet all fall through to the existing
-/// [DetailScreen] unchanged — it already owns the guest offline-browse path,
-/// the loading skeleton, and the error state, so none of that is duplicated
-/// here.
-class _LibraryDetailRoute extends ConsumerWidget {
-  const _LibraryDetailRoute({required this.itemId});
-  final String itemId;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isAuthenticated = ref.watch(
-      authProvider.select((s) => s.isAuthenticated),
-    );
-    final isSeries =
-        isAuthenticated &&
-        ref.watch(itemDetailProvider(itemId)).valueOrNull?.type == 'Series';
-    if (!isSeries) return DetailScreen(itemId: itemId);
-
-    final wp = context.wp;
-    return Scaffold(
-      backgroundColor: wp.bg,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: ShowStage(
-              show: ShowRef(kind: ShowSourceKind.library, id: itemId),
-              onBack: () =>
-                  context.canPop() ? context.pop() : context.go(Routes.movies),
-              // Same launcher the detail screen uses, so playback is
-              // party-aware and pushed in place — back lands on the show
-              // stage instead of a route default.
-              onWatch: (episode) {
-                final jellyfinId = episode.jellyfinId;
-                if (jellyfinId == null) return;
-                startPlayback(context, ref, itemId: jellyfinId);
-              },
-            ),
-          ),
-          const Positioned(right: 22, bottom: 18, child: PopcornControl()),
-        ],
-      ),
-    );
-  }
-}
+// A library SERIES used to be intercepted here and rendered as [ShowStage] —
+// the Sonarr-shaped acquisition surface, which is also what Discover mounts.
+// That interception is gone, and the reason is the whole point of this change:
+//
+//   "Selected episode should always be first. It should follow the same rules
+//    the list of movies follows."
+//
+// The rule is the browse stage's — a fixed cursor with the row travelling
+// under it, the scale falloff, the trail dimming, the settle. `DetailStage`
+// now runs it, over the same `AnalogRail` the Movies stage uses, and it is the
+// surface already held to `title_layout.dart` so the copy lands in the same
+// rectangle on both sides of the transition. `ShowStage` restated all of those
+// numbers as literals and drew its episodes as a plain `ListView` whose cursor
+// moved instead of whose row did — the exact behaviour being replaced. Leaving
+// the interception in place would have meant building the rail somewhere no
+// user could reach it.
+//
+// [ShowStage] itself stays, mounted from Discover
+// (`servarr_detail_screen.dart`), which is what it was built for: a show that
+// is not in the library yet and has nothing to play.
+//
+// KNOWN TRADE-OFF: the per-season / per-episode / whole-series Sonarr download
+// affordances lived on `ShowStage` and are therefore no longer on a library
+// show's page. They remain reachable through Discover. Restoring them here
+// means porting those actions onto `DetailStage`, not reinstating this
+// interception.

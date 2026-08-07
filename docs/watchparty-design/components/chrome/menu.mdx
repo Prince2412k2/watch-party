@@ -1,0 +1,61 @@
+---
+title: Context menu
+kit: chrome
+web: —
+native: AnalogContextMenu
+status: native-only
+---
+
+# Context menu
+
+A secondary-action menu on an existing row.
+
+## Purpose
+
+A **convenience** surface. Transfer host, kick, remove — actions that are
+faster from a right-click than from hunting for the inline button.
+
+## The rule that makes it safe
+
+**Every action the menu offers must also exist as a visible control in the
+row it wraps.**
+
+The reference forbids important actions behind gesture-only interaction. A
+menu is a shortcut to something reachable another way, never the only path.
+The roster row is the model: it renders inline transfer-host and kick
+buttons *and* wraps itself in this menu, with both driving the same
+callbacks.
+
+## Opens four ways
+
+- Secondary tap
+- Long press
+- The Context Menu key
+- Shift+F10
+
+The enclosing `Focus` deliberately does **not** take focus itself, so the
+keyboard routes arrive from whichever control inside the row the user is
+actually on.
+
+## API
+
+`AnalogContextMenu({actions, child})` where each action is:
+
+`AnalogMenuAction({label, onSelected, icon, danger})`
+
+`danger: true` carries the reserved red **and a heavier label weight**, so
+the row is still marked when the colour is not perceivable.
+
+## Why it wraps Material's `showMenu`
+
+The menu route already gets focus traversal, arrow-key movement, Escape and
+correct placement against screen edges. None of that was the thing that
+looked wrong. Only the surface is this kit's.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Every action also exists as a visible control | Review — the invariant this component lives or dies by |
+| 2 | Opens from keyboard, not just pointer | Context Menu key + Shift+F10 |
+| 3 | Danger is marked without colour | Heavier label weight |

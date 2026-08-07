@@ -8,9 +8,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 import 'package:window_manager/window_manager.dart';
 
+import '../../analog/chrome/chrome.dart';
+import '../../analog/player/auto_hide_controller.dart';
+import '../../analog/player_core.dart';
 import '../../models/models.dart';
 import '../../player/player_view.dart';
 import '../../state/state.dart';
@@ -28,7 +30,7 @@ import '../../ui/widgets/party_qr.dart';
 /// back-to-lobby, end) opens on right-click (or a long-press fallback) — no
 /// persistent desktop party pill over the player.
 ///
-/// Creation and join-by-code live in the shell popcorn ([PartyWidget]); this
+/// Creation and join-by-code live in the shell popcorn ([PopcornControl]); this
 /// route is entered with a party id, so its pre-join surface is only the
 /// connecting / sonar waiting-room / "party not found" states.
 class PartyScreen extends ConsumerStatefulWidget {
@@ -50,6 +52,12 @@ class _PartyScreenState extends ConsumerState<PartyScreen> {
     super.initState();
     final id = widget.partyId;
     if (id == null || id.isEmpty) return;
+    // Being on this route IS the un-minimized state: clear the latch so the
+    // shell resumes auto-opening this party after the next lobby round trip.
+    // Deferred a frame — Riverpod refuses provider writes from a life-cycle.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(partyMinimizedProvider.notifier).restore();
+    });
     // Already in this party (created/joined via the popcorn widget, or minimized
     // then re-opened) — render the live session WITHOUT re-emitting party:join,
     // so the socket / LiveKit / sync engine are never torn down and re-set up.
@@ -273,7 +281,6 @@ class _ImmersiveParty extends ConsumerStatefulWidget {
 
 class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   bool _chatOpen = false;
-  bool _chromeVisible = true;
   bool _isFullscreen = false;
 
   /// Camera layout: false = floating PiP tiles, true = docked left column.
@@ -286,11 +293,37 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   /// PTT-driven unmute from a manual one and guards key-repeat.
   bool _pttHolding = false;
 
-  Timer? _idleTimer;
+  /// The party's SINGLE chrome auto-hide clock, covering the player, the shared
+  /// browser and the top-right A/V cluster together. Same
+  /// `analog/player_core.dart` machine the solo player runs — the two used to
+  /// be separate hand-written timers.
+  late final AnalogAutoHideController _autoHide;
+
+  @override
+  void initState() {
+    super.initState();
+    _autoHide = AnalogAutoHideController()
+      ..addListener(_onAutoHide)
+      // The lobby has nothing to un-clutter, so the chrome is pinned there
+      // until the party reaches an immersive stage.
+      ..hold(_kLobbyHold);
+  }
+
+  void _onAutoHide() {
+    if (mounted) setState(() {});
+  }
+
+  /// Chat pins the chrome open while it is on screen (`!_chatOpen` used to be
+  /// checked inside the timer callback), and the non-immersive stages pin it
+  /// permanently.
+  static const String _kChatHold = 'chat';
+  static const String _kLobbyHold = 'lobby';
 
   @override
   void dispose() {
-    _idleTimer?.cancel();
+    _autoHide
+      ..removeListener(_onAutoHide)
+      ..dispose();
     // Don't leave the OS window stuck in fullscreen after navigating away. This
     // is purely a window-chrome toggle — it never touches party/LiveKit state.
     if (_isFullscreen) {
@@ -313,19 +346,27 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     if (mounted) setState(() => _isFullscreen = next);
   }
 
-  /// Wake the chrome and re-arm the SINGLE idle hide. Only auto-hides while
-  /// watching; in the lobby (no video) the chrome stays put, like the web.
-  /// Wake the chrome, and re-arm the idle timer on the stages that hide it.
+  /// Wake the chrome and re-arm the SINGLE idle hide.
   ///
   /// [immersive] is true for the player and the shared browser — the two stages
-  /// where chrome sits over content someone is looking at. The lobby keeps it up.
-  void _poke({required bool immersive}) {
-    _idleTimer?.cancel();
-    if (!_chromeVisible) setState(() => _chromeVisible = true);
-    if (!immersive) return;
-    _idleTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && !_chatOpen) setState(() => _chromeVisible = false);
-    });
+  /// where chrome sits over content someone is looking at. The lobby keeps it
+  /// up, now as a named hold rather than a timer that is simply never armed.
+  void _poke({required bool immersive, PlayerInputKind? kind}) {
+    if (immersive) {
+      _autoHide.release(_kLobbyHold);
+    } else {
+      _autoHide.hold(_kLobbyHold);
+    }
+    _autoHide.noteInput(kind ?? PlayerInputKind.pointer);
+  }
+
+  void _setChatOpen(bool open) {
+    setState(() => _chatOpen = open);
+    if (open) {
+      _autoHide.hold(_kChatHold);
+    } else {
+      _autoHide.release(_kChatHold);
+    }
   }
 
   // Push-to-talk (hold T): momentarily opens the mic, returning to muted on
@@ -366,20 +407,23 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   }
 
   // Back MINIMIZES to the shell — it never leaves/ends the party, so the
-  // socket / LiveKit / sync engine stay alive and the popcorn shows "N in
-  // party". End (host) lives in the Watch Party menu; leave lives in the
+  // socket / LiveKit / sync engine stay alive, playback keeps tracking the
+  // shared schedule, and the popcorn shows the live room (with "Return to the
+  // party"). End (host) lives in the Watch Party menu; leave lives in the
   // popcorn — Stop Movie (backToLobby) and Stop Stream (end) stay distinct.
-  Future<void> _minimize() async {
-    final notifier = ref.read(partyProvider.notifier);
-    if (notifier.isHost) {
-      await notifier.backToLobby();
-    } else {
-      await notifier.leave();
+  //
+  // It used to do the opposite of what it says: a host's Back emitted
+  // `party:backToLobby` (stopping the movie for the WHOLE room) and a guest's
+  // Back left the party outright, tearing down its own socket. Neither is
+  // recoverable, and both were presented as a plain back arrow.
+  void _minimize() {
+    final party = ref.read(partyProvider);
+    // Latch the minimize so [AppShell]'s auto-open does not immediately send us
+    // back here; re-entering `/party/:id` clears it again.
+    if (party != null) {
+      ref.read(partyMinimizedProvider.notifier).minimize(party.id);
     }
-    final player = ref.read(playerControllerProvider);
-    await player.pause();
-    await player.seek(Duration.zero);
-    if (mounted) context.go('/home');
+    context.go('/home');
   }
 
   @override
@@ -394,10 +438,13 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     // no timeline, no sync engine, nothing to seek.
     final browsing = party.stage == 'browser';
 
-    // ONE unified auto-hide flag: chrome + transport bar fade together. Stays
-    // shown while chat is open or in the lobby. The browser counts as a stage
-    // worth un-cluttering, same as the player.
-    final chromeShown = _chromeVisible || _chatOpen || !(watching || browsing);
+    // ONE unified auto-hide flag: chrome + transport bar fade together. "Stays
+    // shown while chat is open / in the lobby" is now a pair of HOLDS on the
+    // shared controller rather than extra terms in this expression, so the rule
+    // lives in player_core alongside the player's. The lobby hold is released
+    // by the first _poke on an immersive stage, exactly as the old timer was
+    // only armed by the first _poke there.
+    final chromeShown = _autoHide.visible;
 
     final stage = browsing
         ? _SharedBrowserStage(
@@ -439,9 +486,25 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             // here) and the party key bindings (c = chat, hold-T = PTT).
             visible: chromeShown,
             onWake: () => _poke(immersive: true),
-            onToggleChat: () => setState(() => _chatOpen = !_chatOpen),
+            onToggleChat: () => _setChatOpen(!_chatOpen),
             onPushToTalkStart: _pttStart,
             onPushToTalkStop: _pttStop,
+            // Chat notifications over the player. The chrome owns the queue,
+            // the three-deep stack and the four second lifetime (player_core);
+            // this only supplies the log and whether the drawer is open.
+            chatOpen: _chatOpen,
+            chatToasts: [
+              for (final message in ref.watch(chatProvider))
+                ToastMessage(
+                  id: '${message.userId}:${message.timestamp}:'
+                      '${message.text.hashCode}',
+                  sender: message.name,
+                  preview: message.text,
+                  // Restamped by the chrome on its own clock; the server
+                  // timestamp only feeds the id.
+                  receivedAtMs: message.timestamp,
+                ),
+            ],
           )
         : _LobbyStage(party: party);
 
@@ -500,8 +563,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                       dock: _dock,
                       chatOpen: _chatOpen,
                       onBack: _minimize,
-                      onToggleChat: () =>
-                          setState(() => _chatOpen = !_chatOpen),
+                      onToggleChat: () => _setChatOpen(!_chatOpen),
                       onToggleLayout: () => setState(() => _dock = !_dock),
                     ),
                   ),
@@ -523,7 +585,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
               // chat never covers or blurs the movie.
               _ChatSlideOver(
                 open: _chatOpen,
-                onClose: () => setState(() => _chatOpen = false),
+                onClose: () => _setChatOpen(false),
               ),
             ],
           ),
@@ -576,15 +638,18 @@ class _WatchChrome extends ConsumerWidget {
         child: Row(
           children: [
             _AvIconButton(
+              key: const Key('minimizePartyButton'),
               icon: Icons.arrow_back,
-              tooltip: 'Back',
+              // Named for what it does. It is not a leave and not a stop: the
+              // room keeps playing and the popcorn offers the way back.
+              tooltip: 'Minimize — the party keeps going',
               scrim: true,
               onTap: onBack,
             ),
             const Spacer(),
             // No shared-browser control here. This chrome sits over the player,
             // and starting a browser is a "what shall we watch" decision — it
-            // lives in the popcorn ([PartyWidget]) instead.
+            // lives in the popcorn ([PopcornControl]) instead.
             _AvIconButton(
               icon: Icons.chat_bubble_outline,
               tooltip: 'Chat',
@@ -636,9 +701,10 @@ class _WatchChrome extends ConsumerWidget {
 ///
 /// [scrim] backs the glyph with a dark disc: a bare icon sitting over full-bleed
 /// video is legible or invisible depending on the frame behind it, which is not
-/// a coin-flip worth taking for the control that leaves the party.
+/// a coin-flip worth taking for the control that leaves the immersive stage.
 class _AvIconButton extends StatefulWidget {
   const _AvIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onTap,
@@ -686,8 +752,8 @@ class _AvIconButtonState extends State<_AvIconButton> {
           )
         : Icon(widget.icon, size: 19, color: color);
 
-    return sc.Tooltip(
-      tooltip: (context) => sc.TooltipContainer(child: Text(widget.tooltip)),
+    return AnalogTooltip(
+      message: widget.tooltip,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
@@ -815,10 +881,10 @@ class _LiveKitErrorBanner extends ConsumerWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Flexible(
-              child: sc.SurfaceCard(
-                surfaceBlur: AppBlur.overlay,
-                surfaceOpacity: 0.9,
-                borderColor: AppColors.line2,
+              child: AnalogPanel(
+                translucent: true,
+                blur: AppBlur.overlay,
+                lift: AnalogLift.over,
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.md,
                   vertical: AppSpacing.sm,
@@ -1477,16 +1543,11 @@ class _TextAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wp = context.wp;
-    return TextButton(
+    return AnalogButton(
+      label: label,
+      tone: AnalogButtonTone.ghost,
+      dense: true,
       onPressed: onTap,
-      style: TextButton.styleFrom(
-        minimumSize: const Size(0, 28),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-        foregroundColor: wp.text,
-        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-      ),
-      child: Text(label),
     );
   }
 }
@@ -1613,17 +1674,11 @@ class _MediaPickerSheet extends ConsumerWidget {
               children: [
                 const Text('Choose a movie', style: AppTheme.titleLarge),
                 const Spacer(),
-                sc.Tooltip(
-                  tooltip: (context) =>
-                      const sc.TooltipContainer(child: Text('Close')),
-                  child: sc.IconButton.ghost(
-                    icon: const Icon(
-                      Icons.close,
-                      color: AppColors.dim,
-                      size: 20,
-                    ),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
+                AnalogIconButton(
+                  icon: Icons.close,
+                  tooltip: 'Close',
+                  iconSize: 20,
+                  onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
             ),
@@ -1697,7 +1752,7 @@ class _PickerSkeletonCell extends StatelessWidget {
 }
 
 /// The shareable room code + participant count, on an acrylic surface with an
-/// `sc.SecondaryBadge` count.
+/// [AnalogBadge] count.
 class _RoomCodePill extends StatelessWidget {
   const _RoomCodePill({required this.code, required this.count});
   final String code;
@@ -1705,11 +1760,11 @@ class _RoomCodePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return sc.SurfaceCard(
-      surfaceBlur: AppBlur.overlay,
-      surfaceOpacity: 0.9,
-      borderColor: AppColors.line2,
-      borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
+    return AnalogPanel(
+      translucent: true,
+      blur: AppBlur.overlay,
+      lift: AnalogLift.over,
+      radius: AppSpacing.radiusPill,
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
         AppSpacing.sm,
@@ -1735,7 +1790,7 @@ class _RoomCodePill extends StatelessWidget {
             ),
           ),
           const SizedBox(width: AppSpacing.md),
-          sc.SecondaryBadge(
+          AnalogBadge(
             leading: Container(
               width: 6,
               height: 6,
@@ -1767,11 +1822,11 @@ class _JoinRequests extends ConsumerWidget {
     return Reveal(
       child: SizedBox(
         width: 268,
-        child: sc.SurfaceCard(
-          surfaceBlur: AppBlur.overlay,
-          surfaceOpacity: 0.9,
-          borderColor: AppColors.line2,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+        child: AnalogPanel(
+          translucent: true,
+          blur: AppBlur.overlay,
+          lift: AnalogLift.over,
+          radius: AppSpacing.radiusLg,
           padding: EdgeInsets.zero,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1817,29 +1872,17 @@ class _JoinRequests extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      sc.Tooltip(
-                        tooltip: (context) =>
-                            const sc.TooltipContainer(child: Text('Reject')),
-                        child: sc.IconButton.ghost(
-                          icon: const Icon(
-                            Icons.close,
-                            color: AppColors.red,
-                            size: 18,
-                          ),
-                          onPressed: () => notifier.reject(w.userId),
-                        ),
+                      AnalogIconButton(
+                        icon: Icons.close,
+                        tooltip: 'Reject',
+                        color: AppColors.red,
+                        onPressed: () => notifier.reject(w.userId),
                       ),
-                      sc.Tooltip(
-                        tooltip: (context) =>
-                            const sc.TooltipContainer(child: Text('Approve')),
-                        child: sc.IconButton.ghost(
-                          icon: const Icon(
-                            Icons.check,
-                            color: AppColors.green,
-                            size: 18,
-                          ),
-                          onPressed: () => notifier.approve(w.userId),
-                        ),
+                      AnalogIconButton(
+                        icon: Icons.check,
+                        tooltip: 'Approve',
+                        color: AppColors.green,
+                        onPressed: () => notifier.approve(w.userId),
                       ),
                     ],
                   ),
@@ -1915,17 +1958,10 @@ class _ChatSlideOver extends StatelessWidget {
                         ],
                       ),
                     ),
-                    sc.Tooltip(
-                      tooltip: (context) =>
-                          const sc.TooltipContainer(child: Text('Close chat')),
-                      child: sc.IconButton.ghost(
-                        icon: const Icon(
-                          Icons.close,
-                          color: AppColors.dim,
-                          size: 18,
-                        ),
-                        onPressed: onClose,
-                      ),
+                    AnalogIconButton(
+                      icon: Icons.close,
+                      tooltip: 'Close chat',
+                      onPressed: onClose,
                     ),
                   ],
                 ),
@@ -1991,13 +2027,11 @@ class _HostControlsDialog extends ConsumerWidget {
                     ),
                   ),
                   const Spacer(),
-                  sc.Tooltip(
-                    tooltip: (context) =>
-                        const sc.TooltipContainer(child: Text('Close')),
-                    child: sc.IconButton.ghost(
-                      icon: Icon(Icons.close, color: wp.dim, size: 18),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
+                  AnalogIconButton(
+                    icon: Icons.close,
+                    tooltip: 'Close',
+                    color: wp.dim,
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
               ),
@@ -2051,9 +2085,10 @@ class _HostControlsDialog extends ConsumerWidget {
                           ),
                         ),
                         const SizedBox(width: AppSpacing.md),
-                        sc.Switch(
+                        AnalogSwitch(
                           value: party.collaborativeControl,
                           onChanged: (v) => notifier.setCollaborative(v),
+                          semanticLabel: 'Collaborative control',
                         ),
                       ],
                     ),
@@ -2197,7 +2232,7 @@ class _HostControlsDialog extends ConsumerWidget {
 }
 
 /// One participant in the Watch Party menu roster. Transfer-host / kick (inline
-/// + a right-click [sc.ContextMenu]) appear only when the VIEWER is the host and
+/// + a right-click [AnalogContextMenu]) appear only when the VIEWER is the host and
 /// the row is a guest.
 class _RosterRow extends StatelessWidget {
   const _RosterRow({
@@ -2235,7 +2270,7 @@ class _RosterRow extends StatelessWidget {
           ),
         ),
         if (p.isHost)
-          const sc.SecondaryBadge(
+          const AnalogBadge(
             child: Text(
               'HOST',
               style: TextStyle(
@@ -2246,21 +2281,17 @@ class _RosterRow extends StatelessWidget {
             ),
           )
         else if (showActions) ...[
-          sc.Tooltip(
-            tooltip: (context) =>
-                const sc.TooltipContainer(child: Text('Make host')),
-            child: sc.IconButton.ghost(
-              icon: Icon(Icons.swap_horiz, color: wp.faint, size: 18),
-              onPressed: () => notifier.transferHost(p.userId),
-            ),
+          AnalogIconButton(
+            icon: Icons.swap_horiz,
+            tooltip: 'Make host',
+            color: wp.faint,
+            onPressed: () => notifier.transferHost(p.userId),
           ),
-          sc.Tooltip(
-            tooltip: (context) =>
-                const sc.TooltipContainer(child: Text('Kick')),
-            child: sc.IconButton.ghost(
-              icon: Icon(Icons.logout, color: _dangerColor(wp), size: 18),
-              onPressed: () => notifier.kick(p.userId),
-            ),
+          AnalogIconButton(
+            icon: Icons.logout,
+            tooltip: 'Kick',
+            color: _dangerColor(wp),
+            onPressed: () => notifier.kick(p.userId),
           ),
         ],
       ],
@@ -2268,17 +2299,18 @@ class _RosterRow extends StatelessWidget {
 
     if (!showActions) return row;
 
-    return sc.ContextMenu(
-      items: [
-        sc.MenuButton(
-          leading: const Icon(Icons.swap_horiz, size: 16),
-          onPressed: (_) => notifier.transferHost(p.userId),
-          child: const Text('Make host'),
+    return AnalogContextMenu(
+      actions: [
+        AnalogMenuAction(
+          label: 'Make host',
+          icon: Icons.swap_horiz,
+          onSelected: () => notifier.transferHost(p.userId),
         ),
-        sc.MenuButton(
-          leading: Icon(Icons.logout, color: _dangerColor(wp), size: 16),
-          onPressed: (_) => notifier.kick(p.userId),
-          child: Text('Kick', style: TextStyle(color: _dangerColor(wp))),
+        AnalogMenuAction(
+          label: 'Kick',
+          icon: Icons.logout,
+          danger: true,
+          onSelected: () => notifier.kick(p.userId),
         ),
       ],
       child: row,
@@ -2289,9 +2321,9 @@ class _RosterRow extends StatelessWidget {
 Color _dangerColor(WpPalette wp) =>
     wp.brightness == Brightness.dark ? kSemanticRed : const Color(0xFFB4232E);
 
-/// The sync-mode segmented control, an `sc.ButtonGroup` of `sc.Toggle`s. Tapping
-/// the already-selected segment is a no-op (radio semantics), so a mode can
-/// never be deselected into an invalid empty state.
+/// The sync-mode segmented control, an [AnalogSegmented]. Tapping the
+/// already-selected segment is a no-op (radio semantics), so a mode can never be
+/// deselected into an invalid empty state.
 class _SyncModeToggle extends StatelessWidget {
   const _SyncModeToggle({required this.value, required this.onChanged});
   final String value;
@@ -2299,51 +2331,19 @@ class _SyncModeToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    sc.Toggle seg(String id, String label) => sc.Toggle(
-      value: value == id,
-      style: const sc.ButtonStyle.outline(),
-      onChanged: (on) {
-        if (on) onChanged(id);
-      },
-      child: Text(label),
-    );
-
-    return sc.ButtonGroup(
-      children: [seg('hopping', 'Hopping'), seg('dragging', 'Dragging')],
+    return AnalogSegmented<String>(
+      semanticLabel: 'Sync mode',
+      value: value,
+      onChanged: onChanged,
+      segments: const [
+        AnalogSegment(value: 'hopping', label: 'Hopping'),
+        AnalogSegment(value: 'dragging', label: 'Dragging'),
+      ],
     );
   }
 }
 
-/// Shows a transient shadcn toast through the app-wide `ToastLayer` (provided by
-/// the root `ShadcnLayer`).
+/// Shows a transient notice on the app-wide [AnalogToastHost].
 void _showPartyToast(BuildContext context, String message) {
-  final wp = context.wp;
-  sc.showToast(
-    context: context,
-    location: sc.ToastLocation.topCenter,
-    builder: (context, overlay) => sc.SurfaceCard(
-      surfaceBlur: AppBlur.overlay,
-      surfaceOpacity: 0.9,
-      borderColor: wp.line2,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.check_circle_outline, size: 16, color: kSuccessGreen),
-          const SizedBox(width: AppSpacing.sm),
-          Text(
-            message,
-            style: TextStyle(
-              color: wp.text,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
+  showAnalogToast(context, message, tone: AnalogToastTone.success);
 }

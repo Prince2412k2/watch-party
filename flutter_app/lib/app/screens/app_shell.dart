@@ -7,6 +7,7 @@ import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/bottom_nav.dart';
 import '../../ui/widgets/profile_menu.dart';
+import '../router.dart';
 import '../shortcuts.dart';
 
 /// The primary navigation destinations, in tab order — the four redesigned web
@@ -82,6 +83,64 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> {
   String? _navigatedPartyId;
 
+  @override
+  void initState() {
+    super.initState();
+    // The party surface has to be considered on MOUNT, not only on the next
+    // state change: a room can already be watching by the time the shell is
+    // built (a boot-time `party:resume`, or a return from another top-level
+    // route). Deferred a frame so the first navigation happens off the build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openParty(ref.read(partyProvider));
+      _warmCatalog(ref.read(catalogNamespaceProvider));
+    });
+  }
+
+  /// Pull the browse catalog down for a launch that did not land on it.
+  ///
+  /// Only worth anything when the app came up somewhere else — a deep link to
+  /// Downloads, a boot-time party resume straight into the player. `/movies`
+  /// and `/series` fetch this themselves the moment they build, so warming it
+  /// under them would be a second request for a payload already in flight.
+  ///
+  /// Deferred past the first frame, and best-effort inside the prefetcher, so
+  /// it cannot delay or fail the paint it runs behind.
+  void _warmCatalog(String? namespace) {
+    if (!mounted || namespace == null) return;
+    if (widget.location.startsWith(Routes.movies) ||
+        widget.location.startsWith(Routes.series)) {
+      return;
+    }
+    ref.read(catalogPrefetcherProvider).warmBrowse(namespace);
+  }
+
+  /// Pull this client onto `/party/:id` when the room is watching — unless the
+  /// user minimized THIS party, in which case the session stays live behind the
+  /// popcorn and they choose when to come back.
+  ///
+  /// Only ever called from `initState` and the [partyProvider] listener, never
+  /// from `build`: it mutates [partyMinimizedProvider], and it used to run on
+  /// every rebuild, which made "minimize" impossible — the shell is rebuilt from
+  /// scratch when `/party/:id` is left, so its `_navigatedPartyId` latch was
+  /// always null and Back bounced straight back into the player.
+  void _openParty(PartyState? party) {
+    if (!mounted) return;
+    final route = partyPlayerRoute(party);
+    if (route == null) {
+      _navigatedPartyId = null;
+      // No player surface to be minimized away from any more (back to the
+      // lobby, or the room is gone), so a later `watching` stage must open.
+      ref.read(partyMinimizedProvider.notifier).restore();
+      return;
+    }
+    if (_navigatedPartyId == party!.id) return;
+    if (ref.read(partyMinimizedProvider) == party.id) return;
+    _navigatedPartyId = party.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.go(route);
+    });
+  }
+
   String _currentOf(List<NavDestination> destinations) {
     for (final d in destinations) {
       if (widget.location.startsWith(d.route)) return d.route;
@@ -91,21 +150,13 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    void openParty(PartyState? party) {
-      final route = partyPlayerRoute(party);
-      if (route == null) {
-        _navigatedPartyId = null;
-        return;
-      }
-      if (_navigatedPartyId == party!.id) return;
-      _navigatedPartyId = party.id;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) context.go(route);
-      });
-    }
-
-    ref.listen<PartyState?>(partyProvider, (_, party) => openParty(party));
-    openParty(ref.read(partyProvider));
+    ref.listen<PartyState?>(partyProvider, (_, party) => _openParty(party));
+    // Signing in is the other "launch": the shell is already up, so the
+    // post-frame warm above has been and gone by the time a namespace exists.
+    ref.listen<String?>(
+      catalogNamespaceProvider,
+      (_, namespace) => _warmCatalog(namespace),
+    );
     final wp = context.wp;
     final isAuthenticated = ref.watch(
       authProvider.select((s) => s.isAuthenticated),

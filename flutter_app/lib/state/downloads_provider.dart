@@ -69,7 +69,7 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
     _meta[itemId] = _Meta(title: title, posterTag: posterTag, runTimeTicks: runTimeTicks);
     _attachListener(itemId);
 
-    unawaited(_fillController.start(itemId));
+    unawaited(_runFill(() => _fillController.start(itemId), itemId));
 
     final record = _recordFor(itemId, _fillController.progressFor(itemId).value);
     upsert(record);
@@ -81,7 +81,28 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
   /// `api` is accepted for call-site compatibility; unused (see [start]).
   Future<void> resume(String itemId, {ApiClient? api}) async {
     _attachListener(itemId);
-    await _fillController.resume(itemId);
+    await _runFill(() => _fillController.resume(itemId), itemId);
+  }
+
+  /// Runs a fill's [begin] (start/resume) so a failure *before* the fill loop
+  /// gets going still lands in the UI. Everything the loop itself hits reaches
+  /// the record through `FillProgress.state`, but a throw out of the opening
+  /// steps (opening the cache entry, probing the total length, minting a signed
+  /// URL) escaped the `unawaited` call as an unhandled async error and left the
+  /// record sitting at "enqueued" forever, with no way to retry it.
+  Future<void> _runFill(Future<void> Function() begin, String itemId) async {
+    try {
+      await begin();
+    } catch (_) {
+      if (!mounted) return;
+      upsert(_recordFor(
+        itemId,
+        _fillController
+            .progressFor(itemId)
+            .value
+            .copyWith(state: FillState.error),
+      ));
+    }
   }
 
   Future<void> cancel(String itemId) async {

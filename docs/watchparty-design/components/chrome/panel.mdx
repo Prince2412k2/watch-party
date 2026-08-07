@@ -1,0 +1,75 @@
+---
+title: Panel
+kit: chrome
+web: .an-panel
+native: AnalogPanel
+status: parity
+---
+
+# Panel
+
+The kit's one framed surface.
+
+## Purpose
+
+Everything that used to be a card is this: a warm surface from the ramp, a
+fine hairline, **chrome radius — never poster radius**, and a directional
+cast shadow keyed to the same light as the artwork.
+
+One component rather than several is deliberate. Dialogs, menus, toasts,
+the party overlays and the join-request card are all the same object at
+different lifts; giving each its own surface is how a design ends up with
+five slightly different greys.
+
+**Not for:** wrapping a poster. Artwork is square (invariant 3).
+
+## API
+
+**Native** — `AnalogPanel`
+
+| Param | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `child` | `Widget` | required | |
+| `padding` | `EdgeInsetsGeometry` | `all(lgPx)` | |
+| `radius` | `double` | `chromePx` | Never a poster radius |
+| `fill` | `Color?` | `null` | Defaults to `stageSurface`, or the scrim when translucent |
+| `border` | `Color?` | `null` | Defaults to `line` |
+| `lift` | `AnalogLift` | `rest` | `flush` \| `rest` \| `over` |
+| `translucent` | `bool` | `false` | Blurs what is behind it |
+| `blur` | `double` | `16` | |
+
+## Lift
+
+| Lift | Meaning | Shadow |
+| --- | --- | --- |
+| `flush` | On the stage | hairline only |
+| `rest` | A plate resting on the stage | rest elevation |
+| `over` | A surface over content — dialog, menu, toast | focus elevation |
+
+## Translucency and reduced transparency
+
+`translucent` is for chrome sitting over moving picture — the party
+overlays, the toast rail. It blurs what is behind rather than hiding it.
+
+**It collapses to an opaque surface of equivalent contrast when the platform
+asks for reduced transparency**, so the content never simply disappears for
+those users:
+
+```dart
+final reduceTransparency = MediaQuery.maybeOf(context)?.highContrast ?? false;
+final blurred = translucent && !reduceTransparency && blur > 0;
+```
+
+## Tokens
+
+`color.stageSurface`, `backdropScrim`, `line`, `shadowCast` ·
+`radius.chromePx` / `sheetPx` · `space.lgPx` ·
+`elevation.restBlurPx` / `focusBlurPx` and their offsets
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Never applied to artwork | Review; `poster.radiusPx` is 0 and panels default to `chromePx` |
+| 2 | Reduced transparency is honoured | `MediaQuery.highContrast` branch |
+| 3 | One surface component, not five | Review — new "card"-shaped widgets should be a `lift`, not a new class |

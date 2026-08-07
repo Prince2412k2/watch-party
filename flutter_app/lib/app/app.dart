@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../analog/chrome/analog_toast.dart';
 import '../state/theme_provider.dart';
 import '../ui/ui.dart';
 import 'router.dart';
@@ -28,12 +29,11 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
 
   @override
   Widget build(BuildContext context) {
-    // The persisted theme drives BOTH the Material theme and the shadcn layer.
-    // Switching modes rebuilds only the theme boundary + ambient wash — it never
-    // remounts the functional subtrees (PLAN §global invariants).
+    // The persisted theme drives the Material theme. Switching modes rebuilds
+    // only the theme boundary + ambient wash — it never remounts the functional
+    // subtrees (PLAN §global invariants).
     final mode = ref.watch(themeModeProvider);
     final theme = AppTheme.forMode(mode);
-    final scTheme = AppShadcnTheme.forMode(mode);
     final isLight = theme.brightness == Brightness.light;
 
     return MaterialApp.router(
@@ -42,25 +42,33 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
       theme: theme,
       darkTheme: theme,
       themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
-      localizationsDelegates: sc.ShadcnLocalizations.localizationsDelegates,
-      supportedLocales: sc.ShadcnLocalizations.supportedLocales,
+      // Supplied directly now that no component library is contributing its own
+      // delegates. The app ships one locale; these are the framework strings
+      // (semantics, text selection, the date pickers Material builds).
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('en')],
       routerConfig: _router,
       builder: (context, child) {
-        // ShadcnLayer wraps every route so shadcn components resolve their theme
-        // + overlay infrastructure. MaterialType.transparency supplies the
-        // Material text/ink plumbing for any chrome that renders above a route's
-        // own Scaffold, without painting a background.
-        final content = Material(
-          type: MaterialType.transparency,
-          child: child ?? const SizedBox.shrink(),
+        // MaterialType.transparency supplies the Material text/ink plumbing for
+        // any chrome that renders above a route's own Scaffold, without painting
+        // a background.
+        //
+        // AnalogToastHost sits *above* the router, which is the whole point:
+        // the party socket's handlers outlive every screen and have nothing but
+        // the root navigator's context to raise a notice from.
+        final content = AnalogToastHost(
+          child: Material(
+            type: MaterialType.transparency,
+            child: child ?? const SizedBox.shrink(),
+          ),
         );
-        return sc.ShadcnLayer(
-          theme: scTheme,
-          themeMode: isLight ? sc.ThemeMode.light : sc.ThemeMode.dark,
-          child: widget.enableWindowFrame
-              ? DesktopWindowChrome(child: content)
-              : content,
-        );
+        return widget.enableWindowFrame
+            ? DesktopWindowChrome(child: content)
+            : content;
       },
     );
   }

@@ -1,0 +1,64 @@
+---
+title: Shelf
+kit: browse
+web: AnalogShelf
+native: AnalogShelf
+status: parity
+---
+
+# Shelf
+
+A horizontal row of posters with a label.
+
+## Purpose
+
+The multi-row browse pattern — Continue Watching, Recently Added, a
+season's episodes. Distinct from the [rail](./rail.mdx): a shelf's cursor
+**moves within it**, and a surface has several shelves. A rail is one row
+that owns the whole surface and keeps its cursor pinned.
+
+Use a shelf when the surface answers "what's on?" and a rail when it
+answers "which one?".
+
+## API
+
+**Web** — `AnalogShelf`
+
+| Prop | Type |
+| --- | --- |
+| `label` | `string` |
+| `items` | `readonly AnalogShelfItem[]` |
+| `focusedIndex` | `number` |
+| `onFocusChange` / `onActivate` | `(index: number) => void` |
+| `onBack` | `() => void` |
+| `motion` | `MotionProfile` |
+| `posterWidthPx` / `gapPx` | `number` |
+| `loading` / `skeletonCount` | — |
+| `emptyTitle` | `string` |
+
+## Focus memory
+
+A shelf does **not** own where focus was. That lives in `surface.ts` /
+`focus_memory.dart`, keyed by `surfaceId(tab, stack)`, because a surface
+unmounts entirely when you drill into a title — component state cannot be
+what remembers, and that was precisely the bug it closed.
+
+Restoration is graded, from `restoreFocus`:
+
+| Kind | Meaning |
+| --- | --- |
+| `exact` | Shelf and item both still exist |
+| `nearest` | Shelf survived, item did not — lands by remembered index |
+| `default` | Shelf is gone — lands on the first focusable |
+| `empty` | Nothing focusable at all |
+
+`nearest` is why a finished episode disappearing from Continue Watching
+leaves focus next to where your attention was, rather than at the start.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Focus memory is never component state | `surfaceId`-keyed store, shared fixture |
+| 2 | An empty shelf says so | `emptyTitle`, never a blank row |
+| 3 | Skeletons are square | Invariant 3 |

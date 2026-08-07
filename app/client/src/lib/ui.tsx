@@ -5,38 +5,14 @@
 // DownloadDetail.jsx — this is the single reconciled source.
 import { useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { navigate } from '../router'
-import { glass } from '../glass'
+import { navigate } from '../router.ts'
+import { glass } from '../glass.tsx'
 
-/* ── Cinematic minimal — dark, flat, monochrome ──────────────────────────────
-   Content is the interface (Apple TV / Max). Neutral near-black -> near-white
-   ramp, ONE color family total: semantic status (danger/live/success), never
-   used decoratively. No brand hue, no gradients, no glass. Keys match the old
-   object 1:1 so every page inherits this untouched. */
-export const C = {
-  bg: 'var(--wp-bg, #0a0a0b)',
-  surface: 'var(--wp-surface, #141416)',
-  surface2: 'var(--wp-surface-2, #1e1e21)',
-  surface3: 'var(--wp-surface-3, #2a2a2e)',
-  text: 'var(--wp-text, #F4F4F5)',
-  dim: 'var(--wp-dim, rgba(244,244,245,.62))',
-  faint: 'var(--wp-faint, rgba(244,244,245,.36))',
-  line: 'var(--wp-line, rgba(255,255,255,.08))',
-  line2: 'var(--wp-line-2, rgba(255,255,255,.14))',
-  accent: 'var(--wp-text, #F4F4F5)',
-  accentDim: 'var(--wp-dim, #CBCBCE)',
-  accentSoft: 'var(--wp-line, rgba(255,255,255,.08))',
-  onAccent: 'var(--wp-bg, #0a0a0b)',
-  // Semantic status ONLY — never decorative, never "brand", never active-state fill.
-  green: '#5AB98A',          // success tick, sparingly
-  amber: '#E0655E',          // (legacy key name) — mapped to danger/live red, see `red`/`live`
-  red: '#E0655E',
-  live: '#E0655E',           // active-download / recording dot
-  glass: '#141416',          // flat solid surface (no blur)
-  glassHi: '#1e1e21',
-}
-export const SANS = "'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-export const MONO = "'JetBrains Mono', ui-monospace, monospace"
+// The palette and type tokens now live in a React-free module so pure consumers
+// (lib/format.ts) can read a colour without importing a component tree. Still
+// re-exported here: every existing caller reaches for them through ui.tsx.
+import { C, MONO, SANS } from './palette.ts'
+export { C, SANS, MONO }
 
 // Frosted panel style, built on the shared glass() abstraction (heavy = blur 26).
 export const glassStyle = glass('heavy')
@@ -94,13 +70,12 @@ export function viewIcon(v: { CollectionType?: string }) {
 
 // Flat, quiet icon/pill button — solid surface, hairline border, no glass.
 export function GlassBtn({
-  onClick, title, children, pill, wide,
+  onClick, title, children, pill,
 }: {
   onClick?: () => void
   title?: string
   children?: ReactNode
   pill?: boolean
-  wide?: boolean
 } = {}) {
   const [h, setH] = useState(false)
   return (
@@ -167,7 +142,7 @@ export function NavRow({
 
 /* ── Floating glass sidebar for the download surfaces — Home → Jellyfin views →
    Browse → Downloads. `current` ('browse' | 'downloads') marks the active row;
-   library views come from the shared useLibraryViews hook so a library row
+   the caller passes the Jellyfin `views` it already loaded, so a library row
    appears here identically to the Library page. ──────────────────────────────── */
 export function Sidebar({
   mobile, width, views = [], downloadCount = 0, failingCount = 0, current,

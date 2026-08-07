@@ -1,7 +1,7 @@
 // Shared display formatters + download-state mapping. Previously reimplemented
 // (with subtle drift) across Library.jsx / Downloads.jsx / FindDownload.jsx /
 // DownloadDetail.jsx — consolidated here so every surface reads identically.
-import { C } from './ui'
+import { C } from './palette.ts'
 
 // Raw bytes → "12.4 MB". Returns "—" for missing/zero.
 export function fmtSize(bytes: number | null | undefined) {

@@ -112,7 +112,11 @@ Future<void> main() async {
         await container.read(playerControllerProvider).pause();
       } catch (_) {}
       try {
-        await container.read(downloaderProvider).pauseAllActive();
+        // The in-flight transfers are cache fills, not `background_downloader`
+        // tasks — [downloaderProvider] is retired (nothing enqueues to it), so
+        // pausing it inspected an empty task DB while the real fill loops kept
+        // running.
+        container.read(cacheFillControllerProvider).pauseAll();
       } catch (_) {}
     };
 

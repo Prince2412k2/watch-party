@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../../analog/chrome/analog_button.dart';
 import '../../livekit/livekit_room.dart';
 import '../../state/livekit_provider.dart';
 import '../tokens.dart';
@@ -305,16 +305,15 @@ class _ToggleIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final iconWidget = Icon(
-      icon,
-      size: 18,
-      color: active ? AppColors.text : AppColors.faint,
-    );
-    return sc.Tooltip(
-      tooltip: (context) => sc.TooltipContainer(child: Text(tooltip)),
-      child: active
-          ? sc.IconButton.secondary(icon: iconWidget, onPressed: onTap)
-          : sc.IconButton.outline(icon: iconWidget, onPressed: onTap),
+    // On/off is a plate, not a tint: an active device carries a filled surface
+    // and a raised frame, an inactive one only a hairline.
+    return AnalogIconButton(
+      icon: icon,
+      tooltip: tooltip,
+      onPressed: onTap,
+      tone: active
+          ? AnalogIconButtonTone.solid
+          : AnalogIconButtonTone.outline,
     );
   }
 }
@@ -326,13 +325,11 @@ class _DevicePickerButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return sc.Tooltip(
-      tooltip: (context) =>
-          const sc.TooltipContainer(child: Text('Choose devices')),
-      child: sc.IconButton.outline(
-        icon: const Icon(Icons.tune, size: 18, color: AppColors.faint),
-        onPressed: () => _openDevicePicker(context),
-      ),
+    return AnalogIconButton(
+      icon: Icons.tune,
+      tooltip: 'Choose devices',
+      tone: AnalogIconButtonTone.outline,
+      onPressed: () => _openDevicePicker(context),
     );
   }
 

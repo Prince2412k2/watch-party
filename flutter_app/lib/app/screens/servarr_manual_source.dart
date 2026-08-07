@@ -166,8 +166,8 @@ class _ManualSourceDialogState extends ConsumerState<_ManualSourceDialog> {
           'targetId': targetId,
           'title': _title.text.trim(),
           'magnet': _magnet.text.trim(),
-          if (seasonNumber != null) 'seasonNumber': seasonNumber,
-          if (episodeNumber != null) 'episodeNumber': episodeNumber,
+          'seasonNumber': ?seasonNumber,
+          'episodeNumber': ?episodeNumber,
         });
       } else {
         final file = _torrent!;

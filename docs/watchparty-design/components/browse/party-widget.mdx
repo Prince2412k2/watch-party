@@ -1,0 +1,47 @@
+---
+title: Party widget
+kit: browse
+web: AnalogPartyWidget
+native: — (planned)
+status: web-only
+---
+
+# Party widget
+
+The corner widget that expands into watch-party controls.
+
+## Purpose
+
+> "Watch party button should be a corner widget that expands and shows
+> controls — icons, toggles, small QR and copy for link. **No text.**
+> Minimal redesign."
+
+## No text
+
+That constraint is the design. The expanded widget carries:
+
+- Icon toggles for the party's settings
+- A **small QR** of the join link
+- A copy-link control
+
+and no prose. The QR is the interesting part: it is the shortest path from
+"I'm on the couch" to "it's on my phone", and it needs no words in any
+language.
+
+Accessible names still exist — "no text" is about the *visual* surface, not
+about semantics. Every control carries a label for screen readers, and the
+copy action confirms through the [toast rail](../chrome/toast.mdx).
+
+## It owns its own open state
+
+The widget is self-contained: the stage does not hold `partyOpen`. That is
+why wiring it into `MoviesStage` removed props rather than adding them.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | No visible prose | Review |
+| 2 | Every control still has an accessible name | Review |
+| 3 | Copy confirms — a silent copy is indistinguishable from a broken one | Toast on success |
+| 4 | Collapsed state never obscures the rail | Corner placement, `z.toolbox` |

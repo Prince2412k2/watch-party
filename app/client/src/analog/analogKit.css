@@ -1,0 +1,1487 @@
+@import '../design/analog.css';
+
+/* Analog primitive kit.
+ *
+ * Every value here comes from the generated custom properties above. The only
+ * literals are structural (100%, flex, grid) or the noise tile's turbulence
+ * parameters, which are not a design token — the tile SIZE and OPACITY are.
+ *
+ * Per-instance values that must be computed in JS (poster width, motion
+ * durations under prefers-reduced-motion, the scene-light offsets) arrive as
+ * inline `--an-k-*` custom properties, never as hard-coded style objects. */
+
+/* ── stage ───────────────────────────────────────────────────────────────── */
+
+.an-stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-ground);
+  font-family: var(--an-type-sans);
+}
+
+.an-stage-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-backdrop);
+  background: var(--an-color-stage-void);
+}
+
+/* Cross-fade, not a cut: a new layer is appended on top at opacity 0 and the
+   previous one is dropped once the transition has run. */
+.an-stage-layer {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  opacity: 0;
+  transform: scale(1.04);
+  /* Barely graded, not treated. The earlier pass desaturated hard enough that a
+     colour-led backdrop read as a grey wash under an already heavy scrim. */
+  filter: saturate(0.95) contrast(0.98);
+  transition:
+    opacity var(--an-k-backdrop-ms, var(--an-motion-backdrop-cross-ms)) var(--an-motion-backdrop-cross-ease);
+}
+
+.an-stage-layer.is-in {
+  opacity: 1;
+}
+
+/* Warm scrim + vignette.
+ *
+ * Artwork is the ground the interface sits on — not a texture behind a panel —
+ * so the scrim only has to carry ink where ink actually lands: down the left
+ * where the title block sits, and along the bottom under the rail. Everything
+ * between them is left alone, which is what lets a backdrop read as a picture
+ * rather than a dark rectangle. The alphas themselves are tokens
+ * (`backdropScrim`, `backdropVignette`) so both clients lighten together. */
+.an-stage-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-backdrop);
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, var(--an-color-backdrop-scrim) 0%, transparent 52%),
+    linear-gradient(0deg, var(--an-color-backdrop-scrim) 0%, transparent 44%),
+    radial-gradient(132% 104% at 50% 38%, transparent 46%, var(--an-color-backdrop-vignette) 100%);
+}
+
+.an-stage-grain {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-grain);
+  pointer-events: none;
+  opacity: var(--an-grain-opacity-pct);
+  background-repeat: repeat;
+  background-size: var(--an-grain-tile-px) var(--an-grain-tile-px);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='128' height='128' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+/* One stage, three bands: the anchor's title fills whatever is left over, the
+   shelf that owns focus sits under it, and the modes stay on the bottom edge.
+   No panel, no sidebar, no second scroll region. */
+.an-stage-content {
+  position: absolute;
+  inset: 0;
+  z-index: var(--an-z-shelf);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  padding: var(--an-k-gutter, var(--an-space-stage-gutter-px));
+  padding-bottom: 0;
+}
+
+.an-stage-shelves {
+  min-width: 0;
+  display: grid;
+  gap: var(--an-space-xl-px);
+}
+
+/* A party guest mirrors the driver, so the shelf is inert for them — but the
+   modes and the toolboxes stay live, or a guest could not leave the mirrored
+   view. Same rule the phone shell applies to its tab bar. */
+.an-stage[data-inert='true'] .an-stage-shelves {
+  pointer-events: none;
+}
+
+/* ── title block ─────────────────────────────────────────────────────────── */
+
+.an-stage-title {
+  min-width: 0;
+  max-width: min(46ch, 52%);
+  align-self: end;
+  padding-bottom: var(--an-space-xl-px);
+}
+
+.an-stage-title h1 {
+  margin: 0;
+  color: var(--an-color-ink);
+  font-size: clamp(28px, 3.6vw, 52px);
+  font-weight: 300;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.an-stage-title p {
+  margin: var(--an-space-md-px) 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--an-color-ink-dim);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.an-stage-eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--an-space-sm-px) var(--an-space-md-px);
+  margin-bottom: var(--an-space-md-px);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* ── stage head: mode slider + the focused title's details ───────────────── */
+
+/* The whole head sits at the BOTTOM of its grid row, directly above the rail,
+   so the copy and the artwork it describes read as one block instead of the
+   title floating at the top of the screen away from its posters. */
+.an-stage-head {
+  min-width: 0;
+  /* The grid row is minmax(0, 1fr), so a long synopsis on a short viewport would
+     otherwise push the title up out of the stage rather than being clipped at
+     the bottom of its own block. */
+  min-height: 0;
+  overflow: hidden;
+  align-self: end;
+  display: grid;
+  gap: var(--an-space-lg-px);
+  padding-bottom: var(--an-space-xl-px);
+}
+
+/* A phone held sideways is 390px tall and the rail plus the modes already own
+   most of it. The synopsis is the one thing here that can be shortened without
+   losing a state or an action, so it is what gives way. */
+@media (max-height: 620px) {
+  .an-detail > p {
+    -webkit-line-clamp: 2;
+  }
+}
+
+@media (max-height: 500px) {
+  .an-detail > p {
+    display: none;
+  }
+}
+
+.an-stage-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xl-px);
+}
+
+/* ── Singles / Collections slider ────────────────────────────────────────── */
+
+/* Presented the way the Shows screen presents its seasons: plain text positions
+   with a detent rule sliding under the current one. Not a segmented control —
+   this is a position on a slider, not a pair of buttons. */
+.an-modes {
+  display: grid;
+  gap: var(--an-space-xs-px);
+  justify-items: end;
+}
+
+.an-modes button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 13px;
+  min-height: var(--an-hairline-hit-px);
+  padding: 0;
+  text-align: right;
+  border: 0;
+  background: transparent;
+  color: var(--an-color-ink-faint);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  transition: color var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
+}
+
+.an-modes button:hover:not(:disabled),
+.an-modes button:focus-visible {
+  color: var(--an-color-ink-dim);
+}
+
+/* Three channels, not one: colour, a longer rule, and a larger label. The
+   references rule out selection by colour alone, and the season rail this
+   mirrors steps 15px -> 18px for the same reason. */
+.an-modes button.is-active {
+  color: var(--an-color-ink);
+  font-size: 14px;
+}
+
+.an-modes button:disabled {
+  cursor: default;
+}
+
+/* The rule sits beside the label and lengthens on selection, mirroring the
+   Shows season rail. Both positions always draw one, so the row's width does
+   not jump as selection moves — only the rule's length changes. */
+.an-modes button > i {
+  display: block;
+  width: 22px;
+  height: 1px;
+  background: currentColor;
+  transition: width var(--an-motion-focus-step-ms) var(--an-motion-focus-step-ease);
+}
+
+.an-modes button.is-active > i {
+  width: 34px;
+}
+
+/* Right-edge rail, clear of the profile toolbox above and the party widget
+   below. Vertically centred rather than pinned, so it reads as belonging to the
+   stage rather than to either corner. */
+.an-stage-side {
+  position: absolute;
+  right: var(--an-k-gutter, var(--an-space-stage-gutter-px));
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: var(--an-z-shelf);
+}
+
+/* A phone has no room for a right rail beside the details block, so the modes
+   return to the flow above the title. */
+.an-stage[data-size='phone'] .an-stage-side {
+  position: static;
+  transform: none;
+  margin-bottom: var(--an-space-md-px);
+}
+
+.an-stage[data-size='phone'] .an-modes {
+  grid-auto-flow: column;
+  justify-items: start;
+  gap: var(--an-space-xl-px);
+}
+
+/* ── Season axis (Shows) ─────────────────────────────────────────────────── */
+
+/* The same control as the mode slider, reusing `.an-modes` outright rather than
+   restating its geometry — that geometry was lifted from the old
+   `.library-seasons` rail in the first place, so Shows is pointing back at
+   where it came from. What this adds is the selected season's poster above the
+   list: the one place season artwork appears, and therefore the one place the
+   season -> series -> placeholder chain is visible. */
+.an-seasons {
+  display: grid;
+  gap: var(--an-space-md-px);
+  justify-items: end;
+}
+
+.an-season-art {
+  display: block;
+  width: 92px;
+}
+
+/* A long-running show has more seasons than the right rail is tall. The list
+   scrolls inside itself rather than pushing the corner widgets apart. */
+.an-seasons .an-modes {
+  max-height: 42vh;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.an-seasons .an-modes::-webkit-scrollbar {
+  display: none;
+}
+
+/* A phone has no right rail: `.an-stage-side` returns to the flow above the
+   title and the positions become a horizontal row. A poster in that row would
+   own the screen, and the row itself has to scroll sideways past four seasons. */
+.an-stage[data-size='phone'] .an-season-art {
+  display: none;
+}
+
+.an-stage[data-size='phone'] .an-seasons .an-modes {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.an-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  min-height: var(--an-hairline-hit-px);
+  padding: 0 var(--an-space-sm-px);
+  border: 0;
+  background: transparent;
+  color: var(--an-color-ink-faint);
+  cursor: pointer;
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-back:hover:not(:disabled),
+.an-back:focus-visible {
+  color: var(--an-color-ink);
+}
+
+/* ── on-stage detail block ───────────────────────────────────────────────── */
+
+.an-detail {
+  min-width: 0;
+  max-width: min(52ch, 54%);
+}
+
+.an-detail h1 {
+  margin: 0;
+  color: var(--an-color-ink);
+  font-size: clamp(26px, 3.2vw, 46px);
+  font-weight: 300;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.an-detail > p {
+  margin: var(--an-space-md-px) 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--an-color-ink-dim);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.an-detail-error {
+  color: var(--an-color-status-danger);
+}
+
+.an-detail-eyebrow,
+.an-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--an-space-sm-px) var(--an-space-md-px);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.an-detail-eyebrow {
+  margin-bottom: var(--an-space-md-px);
+}
+
+.an-detail-meta {
+  margin-top: var(--an-space-md-px);
+  color: var(--an-color-ink-dim);
+}
+
+/* A separator between entries, never before the first or after the last — the
+   meta line closes its own gaps rather than padding them. */
+.an-detail-eyebrow > span + span::before,
+.an-detail-meta > span + span::before {
+  content: '·';
+  margin-right: var(--an-space-sm-px);
+  color: var(--an-color-ink-faint);
+}
+
+.an-detail-actions {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  margin-top: var(--an-space-lg-px);
+}
+
+.an-action {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  padding: 0 var(--an-space-lg-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-surface);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  box-shadow: var(--an-elevation-rest-offset-xpx) var(--an-elevation-rest-offset-ypx)
+    var(--an-elevation-rest-blur-px) var(--an-color-shadow-cast);
+  transition: border-color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-action:hover:not(:disabled),
+.an-action:focus-visible {
+  border-color: var(--an-color-line-strong);
+}
+
+.an-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.an-action.is-primary {
+  border-color: transparent;
+  background: var(--an-color-accent);
+  color: var(--an-color-on-accent);
+}
+
+.an-action.is-icon {
+  width: 42px;
+  padding: 0;
+  justify-content: center;
+}
+
+.an-action.is-icon.is-open {
+  border-color: var(--an-color-line-strong);
+  background: var(--an-color-stage-surface2);
+}
+
+.an-action.is-icon[data-state='queued'] {
+  border-color: var(--an-color-status-success);
+  color: var(--an-color-status-success);
+}
+
+.an-action.is-icon[data-state='failed'] {
+  border-color: var(--an-color-status-danger);
+  color: var(--an-color-status-danger);
+}
+
+/* ── track menu ──────────────────────────────────────────────────────────── */
+
+/* Opens UPWARDS from the action row: the rail owns the bottom of the stage and
+   a menu that dropped over it would cover the thing being chosen for. */
+.an-track-menu {
+  position: absolute;
+  z-index: var(--an-z-sheet);
+  bottom: calc(100% + var(--an-space-sm-px));
+  left: 0;
+  width: min(400px, calc(100vw - var(--an-space-xl-px) * 2));
+  max-height: min(56vh, 460px);
+  overflow: hidden auto;
+  padding: var(--an-space-md-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-sheet-px);
+  background: var(--an-color-stage-surface);
+  box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+    var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+  animation: an-toolbox-in var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
+}
+
+.an-track-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--an-space-xs-px) var(--an-space-sm-px);
+  color: var(--an-color-ink);
+  font-size: 13px;
+}
+
+.an-track-head button {
+  display: grid;
+  place-items: center;
+  width: var(--an-hairline-hit-px);
+  height: var(--an-hairline-hit-px);
+  border: 0;
+  border-radius: var(--an-radius-chrome-px);
+  background: transparent;
+  color: var(--an-color-ink-faint);
+  cursor: pointer;
+}
+
+.an-track-head button:hover,
+.an-track-head button:focus-visible {
+  color: var(--an-color-ink);
+}
+
+.an-track-menu small {
+  display: block;
+  padding: var(--an-space-sm-px) var(--an-space-xs-px) var(--an-space-xs-px);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.an-track-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--an-radius-chrome-px);
+}
+
+.an-track-row[data-selected='true'] {
+  background: var(--an-color-stage-surface2);
+}
+
+.an-track-row > button {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  padding: 0 var(--an-space-sm-px);
+  border: 0;
+  border-radius: var(--an-radius-chrome-px);
+  background: transparent;
+  color: var(--an-color-ink-dim);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.an-track-row[data-selected='true'] > button {
+  color: var(--an-color-ink);
+}
+
+.an-track-row > button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Always occupies its width so a selection change does not shift the label. */
+.an-track-tick {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  flex: 0 0 15px;
+  opacity: 0;
+}
+
+.an-track-tick[data-on='true'] {
+  opacity: 1;
+}
+
+.an-track-remove {
+  display: grid;
+  place-items: center;
+  width: var(--an-hairline-hit-px);
+  height: var(--an-hairline-hit-px);
+  border: 0;
+  background: transparent;
+  color: var(--an-color-ink-faint);
+  cursor: pointer;
+}
+
+.an-track-remove:hover:not(:disabled) {
+  color: var(--an-color-status-danger);
+}
+
+.an-track-upload {
+  width: 100%;
+  min-height: 40px;
+  margin-top: var(--an-space-sm-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-stage-surface2);
+  color: var(--an-color-ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.an-track-upload:hover:not(:disabled),
+.an-track-upload:focus-visible {
+  border-color: var(--an-color-line-strong);
+}
+
+.an-track-empty {
+  margin: 0;
+  padding: var(--an-space-md-px) var(--an-space-xs-px);
+  color: var(--an-color-ink-faint);
+  font-size: 13px;
+}
+
+.an-track-error {
+  margin: var(--an-space-sm-px) 0 0;
+  padding: 0 var(--an-space-xs-px);
+  color: var(--an-color-status-danger);
+  font-size: 12.5px;
+}
+
+/* ── poster ──────────────────────────────────────────────────────────────── */
+
+.an-poster {
+  position: relative;
+  display: block;
+  width: 100%;
+  transform: translateY(0) scale(var(--an-selection-rest-scale));
+  transition:
+    transform var(--an-k-step-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-poster[data-focused='true'] {
+  transform: translateY(calc(-1 * var(--an-k-lift-px, var(--an-selection-focus-lift-px))))
+    scale(var(--an-k-focus-scale, var(--an-selection-focus-scale)));
+}
+
+/* Local backdrop shading: the stage darkens *around* the focused poster rather
+   than the poster gaining a glow. Separation, not decoration. */
+.an-poster-shade {
+  position: absolute;
+  /* Matched to the shelf track's padding, so the wash is never hard-clipped. */
+  inset: calc(-1 * var(--an-space-lg-px));
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    68% 58% at 50% 56%,
+    rgb(0 0 0 / var(--an-selection-focus-backdrop-darken-pct)),
+    transparent 78%
+  );
+  transition: opacity var(--an-k-step-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-poster[data-focused='true'] .an-poster-shade {
+  opacity: 1;
+}
+
+/* Square and unrounded at EVERY size — artwork, skeleton, placeholder, season
+   card and selected state alike. radiusPx is 0 and asserted in both clients;
+   --an-radius-* is chrome-only and must never appear in this block. */
+.an-poster-frame {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: var(--an-poster-aspect-w) / var(--an-poster-aspect-h);
+  border-radius: var(--an-poster-radius-px);
+  background: var(--an-color-stage-surface);
+  box-shadow:
+    inset var(--an-k-lit-x) var(--an-k-lit-y) 0 var(--an-k-frame-px, var(--an-poster-frame-px))
+      var(--an-color-edge-light),
+    inset var(--an-k-shade-x) var(--an-k-shade-y) 0 var(--an-k-frame-px, var(--an-poster-frame-px))
+      var(--an-color-edge-shade),
+    var(--an-elevation-rest-offset-xpx) var(--an-elevation-rest-offset-ypx)
+      var(--an-elevation-rest-blur-px) var(--an-color-shadow-cast);
+  transition: box-shadow var(--an-k-step-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-poster[data-focused='true'] .an-poster-frame {
+  box-shadow:
+    inset calc(var(--an-k-lit-x) * 2) calc(var(--an-k-lit-y) * 2) 0
+      calc(var(--an-k-frame-px, var(--an-poster-frame-px)) * 2) var(--an-color-edge-light),
+    inset var(--an-k-shade-x) var(--an-k-shade-y) 0 var(--an-k-frame-px, var(--an-poster-frame-px))
+      var(--an-color-edge-shade),
+    var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+      var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+}
+
+.an-poster-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.9);
+}
+
+/* Fixed size, so layout and focus do not move when artwork is missing. */
+.an-poster-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: var(--an-color-stage-surface2);
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 22px;
+  letter-spacing: 0.08em;
+}
+
+.an-poster-skeleton {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-image: linear-gradient(
+    100deg,
+    var(--an-color-stage-surface) 30%,
+    var(--an-color-stage-surface2) 50%,
+    var(--an-color-stage-surface) 70%
+  );
+  background-size: 200% 100%;
+  animation: an-shim 1.4s linear infinite;
+}
+
+@keyframes an-shim {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.an-poster-badge {
+  position: absolute;
+  top: var(--an-space-sm-px);
+  left: var(--an-space-sm-px);
+  padding: 2px 6px;
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-edge-shade);
+  color: var(--an-color-ink);
+  font-family: var(--an-type-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.an-poster-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--an-hairline-idle-px);
+  background: var(--an-color-line-strong);
+}
+
+.an-poster-progress > i {
+  display: block;
+  height: 100%;
+  background: var(--an-color-accent);
+}
+
+/* min-height, not content height: a skeleton has no caption, and the shelf must
+   not change height as titles load in. */
+.an-poster-caption {
+  display: block;
+  overflow: hidden;
+  min-height: 1.35em;
+  margin-top: var(--an-space-md-px);
+  color: var(--an-color-ink-dim);
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-shelf-option[aria-selected='true'] .an-poster-caption {
+  color: var(--an-color-ink);
+}
+
+/* ── shelf ───────────────────────────────────────────────────────────────── */
+
+.an-shelf {
+  position: relative;
+  min-width: 0;
+  padding-bottom: var(--an-space-xl-px);
+}
+
+.an-shelf-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--an-space-md-px);
+  margin-bottom: var(--an-space-lg-px);
+}
+
+.an-shelf-head h2 {
+  margin: 0;
+  color: var(--an-color-ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.an-shelf-count {
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 11.5px;
+}
+
+.an-shelf-arrows {
+  display: flex;
+  gap: var(--an-space-sm-px);
+  margin-left: auto;
+}
+
+/* Always present, never revealed by hover. The rail arrows this replaces were
+   opacity-gated on section hover, which made them unreachable by touch, by
+   keyboard and by anyone driving with a remote. */
+.an-shelf-arrows button {
+  width: var(--an-hairline-hit-px);
+  height: var(--an-hairline-hit-px);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-dim);
+  background: var(--an-color-stage-surface);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-shelf-arrows button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.an-shelf-arrows button:not(:disabled):hover,
+.an-shelf-arrows button:focus-visible {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+}
+
+/* overflow:hidden, not auto. The shelf is moved by focus, never free-scrolled:
+   "no nested independent scroll areas on the main stage". It stays a scroll
+   container so the delta math in AnalogShelf can move it programmatically.
+   The padding (cancelled by an equal negative margin) is the room the focused
+   poster's lift, scale and cast shadow need — without it overflow:hidden
+   clips exactly the depth that communicates focus. */
+.an-shelf-track {
+  display: flex;
+  gap: var(--an-k-gap-px, var(--an-poster-gap-px));
+  overflow: hidden;
+  padding: var(--an-space-lg-px);
+  margin: calc(-1 * var(--an-space-lg-px));
+  scrollbar-width: none;
+  touch-action: pan-y;
+}
+
+.an-shelf-track::-webkit-scrollbar {
+  display: none;
+}
+
+.an-shelf-option {
+  flex: 0 0 var(--an-k-poster-px);
+  width: var(--an-k-poster-px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.an-shelf-option:focus {
+  outline: none;
+}
+
+.an-shelf-option:focus-visible .an-poster-frame {
+  outline: calc(var(--an-k-frame-px, var(--an-poster-frame-px)) * 2) solid var(--an-color-accent);
+  outline-offset: var(--an-space-xs-px);
+}
+
+.an-shelf-empty {
+  display: grid;
+  place-content: center;
+  gap: var(--an-space-sm-px);
+  min-height: 220px;
+  color: var(--an-color-ink-dim);
+  text-align: center;
+}
+
+.an-shelf-empty strong {
+  color: var(--an-color-ink);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+/* ── fixed-cursor rail ───────────────────────────────────────────────────── */
+
+/* Not `.an-shelf` with smaller numbers. The shelf scrolls a track to bring a
+   travelling highlight into view; this row is TRANSLATED so that whichever
+   index is selected lands under a cursor that never moves. There is no scroll
+   container here at all, which is also why there is no scroll position to keep
+   in sync with anything. */
+.an-rail {
+  position: relative;
+  min-width: 0;
+  padding-bottom: var(--an-space-lg-px);
+}
+
+.an-rail-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--an-space-md-px);
+  margin-bottom: var(--an-space-md-px);
+}
+
+.an-rail-head h2 {
+  margin: 0;
+  color: var(--an-color-ink);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* A highlight that never moves cannot tell you whether you are three titles in
+   or three hundred, so the count carries the position instead. */
+.an-rail-position {
+  color: var(--an-color-ink-faint);
+  font-family: var(--an-type-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+/* Clipped, never scrollable: "no nested independent scroll areas on the main
+   stage". The padding (cancelled by an equal negative margin) is the room the
+   selected poster's lift, scale and cast shadow need — without it the clip
+   removes exactly the depth that communicates focus — and it doubles as the
+   peek of the next poster on either side. */
+.an-rail-viewport {
+  position: relative;
+  overflow: hidden;
+  padding: var(--an-space-lg-px);
+  margin: calc(-1 * var(--an-space-lg-px));
+  touch-action: pan-y;
+}
+
+.an-rail-viewport:focus {
+  outline: none;
+}
+
+.an-rail-track {
+  display: flex;
+  gap: var(--an-k-gap-px, var(--an-poster-gap-px));
+  will-change: transform;
+  transition: transform var(--an-k-track-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-rail-slot {
+  flex: 0 0 var(--an-k-poster-px);
+  width: var(--an-k-poster-px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.an-rail-slot:focus {
+  outline: none;
+}
+
+.an-rail-slot:focus-visible .an-poster-frame {
+  outline: calc(var(--an-k-frame-px, var(--an-poster-frame-px)) * 2) solid var(--an-color-accent);
+  outline-offset: var(--an-space-xs-px);
+}
+
+/* The cursor itself: a detent mark on the STAGE, under the slot the selection
+   is pinned to. It only leaves the first slot at the very end of the rail,
+   where the row has no travel left to give. */
+.an-rail-cursor {
+  position: absolute;
+  z-index: 1;
+  top: calc(var(--an-space-lg-px) - var(--an-space-sm-px));
+  left: var(--an-space-lg-px);
+  width: var(--an-k-poster-px);
+  height: var(--an-hairline-active-px);
+  background: var(--an-color-accent);
+  pointer-events: none;
+  transition: transform var(--an-k-track-ms, var(--an-motion-focus-step-ms)) var(--an-motion-focus-step-ease);
+}
+
+.an-rail-empty {
+  display: grid;
+  place-content: center;
+  gap: var(--an-space-sm-px);
+  min-height: 160px;
+  color: var(--an-color-ink-dim);
+  text-align: center;
+}
+
+.an-rail-empty strong {
+  color: var(--an-color-ink);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+/* ── bottom nav ──────────────────────────────────────────────────────────── */
+
+.an-nav {
+  position: relative;
+  z-index: var(--an-z-nav);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--an-space-xs-px);
+  padding: var(--an-space-sm-px) 0 calc(var(--an-space-sm-px) + env(safe-area-inset-bottom, 0px));
+  border-top: var(--an-poster-frame-px) solid var(--an-color-line);
+  background: linear-gradient(0deg, var(--an-color-stage-ground), transparent);
+}
+
+.an-nav button {
+  position: relative;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-sm-px);
+  padding: var(--an-space-sm-px) var(--an-space-lg-px);
+  border: 0;
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-faint);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-nav button:hover,
+.an-nav button:focus-visible {
+  color: var(--an-color-ink-dim);
+}
+
+/* Selection is never colour alone: the active mode also carries a detent mark. */
+.an-nav button.is-active {
+  color: var(--an-color-ink);
+}
+
+.an-nav button.is-active::after {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--an-space-sm-px) - var(--an-poster-frame-px));
+  left: var(--an-space-lg-px);
+  right: var(--an-space-lg-px);
+  height: var(--an-hairline-active-px);
+  background: var(--an-color-accent);
+}
+
+.an-nav-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--an-radius-pill-px);
+  background: var(--an-color-accent);
+  color: var(--an-color-on-accent);
+  font-family: var(--an-type-mono);
+  font-size: 9.5px;
+}
+
+.an-nav-badge.is-alert {
+  background: var(--an-color-status-danger);
+  color: var(--an-color-ink);
+}
+
+/* ── corner widgets ──────────────────────────────────────────────────────── */
+
+/* Profile takes the upper-right corner and Watch Party the lower-right. Both
+   are icon-only triggers that expand a surface AWAY from their corner, so the
+   surface never lands on the shelf that owns focus or on the bottom modes.
+   DOM order is trigger-first in both, and the reversed flex direction is what
+   puts the surface on the far side — so Tab leads out of the trigger and into
+   the controls rather than jumping past them. */
+.an-corner {
+  position: fixed;
+  z-index: var(--an-z-toolbox);
+  display: flex;
+  gap: var(--an-space-sm-px);
+}
+
+.an-corner[data-corner='top-right'] {
+  top: calc(var(--an-space-lg-px) + env(safe-area-inset-top, 0px));
+  right: var(--an-space-lg-px);
+  flex-direction: row-reverse;
+  align-items: center;
+}
+
+/* Clear of the bottom nav rather than over it: the expanded surface must not
+   compete with primary navigation. --an-k-nav-px is the nav's measured height. */
+.an-corner[data-corner='bottom-right'] {
+  right: var(--an-space-lg-px);
+  bottom: calc(var(--an-k-nav-px, 64px) + var(--an-space-lg-px) + env(safe-area-inset-bottom, 0px));
+  flex-direction: column-reverse;
+  align-items: flex-end;
+}
+
+/* Icon only, and small: a 34px disc rather than a labelled pill. */
+.an-corner-trigger {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: var(--an-poster-frame-px) solid var(--an-color-line);
+  border-radius: var(--an-radius-pill-px);
+  color: var(--an-color-ink-dim);
+  background: var(--an-color-stage-surface);
+  cursor: pointer;
+  box-shadow: var(--an-elevation-rest-offset-xpx) var(--an-elevation-rest-offset-ypx)
+    var(--an-elevation-rest-blur-px) var(--an-color-shadow-cast);
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-corner-trigger:hover,
+.an-corner-trigger[aria-expanded='true'],
+.an-corner-trigger:focus-visible {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+}
+
+/* A live room is legible without colour: the ring thickens as well as tints. */
+.an-corner-trigger.is-live {
+  color: var(--an-color-ink);
+  border-width: var(--an-hairline-idle-px);
+  border-color: var(--an-color-status-party-live);
+}
+
+.an-corner-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--an-radius-pill-px);
+  background: var(--an-color-status-danger);
+  color: var(--an-color-ink);
+  font-family: var(--an-type-mono);
+  font-size: 9px;
+}
+
+/* ── the icon buttons both surfaces are made of ──────────────────────────── */
+
+.an-icon-button {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: var(--an-poster-frame-px) solid transparent;
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink-dim);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--an-k-chrome-ms, var(--an-motion-chrome-fade-ms)) var(--an-motion-chrome-fade-ease);
+}
+
+.an-icon-button:hover:not(:disabled),
+.an-icon-button:focus-visible {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+  background: var(--an-color-stage-surface2);
+}
+
+.an-icon-button[aria-pressed='true'] {
+  color: var(--an-color-ink);
+  border-color: var(--an-color-line-strong);
+  background: var(--an-color-stage-surface3);
+}
+
+.an-icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.an-icon-button[data-tone='danger'] {
+  color: var(--an-color-status-danger);
+}
+
+/* Host-only actions are visibly distinct from what every participant can
+   reach — a dashed edge plus an accent mark, not a different tint, so the
+   distinction survives a monochrome display. Their accessible name says
+   "(host only)" as well; see cornerWidgets.ts. */
+.an-icon-button[data-host-only='true'] {
+  border-style: dashed;
+  border-color: var(--an-color-line-strong);
+}
+
+.an-icon-button[data-host-only='true']::after {
+  content: '';
+  position: absolute;
+  left: var(--an-space-sm-px);
+  right: var(--an-space-sm-px);
+  bottom: 2px;
+  height: var(--an-hairline-idle-px);
+  background: var(--an-color-accent);
+}
+
+/* ── profile tray ────────────────────────────────────────────────────────── */
+
+/* Slides out of the trigger rather than dropping a panel of labelled rows. */
+.an-tray {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  padding: 3px;
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-pill-px);
+  background: var(--an-color-stage-surface);
+  box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+    var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+  transform-origin: right center;
+  animation: an-tray-out var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
+}
+
+@keyframes an-tray-out {
+  from {
+    opacity: 0;
+    transform: translateX(14px) scaleX(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── watch-party widget ──────────────────────────────────────────────────── */
+
+/* Expands in place, upward out of the corner.
+ *
+ * A grid rather than a block: the rail sets the width and every sheet under it
+ * then stretches to that width, so the roster's right-aligned actions line up
+ * with the rail's last button instead of with the middle of the panel. */
+.an-widget {
+  width: max-content;
+  max-width: min(300px, calc(100vw - var(--an-space-lg-px) * 2));
+  max-height: min(56vh, 460px);
+  overflow: hidden auto;
+  display: grid;
+  gap: var(--an-space-sm-px);
+  padding: var(--an-space-sm-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-sheet-px);
+  background: var(--an-color-stage-surface);
+  box-shadow: var(--an-elevation-focus-offset-xpx) var(--an-elevation-focus-offset-ypx)
+    var(--an-elevation-focus-blur-px) var(--an-color-shadow-cast-strong);
+  transform-origin: bottom right;
+  animation: an-widget-up var(--an-k-drawer-ms, var(--an-motion-drawer-ms)) var(--an-motion-drawer-ease) both;
+}
+
+@keyframes an-widget-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.an-widget-rail {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+}
+
+.an-widget-sheet {
+  display: grid;
+  justify-items: center;
+  gap: var(--an-space-sm-px);
+  padding-top: var(--an-space-sm-px);
+  border-top: var(--an-poster-frame-px) solid var(--an-color-line);
+}
+
+/* The QR is a code, not artwork, so it takes a chrome radius and the pale end
+   of the neutral ramp — dark ink on warm white keeps it scannable. */
+.an-widget-qr {
+  display: grid;
+  place-items: center;
+  padding: var(--an-space-sm-px);
+  border-radius: var(--an-radius-chrome-px);
+  background: var(--an-color-ink);
+}
+
+.an-widget-qr svg {
+  display: block;
+}
+
+/* The room's own id, under its QR. The only glyphs on the widget, and they are
+   the invite itself rather than a label for a control. */
+.an-widget-id {
+  color: var(--an-color-ink-dim);
+  font-family: var(--an-type-mono);
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  user-select: all;
+}
+
+.an-widget-code {
+  width: 9.5em;
+  height: 34px;
+  padding: 0 var(--an-space-sm-px);
+  border: var(--an-poster-frame-px) solid var(--an-color-line-strong);
+  border-radius: var(--an-radius-chrome-px);
+  color: var(--an-color-ink);
+  background: var(--an-color-stage-surface2);
+  font-family: var(--an-type-mono);
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.an-widget-code::placeholder {
+  color: var(--an-color-ink-faint);
+}
+
+.an-roster {
+  display: grid;
+  gap: var(--an-space-xs-px);
+  width: 100%;
+}
+
+.an-roster-row {
+  display: flex;
+  align-items: center;
+  gap: var(--an-space-xs-px);
+  padding: 2px;
+  border: var(--an-poster-frame-px) solid transparent;
+  border-radius: var(--an-radius-chrome-px);
+}
+
+/* Someone knocking is not the same as someone in the room. */
+.an-roster-row[data-waiting='true'] {
+  border-color: var(--an-color-status-danger);
+}
+
+.an-roster-row > .an-icon-button {
+  margin-left: auto;
+}
+
+.an-roster-row > .an-icon-button ~ .an-icon-button {
+  margin-left: 0;
+}
+
+/* The host's own face carries the same accent mark their controls do. */
+.an-roster-avatar {
+  position: relative;
+  display: grid;
+  flex: none;
+}
+
+.an-roster-avatar[data-host='true']::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 -3px;
+  height: var(--an-hairline-idle-px);
+  background: var(--an-color-accent);
+}
+
+.an-corner-error {
+  margin: 0;
+  max-width: 24ch;
+  color: var(--an-color-status-danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* "Reduced-motion mode must preserve all state changes without spatial
+   effects." Both surfaces still appear and disappear; they simply stop
+   travelling to get there. */
+@media (prefers-reduced-motion: reduce) {
+  .an-tray,
+  .an-widget {
+    animation: none;
+  }
+
+  .an-corner-trigger,
+  .an-icon-button {
+    transition: none;
+  }
+}
+
+/* ── phone ───────────────────────────────────────────────────────────────── */
+
+.an-stage[data-size='phone'] .an-stage-title {
+  max-width: none;
+}
+
+.an-stage[data-size='phone'] .an-stage-title h1 {
+  font-size: 26px;
+}
+
+.an-stage[data-size='phone'] .an-stage-title p {
+  -webkit-line-clamp: 2;
+}
+
+/* Phones keep the SAME stage and focus model — fixed cursor, moving row, mode
+   slider, details on the stage. Only the room the copy gets changes. */
+.an-stage[data-size='phone'] .an-detail {
+  max-width: none;
+}
+
+.an-stage[data-size='phone'] .an-detail h1 {
+  font-size: 24px;
+}
+
+.an-stage[data-size='phone'] .an-detail > p {
+  -webkit-line-clamp: 2;
+}
+
+.an-stage[data-size='phone'] .an-detail-actions .an-action:not(.is-icon) {
+  flex: 1;
+  justify-content: center;
+}
+
+.an-stage[data-size='phone'] .an-stage-head {
+  gap: var(--an-space-md-px);
+  padding-bottom: var(--an-space-lg-px);
+}
+
+/* Anchored under a 42px button on a 390px screen is a cramped panel; the same
+   menu rises from the bottom edge instead, which is where every other sheet in
+   this app comes from. */
+.an-stage[data-size='phone'] .an-track-menu {
+  position: fixed;
+  right: var(--an-space-lg-px);
+  bottom: calc(var(--an-k-nav-px, 64px) + var(--an-space-lg-px));
+  left: var(--an-space-lg-px);
+  width: auto;
+  max-height: 62vh;
+}
+
+.an-stage[data-size='phone'] .an-nav {
+  justify-content: space-between;
+  gap: 0;
+}
+
+.an-stage[data-size='phone'] .an-nav button {
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--an-space-sm-px) var(--an-space-xs-px);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.an-stage[data-size='phone'] .an-nav button.is-active::after {
+  left: var(--an-space-xs-px);
+  right: var(--an-space-xs-px);
+}
+
+.an-stage[data-size='phone'] .an-corner {
+  max-width: calc(100vw - var(--an-space-lg-px) * 2);
+}

@@ -82,7 +82,21 @@ abstract class ApiClient {
   // ── Auth ──────────────────────────────────────────────────────────────
   Future<User> login(String username, String password);
   Future<User> me();
+
+  /// End the server-side session, then drop the local one via [clearSession]
+  /// whether or not the round trip succeeded. Throws on a non-200 response —
+  /// the caller learns the server may still consider the session live, but the
+  /// device is signed out either way.
   Future<void> logout();
+
+  /// Drop every credential this client holds locally: the persisted cookie jar
+  /// and any cached `Cookie:` header.
+  ///
+  /// Separate from [logout] because the other thing that invalidates a session
+  /// is pointing the app at a different backend — a cookie minted by one
+  /// origin must never be replayed against another, and the jar outlives the
+  /// process.
+  Future<void> clearSession();
 
   /// Authenticated metadata and artifact transfer from the selected server.
   Future<Map<String, dynamic>> currentDesktopRelease();
@@ -96,6 +110,17 @@ abstract class ApiClient {
   Future<HomeData> home();
   Future<List<LibraryItem>> items({String? parentId});
   Future<List<LibraryItem>> children(String itemId);
+
+  /// Movie collections / franchises — Jellyfin box sets.
+  ///
+  /// A separate call rather than a filter over [items] because the library
+  /// listing does not return box sets: they are a different IncludeItemTypes
+  /// query on the server, which is why Collections mode was empty when it was
+  /// first wired to a client-side type filter.
+  Future<List<LibraryItem>> collections({String? parentId});
+
+  /// The parts of a collection, in release order.
+  Future<List<LibraryItem>> collectionItems(String collectionId);
   Future<LibraryItem> item(String id);
   Future<List<LibraryItem>> latest({String? parentId});
   Future<List<LibraryItem>> search(String query);
@@ -301,8 +326,24 @@ class DioApiClient implements ApiClient {
 
   @override
   Future<void> logout() async {
-    await _dio.post('/api/auth/logout');
+    try {
+      final res = await _dio.post('/api/auth/logout');
+      if (res.statusCode != 200) _fail(res, 'logout');
+    } finally {
+      // The server-side session is only *probably* gone: the request can fail
+      // outright, or come back 500 with the cookie still valid. Dropping the
+      // local copy regardless is what actually signs this device out — the jar
+      // is persisted, so anything left behind is replayed on the next launch.
+      await clearSession();
+    }
+  }
+
+  @override
+  Future<void> clearSession() async {
+    // In-memory first: a jar that fails to delete must not still be able to
+    // hand the cookie to an Image.network request via [cookieHeader].
     _cookieHeader = null;
+    await _cookieJar.deleteAll();
   }
 
   @override
@@ -361,6 +402,23 @@ class DioApiClient implements ApiClient {
   Future<List<LibraryItem>> children(String itemId) async {
     final res = await _dio.get('/api/library/items/$itemId/children');
     if (res.statusCode != 200) _fail(res, 'children');
+    return _items(res.data);
+  }
+
+  @override
+  Future<List<LibraryItem>> collections({String? parentId}) async {
+    final res = await _dio.get(
+      '/api/library/collections',
+      queryParameters: parentId != null ? {'parentId': parentId} : null,
+    );
+    if (res.statusCode != 200) _fail(res, 'collections');
+    return _items(res.data);
+  }
+
+  @override
+  Future<List<LibraryItem>> collectionItems(String collectionId) async {
+    final res = await _dio.get('/api/library/collections/$collectionId/items');
+    if (res.statusCode != 200) _fail(res, 'collectionItems');
     return _items(res.data);
   }
 
@@ -635,8 +693,8 @@ class DioApiClient implements ApiClient {
         'service': service,
         'targetId': targetId,
         'title': title,
-        if (seasonNumber != null) 'seasonNumber': seasonNumber,
-        if (episodeNumber != null) 'episodeNumber': episodeNumber,
+        'seasonNumber': ?seasonNumber,
+        'episodeNumber': ?episodeNumber,
       },
       data: Stream.fromIterable([bytes]),
       options: Options(

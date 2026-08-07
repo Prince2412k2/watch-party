@@ -1,0 +1,104 @@
+---
+title: Button
+kit: chrome
+web: .an-btn
+native: AnalogButton
+status: parity
+---
+
+# Button
+
+A labelled plate that does one thing.
+
+## Purpose
+
+The kit's primary action control. Four tones, one geometry — the tone
+changes what the plate is made of, never how big it is or where its label
+sits, so a row of mixed tones still reads as a row.
+
+**Not for:** navigation (use a link or the nav), or an action with no label
+(use [icon button](./icon-button.mdx)). A button whose label is an icon is
+an icon button that has lost its accessible name.
+
+## Anatomy
+
+```
+┌─────────────────────────────┐
+│  [icon]  Label      [busy]  │   ← min height 38, sinks 1px on press
+└─────────────────────────────┘
+   ↑ edge light (raised tones only, top edge, 315°)
+   ↓ cast shadow (raised tones only, suppressed while pressed)
+```
+
+## API
+
+**Native** — `AnalogButton`
+
+| Param | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `label` | `String` | required | Also the accessible name |
+| `onPressed` | `VoidCallback?` | `null` | Null **or** `busy` disables |
+| `tone` | `AnalogButtonTone` | `secondary` | `primary` \| `secondary` \| `ghost` \| `danger` |
+| `icon` | `IconData?` | `null` | Leading, 17px |
+| `busy` | `bool` | `false` | Swaps the icon for a spinner and disables |
+| `expand` | `bool` | `false` | Fills the cross axis |
+| `dense` | `bool` | `false` | Tighter horizontal padding for button rows |
+| `autofocus` | `bool` | `false` | |
+| `focusNode` | `FocusNode?` | `null` | |
+
+**Web** — `.an-btn` with `.is-primary` / `.is-ghost` / `.is-danger`.
+
+## Tones
+
+| Tone | Fill | Ink | Frame | Raised |
+| --- | --- | --- | --- | --- |
+| `primary` | `accent` | `onAccent` | `accent` | yes |
+| `secondary` | `stageSurface2` | `ink` | `line` → `lineStrong` when lit | yes |
+| `ghost` | transparent | `inkDim` → `ink` when lit | none → `line` when lit | no |
+| `danger` | `stageSurface2` | `statusDanger` | `statusDanger` at **2× width** | yes |
+
+**Danger doubles its frame.** That is what makes it legible without relying
+on the red — invariant 2. A colour-blind user gets the same warning.
+
+## States
+
+The base fill does **not** swap on `lit`. The
+[state layer](./pressable.mdx#states) supplies the whole response, graded
+per state rather than in one binary step:
+
+| State | Layer | Additional signal |
+| --- | --- | --- |
+| Rest | — | — |
+| Hover | ink @ 8% | frame brightens (`line` → `lineStrong`) |
+| Focus | ink @ 10% | **focus ring**, inset 3 |
+| Pressed | ink @ 10% | plate translates +1px Y; shadow and edge light both drop |
+| Disabled | none | plate flattens (no shadow), ink → `inkFaint` |
+| Busy | none | spinner replaces the leading icon; behaves as disabled |
+
+A press drops the plate onto its shadow rather than scaling it: short
+travel, clear detent, no bounce.
+
+## Tokens
+
+`color.accent`, `onAccent`, `ink`, `inkDim`, `inkFaint`, `stageSurface`,
+`stageSurface2`, `statusDanger`, `line`, `lineStrong`, `shadowCast`,
+`edgeLight` · `radius.chromePx` · `poster.framePx` ·
+`space.mdPx` / `lgPx` / `smPx` · `motion.chromeFadeMs` / `chromeFadeEase` ·
+`elevation.restBlurPx` / `restOffsetXPx` / `restOffsetYPx` ·
+`stateLayer.*`
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | `label` is required and is the accessible name | The type — there is no unlabelled constructor |
+| 2 | `busy` disables; you cannot fire an action twice | `enabled = onPressed != null && !busy` |
+| 3 | Danger is legible without colour | 2× frame width — `chrome_kit_test.dart`, "danger doubles the frame" |
+| 4 | Never smaller than the touch floor | `minHeight: 38`, above `hairline.hitPx` (24) |
+| 5 | No stock Material button anywhere in the app | **Review only — no automated gate yet.** The check is that `TextButton`, `TextButton.icon`, `FilledButton`, `ElevatedButton` and `OutlinedButton` do not appear outside `lib/analog/` |
+
+## Parity notes
+
+The native side reached parity when the last stock Material buttons were
+migrated. Rule 5 is the thing that keeps it: M3's own buttons look nothing
+like this kit, and one of them in a dialog is instantly visible.

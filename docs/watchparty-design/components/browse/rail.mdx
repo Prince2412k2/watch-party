@@ -1,0 +1,95 @@
+---
+title: Rail
+kit: browse
+web: AnalogRail
+native: — (planned)
+status: web-only
+---
+
+# Rail
+
+The fixed-cursor poster row along the bottom of the stage.
+
+## Purpose
+
+> "Currently movie cursor moves around. Now we will have our cursor at the
+> first position and the whole row will move. Like old video game consoles."
+
+That sentence is the entire component. The cursor is pinned; the track
+translates underneath it.
+
+## Why fixed-cursor is more than a look
+
+In this model **"which item is selected" and "how far the row has scrolled"
+are the same number.**
+
+That collapse is what makes the visible set — and therefore the prefetch
+set — trivially derivable. A moving cursor needs selection *and* scroll
+offset, they drift apart, and you end up prefetching around the wrong index.
+Here `selection` is the only state the rail has.
+
+## The one exception: the tail
+
+`cursorSlot` is zero everywhere **except** at the end of the rail.
+`railWindow` stops the row at the last full page rather than trailing empty
+space, so once travel runs out the cursor has to walk the final few slots
+itself.
+
+That is also exactly how a console menu behaves at the bottom of a list, so
+it reads as intentional rather than as the abstraction leaking.
+
+## Geometry
+
+The window arithmetic lives in `browseCore.ts` / `browse_core.dart` and is
+driven by `app/shared/design/interaction.json`. **Nothing in the rail
+re-derives it.**
+
+| Function | Answers |
+| --- | --- |
+| `railWindow` | Which indices are visible, which to prefetch |
+| `clampRailOffset` | Where the track stops |
+| `railCursor` | `{start, cursorSlot, visible, prefetch}` |
+| `stepRailSelection` | One cursor step — **clamped, never wrapping** |
+| `railStepPx` | Centre-to-centre: `posterWidth + gap` |
+| `railTranslatePx` | How far the track moves. Never positive |
+
+Defaults: `RAIL_LOOKAHEAD = 6`, `RAIL_BEHIND = 2`. Prefetch never overlaps
+visible.
+
+Stepping is clamped rather than wrapping: there is one rail on this surface,
+so an overflow has nowhere to go, and a wrap would make the two ends of a
+long library indistinguishable.
+
+## API
+
+**Web** — `AnalogRail`
+
+| Prop | Type | Notes |
+| --- | --- | --- |
+| `label` | `string` | |
+| `items` | `readonly AnalogRailItem[]` | |
+| `selection` | `number` | The single source of position |
+| `onIntent` | `(intent: StageIntent) => void` | |
+| `onSelect` / `onActivate` | `(index: number) => void` | |
+| `motion` | `MotionProfile` | |
+| `posterWidthPx`, `gapPx`, `slots` | `number` | |
+| `loading` | `boolean?` | |
+
+`AnalogRailItem` carries three artwork routes, tried in order:
+`renderPoster` (custom) → `artSrc` (a proxied catalog URL) → `art` (a
+Jellyfin item resolved through the library proxy).
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Selection and scroll offset are one number | `railCursor` derives everything from `selection` |
+| 2 | Stepping clamps, never wraps | `stepRailSelection` |
+| 3 | Prefetch never overlaps visible | `railWindow`; asserted in `movieRail.test.ts` and the Dart parity test |
+| 4 | The rail never re-derives window geometry | It imports `browseCore` |
+
+## Parity notes
+
+**Native has no rail.** This is the single largest parity gap in the app —
+`/movies` on the desktop client still renders a pre-analog grid. The core
+arithmetic is already ported (`browse_core.dart`); the widget is not.

@@ -106,6 +106,51 @@ export function getViews(token, userId) {
   return jfetch(`/Users/${userId}/Views`, { token })
 }
 
+// Movie collections / franchises. Jellyfin models these as `BoxSet` items, which
+// getItems() deliberately excludes (it asks for Movie,Series), so they need
+// their own query rather than a parameter tweak.
+//
+// `ParentId` scopes them to one library view. Without it a BoxSet search is
+// server-wide and the Movies tab would list collections belonging to Shows or
+// any other library. `Recursive` is required because box sets do not sit at the
+// top level of the view.
+export function getCollections(token, userId, parentId, limit = 100) {
+  const qs = new URLSearchParams({
+    SortBy: 'SortName',
+    SortOrder: 'Ascending',
+    IncludeItemTypes: 'BoxSet',
+    Recursive: 'true',
+    Fields: 'PrimaryImageAspectRatio,SortName,Overview,Genres,ChildCount',
+    ImageTypeLimit: '1',
+    EnableImageTypes: 'Primary,Backdrop,Banner,Thumb',
+    StartIndex: '0',
+    Limit: String(limit),
+  })
+  if (parentId) qs.set('ParentId', parentId)
+  return jfetch(`/Users/${userId}/Items?${qs}`, { token })
+}
+
+// The parts of one collection. Ordered by release date rather than SortName:
+// a franchise reads chronologically, and a title-sorted Harry Potter puts
+// "Chamber of Secrets" before "Philosopher's Stone".
+//
+// Asks for the full detail field set because the analog stage renders a part's
+// description, rating, runtime and resume position inline while it is focused —
+// there is no separate detail fetch to fill them in later.
+export function getCollectionItems(token, userId, collectionId) {
+  const qs = new URLSearchParams({
+    ParentId: collectionId,
+    SortBy: 'PremiereDate,SortName',
+    SortOrder: 'Ascending',
+    Fields: [
+      'MediaSources', 'Overview', 'Genres', 'ProductionYear', 'PremiereDate',
+      'UserData', 'People', 'OfficialRating', 'CommunityRating', 'RunTimeTicks',
+    ].join(','),
+    EnableImageTypes: 'Primary,Backdrop,Thumb',
+  })
+  return jfetch(`/Users/${userId}/Items?${qs}`, { token })
+}
+
 // Partially-watched items → "Continue Watching"
 export function getResumeItems(token, userId, limit = 12) {
   const qs = new URLSearchParams({
@@ -308,43 +353,9 @@ export function buildHlsUrl(itemId, {
   return `/api/library/hls/Videos/${itemId}/master.m3u8?${qs}`
 }
 
-// All SyncPlay calls accept deviceId so Jellyfin associates them with the right session
-export const syncPlay = {
-  newGroup: (token, deviceId, groupName = 'watchparty') =>
-    jfetch('/SyncPlay/New', { method: 'POST', token, deviceId, body: { GroupName: groupName } }),
-
-  joinGroup: (token, deviceId, groupId) =>
-    jfetch('/SyncPlay/Join', { method: 'POST', token, deviceId, body: { GroupId: groupId } }),
-
-  leaveGroup: (token, deviceId) =>
-    jfetch('/SyncPlay/Leave', { method: 'POST', token, deviceId }),
-
-  setQueue: (token, deviceId, itemId, positionTicks = 0) =>
-    jfetch('/SyncPlay/SetNewQueue', {
-      method: 'POST', token, deviceId,
-      body: { PlayingQueue: [itemId], PlayingItemPosition: 0, StartPositionTicks: positionTicks },
-    }),
-
-  play: (token, deviceId, positionTicks, when) =>
-    jfetch('/SyncPlay/Unpause', { method: 'POST', token, deviceId, body: { PositionTicks: positionTicks, When: when } }),
-
-  pause: (token, deviceId, positionTicks) =>
-    jfetch('/SyncPlay/Pause', { method: 'POST', token, deviceId, body: { PositionTicks: positionTicks } }),
-
-  seek: (token, deviceId, positionTicks) =>
-    jfetch('/SyncPlay/Seek', { method: 'POST', token, deviceId, body: { PositionTicks: positionTicks } }),
-
-  ready: (token, deviceId, positionTicks, isPlaying, when) =>
-    jfetch('/SyncPlay/Ready', {
-      method: 'POST', token, deviceId,
-      body: { PositionTicks: positionTicks, IsPlaying: isPlaying, When: when },
-    }),
-
-  bufferingDone: (token, deviceId, positionTicks, isPlaying, when) =>
-    jfetch('/SyncPlay/BufferingDone', {
-      method: 'POST', token, deviceId,
-      body: { PositionTicks: positionTicks, IsPlaying: isPlaying, When: when },
-    }),
-}
+// NOTE: this module used to also export a `syncPlay` client for Jellyfin's
+// SyncPlay API. Commit 84e5885 replaced SyncPlay with the host-authority
+// timeline engine in app/server/session.js, and nothing has called it since.
+// Removed in #63 — the wire contract is app/shared/contracts/, not SyncPlay.
 
 export { BASE }

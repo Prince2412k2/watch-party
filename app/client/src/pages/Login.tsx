@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/AuthContext.tsx'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
