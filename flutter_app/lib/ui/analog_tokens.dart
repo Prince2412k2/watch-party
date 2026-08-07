@@ -76,19 +76,43 @@ abstract final class AnalogElevation {
   static const double focusOffsetYPx = 18.0;
 }
 
+/// Material 3's state-layer model: a translucent wash of the ink colour over
+/// a control that has been reached, at a fixed opacity per state. Adopted
+/// because it is the one interaction primitive that scales - every control
+/// reads the same whatever its fill, so a chip, a menu row and an icon button
+/// respond identically without each hand-rolling a fill swap. The opacities
+/// are M3's; the colour washed over them is ours.
+abstract final class AnalogStateLayer {
+  static const double hoverPct = 8.0;
+  static const double focusPct = 10.0;
+  static const double pressedPct = 10.0;
+  static const double selectedPct = 12.0;
+  static const double draggedPct = 16.0;
+  static const double disabledContentPct = 38.0;
+  static const double disabledContainerPct = 12.0;
+}
+
 /// Mechanical and weighty: short travel, clear detents, restrained easing. No
-/// elastic overshoot anywhere.
+/// elastic overshoot anywhere. The curves are Material 3's easing set -
+/// standard for chrome, emphasized-decelerate for anything that travels a
+/// distance (the cursor step, drawers). M3's curves suit this design
+/// precisely because none of them overshoot; they only change how weight is
+/// distributed across the move.
 abstract final class AnalogMotion {
   static const Duration focusStepMs = Duration(milliseconds: 170);
-  static const Cubic focusStepEase = Cubic(0.22, 0.61, 0.36, 1.0);
+  static const Cubic focusStepEase = Cubic(0.05, 0.7, 0.1, 1.0);
   static const Duration backdropCrossMs = Duration(milliseconds: 420);
-  static const Cubic backdropCrossEase = Cubic(0.4, 0.0, 0.2, 1.0);
+  static const Cubic backdropCrossEase = Cubic(0.2, 0.0, 0.0, 1.0);
   static const Duration chromeFadeMs = Duration(milliseconds: 160);
-  static const Cubic chromeFadeEase = Cubic(0.4, 0.0, 0.2, 1.0);
+  static const Cubic chromeFadeEase = Cubic(0.2, 0.0, 0.0, 1.0);
   static const Duration detentMs = Duration(milliseconds: 90);
-  static const Cubic detentEase = Cubic(0.3, 0.0, 0.1, 1.0);
+  static const Cubic detentEase = Cubic(0.2, 0.0, 0.0, 1.0);
   static const Duration drawerMs = Duration(milliseconds: 260);
-  static const Cubic drawerEase = Cubic(0.22, 0.61, 0.36, 1.0);
+  static const Cubic drawerEase = Cubic(0.05, 0.7, 0.1, 1.0);
+  static const Duration enterMs = Duration(milliseconds: 300);
+  static const Cubic enterEase = Cubic(0.05, 0.7, 0.1, 1.0);
+  static const Duration exitMs = Duration(milliseconds: 200);
+  static const Cubic exitEase = Cubic(0.3, 0.0, 0.8, 0.15);
 }
 
 /// Timeline and volume are precision lines, not filled bars. The visible line

@@ -27,6 +27,52 @@ class AnalogControlState {
   /// focus additionally draws a ring, selection additionally draws a detent,
   /// and a press additionally sinks the surface.
   bool get lit => enabled && (hovered || focused || pressed);
+
+  /// The Material 3 state-layer opacity for this state, 0..1.
+  ///
+  /// States do not sum — the strongest wins, which is what keeps a control that
+  /// is hovered *and* focused *and* pressed from washing out to a flat plate.
+  /// M3 orders them pressed ≥ focus > hover, and a pressed control is nearly
+  /// always also hovered, so taking the max is the only reading that produces a
+  /// visible press.
+  double get stateLayerOpacity {
+    if (!enabled) return 0;
+    if (pressed) return AnalogStateLayer.pressedPct / 100;
+    if (focused) return AnalogStateLayer.focusPct / 100;
+    if (hovered) return AnalogStateLayer.hoverPct / 100;
+    return 0;
+  }
+}
+
+/// Composites the state layer for [state] onto a container colour.
+///
+/// This is the kit's whole hover/press response, and it lives here rather than
+/// in each widget so that adding a control cannot accidentally ship one that
+/// feels different from the rest. It washes [AnalogColor.ink] — the same ink the
+/// label is drawn in — so the layer reads as the control being *lit* rather than
+/// as a separate coloured surface arriving on top of it.
+///
+/// Blending into the container colour rather than stacking a translucent box
+/// over the control is deliberate on three counts: it lands the layer exactly
+/// where M3 puts it (above the container, below the content, so a label never
+/// gets tinted), it animates for free inside the [AnimatedContainer] the control
+/// already has, and it costs no extra widget in a kit that paints these by the
+/// hundred on a browse stage.
+///
+/// [extra] stacks underneath the interaction states for controls that are also
+/// *selected*, which is M3's ordering.
+///
+/// Strictly additive: every control still carries its own non-colour signal —
+/// focus ring, detent, sunk plate — so the layer is never the only evidence of
+/// a state.
+Color analogStateLayerOver(
+  Color base,
+  AnalogControlState state, {
+  double extra = 0,
+}) {
+  final opacity = (state.stateLayerOpacity + extra).clamp(0.0, 1.0);
+  if (opacity == 0) return base;
+  return Color.alphaBlend(AnalogColor.ink.withValues(alpha: opacity), base);
 }
 
 typedef AnalogControlBuilder =

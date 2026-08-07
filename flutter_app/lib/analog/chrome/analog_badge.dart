@@ -124,9 +124,10 @@ class AnalogChip extends StatelessWidget {
         vertical: AnalogSpace.xsPx,
       ),
       decoration: BoxDecoration(
-        color: selected
-            ? AnalogColor.stageSurface2
-            : (lit ? AnalogColor.stageSurface : const Color(0x00000000)),
+        color: analogStateLayerOver(
+          selected ? AnalogColor.stageSurface2 : const Color(0x00000000),
+          state,
+        ),
         borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
         border: Border.all(
           color: selected

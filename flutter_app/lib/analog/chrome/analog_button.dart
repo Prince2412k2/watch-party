@@ -93,7 +93,7 @@ class AnalogButton extends StatelessWidget {
           vertical: AnalogSpace.smPx + 2,
         ),
         decoration: BoxDecoration(
-          color: skin.fill,
+          color: analogStateLayerOver(skin.fill, state),
           borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
           border: Border.all(color: skin.line, width: skin.lineWidth),
           boxShadow: skin.raised && !state.pressed
@@ -203,7 +203,7 @@ class AnalogIconButton extends StatelessWidget {
               width: size,
               height: size,
               decoration: BoxDecoration(
-                color: skin.fill,
+                color: analogStateLayerOver(skin.fill, state),
                 borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
                 border: Border.all(color: skin.line, width: skin.lineWidth),
               ),
@@ -345,23 +345,21 @@ class _AnalogButtonSkin {
     }
     return switch (tone) {
       AnalogButtonTone.primary => _AnalogButtonSkin(
-        fill: s.lit ? AnalogColor.ink : AnalogColor.accent,
+        fill: AnalogColor.accent,
         ink: AnalogColor.onAccent,
         line: AnalogColor.accent,
         lineWidth: AnalogPoster.framePx,
         raised: true,
       ),
       AnalogButtonTone.secondary => _AnalogButtonSkin(
-        fill: s.lit ? AnalogColor.stageSurface3 : AnalogColor.stageSurface2,
+        fill: AnalogColor.stageSurface2,
         ink: AnalogColor.ink,
         line: s.lit ? AnalogColor.lineStrong : AnalogColor.line,
         lineWidth: AnalogPoster.framePx,
         raised: true,
       ),
       AnalogButtonTone.ghost => _AnalogButtonSkin(
-        fill: s.lit
-            ? AnalogColor.stageSurface2
-            : const Color(0x00000000),
+        fill: const Color(0x00000000),
         ink: s.lit ? AnalogColor.ink : AnalogColor.inkDim,
         line: s.lit ? AnalogColor.line : const Color(0x00000000),
         lineWidth: AnalogPoster.framePx,
@@ -369,7 +367,7 @@ class _AnalogButtonSkin {
       ),
       // The doubled frame is what makes danger legible without the red.
       AnalogButtonTone.danger => _AnalogButtonSkin(
-        fill: s.lit ? AnalogColor.stageSurface3 : AnalogColor.stageSurface2,
+        fill: AnalogColor.stageSurface2,
         ink: AnalogColor.statusDanger,
         line: AnalogColor.statusDanger,
         lineWidth: AnalogPoster.framePx * 2,
@@ -398,21 +396,21 @@ class _AnalogButtonSkin {
     }
     return switch (tone) {
       AnalogIconButtonTone.ghost => _AnalogButtonSkin(
-        fill: s.lit ? AnalogColor.stageSurface2 : transparent,
+        fill: transparent,
         ink: s.lit ? AnalogColor.ink : AnalogColor.inkDim,
         line: transparent,
         lineWidth: AnalogPoster.framePx,
         raised: false,
       ),
       AnalogIconButtonTone.outline => _AnalogButtonSkin(
-        fill: s.lit ? AnalogColor.stageSurface2 : transparent,
+        fill: transparent,
         ink: s.lit ? AnalogColor.ink : AnalogColor.inkDim,
         line: s.lit ? AnalogColor.lineStrong : AnalogColor.line,
         lineWidth: AnalogPoster.framePx,
         raised: false,
       ),
       AnalogIconButtonTone.solid => _AnalogButtonSkin(
-        fill: s.lit ? AnalogColor.stageSurface3 : AnalogColor.stageSurface2,
+        fill: AnalogColor.stageSurface2,
         ink: AnalogColor.ink,
         line: s.lit ? AnalogColor.lineStrong : AnalogColor.line,
         lineWidth: AnalogPoster.framePx,

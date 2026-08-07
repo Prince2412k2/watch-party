@@ -1543,16 +1543,11 @@ class _TextAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wp = context.wp;
-    return TextButton(
+    return AnalogButton(
+      label: label,
+      tone: AnalogButtonTone.ghost,
+      dense: true,
       onPressed: onTap,
-      style: TextButton.styleFrom(
-        minimumSize: const Size(0, 28),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-        foregroundColor: wp.text,
-        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-      ),
-      child: Text(label),
     );
   }
 }

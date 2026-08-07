@@ -78,9 +78,12 @@ class AnalogSwitch extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: !state.enabled
                       ? AnalogColor.stageGround
-                      : (value
-                            ? AnalogColor.stageSurface3
-                            : AnalogColor.stageSurface),
+                      : analogStateLayerOver(
+                          value
+                              ? AnalogColor.stageSurface3
+                              : AnalogColor.stageSurface,
+                          state,
+                        ),
                   borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
                   border: Border.all(
                     color: !state.enabled
@@ -227,11 +230,10 @@ class _Segment<T> extends StatelessWidget {
               AnalogSpace.smPx - 2,
             ),
             decoration: BoxDecoration(
-              color: selected
-                  ? AnalogColor.stageSurface2
-                  : (state.lit
-                        ? AnalogColor.stageSurface
-                        : const Color(0x00000000)),
+              color: analogStateLayerOver(
+                selected ? AnalogColor.stageSurface2 : const Color(0x00000000),
+                state,
+              ),
               border: Border(
                 left: BorderSide(
                   color: first ? const Color(0x00000000) : AnalogColor.line,

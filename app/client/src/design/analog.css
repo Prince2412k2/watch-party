@@ -66,18 +66,40 @@
   --an-elevation-focus-offset-xpx: 8px;
   --an-elevation-focus-offset-ypx: 18px;
 
+  /* Material 3's state-layer model: a translucent wash of the ink colour
+     over a control that has been reached, at a fixed opacity per state.
+     Adopted because it is the one interaction primitive that scales - every
+     control reads the same whatever its fill, so a chip, a menu row and an
+     icon button respond identically without each hand-rolling a fill swap.
+     The opacities are M3's; the colour washed over them is ours. */
+  --an-state-layer-hover-pct: 8%;
+  --an-state-layer-focus-pct: 10%;
+  --an-state-layer-pressed-pct: 10%;
+  --an-state-layer-selected-pct: 12%;
+  --an-state-layer-dragged-pct: 16%;
+  --an-state-layer-disabled-content-pct: 38%;
+  --an-state-layer-disabled-container-pct: 12%;
+
   /* Mechanical and weighty: short travel, clear detents, restrained easing.
-     No elastic overshoot anywhere. */
+     No elastic overshoot anywhere. The curves are Material 3's easing set -
+     standard for chrome, emphasized-decelerate for anything that travels a
+     distance (the cursor step, drawers). M3's curves suit this design
+     precisely because none of them overshoot; they only change how weight is
+     distributed across the move. */
   --an-motion-focus-step-ms: 170ms;
-  --an-motion-focus-step-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --an-motion-focus-step-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
   --an-motion-backdrop-cross-ms: 420ms;
-  --an-motion-backdrop-cross-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --an-motion-backdrop-cross-ease: cubic-bezier(0.2, 0, 0, 1);
   --an-motion-chrome-fade-ms: 160ms;
-  --an-motion-chrome-fade-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --an-motion-chrome-fade-ease: cubic-bezier(0.2, 0, 0, 1);
   --an-motion-detent-ms: 90ms;
-  --an-motion-detent-ease: cubic-bezier(0.3, 0, 0.1, 1);
+  --an-motion-detent-ease: cubic-bezier(0.2, 0, 0, 1);
   --an-motion-drawer-ms: 260ms;
-  --an-motion-drawer-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --an-motion-drawer-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --an-motion-enter-ms: 300ms;
+  --an-motion-enter-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --an-motion-exit-ms: 200ms;
+  --an-motion-exit-ease: cubic-bezier(0.3, 0, 0.8, 0.15);
 
   /* Timeline and volume are precision lines, not filled bars. The visible
      line is thin; the hit target is not. */
