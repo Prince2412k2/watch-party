@@ -1,6 +1,9 @@
 import 'package:flutter/widgets.dart';
 
+import '../../analog/stage_layout.dart';
+import '../../analog/widgets/analog_rail.dart';
 import '../../ui/theme.dart';
+import '../../ui/widgets/bottom_nav.dart';
 
 /// Placement shared by the Movies browse stage and the title detail page.
 ///
@@ -18,10 +21,16 @@ abstract final class TitleLayout {
   static const double padLeft = 64;
   static const double padTop = 80;
 
-  /// Room held below the copy. On the detail page this is the cast band; on the
-  /// browse stage it is where the rail sits. Deliberately the same number on
-  /// both, because it is what decides where the vertically-centred copy lands —
-  /// reserving more on one side would move the title.
+  /// Share of the stage the Movies rail may occupy.
+  static const double railStageShare = 0.40;
+
+  /// Between the copy and whatever band sits under it.
+  static const double copyToBandGap = 24;
+
+  /// Room held below the copy on a surface with no rail.
+  ///
+  /// Only a floor now — see [copyBottomReserve], which is what both surfaces
+  /// actually use.
   static const double padBottom = 170;
 
   /// Between the copy column and whatever sits beside it: the poster on the
@@ -75,4 +84,28 @@ abstract final class TitleType {
     height: 1.5,
     fontStyle: FontStyle.italic,
   );
+}
+
+
+/// Bottom reserve that lands a title surface's copy where the Movies browse
+/// stage lands it.
+///
+/// The browse stage centres its copy in the room left above the poster rail,
+/// and the rail is far taller than the detail page's cast strip. So a detail
+/// page that reserved only enough for its own cast would centre the title
+/// lower, and the route between the two would visibly drop the text.
+///
+/// Reserving the rail's height on a page that has no rail looks odd read
+/// cold, and is exactly right: the number being matched is where the copy
+/// sits, and that is what the browse stage's rail decides.
+double copyBottomReserve(Size stage) {
+  final size = stageLayout(stage.width, stage.height, false).size;
+  final metrics = analogRailMetrics(
+    usableWidthPx: stage.width - TitleLayout.padLeft * 2,
+    maxHeightPx: stage.height * TitleLayout.railStageShare,
+    size: size,
+    subtitle: true,
+  );
+  final railHeight = analogRailHeight(metrics.posterWidthPx, subtitle: true);
+  return kBottomNavReservedPx + TitleLayout.copyToBandGap + railHeight;
 }
