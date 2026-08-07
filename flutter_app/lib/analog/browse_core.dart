@@ -325,6 +325,7 @@ class RailWindowInput {
     required this.slots,
     this.lookahead = kRailLookahead,
     this.behind = kRailBehind,
+    this.pinned = false,
   });
 
   /// Items in the rail.
@@ -341,6 +342,19 @@ class RailWindowInput {
 
   /// Items before the cursor to keep warm, so scrolling back is not a stall.
   final int behind;
+
+  /// Whether the cursor is *pinned* to the first slot.
+  ///
+  /// A shelf's cursor moves within it, so its row stops at the last full page
+  /// rather than trailing empty space — that is [pinned] false, the default.
+  ///
+  /// The Movies/Shows rail is the other model: "selected movie/show should
+  /// always be first, so when I scroll, the whole thing scrolls to put the
+  /// movie on the first spot." There the row must keep travelling past the
+  /// last full page, and the tail of the rail simply runs out of items to the
+  /// right of the selection. Trailing space is the price of the selection
+  /// never moving, and it is the behaviour that was asked for.
+  final bool pinned;
 }
 
 class RailWindow {
@@ -361,9 +375,13 @@ RailWindow railWindow(RailWindowInput input) {
     return const RailWindow(visible: [], prefetch: []);
   }
 
-  // A rail scrolled to its end still fills its slots rather than trailing empty
-  // space, so the offset is clamped against the last full page.
-  final maxOffset = math.max(0, input.total - input.slots);
+  // Pinned: the selection is always the first slot, so the only clamp is
+  // against the ends of the list. Unpinned: a shelf scrolled to its end still
+  // fills its slots rather than trailing empty space, so the offset is
+  // clamped against the last full page.
+  final maxOffset = input.pinned
+      ? input.total - 1
+      : math.max(0, input.total - input.slots);
   final start = math.max(0, math.min(input.offset, maxOffset));
   final end = math.min(input.total, start + input.slots);
 
@@ -376,6 +394,14 @@ RailWindow railWindow(RailWindowInput input) {
   return RailWindow(visible: visible, prefetch: prefetch);
 }
 
-/// Clamp an offset the way [railWindow] does, for callers stepping the rail.
+/// Clamp an offset the way [railWindow] does, for callers stepping a shelf.
+///
+/// For a *pinned* rail use [clampPinnedOffset]: the selection is the offset,
+/// so clamping it against the last full page would stop the row short and
+/// strand the final items away from the first slot.
 int clampRailOffset(int offset, int total, int slots) =>
     math.max(0, math.min(offset, math.max(0, total - slots)));
+
+/// Clamp an offset for a rail whose cursor is pinned to the first slot.
+int clampPinnedOffset(int offset, int total) =>
+    total <= 0 ? 0 : offset.clamp(0, total - 1);

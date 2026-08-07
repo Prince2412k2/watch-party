@@ -34,36 +34,43 @@ void main() {
     }
   });
 
-  test('the cursor walks the last page once the row has no travel left', () {
-    // total 20, slots 6 -> the row stops at start 14. Selecting 15..19 has to
-    // move the cursor, because the alternative is five titles you can see and
-    // never reach.
+  test('the cursor stays first even at the tail, and the row runs out instead', () {
+    // "Selected movie/show should always be first." So at the end of a library
+    // the row keeps travelling and simply has nothing left to its right,
+    // rather than stopping at the last full page and letting the cursor walk
+    // forward into it.
     final tail = [
       for (final selection in [15, 16, 17, 18, 19])
         railCursor(total: 20, selection: selection, slots: 6),
     ];
 
-    expect([for (final c in tail) c.start], [14, 14, 14, 14, 14]);
-    expect([for (final c in tail) c.cursorSlot], [1, 2, 3, 4, 5]);
+    expect([for (final c in tail) c.start], [15, 16, 17, 18, 19]);
+    expect([for (final c in tail) c.cursorSlot], [0, 0, 0, 0, 0]);
     for (final (offset, cursor) in tail.indexed) {
-      expect(cursor.visible[cursor.cursorSlot], 15 + offset);
+      expect(
+        cursor.visible.first,
+        15 + offset,
+        reason: 'the selection must be the first slot',
+      );
     }
+    // The last selection shows only itself; the remaining slots are empty.
+    expect(tail.last.visible, [19]);
   });
 
-  test('a rail shorter than the row never moves at all', () {
+  test('a rail shorter than the row still puts the selection first', () {
     final cursor = railCursor(total: 3, selection: 2, slots: 6);
-    expect(cursor.start, 0);
-    expect(cursor.cursorSlot, 2);
-    expect(cursor.visible, [0, 1, 2]);
-    expect(cursor.prefetch, isEmpty);
+    expect(cursor.start, 2);
+    expect(cursor.cursorSlot, 0);
+    expect(cursor.visible, [2]);
+    expect(cursor.prefetch, [0, 1]);
   });
 
   test('an out-of-range selection is clamped rather than emptying the window', () {
     final over = railCursor(total: 5, selection: 99, slots: 3);
-    expect(over.start, 2);
-    expect(over.cursorSlot, 2);
-    expect(over.visible, [2, 3, 4]);
-    expect(over.prefetch, [0, 1]);
+    expect(over.start, 4);
+    expect(over.cursorSlot, 0);
+    expect(over.visible, [4]);
+    expect(over.prefetch, [2, 3]);
 
     expect(railCursor(total: 5, selection: -4, slots: 3).visible, [0, 1, 2]);
 
@@ -80,7 +87,7 @@ void main() {
     for (final selection in [0, 1, 7, 13, 14, 19]) {
       final cursor = railCursor(total: 20, selection: selection, slots: 6);
       final shared = railWindow(
-        RailWindowInput(total: 20, offset: selection, slots: 6),
+        RailWindowInput(total: 20, offset: selection, slots: 6, pinned: true),
       );
       expect(cursor.visible, shared.visible);
       expect(cursor.prefetch, shared.prefetch);
