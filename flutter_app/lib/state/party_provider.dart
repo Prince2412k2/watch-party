@@ -367,7 +367,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     if (_browserSurfaceOpened) return;
     // Waiting guests are not members yet and must not be pulled in.
     final myUserId = _myUserId;
-    final isMember = myUserId != null &&
+    final isMember =
+        myUserId != null &&
         (session.hostId == myUserId ||
             session.participants.any((p) => p.userId == myUserId));
     if (!isMember) return;
@@ -458,16 +459,15 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   /// Stops the shared player and forgets what was open, ordered behind any open
   /// still in flight — otherwise a leave that raced an open paused a player that
   /// then finished loading and sat there holding the movie.
-  Future<void> _releaseSharedPlayer() =>
-      _enqueueMediaStep((generation) async {
-        // A new session already claimed the player (solo → party handoff, or a
-        // fresh join): its open is the current truth, so don't stop it.
-        if (generation != _mediaGeneration) return;
-        _openedMediaId = null;
-        final player = _ref.read(playerControllerProvider);
-        await player.pause();
-        await player.seek(Duration.zero);
-      });
+  Future<void> _releaseSharedPlayer() => _enqueueMediaStep((generation) async {
+    // A new session already claimed the player (solo → party handoff, or a
+    // fresh join): its open is the current truth, so don't stop it.
+    if (generation != _mediaGeneration) return;
+    _openedMediaId = null;
+    final player = _ref.read(playerControllerProvider);
+    await player.pause();
+    await player.seek(Duration.zero);
+  });
 
   // ── Create / join ─────────────────────────────────────────────────────────
   /// Restores a server-side party after an app restart.
@@ -537,8 +537,21 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     try {
       final token = await api.livekitToken(partyId);
       await _ref.read(livekitProvider.notifier).connect(token.url, token.token);
-    } catch (_) {
-      // A/V is best-effort — sync + chat still work without it.
+    } catch (e) {
+      // A/V is best-effort — sync and chat still work without it, and that is
+      // why this does not rethrow. But it used to `catch (_) {}`, discarding
+      // the exception entirely, and "best-effort" is not the same as "silent".
+      //
+      // The cost of the difference: a failed token fetch or a rejected
+      // /livekit/rtc upgrade left the room unconnected with nothing recorded
+      // anywhere, so localParticipant stayed null and the camera and mic
+      // toggles no-opped. Reported as "I am host in a party and the camera
+      // does nothing, no error or warning" — and the reason was two swallowed
+      // failures in a row, this one and the bare return in LivekitRoom.
+      //
+      // Surfaced on the LiveKit state rather than thrown, so the party still
+      // works and the reason is visible where the A/V controls are.
+      _ref.read(livekitProvider.notifier).reportConnectFailure(e);
     }
 
     final engine = _ref.read(syncEngineProvider);

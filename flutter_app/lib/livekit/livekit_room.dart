@@ -267,7 +267,13 @@ class LiveKitRoomService {
     _log.warning('$device toggle ignored: not connected to a room');
     _emit(
       _snapshot.copyWith(
-        error: 'Join or start a watch party before turning on your $device.',
+        // Deliberately NOT "join a watch party first". Being in a party and
+        // being connected to its LiveKit room are different things — the party
+        // is a socket session, the room is a separate connection made after
+        // it, and that connection can fail on its own. Telling a host who is
+        // demonstrably in a party to join one would send them looking in the
+        // wrong place, which is how the original silent failure wasted time.
+        error: 'Video chat is not connected, so the $device cannot turn on.',
       ),
     );
   }

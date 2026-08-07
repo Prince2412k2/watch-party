@@ -51,18 +51,17 @@ class LiveKitState {
     lk.VideoTrack? screenShare,
     bool clearScreenShare = false,
     String? error,
-  }) =>
-      LiveKitState(
-        connected: connected ?? this.connected,
-        connecting: connecting ?? this.connecting,
-        micEnabled: micEnabled ?? this.micEnabled,
-        cameraEnabled: cameraEnabled ?? this.cameraEnabled,
-        hideSelf: hideSelf ?? this.hideSelf,
-        participants: participants ?? this.participants,
-        tracks: tracks ?? this.tracks,
-        screenShare: clearScreenShare ? null : (screenShare ?? this.screenShare),
-        error: error,
-      );
+  }) => LiveKitState(
+    connected: connected ?? this.connected,
+    connecting: connecting ?? this.connecting,
+    micEnabled: micEnabled ?? this.micEnabled,
+    cameraEnabled: cameraEnabled ?? this.cameraEnabled,
+    hideSelf: hideSelf ?? this.hideSelf,
+    participants: participants ?? this.participants,
+    tracks: tracks ?? this.tracks,
+    screenShare: clearScreenShare ? null : (screenShare ?? this.screenShare),
+    error: error,
+  );
 }
 
 class LiveKitNotifier extends StateNotifier<LiveKitState> {
@@ -100,6 +99,21 @@ class LiveKitNotifier extends StateNotifier<LiveKitState> {
     }
   }
 
+  /// Records a failure to reach the room at all.
+  ///
+  /// Separate from [connect] because the caller that fetches the token owns
+  /// that failure — it can fail before `connect` is ever called — and A/V is
+  /// deliberately best-effort there, so it must not throw. It must still be
+  /// visible: an unconnected room makes the camera and mic controls inert, and
+  /// without this the user is left pressing a button that cannot work and says
+  /// nothing about why.
+  void reportConnectFailure(Object error) {
+    state = state.copyWith(
+      connecting: false,
+      error: 'Video chat could not connect: $error',
+    );
+  }
+
   Future<void> leave() => _service.disconnect();
 
   Future<void> setMic(bool on) => _service.setMicEnabled(on);
@@ -131,8 +145,9 @@ class LiveKitNotifier extends StateNotifier<LiveKitState> {
 /// The underlying room service — one per app lifetime; E5's party screen
 /// calls `ref.read(livekitProvider.notifier).connect(url, token)` once it has
 /// a token from `ApiClient.livekitToken(partyId)`.
-final livekitRoomServiceProvider =
-    Provider<LiveKitRoomService>((ref) => LiveKitRoomService());
+final livekitRoomServiceProvider = Provider<LiveKitRoomService>(
+  (ref) => LiveKitRoomService(),
+);
 
 final livekitProvider = StateNotifierProvider<LiveKitNotifier, LiveKitState>(
   (ref) => LiveKitNotifier(ref.watch(livekitRoomServiceProvider)),
