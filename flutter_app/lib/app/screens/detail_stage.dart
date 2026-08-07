@@ -9,6 +9,7 @@ import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
+import 'title_layout.dart';
 
 /// Track indices selected on the detail stage, handed to the player/party on
 /// Watch (mirrors the web `DetailTrackSelection`).
@@ -228,20 +229,23 @@ class _StageBody extends ConsumerWidget {
             const _Wash(),
             Padding(
               padding: EdgeInsets.fromLTRB(
-                64,
-                80,
-                64,
-                rootIsSeries ? 260 : 170,
+                TitleLayout.padLeft,
+                TitleLayout.padTop,
+                TitleLayout.padLeft,
+                rootIsSeries ? 260 : TitleLayout.padBottom,
               ),
               child: Row(
                 crossAxisAlignment: rootIsSeries
                     ? CrossAxisAlignment.start
                     : CrossAxisAlignment.center,
                 children: [
-                  Expanded(flex: 92, child: SingleChildScrollView(child: copy)),
-                  const SizedBox(width: 80),
                   Expanded(
-                    flex: 108,
+                    flex: TitleLayout.copyFlex,
+                    child: SingleChildScrollView(child: copy),
+                  ),
+                  const SizedBox(width: TitleLayout.columnGap),
+                  Expanded(
+                    flex: TitleLayout.asideFlex,
                     child: rootIsSeries
                         ? _SeasonSelector(
                             state: state,
@@ -325,7 +329,7 @@ class _CopyColumn extends StatelessWidget {
     ];
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 650),
+      constraints: const BoxConstraints(maxWidth: TitleLayout.copyMaxWidth),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -362,7 +366,9 @@ class _CopyColumn extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: 20),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 590),
+                constraints: const BoxConstraints(
+                  maxWidth: TitleLayout.overviewMaxWidth,
+                ),
                 child: Text(
                   hero.overview!,
                   maxLines: 4,

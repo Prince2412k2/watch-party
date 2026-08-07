@@ -39,6 +39,7 @@ import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/bottom_nav.dart';
+import 'title_layout.dart';
 
 class MoviesStage extends ConsumerStatefulWidget {
   const MoviesStage({super.key});
@@ -189,10 +190,8 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
     ).size;
     final motion = motionProfile(media.disableAnimations);
 
-    final gutter = size == StageSize.phone
-        ? AnalogSpace.stageGutterPhonePx
-        : AnalogSpace.stageGutterPx;
-    final bottomPad = AnalogSpace.xlPx + kBottomNavReservedPx;
+    // The rail may take up to a bit under half the stage. It is laid over the
+    // foot rather than taking a share of the column — see the Stack below.
     final railBudget = media.size.height * 0.40;
 
     return AnalogStage(
@@ -208,42 +207,64 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
           // "scrolling anywhere should work" means the whole stage, not the
           // strip of it the posters happen to occupy.
           behavior: HitTestBehavior.opaque,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              gutter,
-              AnalogSpace.xlPx,
-              gutter,
-              bottomPad,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _Details(
-                          item: detailed,
-                          collection: _collection,
-                          loading: async.isLoading,
-                          error: async.hasError
-                              ? 'Could not load this library'
-                              : null,
-                          onPlay: selected == null
-                              ? null
-                              : () => _activate(items, _selected),
-                          onBack: _collection == null ? null : _back,
-                        ),
-                      ),
-                      const SizedBox(width: AnalogSpace.xlPx),
-                      if (_collection == null)
-                        _ModeStrip(mode: _mode, onChanged: _setMode),
-                    ],
-                  ),
+          child: Stack(
+            children: [
+              // The copy sits in exactly the rectangle the detail page puts it
+              // in — same insets, same 92/108 split, same vertical centring —
+              // so the transition between the two surfaces moves everything
+              // except the text.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  TitleLayout.padLeft,
+                  TitleLayout.padTop,
+                  TitleLayout.padLeft,
+                  TitleLayout.padBottom,
                 ),
-                const SizedBox(height: AnalogSpace.lgPx),
-                AnalogRail(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      flex: TitleLayout.copyFlex,
+                      child: _Details(
+                        item: detailed,
+                        collection: _collection,
+                        loading: async.isLoading,
+                        error: async.hasError
+                            ? 'Could not load this library'
+                            : null,
+                        onPlay: selected == null
+                            ? null
+                            : () => _activate(items, _selected),
+                        onBack: _collection == null ? null : _back,
+                      ),
+                    ),
+                    const SizedBox(width: TitleLayout.columnGap),
+                    Expanded(
+                      flex: TitleLayout.asideFlex,
+                      child: _collection == null
+                          ? Align(
+                              alignment: Alignment.centerRight,
+                              child: _ModeStrip(
+                                mode: _mode,
+                                onChanged: _setMode,
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
+              ),
+
+              // The rail is laid over the foot of the stage rather than taking
+              // a share of the column. If it took a share, the space left for
+              // the copy would differ from the detail page's and the centred
+              // title would land somewhere else — which is the whole thing
+              // this layout exists to prevent.
+              Positioned(
+                left: TitleLayout.padLeft,
+                right: TitleLayout.padLeft,
+                bottom: kBottomNavReservedPx,
+                child: AnalogRail(
                   maxHeightPx: railBudget,
                   items: _railItems(items, api),
                   selection: _selected.clamp(
@@ -261,8 +282,8 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
                     (false, BrowseMode.singles) => 'No movies in this library',
                   },
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -330,7 +351,7 @@ class _Details extends StatelessWidget {
     return ConstrainedBox(
       // The same measure the detail stage holds its column to, so the text
       // block is literally the same shape before and after the transition.
-      constraints: const BoxConstraints(maxWidth: 650),
+      constraints: const BoxConstraints(maxWidth: TitleLayout.copyMaxWidth),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.end,
@@ -401,7 +422,9 @@ class _Details extends StatelessWidget {
             if ((current.overview ?? '').isNotEmpty) ...[
               const SizedBox(height: AnalogSpace.lgPx),
               ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 590),
+                constraints: const BoxConstraints(
+                  maxWidth: TitleLayout.overviewMaxWidth,
+                ),
                 child: Text(
                   current.overview!,
                   maxLines: 4,
