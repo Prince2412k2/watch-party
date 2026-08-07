@@ -134,6 +134,21 @@ void main() {
     await tester.pump();
   }
 
+  /// Opens the audio-track picker.
+  ///
+  /// Two taps now, not one. Audio used to be its own button in the transport
+  /// bar; it lives inside the settings stack behind the gear, because the
+  /// bottom bar is subtitle / mute / gear / fullscreen and audio is not a
+  /// per-minute control. The direct SUBTITLE control deliberately stays out
+  /// there — Off and a track swap must not cost two taps — which is why these
+  /// tests reach subtitles and audio by different routes.
+  Future<void> openAudioPicker(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.settings));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Audio track'));
+    await tester.pumpAndSettle();
+  }
+
   const tracks = PlayerTracks(
     audio: [
       PlayerTrack(id: 'a0', type: 'audio', title: 'English'),
@@ -244,9 +259,24 @@ void main() {
 
     expect(c.audioTracks, contains('native-a'));
     expect(c.subtitles, contains('native-s'));
-    await tester.tap(find.byIcon(Icons.audiotrack));
+
+    // Read-only means the row is VISIBLE and inert, not absent. A guest is
+    // meant to see which track the party is on — the settings row carries it
+    // as its trailing detail — and simply cannot change it.
+    //
+    // This used to assert the track name was nowhere on screen, which worked
+    // only because a guest could not open the old menu at all. That assertion
+    // would now fail against correct behaviour: the name appears as the row's
+    // own detail. What actually has to hold is that tapping the row reaches
+    // the controller with nothing.
+    await tester.tap(find.byIcon(Icons.settings));
     await tester.pumpAndSettle();
-    expect(find.text('Commentary'), findsNothing);
+    expect(find.text('Audio track'), findsOneWidget);
+
+    final writesBefore = c.audioTracks.length;
+    await tester.tap(find.text('Audio track'));
+    await tester.pumpAndSettle();
+    expect(c.audioTracks.length, writesBefore);
   });
 
   testWidgets('host track choice reports Jellyfin indices to party protocol', (
@@ -283,8 +313,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.audiotrack));
-    await tester.pumpAndSettle();
+    await openAudioPicker(tester);
     await tester.tap(find.text('English'));
     await tester.pumpAndSettle();
 
@@ -392,11 +421,16 @@ void main() {
     await tester.pump(); // deliver stream event (schedules setState)
     await tester.pump(); // rebuild with the new tracks
 
-    await tester.tap(find.byIcon(Icons.audiotrack));
-    await tester.pumpAndSettle();
+    await openAudioPicker(tester);
+    // The picker grows UPWARD out of the transport bar. This is the
+    // bottom-right corner, so a menu opening downward would run off the
+    // window; it must also not extend past its own anchor and cover the
+    // controls beside it. Bounded by the gear's BOTTOM rather than its top —
+    // overlapping the button you just pressed is fine and unavoidable, since
+    // that is what the menu hangs off.
     expect(
       tester.getBottomLeft(find.text('Commentary')).dy,
-      lessThan(tester.getTopLeft(find.byIcon(Icons.audiotrack)).dy),
+      lessThanOrEqualTo(tester.getBottomLeft(find.byIcon(Icons.settings)).dy),
     );
     await tester.tap(find.text('Commentary'));
     await tester.pumpAndSettle();
@@ -417,8 +451,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.audiotrack));
-    await tester.pumpAndSettle();
+    await openAudioPicker(tester);
     await tester.tap(find.text('Commentary'));
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.subtitles));
@@ -441,7 +474,14 @@ void main() {
     await tester.pump();
 
     expect(find.byIcon(Icons.subtitles), findsNothing);
-    expect(find.byIcon(Icons.audiotrack), findsNothing);
+
+    // Audio moved inside the settings stack, so asserting its ICON is absent
+    // would now pass for the wrong reason — the row is unbuilt until the gear
+    // is open, whether or not there are tracks. Open the stack and assert the
+    // ROW is missing, which is the thing the test was always about.
+    await tester.tap(find.byIcon(Icons.settings));
+    await tester.pumpAndSettle();
+    expect(find.text('Audio track'), findsNothing);
   });
 
   testWidgets('read-only guest can hover for a preview without seeking', (

@@ -26,6 +26,7 @@ class AnalogVolume extends StatefulWidget {
     this.trackKey,
     this.trackLength = 96,
     this.onAdjustingChanged,
+    this.showMuteButton = true,
   });
 
   /// 0..100 (media_kit's scale).
@@ -43,6 +44,14 @@ class AnalogVolume extends StatefulWidget {
 
   /// Raised for the length of a drag so the caller can pin the chrome open.
   final ValueChanged<bool>? onAdjustingChanged;
+
+  /// Whether the mute glyph rides under the track.
+  ///
+  /// False when the caller already carries mute somewhere else — the player's
+  /// transport row does, beside subtitles and fullscreen, which leaves this
+  /// control as a bare hairline on the right edge. [onToggleMute] stays
+  /// required either way: the keyboard and the caller both still use it.
+  final bool showMuteButton;
 
   @override
   State<AnalogVolume> createState() => _AnalogVolumeState();
@@ -171,6 +180,7 @@ class _AnalogVolumeState extends State<AnalogVolume> {
             ),
           ),
         ),
+        if (widget.showMuteButton)
         Tooltip(
           message: muted ? 'Unmute' : 'Mute',
           child: IconButton(
