@@ -68,6 +68,7 @@ class AnalogRail extends StatefulWidget {
     this.maxHeightPx,
     this.hideSelected = false,
     this.velocity = 0,
+    this.aspectRatio = AnalogPosterTile.posterAspect,
   });
 
   final List<AnalogRailItem> items;
@@ -110,6 +111,15 @@ class AnalogRail extends StatefulWidget {
   /// further and takes longer to come back, so the rail answers the gesture
   /// instead of running the same canned move every time.
   final double velocity;
+
+  /// Artwork shape, width ÷ height. [AnalogPosterTile.posterAspect] for titles,
+  /// [AnalogPosterTile.stillAspect] for episodes.
+  ///
+  /// It is a property of the rail rather than of each item because every
+  /// number the row derives — the fitted poster width, the slot count, the
+  /// row's height — falls out of it, and a row of mixed shapes has no single
+  /// answer for any of them.
+  final double aspectRatio;
 
   @override
   State<AnalogRail> createState() => _AnalogRailState();
@@ -166,7 +176,11 @@ class _AnalogRailState extends State<AnalogRail> {
     final motion = widget.motion ?? motionProfile(false);
 
     if (widget.items.isEmpty) {
-      return _EmptyRail(label: widget.emptyLabel, size: widget.size);
+      return _EmptyRail(
+        label: widget.emptyLabel,
+        size: widget.size,
+        aspectRatio: widget.aspectRatio,
+      );
     }
 
     return LayoutBuilder(
@@ -177,6 +191,7 @@ class _AnalogRailState extends State<AnalogRail> {
           maxHeightPx: widget.maxHeightPx,
           size: widget.size,
           subtitle: anySubtitle,
+          aspectRatio: widget.aspectRatio,
         );
 
         final cursor = railCursor(
@@ -198,9 +213,15 @@ class _AnalogRailState extends State<AnalogRail> {
         // The row has to leave room for both or the caption is clipped.
         final selectedWidth = metrics.posterWidthPx * kRailSelectedScale;
         final railHeight =
-            AnalogPosterTile.artHeightFor(selectedWidth) +
+            AnalogPosterTile.artHeightFor(
+              selectedWidth,
+              aspectRatio: widget.aspectRatio,
+            ) +
             captionHeight +
-            AnalogPosterTile.focusOverflowFor(selectedWidth);
+            AnalogPosterTile.focusOverflowFor(
+              selectedWidth,
+              aspectRatio: widget.aspectRatio,
+            );
 
         return Focus(
           autofocus: widget.autofocus,
@@ -270,6 +291,7 @@ class _AnalogRailState extends State<AnalogRail> {
                           child: _RailSlot(
                           item: widget.items[index],
                           width: width,
+                          aspectRatio: widget.aspectRatio,
                           focused: index == widget.selection,
                           hidden:
                               widget.hideSelected &&
@@ -330,11 +352,15 @@ const double _aheadOpacity = 0.62;
 
 /// Height the row needs for [posterWidthPx], including the enlarged selection
 /// and the room its focus growth wants above the caption baseline.
-double analogRailHeight(double posterWidthPx, {bool subtitle = false}) {
+double analogRailHeight(
+  double posterWidthPx, {
+  bool subtitle = false,
+  double aspectRatio = AnalogPosterTile.posterAspect,
+}) {
   final selected = posterWidthPx * kRailSelectedScale;
-  return AnalogPosterTile.artHeightFor(selected) +
+  return AnalogPosterTile.artHeightFor(selected, aspectRatio: aspectRatio) +
       AnalogPosterTile.captionHeight(subtitle: subtitle) +
-      AnalogPosterTile.focusOverflowFor(selected);
+      AnalogPosterTile.focusOverflowFor(selected, aspectRatio: aspectRatio);
 }
 
 /// The rail's fitted geometry.
@@ -349,6 +375,7 @@ RailMetrics analogRailMetrics({
   required double? maxHeightPx,
   required StageSize size,
   bool subtitle = false,
+  double aspectRatio = AnalogPosterTile.posterAspect,
 }) {
   final metrics = railMetrics(usableWidthPx, size);
   if (maxHeightPx == null || maxHeightPx <= 0) return metrics;
@@ -359,7 +386,11 @@ RailMetrics analogRailMetrics({
   final fixed =
       AnalogPosterTile.captionHeight(subtitle: subtitle) +
       AnalogSelection.focusLiftPx;
-  final tall = analogRailHeight(metrics.posterWidthPx, subtitle: subtitle);
+  final tall = analogRailHeight(
+    metrics.posterWidthPx,
+    subtitle: subtitle,
+    aspectRatio: aspectRatio,
+  );
   if (tall <= maxHeightPx || tall <= fixed) return metrics;
 
   var fitted = (metrics.posterWidthPx * (maxHeightPx - fixed) / (tall - fixed))
@@ -369,7 +400,12 @@ RailMetrics analogRailMetrics({
   // down until it genuinely fits rather than trusting the arithmetic through
   // two ceilings.
   while (fitted > 1 &&
-      analogRailHeight(fitted, subtitle: subtitle) > maxHeightPx) {
+      analogRailHeight(
+            fitted,
+            subtitle: subtitle,
+            aspectRatio: aspectRatio,
+          ) >
+          maxHeightPx) {
     fitted -= 1;
   }
   return metrics.withPosterWidth(fitted, usableWidthPx);
@@ -379,6 +415,7 @@ class _RailSlot extends StatelessWidget {
   const _RailSlot({
     required this.item,
     required this.width,
+    required this.aspectRatio,
     required this.focused,
     required this.dim,
     required this.lag,
@@ -389,6 +426,7 @@ class _RailSlot extends StatelessWidget {
 
   final AnalogRailItem item;
   final double width;
+  final double aspectRatio;
   final bool focused;
   final double dim;
 
@@ -420,6 +458,7 @@ class _RailSlot extends StatelessWidget {
       // nobody selected would be flying the wrong artwork.
       heroTag: focused ? item.heroTag : null,
       width: width,
+      aspectRatio: aspectRatio,
       focused: focused,
       progress: item.progress,
       onTap: onTap,
@@ -465,10 +504,15 @@ class _TrailFade extends StatelessWidget {
 }
 
 class _EmptyRail extends StatelessWidget {
-  const _EmptyRail({required this.label, required this.size});
+  const _EmptyRail({
+    required this.label,
+    required this.size,
+    required this.aspectRatio,
+  });
 
   final String label;
   final StageSize size;
+  final double aspectRatio;
 
   @override
   Widget build(BuildContext context) {
@@ -477,7 +521,10 @@ class _EmptyRail extends StatelessWidget {
     final metrics = railMetrics(400, size);
     return SizedBox(
       height:
-          AnalogPosterTile.artHeightFor(metrics.posterWidthPx) +
+          AnalogPosterTile.artHeightFor(
+            metrics.posterWidthPx,
+            aspectRatio: aspectRatio,
+          ) +
           AnalogPosterTile.captionHeight(),
       child: Align(
         alignment: Alignment.centerLeft,

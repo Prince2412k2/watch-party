@@ -58,7 +58,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Library'), findsNothing);
     expect(find.text('12 Angry Men'), findsNothing);
-    expect(find.text('Blade Runner'), findsOneWidget);
+    // Shows is a stage now, not a grid, so the selected series reads twice for
+    // the same reason Movies does: heading on top, poster caption in the rail.
+    expect(find.text('Blade Runner'), findsWidgets);
+    // ...and it carries no mode strip. There is no Singles/Collections split
+    // for series, and a one-position slider is a control that lies about
+    // being one.
+    expect(find.text('Singles'), findsNothing);
+    expect(find.text('Collections'), findsNothing);
 
     await tester.tap(find.text('Discover'));
     await tester.pumpAndSettle();
