@@ -171,11 +171,12 @@ class _AnalogRailState extends State<AnalogRail> {
         );
         final rendered = railRendered(cursor);
         final step = railStepPx(metrics.posterWidthPx, metrics.gapPx);
-        final translate = railTranslatePx(
-          cursor.start,
-          metrics.posterWidthPx,
-          metrics.gapPx,
-        );
+        final trail = railTrailPx(metrics.posterWidthPx, metrics.gapPx);
+        // The cursor sits one part-slot in, so the titles already passed stay
+        // partly visible behind it — the trail.
+        final translate =
+            railTranslatePx(cursor.start, metrics.posterWidthPx, metrics.gapPx) +
+            trail;
 
         final artHeight = AnalogPosterTile.artHeightFor(metrics.posterWidthPx);
         // Uniform slots: size for the tallest caption any item needs, so a
@@ -196,7 +197,9 @@ class _AnalogRailState extends State<AnalogRail> {
               // what makes the row read as sliding under a fixed cursor
               // rather than as a list that reflows.
               child: ClipRect(
-                child: Stack(
+                child: _TrailFade(
+                  trailPx: trail,
+                  child: Stack(
                   clipBehavior: Clip.none,
                   children: [
                     // Only the rendered range is mounted — visible plus the
@@ -215,6 +218,16 @@ class _AnalogRailState extends State<AnalogRail> {
                           item: widget.items[index],
                           width: metrics.posterWidthPx,
                           focused: index == widget.selection,
+                          // Depth: what is ahead of the cursor is dimmed, what
+                          // is behind it is dimmed harder. The selection is the
+                          // only thing at full strength, which is what makes
+                          // the row read as moving past a fixed point rather
+                          // than as a flat strip of equals.
+                          dim: index == widget.selection
+                              ? 1
+                              : index < widget.selection
+                              ? _passedOpacity
+                              : _aheadOpacity,
                           motion: motion,
                           onTap: () => index == widget.selection
                               ? widget.onActivate(index)
@@ -222,6 +235,7 @@ class _AnalogRailState extends State<AnalogRail> {
                         ),
                       ),
                   ],
+                  ),
                 ),
               ),
             ),
@@ -232,11 +246,16 @@ class _AnalogRailState extends State<AnalogRail> {
   }
 }
 
+/// Opacity for titles the cursor has already passed, and for those ahead of it.
+const double _passedOpacity = 0.34;
+const double _aheadOpacity = 0.62;
+
 class _RailSlot extends StatelessWidget {
   const _RailSlot({
     required this.item,
     required this.width,
     required this.focused,
+    required this.dim,
     required this.motion,
     required this.onTap,
   });
@@ -244,11 +263,21 @@ class _RailSlot extends StatelessWidget {
   final AnalogRailItem item;
   final double width;
   final bool focused;
+  final double dim;
   final MotionProfile motion;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      duration: motion.focusStep,
+      curve: AnalogMotion.focusStepEase,
+      opacity: dim,
+      child: _tile(),
+    );
+  }
+
+  Widget _tile() {
     return AnalogPosterTile(
       imageUrl: item.imageUrl,
       title: item.label,
@@ -258,6 +287,43 @@ class _RailSlot extends StatelessWidget {
       focused: focused,
       progress: item.progress,
       onTap: onTap,
+    );
+  }
+}
+
+/// Fades the leading edge of the rail so the trail dissolves rather than being
+/// cut off by the clip.
+///
+/// A hard clip reads as "the row is truncated here"; a fade reads as "these
+/// have gone past". Same geometry, opposite meaning.
+class _TrailFade extends StatelessWidget {
+  const _TrailFade({required this.trailPx, required this.child});
+
+  final double trailPx;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        if (!width.isFinite || width <= 0 || trailPx <= 0) return child;
+        final stop = (trailPx / width).clamp(0.0, 1.0);
+        return ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (rect) => LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: const [
+              Color(0x00000000),
+              Color(0x66000000),
+              Color(0xFF000000),
+            ],
+            stops: [0.0, stop * 0.6, stop],
+          ).createShader(rect),
+          child: child,
+        );
+      },
     );
   }
 }
