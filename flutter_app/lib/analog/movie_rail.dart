@@ -152,21 +152,43 @@ class RailMetrics {
       'RailMetrics(poster $posterWidthPx, gap $gapPx, slots $slots)';
 }
 
-/// Target poster width per device size — roughly two thirds of the shelf's, so
-/// ten titles are on screen at once on a desktop where seven used to be.
+/// Target poster width per device size.
+///
+/// Smaller than the shelf's, because the rail is a strip under the details
+/// rather than the main event — but not so small that a poster stops being
+/// recognisable artwork at a glance, which is what the first pass at these
+/// numbers got wrong.
 const Map<StageSize, double> _railPosterPx = {
-  StageSize.phone: 68,
-  StageSize.tablet: 88,
-  StageSize.desktop: 104,
+  StageSize.phone: 80,
+  StageSize.tablet: 104,
+  StageSize.desktop: 124,
 };
 
 /// Below this a poster is an icon rather than artwork you can recognise.
 const double _minRailPosterPx = 64;
 
+/// The lead-in to the left of the cursor, as a fraction of one slot.
+///
+/// "The list needs to show some trail and dimming effect to show depth and
+/// movement — emphasis on selected, showing a bit of the last movies with
+/// fade." So the cursor does not sit flush against the stage gutter: it sits
+/// one part-slot in, and the titles already passed remain partly visible
+/// behind it. Half a slot shows enough of the previous poster to read as
+/// history without reading as a second, competing selection.
+const double _trailFraction = 0.5;
+
+/// How far the cursor is inset from the left edge of the rail.
+double railTrailPx(double posterWidthPx, double gapPx) =>
+    railStepPx(posterWidthPx, gapPx) * _trailFraction;
+
 RailMetrics railMetrics(double usableWidthPx, StageSize size) {
   const gapPx = AnalogPoster.gapPx;
   final target = _railPosterPx[size]!;
-  final usable = math.max(_minRailPosterPx, usableWidthPx);
+  // The trail eats into the width available for forward slots, so it is taken
+  // off before the fit rather than after — otherwise the last slot is a sliver
+  // pushed off the right edge by the lead-in.
+  final lead = (target + gapPx) * _trailFraction;
+  final usable = math.max(_minRailPosterPx, usableWidthPx - lead);
 
   // Fit whole posters across the usable width, then spend the remainder
   // widening them back out — so the rail always ends on a poster edge instead

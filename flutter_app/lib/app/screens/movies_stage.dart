@@ -23,7 +23,9 @@
 // input on a surface that has to work from a remote and from touch, and a
 // pointer resting somewhere is not an intent.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -36,6 +38,7 @@ import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
+import '../../ui/widgets/bottom_nav.dart';
 
 class MoviesStage extends ConsumerStatefulWidget {
   const MoviesStage({super.key});
@@ -93,6 +96,60 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
     if (_collection != null) setState(() => _collection = null);
   }
 
+  /// Wheel deltas arrive in bursts; one notch is one step and the remainder is
+  /// dropped rather than accumulated into a jump on the next event.
+  static const double _wheelThreshold = 24;
+  double _wheelAccum = 0;
+
+  void _stepSelection(int direction, int total) {
+    if (total <= 0) return;
+    final next = (_selected + direction.sign).clamp(0, total - 1);
+    if (next != _selected) setState(() => _selected = next);
+  }
+
+  /// Scrolling **anywhere on the stage** drives the rail, not just over it.
+  /// The rail is the only thing on this surface that scrolls, so a wheel event
+  /// landing on the backdrop meaning nothing was a dead zone, not a feature.
+  void _onPointerSignal(PointerSignalEvent event, int total) {
+    if (event is! PointerScrollEvent) return;
+    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+        ? event.scrollDelta.dx
+        : event.scrollDelta.dy;
+    _wheelAccum += delta;
+    if (_wheelAccum.abs() < _wheelThreshold) return;
+    _stepSelection(_wheelAccum.sign.toInt(), total);
+    _wheelAccum = 0;
+  }
+
+  /// Arrows work from anywhere on the stage for the same reason.
+  KeyEventResult _onKey(KeyEvent event, List<LibraryItem> items) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowLeft:
+        _stepSelection(-1, items.length);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowRight:
+        _stepSelection(1, items.length);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        if (_collection == null) _stepMode(-1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        if (_collection == null) _stepMode(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+      case LogicalKeyboardKey.select:
+        _activate(items, _selected);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+      case LogicalKeyboardKey.backspace:
+        _back();
+        return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
     final api = ref.watch(apiClientProvider);
@@ -110,6 +167,14 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
         ? null
         : items[_selected.clamp(0, items.length - 1)];
 
+    // The library listing carries no Overview, Genres or ratings — those come
+    // from the item record. Without this the details block could only ever show
+    // a name and a runtime, which is what it did. Falls back to the list row
+    // while the record is in flight, so the title never blanks on a step.
+    final detailed = selected == null
+        ? null
+        : ref.watch(itemDetailProvider(selected.id)).valueOrNull ?? selected;
+
     final media = MediaQuery.of(context);
     final size = stageLayout(
       media.size.width,
@@ -122,12 +187,27 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
       backdropUrl: selected == null
           ? null
           : api.imageUrl(selected.id, type: ImageType.backdrop),
-      child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: size == StageSize.phone
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (_, event) => _onKey(event, items),
+        child: Listener(
+          onPointerSignal: (e) => _onPointerSignal(e, items.length),
+          // Opaque so a wheel event over the bare backdrop still reaches us:
+          // "scrolling anywhere should work" means the whole stage, not the
+          // strip of it the posters happen to occupy.
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          size == StageSize.phone
               ? AnalogSpace.stageGutterPhonePx
               : AnalogSpace.stageGutterPx,
-          vertical: AnalogSpace.xlPx,
+          AnalogSpace.xlPx,
+          size == StageSize.phone
+              ? AnalogSpace.stageGutterPhonePx
+              : AnalogSpace.stageGutterPx,
+          // Hold the rail clear of the shell's floating nav, which was sitting
+          // on top of the poster captions.
+          AnalogSpace.xlPx + kBottomNavReservedPx,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -140,7 +220,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
                   // separate movie detail page to open.
                   Expanded(
                     child: _Details(
-                      item: selected,
+                      item: detailed,
                       collection: _collection,
                       loading: async.isLoading,
                       error: async.hasError ? 'Could not load this library' : null,
@@ -177,11 +257,8 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
               selection: _selected.clamp(0, items.isEmpty ? 0 : items.length - 1),
               size: size,
               motion: motion,
-              autofocus: true,
               onSelect: (i) => setState(() => _selected = i),
               onActivate: (i) => _activate(items, i),
-              onCrossAxis: _collection == null ? _stepMode : null,
-              onEscape: _collection == null ? null : _back,
               emptyLabel: switch ((async.isLoading, _mode)) {
                 (true, _) => 'Loading…',
                 (false, BrowseMode.collections) => 'No collections in this library',
@@ -189,6 +266,8 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
               },
             ),
           ],
+        ),
+          ),
         ),
       ),
     );
@@ -277,15 +356,72 @@ class _Details extends StatelessWidget {
         ),
         if (current != null) ...[
           const SizedBox(height: AnalogSpace.smPx),
-          Text(
-            _metaLine(current),
-            style: const TextStyle(
-              fontFamily: AnalogType.monoFamily,
-              fontSize: 12,
-              letterSpacing: 0.6,
-              color: AnalogColor.inkDim,
-            ),
+          Row(
+            children: [
+              Text(
+                _metaLine(current),
+                style: const TextStyle(
+                  fontFamily: AnalogType.monoFamily,
+                  fontSize: 12,
+                  letterSpacing: 0.6,
+                  color: AnalogColor.inkDim,
+                ),
+              ),
+              // Ratings are a different kind of fact from the meta line — an
+              // opinion rather than a property — so they read as a mark rather
+              // than as another item in the run of text.
+              if (current.communityRating != null) ...[
+                const SizedBox(width: AnalogSpace.mdPx),
+                const Icon(Icons.star, size: 13, color: AnalogColor.inkDim),
+                const SizedBox(width: 4),
+                Text(
+                  current.communityRating!.toStringAsFixed(1),
+                  style: const TextStyle(
+                    fontFamily: AnalogType.monoFamily,
+                    fontSize: 12,
+                    color: AnalogColor.ink,
+                  ),
+                ),
+              ],
+            ],
           ),
+          if (current.genres.isNotEmpty) ...[
+            const SizedBox(height: AnalogSpace.smPx),
+            Wrap(
+              spacing: AnalogSpace.xsPx,
+              runSpacing: AnalogSpace.xsPx,
+              children: [
+                for (final genre in current.genres.take(4))
+                  AnalogBadge.outline(
+                    child: Text(
+                      genre,
+                      style: const TextStyle(
+                        fontFamily: AnalogType.sansFamily,
+                        fontSize: 11,
+                        color: AnalogColor.inkDim,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+          if ((current.taglines.isNotEmpty)) ...[
+            const SizedBox(height: AnalogSpace.mdPx),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Text(
+                current.taglines.first,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: AnalogType.sansFamily,
+                  fontSize: 14,
+                  fontStyle: FontStyle.italic,
+                  color: AnalogColor.inkDim,
+                ),
+              ),
+            ),
+          ],
           if ((current.overview ?? '').isNotEmpty) ...[
             const SizedBox(height: AnalogSpace.mdPx),
             ConstrainedBox(
@@ -320,13 +456,14 @@ class _Details extends StatelessWidget {
     );
   }
 
+  /// Year, certificate and runtime — the facts that are the same shape for
+  /// every title, so the line does not reflow as you step along the rail.
   static String _metaLine(LibraryItem item) {
     final parts = <String>[
       if (item.productionYear != null) '${item.productionYear}',
       if ((item.officialRating ?? '').isNotEmpty) item.officialRating!,
       if (item.runTimeTicks != null && item.runTimeTicks! > 0)
         _runtime(item.runTimeTicks!),
-      if (item.genres.isNotEmpty) item.genres.take(2).join(', '),
     ];
     return parts.join('  ·  ');
   }
