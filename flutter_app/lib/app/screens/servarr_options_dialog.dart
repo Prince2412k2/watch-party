@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/providers.dart';
 import '../../state/servarr_provider.dart';
+import '../../analog/chrome/analog_select.dart';
 import '../../ui/ui.dart';
 
 /// Download-options dialog (mirrors `FindDownload.tsx`'s `OptionsDialog`): pick a
@@ -83,7 +84,8 @@ class _ServarrOptionsDialogState extends ConsumerState<_ServarrOptionsDialog> {
                 : null;
             _initialized = true;
           }
-          final canSubmit = !_submitting &&
+          final canSubmit =
+              !_submitting &&
               _qualityProfileId != null &&
               _rootFolderPath != null &&
               _okOutcome == null;
@@ -98,7 +100,7 @@ class _ServarrOptionsDialogState extends ConsumerState<_ServarrOptionsDialog> {
               ),
               const SizedBox(height: AppSpacing.lg),
               _FieldLabel('Quality'),
-              _DropdownInt(
+              _Dropdown<int>(
                 value: _qualityProfileId,
                 items: [
                   for (final p in meta.profiles)
@@ -108,21 +110,18 @@ class _ServarrOptionsDialogState extends ConsumerState<_ServarrOptionsDialog> {
               ),
               const SizedBox(height: AppSpacing.md),
               _FieldLabel('Save to'),
-              _DropdownString(
+              _Dropdown<String>(
                 value: _rootFolderPath,
                 items: [
                   for (final f in meta.rootFolders)
-                    (
-                      (f['path'] ?? '').toString(),
-                      _folderLabel(f),
-                    ),
+                    ((f['path'] ?? '').toString(), _folderLabel(f)),
                 ],
                 onChanged: (v) => setState(() => _rootFolderPath = v),
               ),
               if (_isSeries && meta.langProfiles.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.md),
                 _FieldLabel('Language'),
-                _DropdownInt(
+                _Dropdown<int>(
                   value: _languageProfileId,
                   items: [
                     for (final p in meta.langProfiles)
@@ -149,11 +148,19 @@ class _ServarrOptionsDialogState extends ConsumerState<_ServarrOptionsDialog> {
               ],
               if (_error != null) ...[
                 const SizedBox(height: AppSpacing.md),
-                _Notice(icon: Icons.error_outline, tone: _NoticeTone.error, text: _error!),
+                _Notice(
+                  icon: Icons.error_outline,
+                  tone: _NoticeTone.error,
+                  text: _error!,
+                ),
               ],
               if (_warn != null) ...[
                 const SizedBox(height: AppSpacing.md),
-                _Notice(icon: Icons.error_outline, tone: _NoticeTone.warn, text: _warn!),
+                _Notice(
+                  icon: Icons.error_outline,
+                  tone: _NoticeTone.warn,
+                  text: _warn!,
+                ),
               ],
               if (_okOutcome != null) ...[
                 const SizedBox(height: AppSpacing.md),
@@ -163,8 +170,8 @@ class _ServarrOptionsDialogState extends ConsumerState<_ServarrOptionsDialog> {
                   text: _okOutcome == 'grabbed'
                       ? 'Downloading — added to your library'
                       : _okOutcome == 'monitoring'
-                          ? 'Added — monitoring for releases'
-                          : 'Already in your library',
+                      ? 'Added — monitoring for releases'
+                      : 'Already in your library',
                 ),
               ],
               const SizedBox(height: AppSpacing.lg),
@@ -172,10 +179,10 @@ class _ServarrOptionsDialogState extends ConsumerState<_ServarrOptionsDialog> {
                 label: _submitting
                     ? (_isSeries ? 'Adding…' : 'Finding a release…')
                     : _okOutcome != null
-                        ? 'Done'
-                        : _warn != null
-                            ? 'Try again'
-                            : 'Download',
+                    ? 'Done'
+                    : _warn != null
+                    ? 'Try again'
+                    : 'Download',
                 icon: _okOutcome != null ? Icons.check : Icons.download,
                 busy: _submitting,
                 expand: true,
@@ -225,8 +232,10 @@ class _ServarrOptionsDialogState extends ConsumerState<_ServarrOptionsDialog> {
           };
     try {
       final api = ref.read(apiClientProvider);
-      final res =
-          await api.servarrPost('${widget.kind.service}/request', body: body);
+      final res = await api.servarrPost(
+        '${widget.kind.service}/request',
+        body: body,
+      );
       final outcome = (res as Map)['outcome'] as String?;
       if (!mounted) return;
       if (outcome == 'grabbed' ||
@@ -359,7 +368,11 @@ class _ErrorBody extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _Notice(icon: Icons.error_outline, tone: _NoticeTone.error, text: message),
+        _Notice(
+          icon: Icons.error_outline,
+          tone: _NoticeTone.error,
+          text: message,
+        ),
         const SizedBox(height: AppSpacing.lg),
         AppButton(
           label: 'Close',
@@ -377,85 +390,100 @@ class _FieldLabel extends StatelessWidget {
   final String label;
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: context.wp.dim,
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(
+      label,
+      style: TextStyle(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+        color: context.wp.dim,
+      ),
+    ),
+  );
+}
+
+/// A select field on the kit's dropdown.
+///
+/// Replaces two near-identical `DropdownButton` wrappers (one for int ids, one
+/// for strings) that carried Material's own menu — a different surface, a
+/// different radius and a different open animation from every other picker in
+/// the app. Generic over the value type, so the duplication is gone with the
+/// widget: the two differed only in `<int>` versus `<String>`.
+class _Dropdown<T> extends StatefulWidget {
+  const _Dropdown({
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  final T? value;
+  final List<(T, String)> items;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  State<_Dropdown<T>> createState() => _DropdownState<T>();
+}
+
+class _DropdownState<T> extends State<_Dropdown<T>> {
+  final GlobalKey _anchor = GlobalKey();
+
+  String get _label {
+    for (final (v, label) in widget.items) {
+      if (v == widget.value) return label;
+    }
+    return 'Select';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    final enabled = widget.items.isNotEmpty;
+    return MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: enabled
+            ? () => showAnalogSelect<T>(
+                context: context,
+                anchor: _anchor,
+                selected: widget.value,
+                groups: [
+                  AnalogChoiceGroup(
+                    icon: Icons.list,
+                    choices: [
+                      for (final (v, label) in widget.items)
+                        AnalogChoice(value: v, label: label),
+                    ],
+                  ),
+                ],
+                onSelected: widget.onChanged,
+              )
+            : null,
+        child: _DropdownFrame(
+          key: _anchor,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: enabled ? wp.text : wp.dim,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              Icon(Icons.expand_more, color: wp.dim),
+            ],
           ),
         ),
-      );
-}
-
-class _DropdownInt extends StatelessWidget {
-  const _DropdownInt({
-    required this.value,
-    required this.items,
-    required this.onChanged,
-  });
-  final int? value;
-  final List<(int, String)> items;
-  final ValueChanged<int?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return _DropdownFrame(
-      child: DropdownButton<int>(
-        value: value,
-        isExpanded: true,
-        underline: const SizedBox.shrink(),
-        dropdownColor: wp.surface2,
-        style: TextStyle(color: wp.text, fontSize: 14),
-        icon: Icon(Icons.expand_more, color: wp.dim),
-        items: [
-          for (final (id, name) in items)
-            DropdownMenuItem(value: id, child: Text(name)),
-        ],
-        onChanged: onChanged,
-      ),
-    );
-  }
-}
-
-class _DropdownString extends StatelessWidget {
-  const _DropdownString({
-    required this.value,
-    required this.items,
-    required this.onChanged,
-  });
-  final String? value;
-  final List<(String, String)> items;
-  final ValueChanged<String?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return _DropdownFrame(
-      child: DropdownButton<String>(
-        value: value,
-        isExpanded: true,
-        underline: const SizedBox.shrink(),
-        dropdownColor: wp.surface2,
-        style: TextStyle(color: wp.text, fontSize: 14),
-        icon: Icon(Icons.expand_more, color: wp.dim),
-        items: [
-          for (final (v, label) in items)
-            DropdownMenuItem(
-              value: v,
-              child: Text(label, overflow: TextOverflow.ellipsis),
-            ),
-        ],
-        onChanged: onChanged,
       ),
     );
   }
 }
 
 class _DropdownFrame extends StatelessWidget {
-  const _DropdownFrame({required this.child});
+  const _DropdownFrame({super.key, required this.child});
   final Widget child;
   @override
   Widget build(BuildContext context) {
@@ -584,7 +612,11 @@ class _Notice extends StatelessWidget {
 
 // Shared acquire-dialog primitives reused by the release picker + manual source.
 class ServarrDialogShell extends StatelessWidget {
-  const ServarrDialogShell({super.key, required this.child, this.maxWidth = 640});
+  const ServarrDialogShell({
+    super.key,
+    required this.child,
+    this.maxWidth = 640,
+  });
   final Widget child;
   final double maxWidth;
   @override
@@ -606,11 +638,11 @@ class ServarrDialogHeader extends StatelessWidget {
   final Widget? poster;
   @override
   Widget build(BuildContext context) => _DialogHeader(
-        eyebrow: eyebrow,
-        title: title,
-        onClose: onClose,
-        poster: poster,
-      );
+    eyebrow: eyebrow,
+    title: title,
+    onClose: onClose,
+    poster: poster,
+  );
 }
 
 class ServarrNotice extends StatelessWidget {
@@ -625,8 +657,8 @@ class ServarrNotice extends StatelessWidget {
   final bool error;
   @override
   Widget build(BuildContext context) => _Notice(
-        icon: icon,
-        tone: error ? _NoticeTone.error : _NoticeTone.ok,
-        text: text,
-      );
+    icon: icon,
+    tone: error ? _NoticeTone.error : _NoticeTone.ok,
+    text: text,
+  );
 }
