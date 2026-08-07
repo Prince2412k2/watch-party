@@ -1,0 +1,37 @@
+---
+title: Chat toasts
+kit: player
+web: player/
+native: AnalogToastStack
+status: parity
+---
+
+# Chat toasts
+
+Party chat messages over the picture.
+
+## Purpose
+
+Chat that does not take the screen. Messages arrive, stack, and expire on
+the same clock as the app-wide [toast rail](../chrome/toast.mdx) — the two
+share `timing.toastLifetimeMs` (4000) and `timing.toastMaxStack` (3)
+deliberately, so a notice and a message behave identically.
+
+## Never interactive
+
+Like the chrome toast rail, these sit under an `IgnorePointer`. A chat
+message must never swallow a click aimed at the player.
+
+## Relationship to the chat panel
+
+Toasts are the *ambient* view. The full panel is a separate surface with
+its own shortcut. Toasts never become the only place a message exists — a
+message that expired is still in the panel.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Never swallow a pointer event | `IgnorePointer` |
+| 2 | Lifetime and depth come from shared tokens | `timing.*` |
+| 3 | An expired message is still readable somewhere | The chat panel |

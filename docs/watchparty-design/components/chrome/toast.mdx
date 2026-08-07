@@ -1,0 +1,65 @@
+---
+title: Toast
+kit: chrome
+web: .an-toast
+native: AnalogToastHost / showAnalogToast
+status: parity
+---
+
+# Toast
+
+The app-wide transient-notice rail.
+
+## Purpose
+
+For something that happened which the user should know about but need not
+act on — "link copied", "download queued", "host transferred".
+
+## Mounted once, above the router
+
+That placement is the whole design. A notifier holding nothing but the root
+navigator's context can still raise a notice — which is exactly the party
+socket's situation: its handlers run for the entire app lifetime and belong
+to no screen.
+
+```dart
+MaterialApp.router(
+  builder: (context, child) => AnalogToastHost(child: child!),
+)
+```
+
+## API
+
+```dart
+void showAnalogToast(
+  BuildContext context,
+  String message, {
+  AnalogToastTone tone = AnalogToastTone.info,
+})
+```
+
+Tones: `info`, `success`, `warning`, `danger`.
+
+**A no-op when no host is mounted, deliberately.** A notice is never the
+only path to information, and a missing rail must not take the app down.
+
+## Behaviour
+
+| Property | Value | Token |
+| --- | --- | --- |
+| Max stack depth | 3 | `timing.toastMaxStack` |
+| Lifetime | 4000ms | `timing.toastLifetimeMs` |
+| Interactive | **never** | — |
+
+Notices sit under an `IgnorePointer` so they cannot swallow a click meant
+for the content behind them, and they expire on their own clock rather than
+waiting to be dismissed.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Never the only route to information | Review |
+| 2 | Never swallows a pointer event | `IgnorePointer` |
+| 3 | Stack depth and lifetime come from tokens, shared with the player's chat toasts | `timing.*` |
+| 4 | A missing host degrades silently | `maybeOf(context)?.show(...)` |

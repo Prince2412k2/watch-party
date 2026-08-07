@@ -8,11 +8,22 @@
 
 This document describes the destination, not the redesign history. The images in this directory are part of the specification.
 
+## Component reference
+
+`components/` is the per-component library: one MDX page for every component
+in both clients, stating its purpose, API, states, tokens and invariants.
+Start at [`components/index.mdx`](./components/index.mdx).
+
+This guide describes the destination; the component pages describe the
+parts. When you are changing a specific control, the component page is the
+closer contract.
+
 ## Source-of-truth order
 
 When references disagree, use this order:
 
 1. The rules in this guide.
+2. The relevant page under `components/`.
 2. `references/04-library-fullscreen-annotated.png` for the library composition.
 3. `references/07-show-detail.png` and `references/08-movie-detail.png` for title-detail composition.
 4. Images under `implemented/` for the current working result.

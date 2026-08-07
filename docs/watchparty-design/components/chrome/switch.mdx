@@ -1,0 +1,74 @@
+---
+title: Switch
+kit: chrome
+web: —
+native: AnalogSwitch
+status: native-only
+---
+
+# Switch
+
+A two-position mechanical switch.
+
+## Purpose
+
+For a setting that takes effect immediately — collaborative control, a
+player toggle. Not for a form field that is saved later; that is a checkbox,
+and this kit does not have one yet because nothing has needed it.
+
+## Anatomy
+
+```
+   ┌──────────────┐        ┌──────────────┐
+   │ ●            │        │            ● │
+   └──────────────┘        └──────────────┘
+       off                      on
+   track 44x24, knob 18x16, hit target 44x36
+```
+
+## The key idea
+
+**Position is the state signal; fill only reinforces it.**
+
+That is deliberate and testable: with every colour in the widget collapsed
+to a single value, the knob is still on the left when off and on the right
+when on. A switch that signals only by colour is unreadable to a large
+fraction of users and invisible in a screenshot.
+
+## API
+
+| Param | Type | Default |
+| --- | --- | --- |
+| `value` | `bool` | required |
+| `onChanged` | `ValueChanged<bool>?` | required — **null disables** |
+| `semanticLabel` | `String?` | `null` |
+
+## Interaction
+
+Operable from the keyboard three ways:
+
+- **Enter / Space** — toggle
+- **Arrow Left** — set off
+- **Arrow Right** — set on
+
+The arrows *set* rather than toggle so a remote's d-pad does the obvious
+thing: pressing right twice leaves it on, not back where it started.
+
+## Tokens
+
+`color.stageGround`, `stageSurface`, `stageSurface3`, `ink`, `inkDim`,
+`inkFaint`, `line`, `lineStrong`, `shadowCast` · `radius.chromePx` ·
+`motion.detentMs` / `detentEase` · `stateLayer.*`
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Position, not colour, carries the state | `chrome_kit_test.dart`, "the switch reports position, not just fill" — asserts the knob centre travels, independent of every `Color` in the widget |
+| 2 | Hit target ≥ the touch floor | Track is 24 tall; the hit box is 44x36 |
+| 3 | Arrows set, never toggle | `onKeyEvent` branches on current `value` |
+
+## Parity notes
+
+The web has no analog switch yet — settings there still use a native
+checkbox in one place. Real gap, small.

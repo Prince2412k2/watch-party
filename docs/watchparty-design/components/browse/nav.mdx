@@ -1,0 +1,44 @@
+---
+title: Nav
+kit: browse
+web: AnalogNav
+native: AnalogNav
+status: parity
+---
+
+# Nav
+
+The destination strip.
+
+## Purpose
+
+Movies, Shows, Discover, Downloads. Four destinations, always visible,
+never a hamburger — on a stage driven by a remote, a menu that hides the
+destinations costs a keypress and a guess.
+
+## API
+
+**Web** — `AnalogNav`
+
+| Prop | Type | Notes |
+| --- | --- | --- |
+| `active` | `AnalogMode` | |
+| `onNavigate` | `(href: string) => void` | |
+| `downloadCount` | `number` | Badge on Downloads |
+| `failingCount` | `number` | **Danger** badge on Downloads |
+| `compact` | `boolean` | Icons only |
+
+## Counts
+
+`failingCount` is not the same signal as `downloadCount` and must not be
+folded into it. A failing download needs attention; a queued one does not.
+The failing badge carries `statusDanger` **and** a distinct shape, so the
+difference is not colour alone.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Destinations are always visible | No collapsed/hamburger mode |
+| 2 | Failing is distinguishable from queued without colour | Distinct badge shape |
+| 3 | The active destination is marked by detent, not only by tint | `hairline.activePx` |

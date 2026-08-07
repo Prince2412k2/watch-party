@@ -1,0 +1,41 @@
+---
+title: Progress
+kit: chrome
+web: .an-progress
+native: AnalogProgress
+status: parity
+---
+
+# Progress
+
+A hairline that reports work.
+
+## Purpose
+
+Determinate for downloads and cache fills, indeterminate for a request in
+flight. A **line**, not a filled bar or a spinner — precision instruments,
+consistent with the timeline and volume controls.
+
+## API
+
+| Param | Type | Default |
+| --- | --- | --- |
+| `value` | `double?` | `null` — **null is indeterminate** |
+| `ink` | `Color` | `AnalogColor.ink` |
+| `track` | `Color` | `AnalogColor.line` |
+| `thickness` | `double` | `hairline.idlePx` |
+| `semanticLabel` | `String?` | `null` |
+
+## Determinate vs indeterminate
+
+`value == null` is the whole switch. That is deliberate: a caller who does
+not yet know the total cannot accidentally render `0%` and imply that
+nothing has happened.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Unknown progress is never drawn as 0% | `value: null` is a distinct mode |
+| 2 | Announced to screen readers | `semanticLabel` + Semantics value |
+| 3 | Thickness never exceeds `hairline.activePx` | Default is `idlePx` |
