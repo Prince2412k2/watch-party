@@ -27,6 +27,11 @@ abstract class SyncEngine {
   set canControl(bool value);
 
   // ── Local user intents (only take effect when [canControl]) ────────────
+  //
+  // These are the ONLY route a party's transport may take. Poking
+  // [PlayerController.play]/[PlayerController.pause] directly leaves the engine
+  // unaware that a command was authored, so its applying-guard never fires and
+  // the correction loop treats the result as drift to undo.
   Future<void> requestPlay();
   Future<void> requestPause();
   Future<void> requestSeek(Duration position);
@@ -95,12 +100,16 @@ class MockSyncEngine implements SyncEngine {
 
   @override
   Future<void> requestPlay() async {
-    if (_canControl) _socket?.emit('sync:play', {'positionTicks': 0});
+    if (!_canControl) return;
+    await _player?.play();
+    _socket?.emit('sync:play', {'positionTicks': 0});
   }
 
   @override
   Future<void> requestPause() async {
-    if (_canControl) _socket?.emit('sync:pause', {'positionTicks': 0});
+    if (!_canControl) return;
+    await _player?.pause();
+    _socket?.emit('sync:pause', {'positionTicks': 0});
   }
 
   @override
