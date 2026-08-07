@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../analog/chrome/analog_switch.dart';
+import '../../analog/chrome/chrome.dart';
 import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
 import 'servarr_detail_screen.dart';
@@ -246,10 +246,12 @@ class _RailUnavailable extends StatelessWidget {
                   style: TextStyle(fontSize: 14, color: wp.dim),
                 ),
               ),
-              TextButton.icon(
+              AnalogButton(
+                label: 'Retry',
+                icon: Icons.refresh,
+                tone: AnalogButtonTone.ghost,
+                dense: true,
                 onPressed: onRetry,
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('Retry'),
               ),
             ],
           ),

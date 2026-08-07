@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../analog/chrome/chrome.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
@@ -381,16 +383,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       const SizedBox(height: AppSpacing.md),
       Row(
         children: [
-          TextButton(
+          AnalogButton(
+            label: 'Reset to my default avatar',
+            tone: AnalogButtonTone.ghost,
+            dense: true,
             onPressed: _reset,
-            child: Text(
-              'Reset to my default avatar',
-              style: TextStyle(
-                fontFamily: AppFonts.sans,
-                fontSize: 13,
-                color: wp.dim,
-              ),
-            ),
           ),
           const SizedBox(width: AppSpacing.md),
           if (_status != null)
@@ -447,9 +444,11 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
-          FilledButton(
-            onPressed: saving ? null : onSave,
-            child: Text(saving ? 'Saving...' : 'Save'),
+          AnalogButton(
+            label: saving ? 'Saving...' : 'Save',
+            tone: AnalogButtonTone.primary,
+            busy: saving,
+            onPressed: onSave,
           ),
         ],
       ),
@@ -489,7 +488,12 @@ class _Notice extends StatelessWidget {
               ),
             ),
           ),
-          TextButton(onPressed: onRetry, child: const Text('Retry')),
+          AnalogButton(
+            label: 'Retry',
+            tone: AnalogButtonTone.ghost,
+            dense: true,
+            onPressed: onRetry,
+          ),
         ],
       ),
     );

@@ -104,6 +104,8 @@ void main() {
       'chromeFadeEase': AnalogMotion.chromeFadeEase,
       'detentEase': AnalogMotion.detentEase,
       'drawerEase': AnalogMotion.drawerEase,
+      'enterEase': AnalogMotion.enterEase,
+      'exitEase': AnalogMotion.exitEase,
     };
 
     final declared = motion.keys.where((key) => key.endsWith('Ease')).toSet();

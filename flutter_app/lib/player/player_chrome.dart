@@ -6,6 +6,8 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../analog/chrome/chrome.dart';
 import 'package:flutter/services.dart';
 
 import '../analog/player/analog_settings_stack.dart';
@@ -1908,7 +1910,9 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  TextButton(
+                  AnalogButton(
+                    tone: AnalogButtonTone.ghost,
+                    dense: true,
                     onPressed: !widget.enabled
                         ? null
                         : () {
@@ -1927,11 +1931,13 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
                             widget.onColor(_color);
                             widget.onBackgroundOpacity(_backgroundOpacity);
                           },
-                    child: Text('Reset', style: bodyStyle),
+                    label: 'Reset',
                   ),
-                  TextButton(
+                  AnalogButton(
+                    tone: AnalogButtonTone.ghost,
+                    dense: true,
                     onPressed: () => Navigator.of(context).pop(),
-                    child: Text('Done', style: bodyStyle),
+                    label: 'Done',
                   ),
                 ],
               ),
