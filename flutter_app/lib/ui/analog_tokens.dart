@@ -179,6 +179,7 @@ abstract final class AnalogRadius {
   static const double sheetPx = 8.0;
   static const double pillPx = 999.0;
   static const double buttonPx = 999.0;
+  static const double cardPx = 14.0;
 }
 
 abstract final class AnalogType {

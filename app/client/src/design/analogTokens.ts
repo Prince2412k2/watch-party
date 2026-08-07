@@ -178,6 +178,7 @@ export const analogTokens = {
     sheetPx: 8,
     pillPx: 999,
     buttonPx: 999,
+    cardPx: 14,
   },
 
   type: {

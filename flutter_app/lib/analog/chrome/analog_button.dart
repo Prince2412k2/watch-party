@@ -278,6 +278,15 @@ class AnalogIconButton extends StatelessWidget {
                   border: skin.lineWidth > 0
                       ? Border.all(color: skin.line, width: skin.lineWidth)
                       : null,
+                  boxShadow: skin.glow && state.lit
+                      ? const [
+                          BoxShadow(
+                            color: AnalogColor.shadowCast,
+                            blurRadius: AnalogElevation.focusBlurPx,
+                            offset: Offset(0, AnalogElevation.restOffsetYPx),
+                          ),
+                        ]
+                      : const [],
                 ),
                 child: Center(
                   child: Icon(icon, size: iconSize, color: glyph),
@@ -291,9 +300,16 @@ class AnalogIconButton extends StatelessWidget {
   }
 }
 
-/// Plate treatment for [AnalogIconButton]: [ghost] has none until reached,
-/// [outline] always carries a hairline frame, [solid] always carries a plate.
-enum AnalogIconButtonTone { ghost, outline, solid }
+/// Fill treatment for [AnalogIconButton]: [ghost] has none until reached,
+/// [outline] carries a hairline frame, [solid] carries a tonal fill, and
+/// [primary] is the accent — the same weight as a primary [AnalogButton], for
+/// when the page's main affordance is a glyph everybody already knows.
+///
+/// [primary] exists so that dropping a label is not the same as demoting the
+/// action. A play triangle is the most legible mark in the medium; it should
+/// not have to be a quiet ghost button just because it stopped spelling itself
+/// out.
+enum AnalogIconButtonTone { ghost, outline, solid, primary }
 
 /// Busy is a state, not a colour: the glyph slot becomes a rotating tick mark
 /// so the change survives greyscale and reduced-motion alike (the mark still
@@ -436,7 +452,9 @@ class _AnalogButtonSkin {
     const transparent = Color(0x00000000);
     if (!s.enabled) {
       return _AnalogButtonSkin(
-        fill: tone == AnalogIconButtonTone.solid
+        fill:
+            tone == AnalogIconButtonTone.solid ||
+                tone == AnalogIconButtonTone.primary
             ? AnalogColor.stageSurface
             : transparent,
         ink: AnalogColor.inkFaint,
@@ -468,6 +486,13 @@ class _AnalogButtonSkin {
         line: AnalogColor.line,
         lineWidth: 0,
         glow: false,
+      ),
+      AnalogIconButtonTone.primary => const _AnalogButtonSkin(
+        fill: AnalogColor.accent,
+        ink: AnalogColor.onAccent,
+        line: AnalogColor.accent,
+        lineWidth: 0,
+        glow: true,
       ),
     };
   }
