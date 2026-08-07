@@ -215,7 +215,7 @@ class LiveKitRoomService {
   /// is an instant mute/unmute instead of a slow (UI-blocking) device re-open.
   Future<void> setMicEnabled(bool enabled) async {
     final lp = _room?.localParticipant;
-    if (lp == null) return;
+    if (lp == null) return _noRoom('microphone');
     try {
       await lp.setMicrophoneEnabled(
         enabled,
@@ -234,7 +234,7 @@ class LiveKitRoomService {
   /// this argument, defaulting to `true`, i.e. stop/re-open on each toggle).
   Future<void> setCameraEnabled(bool enabled) async {
     final lp = _room?.localParticipant;
-    if (lp == null) return;
+    if (lp == null) return _noRoom('camera');
     try {
       await lp.setCameraEnabled(
         enabled,
@@ -252,6 +252,30 @@ class LiveKitRoomService {
     } catch (e) {
       _captureFailed('camera', e);
     }
+  }
+
+  /// There is no room to publish into, so the toggle cannot do anything.
+  ///
+  /// This used to be a bare `return`. The device then appeared to be broken
+  /// with NO error, NO warning and NO log line — the hardest failure to report
+  /// and the hardest to diagnose, because "nothing happened" looks identical
+  /// to a permission problem, a missing device, and a dead button. It is none
+  /// of those: it means the toggle was pressed outside a connected party.
+  ///
+  /// A control that cannot act should say so rather than absorb the press.
+  void _noRoom(String device) {
+    _log.warning('$device toggle ignored: not connected to a room');
+    _emit(
+      _snapshot.copyWith(
+        // Deliberately NOT "join a watch party first". Being in a party and
+        // being connected to its LiveKit room are different things — the party
+        // is a socket session, the room is a separate connection made after
+        // it, and that connection can fail on its own. Telling a host who is
+        // demonstrably in a party to join one would send them looking in the
+        // wrong place, which is how the original silent failure wasted time.
+        error: 'Video chat is not connected, so the $device cannot turn on.',
+      ),
+    );
   }
 
   void _captureFailed(String device, Object error) {
