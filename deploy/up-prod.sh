@@ -37,9 +37,27 @@ echo "== 2/6  Checking for leftover placeholder values =="
 # Anything that still says YOUR_VPS_PUBLIC_IP / CHANGE_ME after setup is a
 # guaranteed runtime failure (this is exactly the bug we chased earlier:
 # livekit.yaml had a stale hardcoded node_ip that silently shadowed the env var).
-if grep -rq 'YOUR_VPS_PUBLIC_IP\|CHANGE_ME' secrets/ 2>/dev/null; then
-  echo "  Found unfilled placeholders:"
-  grep -rn 'YOUR_VPS_PUBLIC_IP\|CHANGE_ME' secrets/ | sed 's/^/    /'
+#
+# Scoped to the files the stack actually READS, not `-r secrets/`. The recursive
+# form scanned everything in the directory — including secrets/README.md, whose
+# job is to document the placeholders, and any .bak a human left behind while
+# fixing one. Both block the deploy with a message pointing at a file nobody is
+# editing, which is exactly what happened: a backup taken thirty seconds
+# earlier aborted the bring-up and read like the fix had not worked.
+#
+# A commented-out line is not a live setting either, so those are skipped —
+# an example left in a comment is documentation, not misconfiguration.
+PLACEHOLDER_HITS=""
+for f in "${REQUIRED_FILES[@]}"; do
+  # Anchored at the line number, so a value that merely CONTAINS ":#" is not
+  # mistaken for a comment and silently skipped. A false negative here is worse
+  # than a false positive: it is the placeholder shipping to production.
+  hits="$(grep -nE 'YOUR_VPS_PUBLIC_IP|CHANGE_ME' "$f" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*[#;]' || true)"
+  [ -n "$hits" ] && PLACEHOLDER_HITS="${PLACEHOLDER_HITS}${f}:${hits}"$'\n'
+done
+if [ -n "$PLACEHOLDER_HITS" ]; then
+  echo "  Found unfilled placeholders in live settings:"
+  printf '%s' "$PLACEHOLDER_HITS" | sed 's/^/    /'
   echo "  Fix these in secrets/ before deploying — see secrets/README.md."
   exit 1
 fi
@@ -55,6 +73,30 @@ if [ -z "$RESOLVED_IP" ] || [ "$RESOLVED_IP" = "YOUR_VPS_PUBLIC_IP" ]; then
   exit 1
 fi
 echo "  resolves to $RESOLVED_IP"
+
+# coturn does NOT read the environment — it reads secrets/coturn.conf, which
+# compose bind-mounts verbatim. So the check above proves nothing about it, and
+# for a long time nothing else did either: external-ip sat at the literal
+# YOUR_VPS_PUBLIC_IP in production.
+#
+# That is the address TURN advertises as its relay candidate. Wrong, it is not
+# an error anyone sees — STUN still works, so most people connect fine and only
+# users behind symmetric NAT or a restrictive firewall silently fail to get
+# video. "Works for everyone except a few" is the worst shape a fault can take,
+# and it is why this is asserted rather than trusted.
+COTURN_IP="$(grep -m1 '^external-ip=' secrets/coturn.conf 2>/dev/null | cut -d= -f2- | xargs || true)"
+if [ -z "$COTURN_IP" ]; then
+  echo "  coturn.conf has no live external-ip= line."
+  echo "  TURN relay will advertise nothing. Set it to $RESOLVED_IP."
+  exit 1
+fi
+if [ "$COTURN_IP" != "$RESOLVED_IP" ]; then
+  echo "  coturn external-ip does not match VPS_PUBLIC_IP."
+  echo "  compose resolves $RESOLVED_IP; secrets/coturn.conf advertises $COTURN_IP."
+  echo "  TURN relay candidates would point somewhere the client cannot reach."
+  exit 1
+fi
+echo "  coturn external-ip agrees"
 
 echo ""
 echo "== 4/6  Verifying the admin-port firewall =="
