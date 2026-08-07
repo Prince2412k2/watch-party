@@ -214,15 +214,30 @@ jobs:
             cd /opt/watch-party
             git pull --ff-only origin main
 
-            if [ ! -f secrets/.env ] || [ ! -f secrets/.env.local ]; then
-              echo "secrets/.env or secrets/.env.local is missing on the VPS"
-              exit 1
-            fi
-
-            sudo ./deploy/firewall.sh --verify
-
-            docker compose --env-file secrets/.env -f docker-compose.prod.yml pull
-            docker compose --env-file secrets/.env -f docker-compose.prod.yml up -d --build
+            # ONE bring-up path, deliberately: this used to open-code a subset
+            # of up-prod.sh — a secrets-file existence check, the firewall
+            # verify, then `pull` + `up -d --build` — and quietly skipped the
+            # rest of what that script exists to enforce.
+            #
+            # What CI was missing, and what it cost: up-prod.sh refuses to
+            # bring the stack up when the data/ bind mounts are not owned by
+            # uid 1000. The app image runs as that uid, so root-owned mounts
+            # mean SQLite opens read-only and the server crash-loops on import
+            # ("attempt to write a readonly database"), while the session store
+            # silently logs everyone out on every redeploy. That happened in
+            # production. A deploy through this job would have walked straight
+            # into it and left health-check.sh to report the wreck afterwards,
+            # rather than refusing to start.
+            #
+            # It also skips the placeholder scan (CHANGE_ME /
+            # YOUR_VPS_PUBLIC_IP) and the NODE_IP resolution check, each of
+            # which is in that script because it has broken a deploy before.
+            #
+            # up-prod.sh also uses --force-recreate, which the open-coded
+            # version did not: a container created before a secrets fix is not
+            # re-read by a plain `up -d`, and on a deploy that insurance is
+            # what you want.
+            ./deploy/up-prod.sh
 
             ./deploy/health-check.sh
 
@@ -428,11 +443,43 @@ jobs:
         run: |
           set -euo pipefail
           cd desktop-builds
-          sha256sum * > SHA256SUMS
+
+          # Flatten first. `merge-multiple` merges the artifacts into one
+          # directory but does NOT flatten the paths *inside* each of them, so
+          # a build job that uploaded with any directory structure lands here
+          # as a subdirectory. `sha256sum *` then hits it and dies with
+          # "sha256sum: work: Is a directory" — which names the directory, not
+          # the actual problem, and cost a run to diagnose.
+          find . -mindepth 2 -type f -exec mv -n -t . {} +
+          find . -mindepth 1 -type d -empty -delete
+
+          # An unmatched glob expands to the literal pattern unless nullglob is
+          # set. Without this, a missing .dmg made `mac` the string "*.dmg",
+          # which `stat` then failed on three lines later — reporting a missing
+          # file rather than a missing BUILD.
+          shopt -s nullglob
+
+          # Exactly one of each, named, before anything is computed from them.
+          # Two .exe files (a stale artifact, a renamed installer) would
+          # otherwise concatenate into one filename and produce a release.json
+          # that looks plausible and points at nothing.
+          only_one() {
+            local kind="$1"; shift
+            if [ "$#" -ne 1 ]; then
+              echo "expected exactly one ${kind}, found $#: ${*:-<none>}" >&2
+              exit 1
+            fi
+            printf '%s\n' "$1"
+          }
+          mac="$(only_one .dmg *.dmg)"
+          linux="$(only_one .AppImage *.AppImage)"
+          windows="$(only_one .exe *.exe)"
+
+          # Hash the artifacts by name rather than `*`, so SHA256SUMS can never
+          # include itself (the redirect creates it before the glob runs).
+          sha256sum "$mac" "$linux" "$windows" > SHA256SUMS
+
           base="$(awk '/^version:/{print $2; exit}' ../flutter_app/pubspec.yaml | cut -d+ -f1)"
-          mac="$(printf '%s\n' *.dmg)"
-          linux="$(printf '%s\n' *.AppImage)"
-          windows="$(printf '%s\n' *.exe)"
           artifact() {
             jq -n --arg filename "$1" --argjson size "$(stat -c %s "$1")" \
               --arg sha256 "$(sha256sum "$1" | cut -d' ' -f1)" \
