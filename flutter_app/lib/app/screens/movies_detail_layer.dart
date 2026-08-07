@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import '../../analog/chrome/chrome.dart';
 import '../../models/models.dart';
 import '../../ui/analog_tokens.dart';
+import '../../ui/widgets/authed_image.dart';
 
 /// Stagger for the expanded state's parts.
 ///
@@ -93,9 +94,12 @@ class MoviesHeroPoster extends StatelessWidget {
               ),
             ],
           ),
+          // AuthedNetworkImage, not Image.network: the library image route is
+          // behind the session, so a bare request 401s and renders nothing but
+          // the error box.
           child: imageUrl == null
               ? const SizedBox.shrink()
-              : Image.network(imageUrl!, fit: BoxFit.cover),
+              : AuthedNetworkImage(imageUrl!, fit: BoxFit.cover),
         ),
       ),
     );
@@ -147,9 +151,11 @@ class MoviesCastRow extends StatelessWidget {
                     ),
                     child: SizedBox(
                       width: _faceWidth,
-                      child: Image.network(
+                      child: AuthedNetworkImage(
                         imageUrlFor(person.id),
                         fit: BoxFit.cover,
+                        // Plenty of cast members genuinely have no headshot,
+                        // so the fallback is a real state, not an error path.
                         errorBuilder: (_, _, _) => const Center(
                           child: Icon(
                             Icons.person,
