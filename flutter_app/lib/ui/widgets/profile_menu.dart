@@ -6,20 +6,29 @@ import '../../app/router.dart';
 import '../../state/state.dart';
 import '../../state/theme_provider.dart';
 import '../../update/desktop_updater.dart';
+import '../analog_tokens.dart';
 import '../palette.dart';
 import '../theme_mode.dart';
 import '../tokens.dart';
 import 'app_dialog.dart';
 import 'avatar_view.dart';
+import 'icon_tray.dart';
 
-/// The top-right profile control (`.web-profile`, styles.css:313-331). A
-/// circular avatar showing the signed-in user's initials with a red
-/// notification dot; tapping it opens a dropdown with "Signed in as `name`", a
-/// 3-way appearance switch bound to [themeModeProvider], and a red Sign out row.
+/// The top-right profile control: an avatar that expands an [IconTray] of
+/// actions leftwards out from beside itself.
 ///
-/// A tap anywhere outside the control closes the menu (mirrors the web's
-/// outside-`pointerdown` handler) without swallowing that tap from the content
-/// beneath, via [TapRegion].
+/// This replaced a 250px dropdown card that listed the same actions as labelled
+/// rows plus two lines of status text. The card was the heaviest object on a
+/// stage whose whole premise is that the artwork is the interface — it covered
+/// a sixth of the poster to offer four things, three of which are used once a
+/// month.
+///
+/// What the card's text lines carried now lives in tooltips: the account name
+/// on the avatar, the installed version on the update button. Nothing was
+/// dropped, it just stopped being on screen when nobody asked for it.
+///
+/// A tap anywhere outside the control closes the tray without swallowing that
+/// tap from the content beneath, via [TapRegion].
 class ProfileMenu extends ConsumerStatefulWidget {
   const ProfileMenu({super.key});
 
@@ -27,8 +36,15 @@ class ProfileMenu extends ConsumerStatefulWidget {
   ConsumerState<ProfileMenu> createState() => _ProfileMenuState();
 }
 
-class _ProfileMenuState extends ConsumerState<ProfileMenu> {
-  bool _open = false;
+class _ProfileMenuState extends ConsumerState<ProfileMenu>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _tray = AnimationController(
+    vsync: this,
+    duration: AnalogMotion.drawerMs,
+    reverseDuration: AnalogMotion.exitMs,
+  );
+
+  bool get _open => _tray.value > 0;
 
   @override
   void initState() {
@@ -41,8 +57,18 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu> {
     });
   }
 
+  @override
+  void dispose() {
+    _tray.dispose();
+    super.dispose();
+  }
+
+  void _close() {
+    if (_open) _tray.reverse();
+  }
+
   Future<void> _signOut() async {
-    setState(() => _open = false);
+    _close();
     final confirmed = await showConfirm(
       context,
       title: 'Sign out?',
@@ -62,30 +88,61 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu> {
     final displayName = ref.watch(profileProvider.select((s) => s.shownName));
     final name = displayName.isNotEmpty ? displayName : accountName;
 
+    final update = ref.watch(desktopUpdateProvider);
+    final mode = ref.watch(themeModeProvider);
+
     return TapRegion(
-      onTapOutside: (_) {
-        if (_open) setState(() => _open = false);
-      },
-      child: Column(
+      onTapOutside: (_) => _close(),
+      child: Row(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          IconTray(
+            animation: _tray,
+            // Left-to-right; the last one is nearest the avatar, which is where
+            // the cursor already is when the tray opens.
+            children: [
+              TrayButton(
+                icon: _updateIcon(update.status),
+                tooltip: _updateTooltip(update),
+                badge: update.status == UpdateStatus.available,
+                busy:
+                    update.status == UpdateStatus.checking ||
+                    update.status == UpdateStatus.downloading ||
+                    update.status == UpdateStatus.loading,
+                onTap: _updateAction(ref, update),
+              ),
+              TrayButton(
+                icon: switch (mode) {
+                  AppThemeMode.light => Icons.light_mode_outlined,
+                  AppThemeMode.balanced => Icons.contrast,
+                  AppThemeMode.dark => Icons.dark_mode_outlined,
+                },
+                tooltip: 'Appearance: ${_modeLabel(mode)}',
+                onTap: () =>
+                    ref.read(themeModeProvider.notifier).set(_next(mode)),
+              ),
+              TrayButton(
+                icon: Icons.tune,
+                tooltip: 'Edit profile',
+                onTap: () {
+                  _close();
+                  context.push(Routes.profile);
+                },
+              ),
+              TrayButton(
+                icon: Icons.logout,
+                tooltip: 'Sign out',
+                tint: kSemanticRed,
+                onTap: _signOut,
+              ),
+            ],
+          ),
           _Avatar(
             userId: userId,
             name: name,
-            onTap: () => setState(() => _open = !_open),
+            animation: _tray,
+            onTap: () => _open ? _tray.reverse() : _tray.forward(),
           ),
-          if (_open) ...[
-            const SizedBox(height: 8),
-            _Menu(
-              name: name,
-              onSignOut: _signOut,
-              onEditProfile: () {
-                setState(() => _open = false);
-                context.push(Routes.profile);
-              },
-            ),
-          ],
         ],
       ),
     );
@@ -93,416 +150,134 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu> {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.userId, required this.name, required this.onTap});
+  const _Avatar({
+    required this.userId,
+    required this.name,
+    required this.animation,
+    required this.onTap,
+  });
 
   final String? userId;
   final String name;
+  final Animation<double> animation;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            SizedBox(
-              width: 36,
-              height: 36,
-              child: userId == null
-                  ? Container(
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: wp.text,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Text(
-                        initialsOf(name),
-                        style: TextStyle(
-                          fontFamily: AppFonts.sans,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: wp.bg,
-                        ),
-                      ),
-                    )
-                  : AvatarView(userId: userId!, name: name, size: 36),
-            ),
-            Positioned(
-              top: 0,
-              right: -2,
-              child: Container(
-                width: 10,
-                height: 10,
+    return Tooltip(
+      message: name,
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedBuilder(
+            animation: animation,
+            builder: (context, child) {
+              final t = animation.value.clamp(0.0, 1.0);
+              return Container(
+                // A ring that thickens as the tray comes out. It is what ties
+                // the circle to the pill: the avatar is the handle the tray
+                // hangs off, not a separate control sitting next to it.
                 decoration: BoxDecoration(
-                  color: kBrandRed,
                   shape: BoxShape.circle,
-                  border: Border.all(color: wp.stage, width: 2),
+                  color: wp.stage,
+                  border: Border.all(color: wp.line2, width: 2 * t),
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Menu extends ConsumerWidget {
-  const _Menu({
-    required this.name,
-    required this.onSignOut,
-    required this.onEditProfile,
-  });
-
-  final String name;
-  final VoidCallback onSignOut;
-  final VoidCallback onEditProfile;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final wp = context.wp;
-    final update = ref.watch(desktopUpdateProvider);
-    return Container(
-      width: 250,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: wp.surface,
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: wp.line),
-        boxShadow: [
-          BoxShadow(
-            color: wp.shadow,
-            blurRadius: 50,
-            offset: const Offset(0, 18),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 9, 10, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+                padding: EdgeInsets.all(2 * t),
+                child: child,
+              );
+            },
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                Text(
-                  'Signed in as',
-                  style: TextStyle(
-                    fontFamily: AppFonts.sans,
-                    fontSize: 11,
-                    color: wp.faint,
-                  ),
+                SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: userId == null
+                      ? Container(
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: wp.text,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            initialsOf(name),
+                            style: TextStyle(
+                              fontFamily: AppFonts.sans,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: wp.bg,
+                            ),
+                          ),
+                        )
+                      : AvatarView(userId: userId!, name: name, size: 36),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: AppFonts.sans,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: wp.text,
+                Positioned(
+                  top: 0,
+                  right: -2,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: kBrandRed,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: wp.stage, width: 2),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(6, 0, 6, 6),
-            child: _ThemeSwitch(),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 4, 10, 3),
-            child: Text(
-              'Version ${update.installedVersion}',
-              style: TextStyle(
-                fontFamily: AppFonts.sans,
-                fontSize: 11,
-                color: wp.faint,
-              ),
-            ),
-          ),
-          _UpdateButton(
-            state: update,
-            onTap: update.status == UpdateStatus.available
-                ? () => ref.read(desktopUpdateProvider.notifier).install()
-                : update.status == UpdateStatus.checking ||
-                      update.status == UpdateStatus.downloading ||
-                      update.status == UpdateStatus.loading
-                ? null
-                : () => ref.read(desktopUpdateProvider.notifier).check(),
-          ),
-          if (update.message != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
-              child: Text(
-                update.message!,
-                style: TextStyle(
-                  fontFamily: AppFonts.sans,
-                  fontSize: 10,
-                  height: 1.25,
-                  color: update.status == UpdateStatus.error
-                      ? kSemanticRed
-                      : wp.faint,
-                ),
-              ),
-            ),
-          _MenuRow(
-            icon: Icons.person_outline,
-            label: 'Edit profile',
-            onTap: onEditProfile,
-          ),
-          _SignOutButton(onTap: onSignOut),
-        ],
-      ),
-    );
-  }
-}
-
-class _UpdateButton extends StatelessWidget {
-  const _UpdateButton({required this.state, required this.onTap});
-
-  final UpdateState state;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    final downloading = state.status == UpdateStatus.downloading;
-    final label = state.status == UpdateStatus.available
-        ? 'Update to ${state.release!.version}'
-        : downloading
-        ? 'Downloading ${(state.progress * 100).round()}%'
-        : state.status == UpdateStatus.checking
-        ? 'Checking...'
-        : 'Check for updates';
-    return MouseRegion(
-      cursor: onTap == null
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          child: Row(
-            children: [
-              Icon(
-                Icons.system_update_alt,
-                size: 16,
-                color: onTap == null ? wp.dim : wp.text,
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontFamily: AppFonts.sans,
-                    fontSize: 12,
-                    color: onTap == null ? wp.dim : wp.text,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
   }
 }
 
-/// The 3-way appearance segmented control (`.web-theme-switch`,
-/// styles.css:284-312): sun → Light, blend → Balanced, moon → Dark. The active
-/// button carries a surface-2 fill and full-strength text; the others are dim.
-class _ThemeSwitch extends ConsumerWidget {
-  const _ThemeSwitch();
+IconData _updateIcon(UpdateStatus status) => switch (status) {
+  UpdateStatus.available => Icons.system_update_alt,
+  UpdateStatus.error => Icons.error_outline,
+  _ => Icons.refresh,
+};
 
-  static const _options = [
-    (AppThemeMode.light, Icons.light_mode_outlined, 'Light mode'),
-    (AppThemeMode.balanced, Icons.contrast, 'Balanced mode'),
-    (AppThemeMode.dark, Icons.dark_mode_outlined, 'Dark mode'),
-  ];
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final wp = context.wp;
-    final mode = ref.watch(themeModeProvider);
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: wp.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: wp.line),
-      ),
-      child: Row(
-        children: [
-          for (final (m, icon, label) in _options)
-            Expanded(
-              child: _ThemeButton(
-                icon: icon,
-                label: label,
-                active: mode == m,
-                onTap: () => ref.read(themeModeProvider.notifier).set(m),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+/// The version line the dropdown used to print, now only shown when asked for.
+/// It is still the first thing anyone needs when reporting a bug, so it leads.
+String _updateTooltip(UpdateState state) {
+  final version = 'Version ${state.installedVersion}';
+  final action = switch (state.status) {
+    UpdateStatus.available => 'Update to ${state.release!.version}',
+    UpdateStatus.downloading =>
+      'Downloading ${(state.progress * 100).round()}%',
+    UpdateStatus.checking || UpdateStatus.loading => 'Checking...',
+    _ => 'Check for updates',
+  };
+  final message = state.message;
+  return message == null ? '$version\n$action' : '$version\n$action\n$message';
 }
 
-class _ThemeButton extends StatefulWidget {
-  const _ThemeButton({
-    required this.icon,
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
+VoidCallback? _updateAction(WidgetRef ref, UpdateState state) =>
+    switch (state.status) {
+      UpdateStatus.available =>
+        () => ref.read(desktopUpdateProvider.notifier).install(),
+      UpdateStatus.checking ||
+      UpdateStatus.downloading ||
+      UpdateStatus.loading => null,
+      _ => () => ref.read(desktopUpdateProvider.notifier).check(),
+    };
 
-  final IconData icon;
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
+String _modeLabel(AppThemeMode mode) => switch (mode) {
+  AppThemeMode.light => 'Light',
+  AppThemeMode.balanced => 'Balanced',
+  AppThemeMode.dark => 'Dark',
+};
 
-  @override
-  State<_ThemeButton> createState() => _ThemeButtonState();
-}
-
-class _ThemeButtonState extends State<_ThemeButton> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    final on = widget.active || _hover;
-    return Tooltip(
-      message: widget.label,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: Container(
-            height: 34,
-            margin: const EdgeInsets.symmetric(horizontal: 1.5),
-            decoration: BoxDecoration(
-              color: on ? wp.surface2 : Colors.transparent,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(widget.icon, size: 16, color: on ? wp.text : wp.dim),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A neutral menu row. Same shape as [_SignOutButton] without the danger
-/// colouring — that one stays red because it is the destructive one.
-class _MenuRow extends StatefulWidget {
-  const _MenuRow({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  State<_MenuRow> createState() => _MenuRowState();
-}
-
-class _MenuRowState extends State<_MenuRow> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 40),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: _hover ? wp.surface2 : Colors.transparent,
-            borderRadius: BorderRadius.circular(9),
-          ),
-          child: Row(
-            children: [
-              Icon(widget.icon, size: 16, color: wp.text),
-              const SizedBox(width: 9),
-              Text(
-                widget.label,
-                style: TextStyle(
-                  fontFamily: AppFonts.sans,
-                  fontSize: 13,
-                  color: wp.text,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SignOutButton extends StatefulWidget {
-  const _SignOutButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  State<_SignOutButton> createState() => _SignOutButtonState();
-}
-
-class _SignOutButtonState extends State<_SignOutButton> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 40),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: _hover ? const Color(0x1AE0655E) : Colors.transparent,
-            borderRadius: BorderRadius.circular(9),
-          ),
-          child: Row(
-            children: const [
-              Icon(Icons.logout, size: 16, color: kSemanticRed),
-              SizedBox(width: 9),
-              Text(
-                'Sign out',
-                style: TextStyle(
-                  fontFamily: AppFonts.sans,
-                  fontSize: 13,
-                  color: kSemanticRed,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+/// One button cycles all three, in the order the old segmented control listed
+/// them. Three states is the most a cycle can carry before you stop being able
+/// to predict where the next tap lands.
+AppThemeMode _next(AppThemeMode mode) => switch (mode) {
+  AppThemeMode.light => AppThemeMode.balanced,
+  AppThemeMode.balanced => AppThemeMode.dark,
+  AppThemeMode.dark => AppThemeMode.light,
+};

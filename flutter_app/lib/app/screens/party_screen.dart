@@ -30,7 +30,7 @@ import '../../ui/widgets/party_qr.dart';
 /// back-to-lobby, end) opens on right-click (or a long-press fallback) — no
 /// persistent desktop party pill over the player.
 ///
-/// Creation and join-by-code live in the shell popcorn ([PartyWidget]); this
+/// Creation and join-by-code live in the shell popcorn ([PopcornControl]); this
 /// route is entered with a party id, so its pre-join surface is only the
 /// connecting / sonar waiting-room / "party not found" states.
 class PartyScreen extends ConsumerStatefulWidget {
@@ -649,7 +649,7 @@ class _WatchChrome extends ConsumerWidget {
             const Spacer(),
             // No shared-browser control here. This chrome sits over the player,
             // and starting a browser is a "what shall we watch" decision — it
-            // lives in the popcorn ([PartyWidget]) instead.
+            // lives in the popcorn ([PopcornControl]) instead.
             _AvIconButton(
               icon: Icons.chat_bubble_outline,
               tooltip: 'Chat',

@@ -20,6 +20,7 @@ export 'widgets/download_button.dart';
 export 'widgets/desktop_window_chrome.dart';
 export 'widgets/empty_state.dart';
 export 'widgets/error_state.dart';
+export 'widgets/icon_tray.dart';
 export 'widgets/loading_skeleton.dart';
 export 'widgets/nav_rail.dart';
 export 'widgets/poster_card.dart';

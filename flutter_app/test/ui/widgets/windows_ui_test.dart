@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/ui/ui.dart';
-import 'package:watchparty/ui/widgets/party_widget.dart';
 
 void main() {
   testWidgets('Windows caption controls are compact and preserve actions', (
@@ -79,7 +78,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('PartyWidget stays inside a compact desktop viewport', (
+  testWidgets('the open party tray stays inside a compact desktop viewport', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -92,18 +91,25 @@ void main() {
           builder: (context, child) => AnalogToastHost(child: child!),
           home: const MediaQuery(
             data: MediaQueryData(size: Size(300, 240)),
-            child: Scaffold(body: Align(child: PartyWidget())),
+            child: Scaffold(
+              body: Align(
+                alignment: Alignment.bottomRight,
+                child: PopcornControl(),
+              ),
+            ),
           ),
         ),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    final size = tester.getSize(
-      find.byKey(const ValueKey('party-widget-panel')),
-    );
-    expect(size.width, lessThanOrEqualTo(262));
-    expect(size.height, lessThanOrEqualTo(158));
+    // This replaced a 320px panel that had to be clamped against the viewport
+    // to fit here at all. The tray is a COLUMN of 30px buttons rising off the
+    // button, so the axis that can now overrun is the short one — 240px here.
+    await tester.tap(find.byType(PopcornControl));
+    await tester.pumpAndSettle();
+
+    expect(tester.getSize(find.byType(PopcornControl)).height, lessThan(240));
     expect(tester.takeException(), isNull);
   });
 }
