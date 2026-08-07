@@ -6,20 +6,32 @@ import 'analog_tooltip.dart';
 
 /// What a button is for, not what colour it is.
 ///
-/// - [primary]  the one affordance on the surface that the user came for.
-/// - [secondary] the quiet default: a surface plate with a hairline frame.
-/// - [ghost]    text on the stage, no plate until it is reached.
-/// - [danger]   destructive. Carries the reserved red *and* a doubled frame, so
-///              it still reads as different with the colour taken away.
+/// - [primary]   the one affordance on the surface that the user came for.
+///               Solid ink, no frame, and the only tone that pools light.
+/// - [secondary] the quiet default: a tonal fill one step off the stage.
+/// - [ghost]     ink on the stage, no fill until it is reached.
+/// - [danger]    destructive. The only tone that keeps a frame, so it still
+///               reads as different with the colour taken away.
 enum AnalogButtonTone { primary, secondary, ghost, danger }
 
-/// A rectangular chrome control on the analog tokens.
+/// A chrome control on the analog tokens.
 ///
-/// Square-ish by [AnalogRadius.chromePx] — 4px, the chrome radius, never the
-/// poster radius. Light comes from above-left exactly as it does on artwork
-/// ([AnalogSelection.sceneLightAngleDeg]), so the top and left edges carry
-/// [AnalogColor.edgeLight] and the cast shadow falls below-right. Pressing sinks
-/// the plate into its own shadow; nothing bounces.
+/// **A pill** ([AnalogRadius.buttonPx]), and the only piece of chrome that is.
+/// It used to be a 4px-radius plate with a hairline frame, a directional edge
+/// light and a cast shadow — which is a small card, on a stage already made of
+/// rectangular artwork. Nothing was distinguishing the thing you press from the
+/// things you look at. A pill is unambiguous: it is the only shape on the stage
+/// that could not be a poster.
+///
+/// It answers under the finger by **scaling**, not by translating 1px onto its
+/// own shadow. Scale reads at any button size; a fixed 1px nudge reads only on
+/// the small ones. Hover lifts and grows a little, press shrinks past rest and
+/// comes back. Still no overshoot — chrome has no mass — but the response is
+/// now visible rather than something you have to be told about.
+///
+/// Colour does the tone work now that the frame is gone; the frame that remains
+/// on [AnalogButtonTone.danger] is there so destructive stays legible in
+/// greyscale.
 class AnalogButton extends StatelessWidget {
   const AnalogButton({
     super.key,
@@ -81,36 +93,38 @@ class AnalogButton extends StatelessWidget {
 
     return AnalogFocusRing(
       visible: state.focused,
-      child: AnimatedContainer(
-        duration: AnalogMotion.chromeFadeMs,
-        curve: AnalogMotion.chromeFadeEase,
-        // A press drops the plate onto its shadow rather than scaling it: short
-        // travel, clear detent, no bounce (AnalogMotion §mechanical).
-        transform: Matrix4.translationValues(0, state.pressed ? 1 : 0, 0),
-        constraints: const BoxConstraints(minHeight: 38),
-        padding: EdgeInsets.symmetric(
-          horizontal: dense ? AnalogSpace.mdPx : AnalogSpace.lgPx,
-          vertical: AnalogSpace.smPx + 2,
-        ),
-        decoration: BoxDecoration(
-          color: analogStateLayerOver(skin.fill, state),
-          borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-          border: Border.all(color: skin.line, width: skin.lineWidth),
-          boxShadow: skin.raised && !state.pressed
-              ? const [
-                  BoxShadow(
-                    color: AnalogColor.shadowCast,
-                    blurRadius: AnalogElevation.restBlurPx,
-                    offset: Offset(
-                      AnalogElevation.restOffsetXPx,
-                      AnalogElevation.restOffsetYPx,
+      radius: AnalogRadius.buttonPx,
+      child: AnalogReact(
+        state: state,
+        child: AnimatedContainer(
+          duration: AnalogMotion.chromeFadeMs,
+          curve: AnalogMotion.chromeFadeEase,
+          constraints: const BoxConstraints(minHeight: 40),
+          // Pills need their ends kept clear of the text — at the old 16px the
+          // label ran into the curve.
+          padding: EdgeInsets.symmetric(
+            horizontal: dense ? AnalogSpace.lgPx : AnalogSpace.xlPx,
+            vertical: AnalogSpace.smPx + 2,
+          ),
+          decoration: BoxDecoration(
+            color: analogStateLayerOver(skin.fill, state),
+            borderRadius: BorderRadius.circular(AnalogRadius.buttonPx),
+            border: skin.lineWidth > 0
+                ? Border.all(color: skin.line, width: skin.lineWidth)
+                : null,
+            // A soft pool under the primary only, and only while it is being
+            // reached — enough to lift the one affordance the user came for off
+            // the artwork, not a plate sitting on a desk.
+            boxShadow: skin.glow && state.lit
+                ? const [
+                    BoxShadow(
+                      color: AnalogColor.shadowCast,
+                      blurRadius: AnalogElevation.focusBlurPx,
+                      offset: Offset(0, AnalogElevation.restOffsetYPx),
                     ),
-                  ),
-                ]
-              : const [],
-        ),
-        child: _EdgeLit(
-          lit: skin.raised && !state.pressed,
+                  ]
+                : const [],
+          ),
           child: Row(
             mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -139,6 +153,57 @@ class AnalogButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The physical response, shared by every control in the kit.
+///
+/// Hover lifts and grows a touch; press shrinks past rest and drops back to the
+/// ground. One widget rather than a transform hand-rolled per control, because
+/// "everything in the kit answers the same way" is the property that makes a
+/// component kit feel like one thing — and it is the property that quietly
+/// breaks first when each control owns its own numbers.
+///
+/// Deliberately no overshoot. Things with mass overshoot; chrome does not.
+class AnalogReact extends StatelessWidget {
+  const AnalogReact({super.key, required this.state, required this.child});
+
+  final AnalogControlState state;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = !state.enabled
+        ? 1.0
+        : state.pressed
+        ? 1 - AnalogMotion.pressScalePct / 100
+        : state.lit
+        ? 1 + AnalogMotion.hoverScalePct / 100
+        : 1.0;
+    final lift = state.enabled && state.lit && !state.pressed
+        ? -AnalogMotion.hoverLiftPx
+        : 0.0;
+
+    return AnimatedContainer(
+      // A press is a detent — the fastest thing in the system, because the gap
+      // between finger and answer is where an interface feels slow. Releasing
+      // is not urgent, so it takes the ordinary chrome fade.
+      duration: state.pressed
+          ? AnalogMotion.detentMs
+          : AnalogMotion.chromeFadeMs,
+      curve: state.pressed
+          ? AnalogMotion.detentEase
+          : AnalogMotion.chromeFadeEase,
+      // Lift and scale ride one matrix. `AnimatedSlide` would have been the
+      // obvious pairing and is wrong: its offset is a FRACTION of the child's
+      // size, so a 2px lift written as an offset silently becomes "2% of
+      // however tall this particular button is".
+      transform: Matrix4.identity()
+        ..translateByDouble(0.0, lift, 0.0, 1.0)
+        ..scaleByDouble(scale, scale, 1.0, 1.0),
+      transformAlignment: Alignment.center,
+      child: child,
     );
   }
 }
@@ -195,19 +260,29 @@ class AnalogIconButton extends StatelessWidget {
               : skin.ink;
           return AnalogFocusRing(
             visible: state.focused,
+            radius: AnalogRadius.buttonPx,
             inset: 4,
-            child: AnimatedContainer(
-              duration: AnalogMotion.chromeFadeMs,
-              curve: AnalogMotion.chromeFadeEase,
-              transform: Matrix4.translationValues(0, state.pressed ? 1 : 0, 0),
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                color: analogStateLayerOver(skin.fill, state),
-                borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-                border: Border.all(color: skin.line, width: skin.lineWidth),
+            child: AnalogReact(
+              state: state,
+              child: AnimatedContainer(
+                duration: AnalogMotion.chromeFadeMs,
+                curve: AnalogMotion.chromeFadeEase,
+                width: size,
+                height: size,
+                decoration: BoxDecoration(
+                  color: analogStateLayerOver(skin.fill, state),
+                  // A circle, being square and pill-radiused. Icon buttons are
+                  // the shape a glyph actually wants — the old rounded square
+                  // gave a 34px plate to an 18px mark.
+                  borderRadius: BorderRadius.circular(AnalogRadius.buttonPx),
+                  border: skin.lineWidth > 0
+                      ? Border.all(color: skin.line, width: skin.lineWidth)
+                      : null,
+                ),
+                child: Center(
+                  child: Icon(icon, size: iconSize, color: glyph),
+                ),
               ),
-              child: Center(child: Icon(icon, size: iconSize, color: glyph)),
             ),
           );
         },
@@ -219,41 +294,6 @@ class AnalogIconButton extends StatelessWidget {
 /// Plate treatment for [AnalogIconButton]: [ghost] has none until reached,
 /// [outline] always carries a hairline frame, [solid] always carries a plate.
 enum AnalogIconButtonTone { ghost, outline, solid }
-
-/// The directional edge light, on chrome.
-///
-/// The scene light is at [AnalogSelection.sceneLightAngleDeg] (315deg, above
-/// left), so a raised plate catches it on its top and left edges while the cast
-/// shadow falls below-right. Same story as the artwork frame in
-/// `analog_poster.dart`, told with a border instead of a painter because chrome
-/// plates are small and their corners are rounded.
-class _EdgeLit extends StatelessWidget {
-  const _EdgeLit({required this.lit, required this.child});
-
-  final bool lit;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!lit) return child;
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(
-            color: AnalogColor.edgeLight,
-            width: AnalogPoster.framePx,
-          ),
-          left: BorderSide(
-            color: AnalogColor.edgeLight,
-            width: AnalogPoster.framePx,
-          ),
-        ),
-      ),
-      position: DecorationPosition.foreground,
-      child: child,
-    );
-  }
-}
 
 /// Busy is a state, not a colour: the glyph slot becomes a rotating tick mark
 /// so the change survives greyscale and reduced-motion alike (the mark still
@@ -319,59 +359,72 @@ class _AnalogButtonSkin {
     required this.ink,
     required this.line,
     required this.lineWidth,
-    required this.raised,
+    required this.glow,
   });
 
   final Color fill;
   final Color ink;
   final Color line;
+
+  /// Zero means no border at all, which is now the common case: tone is carried
+  /// by fill and ink, and a hairline on every control was most of what made
+  /// them read as little cards.
   final double lineWidth;
-  final bool raised;
+
+  /// Pools light under itself while being reached. Primary only.
+  final bool glow;
 
   static _AnalogButtonSkin resolve(
     AnalogButtonTone tone,
     AnalogControlState s,
   ) {
     if (!s.enabled) {
-      // Disabled drops the plate flat and takes the frame down with the ink, so
-      // the control reads as inert by depth as well as by contrast.
+      // Disabled is a flat wash and faint ink — no frame, because a frame is
+      // the thing that says "press me".
       return const _AnalogButtonSkin(
         fill: AnalogColor.stageSurface,
         ink: AnalogColor.inkFaint,
         line: AnalogColor.line,
-        lineWidth: AnalogPoster.framePx,
-        raised: false,
+        lineWidth: 0,
+        glow: false,
       );
     }
     return switch (tone) {
-      AnalogButtonTone.primary => _AnalogButtonSkin(
+      // Solid ink, no frame. It is the brightest thing on the stage; a border
+      // around it would be a border around a light bulb.
+      AnalogButtonTone.primary => const _AnalogButtonSkin(
         fill: AnalogColor.accent,
         ink: AnalogColor.onAccent,
         line: AnalogColor.accent,
-        lineWidth: AnalogPoster.framePx,
-        raised: true,
+        lineWidth: 0,
+        glow: true,
       ),
-      AnalogButtonTone.secondary => _AnalogButtonSkin(
+      // Tonal: a filled pill one step off the stage, no frame. This is the
+      // quiet default, and quiet should mean "less", not "same shape with a
+      // thinner line".
+      AnalogButtonTone.secondary => const _AnalogButtonSkin(
         fill: AnalogColor.stageSurface2,
         ink: AnalogColor.ink,
-        line: s.lit ? AnalogColor.lineStrong : AnalogColor.line,
-        lineWidth: AnalogPoster.framePx,
-        raised: true,
+        line: AnalogColor.line,
+        lineWidth: 0,
+        glow: false,
       ),
       AnalogButtonTone.ghost => _AnalogButtonSkin(
         fill: const Color(0x00000000),
         ink: s.lit ? AnalogColor.ink : AnalogColor.inkDim,
-        line: s.lit ? AnalogColor.line : const Color(0x00000000),
-        lineWidth: AnalogPoster.framePx,
-        raised: false,
+        line: const Color(0x00000000),
+        lineWidth: 0,
+        glow: false,
       ),
-      // The doubled frame is what makes danger legible without the red.
-      AnalogButtonTone.danger => _AnalogButtonSkin(
+      // The one control that keeps a frame. Destructive has to stay legible
+      // with the colour taken away — in greyscale this is the only button on
+      // the surface with an outline, and that is the whole point of it.
+      AnalogButtonTone.danger => const _AnalogButtonSkin(
         fill: AnalogColor.stageSurface2,
         ink: AnalogColor.statusDanger,
         line: AnalogColor.statusDanger,
-        lineWidth: AnalogPoster.framePx * 2,
-        raised: true,
+        lineWidth: AnalogPoster.framePx,
+        glow: false,
       ),
     };
   }
@@ -387,11 +440,11 @@ class _AnalogButtonSkin {
             ? AnalogColor.stageSurface
             : transparent,
         ink: AnalogColor.inkFaint,
-        line: tone == AnalogIconButtonTone.ghost
-            ? transparent
-            : AnalogColor.line,
-        lineWidth: AnalogPoster.framePx,
-        raised: false,
+        line: AnalogColor.line,
+        lineWidth: tone == AnalogIconButtonTone.outline
+            ? AnalogPoster.framePx
+            : 0,
+        glow: false,
       );
     }
     return switch (tone) {
@@ -399,22 +452,22 @@ class _AnalogButtonSkin {
         fill: transparent,
         ink: s.lit ? AnalogColor.ink : AnalogColor.inkDim,
         line: transparent,
-        lineWidth: AnalogPoster.framePx,
-        raised: false,
+        lineWidth: 0,
+        glow: false,
       ),
       AnalogIconButtonTone.outline => _AnalogButtonSkin(
         fill: transparent,
         ink: s.lit ? AnalogColor.ink : AnalogColor.inkDim,
         line: s.lit ? AnalogColor.lineStrong : AnalogColor.line,
         lineWidth: AnalogPoster.framePx,
-        raised: false,
+        glow: false,
       ),
-      AnalogIconButtonTone.solid => _AnalogButtonSkin(
+      AnalogIconButtonTone.solid => const _AnalogButtonSkin(
         fill: AnalogColor.stageSurface2,
         ink: AnalogColor.ink,
-        line: s.lit ? AnalogColor.lineStrong : AnalogColor.line,
-        lineWidth: AnalogPoster.framePx,
-        raised: true,
+        line: AnalogColor.line,
+        lineWidth: 0,
+        glow: false,
       ),
     };
   }

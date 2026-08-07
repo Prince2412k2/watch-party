@@ -118,6 +118,11 @@
     "settleFastMs": 820,
     "fastStepMs": 220,
 
+    "$press": "A control answers under the finger. It used to answer by translating down 1px onto its own shadow - a plate being pressed into a desk, and at 1px an effect you had to be told about to notice. It now takes the press the way a physical button does: the whole thing shrinks slightly and lifts back. Scale reads at any button size, where a fixed 1px nudge reads only on the small ones. Still no overshoot - chrome does not have mass - but the response is now visible from across the room, which is the point of a response.",
+    "pressScalePct": 4,
+    "hoverLiftPx": 2,
+    "hoverScalePct": 2,
+
     "$anticipation": "A move starts by gathering against itself. Kept very small: the design forbids overshoot, and anticipation read too large becomes a bounce by another name.",
     "anticipationMs": 60,
     "anticipationPct": 4,
@@ -172,7 +177,10 @@
     "$about": "Artwork is always square. These radii are for chrome only (buttons, sheets, toasts) and must never be applied to a poster, still, skeleton or placeholder.",
     "chromePx": 4,
     "sheetPx": 8,
-    "pillPx": 999
+    "pillPx": 999,
+
+    "$button": "Buttons are pills, and they are the ONE piece of chrome that is. A 4px radius on a bordered plate with a cast shadow reads as a small card - which is exactly what it looked like, and a stage made of rectangular artwork does not need more rectangles competing with it. A pill is unmistakably a control: nothing else on the stage is that shape. Kept separate from chromePx because text fields, toasts and the settings stack are still plates and should stay square-ish; rounding those too would just move the problem.",
+    "buttonPx": 999
   },
 
   "type": {

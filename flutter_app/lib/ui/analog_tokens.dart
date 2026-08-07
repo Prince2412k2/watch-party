@@ -124,6 +124,9 @@ abstract final class AnalogMotion {
   static const Duration heroReturnMs = Duration(milliseconds: 380);
   static const Duration settleFastMs = Duration(milliseconds: 820);
   static const Duration fastStepMs = Duration(milliseconds: 220);
+  static const double pressScalePct = 4.0;
+  static const double hoverLiftPx = 2.0;
+  static const double hoverScalePct = 2.0;
   static const Duration anticipationMs = Duration(milliseconds: 60);
   static const double anticipationPct = 4.0;
   static const Duration copySwapMs = Duration(milliseconds: 260);
@@ -175,6 +178,7 @@ abstract final class AnalogRadius {
   static const double chromePx = 4.0;
   static const double sheetPx = 8.0;
   static const double pillPx = 999.0;
+  static const double buttonPx = 999.0;
 }
 
 abstract final class AnalogType {

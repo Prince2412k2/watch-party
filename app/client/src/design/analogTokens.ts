@@ -123,6 +123,9 @@ export const analogTokens = {
     heroReturnMs: 380,
     settleFastMs: 820,
     fastStepMs: 220,
+    pressScalePct: 4,
+    hoverLiftPx: 2,
+    hoverScalePct: 2,
     anticipationMs: 60,
     anticipationPct: 4,
     copySwapMs: 260,
@@ -174,6 +177,7 @@ export const analogTokens = {
     chromePx: 4,
     sheetPx: 8,
     pillPx: 999,
+    buttonPx: 999,
   },
 
   type: {
