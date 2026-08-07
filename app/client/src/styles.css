@@ -599,6 +599,11 @@ media-player, media-player:focus, media-player:focus-visible,
 .discover-rows { height: 100%; overflow: hidden auto; padding: 64px 0 100px clamp(40px, 5vw, 72px); }
 .discover-rows > section { margin-bottom: 44px !important; }
 .discover-rows h2 { font-size: clamp(38px, 3.2vw, 44px) !important; font-weight: 300 !important; letter-spacing: -.04em !important; }
+/* The search block shares .discover-rows' left inset but needs a right one too
+   (the rails deliberately bleed off the right edge; a form must not). Its own
+   headings opt out of the oversized rail heading treatment above. */
+.discover-search { padding-right: clamp(40px, 5vw, 72px); }
+.discover-search h2 { font-size: 20px !important; font-weight: 800 !important; letter-spacing: -.02em !important; margin: 0 0 16px !important; }
 .discover-row-empty { padding: 4px 0 32px; }
 .discover-row-empty h2 { margin: 0 0 8px; color: var(--wp-text); }
 .discover-row-empty p { margin: 0; color: var(--wp-faint); font-size: 14px; }
@@ -620,6 +625,7 @@ media-player, media-player:focus, media-player:focus-visible,
   .web-party-button > span, .web-party-button::before { display: none; }
   .library-catalog { display: block; padding: 72px 16px 24px; overflow: auto; }
   .discover-rows { padding: 76px 16px 90px; }
+  .discover-search { padding-right: 0; }
   .library-genres { display: none; }
   .library-results { overflow: visible; padding-bottom: 76px; }
   .library-mobile-genres { display: flex; }

@@ -7,7 +7,9 @@ import '../download/downloader.dart';
 import '../cache/media_cache_proxy.dart';
 import '../cache/cache_fill_controller.dart';
 import '../cache/artwork_cache.dart';
+import '../cache/artwork_prefetcher.dart';
 import '../cache/catalog_cache_store.dart';
+import '../data/catalog_prefetcher.dart';
 import '../data/catalog_repository.dart';
 
 /// Core dependency-injection seams (PLAN §3.8). Phase 0 wires MOCK
@@ -30,6 +32,24 @@ final catalogRepositoryProvider = Provider<CatalogRepository>(
 
 final artworkCacheProvider = Provider<ArtworkCache?>((ref) => null);
 
+/// Warms artwork for the items about to scroll into view. Null wherever no
+/// [ArtworkCache] is installed (tests, and the guest paths that never build
+/// one) — with nothing to warm into, there is nothing to prefetch.
+final artworkPrefetcherProvider = Provider<ArtworkPrefetcher?>((ref) {
+  final cache = ref.watch(artworkCacheProvider);
+  if (cache == null) return null;
+  final prefetcher = ArtworkPrefetcher(cache);
+  ref.onDispose(prefetcher.dispose);
+  return prefetcher;
+});
+
+/// Warms catalog JSON for the surface the user is most likely to open next.
+final catalogPrefetcherProvider = Provider<CatalogPrefetcher>((ref) {
+  final prefetcher = CatalogPrefetcher(ref.watch(catalogRepositoryProvider));
+  ref.onDispose(prefetcher.dispose);
+  return prefetcher;
+});
+
 /// The socket.io client for sync/chat. Mock by default.
 final socketClientProvider = Provider<SocketClient>(
   (ref) => MockSocketClient(),
@@ -40,7 +60,10 @@ final socketClientProvider = Provider<SocketClient>(
 /// and [offlineProvider] are now backed by [cacheFillControllerProvider] /
 /// [mediaCacheProxyProvider] instead (download == filling the on-device
 /// cache). Kept only so the class/provider still exist for anything that
-/// still references them; nothing in the app reads this provider anymore.
+/// still references them; nothing in the app reads this provider anymore —
+/// including the desktop shutdown handler, which pauses the live
+/// [cacheFillControllerProvider] fills rather than this downloader's (always
+/// empty) task database.
 final downloaderProvider = Provider<Downloader>((ref) => Downloader());
 
 /// The on-device caching media proxy (Phase 2) playback routes network

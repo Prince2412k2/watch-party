@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import CameraTile from './CameraTile'
+import CameraTile from './CameraTile.tsx'
 
 export default function Dock({
   localParticipant, participants, isHost, removedCameras, onRemove, hideSelf,

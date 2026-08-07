@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -11,9 +11,11 @@ process.env.BROWSER_ENABLED = '1'
 process.env.BROWSER_AGENT_TOKEN = 'test-token'
 process.env.LIVEKIT_API_KEY = 'devkey'
 process.env.LIVEKIT_API_SECRET = 'secret-that-is-long-enough-for-jwt'
+process.env.BROWSER_HOME_URL = 'https://93.184.216.34/'
 
 const service = await import('./service.js')
 const lease = await import('./lease.js')
+const agentClient = await import('./agent.js')
 const { createSession, deleteSession, getSession, approveGuest, addToWaiting, publicSession } =
   await import('../session.js')
 
@@ -24,6 +26,8 @@ test.after(() => {
     }
   }
 })
+
+test.afterEach(() => agentClient.setCallForTests(null))
 
 function party() {
   const session = createSession({ hostId: 'host', hostName: 'Host', hostSocketId: 'sock-host' })
@@ -106,6 +110,67 @@ test('normalizeUrl rejects non-http schemes and junk', () => {
   ]) {
     assert.equal(service.normalizeUrl(value), null, `expected ${String(value).slice(0, 24)} to be rejected`)
   }
+})
+
+test('URL policy rejects internal names and non-public addresses', async () => {
+  const publicLookup = async () => [{ address: '93.184.216.34', family: 4 }]
+  const privateLookup = async () => [{ address: '10.0.0.4', family: 4 }]
+
+  assert.equal(await service.validateTargetUrl('https://example.com', { lookupHostname: publicLookup }),
+    'https://example.com/')
+  for (const value of ['http://localhost', 'http://livekit:7880', 'http://service.internal']) {
+    assert.equal(await service.validateTargetUrl(value, { lookupHostname: publicLookup }), null, value)
+  }
+  assert.equal(await service.validateTargetUrl('https://example.com', { lookupHostname: privateLookup }), null)
+  assert.equal(await service.validateTargetUrl('https://[::1]/', {
+    lookupHostname: async () => [{ address: '::1', family: 6 }],
+  }), null)
+})
+
+test('URL policy rejects mixed DNS answers to prevent rebinding', async () => {
+  const reboundLookup = async () => [
+    { address: '93.184.216.34', family: 4 },
+    { address: '127.0.0.1', family: 4 },
+  ]
+  assert.equal(await service.validateTargetUrl('https://example.com', { lookupHostname: reboundLookup }), null)
+})
+
+test('URL policy rejects Tailscale, NAT64-private, and configured host addresses', async () => {
+  for (const address of ['100.100.100.100', '64:ff9b::a00:1']) {
+    const family = address.includes(':') ? 6 : 4
+    assert.equal(await service.validateTargetUrl('https://example.com', {
+      lookupHostname: async () => [{ address, family }],
+    }), null, address)
+  }
+  assert.equal(await service.validateTargetUrl('https://example.com', {
+    lookupHostname: async () => [{ address: '203.0.114.8', family: 4 }],
+    deniedAddresses: '203.0.114.8,2606:4700::/32',
+  }), null)
+  assert.equal(await service.validateTargetUrl('https://example.com', {
+    lookupHostname: async () => [{ address: '2606:4700:4700::1111', family: 6 }],
+    deniedAddresses: '2606:4700::/32',
+  }), null)
+})
+
+test('start rejects a private destination without taking the browser lease', async () => {
+  const session = party()
+  const response = await service.startBrowser({
+    partyId: session.id,
+    userId: 'host',
+    url: 'http://127.0.0.1:8096',
+  })
+  assert.deepEqual(response, { error: 'invalid url' })
+  assert.equal(lease.getLease(), null)
+  assert.equal(session.browser, null)
+  cleanup(session)
+})
+
+test('server and agent input limits stay in parity', async () => {
+  const agentPolicy = JSON.parse(readFileSync(
+    new URL('../../../browser/policy.json', import.meta.url), 'utf8'
+  ))
+  const { browserPolicy } = await import('./policy.js')
+  assert.deepEqual({ ...browserPolicy }, agentPolicy)
 })
 
 // ── control lease ──────────────────────────────────────────────────────────
@@ -287,7 +352,7 @@ test('a refused start leaves a playing party alone', async () => {
 
 // ── teardown ───────────────────────────────────────────────────────────────
 
-test('teardown clears the lease and the activity even when the agent is unreachable', async () => {
+test('teardown keeps the lease cleaning when the agent is unreachable', async () => {
   const session = party()
   lease.acquireLease(session.id)
   lease.markActive(session.id)
@@ -299,10 +364,150 @@ test('teardown clears the lease and the activity even when the agent is unreacha
   // to end.
   await service.teardownBrowser(session.id, 'test')
 
+  assert.equal(lease.getLease().state, 'cleaning')
+  assert.equal(session.browser.state, 'error')
+  assert.match(session.browser.error, /cleanup pending/i)
+  assert.equal(session.stage, 'browser')
+  cleanup(session)
+})
+
+test('successful teardown confirms stopped status before releasing the lease', async () => {
+  const session = party()
+  const acquired = lease.acquireLease(session.id)
+  lease.markActive(session.id, acquired.leaseId)
+  session.browser = { state: 'active', url: null, driverUserId: 'host', requests: [] }
+  session.stage = 'browser'
+  agentClient.setCallForTests(async (method, path) => {
+    if (path === '/session/stop') return { ok: true, status: 200, body: { stopped: true } }
+    if (path === '/status') return { ok: true, status: 200, body: { running: false, generation: null } }
+    throw new Error(`${method} ${path}`)
+  })
+
+  assert.deepEqual(await service.teardownBrowser(session.id, 'test', acquired.leaseId), { ok: true, stopped: true })
   assert.equal(lease.getLease(), null)
   assert.equal(session.browser, null)
-  assert.equal(session.stage, 'lobby', 'the party falls back to the lobby, not a dead browser')
+  assert.equal(session.stage, 'lobby')
   cleanup(session)
+})
+
+test('generation conflict quarantines instead of releasing the lease', async () => {
+  const session = party()
+  const acquired = lease.acquireLease(session.id)
+  lease.markActive(session.id, acquired.leaseId)
+  session.browser = { state: 'active', url: null, driverUserId: 'host', requests: [] }
+  agentClient.setCallForTests(async () => ({
+    ok: false, status: 409, error: 'generation mismatch',
+  }))
+
+  const response = await service.teardownBrowser(session.id, 'stale', acquired.leaseId)
+  assert.deepEqual(response, { ok: false, retry: false, quarantined: true })
+  assert.equal(lease.getLease().state, 'quarantined')
+  assert.equal(session.browser.state, 'error')
+  cleanup(session)
+})
+
+test('reconciliation tears down a target left behind by a controller restart', async () => {
+  const session = party()
+  const acquired = lease.acquireLease(session.id)
+  lease.markActive(session.id, acquired.leaseId)
+  const stops = []
+
+  const survivor = await lease.reconcile({
+    partyExists: () => true,
+    agentStatus: async () => ({
+      ok: true,
+      body: {
+        running: false,
+        publisherRunning: false,
+        targetRunning: true,
+        targetReachable: true,
+        publishing: false,
+        generation: acquired.leaseId,
+        expectedGeneration: null,
+      },
+    }),
+    stopSession: async (reason, generation) => {
+      stops.push({ reason, generation })
+      return { ok: true }
+    },
+  })
+
+  assert.equal(survivor, null)
+  assert.deepEqual(stops, [{ reason: 'reconcile', generation: acquired.leaseId }])
+  assert.equal(lease.getLease(), null)
+  cleanup(session)
+})
+
+test('reconciliation reclaims a publisher orphan when no lease exists', async () => {
+  const stops = []
+  const survivor = await lease.reconcile({
+    partyExists: () => false,
+    agentStatus: async () => ({
+      ok: true,
+      body: {
+        running: false,
+        publisherRunning: true,
+        targetRunning: false,
+        expectedGeneration: 'orphan-generation',
+      },
+    }),
+    stopSession: async (...args) => {
+      stops.push(args)
+      return { ok: true }
+    },
+  })
+
+  assert.equal(survivor, null)
+  assert.deepEqual(stops, [['orphan']])
+})
+
+test('reconciliation salvages only a complete publishing generation', async () => {
+  const session = party()
+  const acquired = lease.acquireLease(session.id)
+  lease.markActive(session.id, acquired.leaseId)
+
+  const survivor = await lease.reconcile({
+    partyExists: partyId => partyId === session.id,
+    agentStatus: async () => ({
+      ok: true,
+      body: {
+        running: true,
+        publisherRunning: true,
+        targetRunning: true,
+        targetReachable: true,
+        publishing: true,
+        generation: acquired.leaseId,
+        expectedGeneration: acquired.leaseId,
+        lastError: null,
+        exited: null,
+      },
+    }),
+    stopSession: async () => assert.fail('a healthy generation must not be stopped'),
+  })
+
+  assert.deepEqual(survivor, { partyId: session.id, leaseId: acquired.leaseId })
+  cleanup(session)
+})
+
+test('teardown does not clear a replacement lease created while stop was awaiting', async () => {
+  const session = party()
+  const replacement = createSession({ hostId: 'other', hostName: 'Other', hostSocketId: 'other-socket' })
+  const acquired = lease.acquireLease(session.id)
+  lease.markActive(session.id, acquired.leaseId)
+  session.browser = { state: 'active', url: null, driverUserId: 'host', requests: [] }
+  agentClient.setCallForTests(async (method, path) => {
+    if (path === '/session/stop') {
+      lease.forceClear()
+      lease.acquireLease(replacement.id)
+      return { ok: true, status: 200, body: { stopped: true } }
+    }
+    throw new Error(`${method} ${path}`)
+  })
+
+  assert.deepEqual(await service.teardownBrowser(session.id, 'race', acquired.leaseId), { ok: false, stale: true })
+  assert.equal(lease.getLease().partyId, replacement.id)
+  cleanup(session)
+  deleteSession(replacement.id)
 })
 
 test('teardown is idempotent and safe for a party that never had a browser', async () => {
@@ -324,7 +529,7 @@ test('concurrent teardowns share one in-flight operation', async () => {
   const second = service.teardownBrowser(session.id, 'b')
   assert.equal(first, second, 'a second teardown joins the first rather than racing it')
   await first
-  assert.equal(lease.getLease(), null)
+  assert.equal(lease.getLease().state, 'cleaning')
   cleanup(session)
 })
 
@@ -338,7 +543,55 @@ test('the monitor reclaims the browser when its party is gone', async () => {
   deleteSession(partyId)          // as if the party ended without tearing down
 
   await service.tick()
+  assert.equal(lease.getLease().state, 'cleaning')
+  lease.forceClear()
+})
+
+test('the monitor retries a cleaning lease and releases it only after confirmation', async () => {
+  const session = party()
+  const acquired = lease.acquireLease(session.id)
+  lease.markActive(session.id, acquired.leaseId)
+  lease.beginCleaning(session.id, acquired.leaseId)
+  session.browser = { state: 'error', url: null, driverUserId: 'host', requests: [] }
+  agentClient.setCallForTests(async (method, path) => {
+    if (path === '/session/stop') return { ok: true, status: 200, body: { stopped: true } }
+    if (path === '/status') return { ok: true, status: 200, body: { running: false, generation: null } }
+    throw new Error(`${method} ${path}`)
+  })
+
+  await service.tick()
   assert.equal(lease.getLease(), null)
+  assert.equal(session.browser, null)
+  cleanup(session)
+})
+
+test('the monitor leaves publication timeout to the startup waiter', async () => {
+  const session = party()
+  const acquired = lease.acquireLease(session.id)
+  lease.markActive(session.id, acquired.leaseId)
+  session.browser = { state: 'starting', url: null, driverUserId: 'host', requests: [] }
+  agentClient.setCallForTests(async (method, path) => {
+    assert.equal(path, '/status')
+    return {
+      ok: true,
+      body: {
+        running: true,
+        publisherRunning: true,
+        targetRunning: true,
+        targetReachable: true,
+        publishing: false,
+        generation: acquired.leaseId,
+        expectedGeneration: acquired.leaseId,
+        lastError: null,
+        exited: null,
+      },
+    }
+  })
+
+  await service.tick()
+  assert.equal(lease.getLease().leaseId, acquired.leaseId)
+  assert.equal(session.browser.state, 'starting')
+  cleanup(session)
 })
 
 // ── what clients are told ──────────────────────────────────────────────────

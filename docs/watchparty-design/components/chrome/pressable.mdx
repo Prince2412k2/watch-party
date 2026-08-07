@@ -1,0 +1,136 @@
+---
+title: Pressable
+kit: chrome
+web: —
+native: AnalogPressable
+status: native-only
+---
+
+# Pressable
+
+The pointer/keyboard/focus plumbing every chrome control sits on. It paints
+nothing.
+
+## Purpose
+
+Routing every control through one widget is what makes invariant 1
+("nothing is hover-only") **structural rather than a habit**. Anything built
+on `AnalogPressable` takes focus, activates on Enter/Space/Select, reports
+itself to `Semantics`, and refuses all three when disabled — without the
+author of that control having to remember any of it.
+
+It owns no pixels. The caller's `builder` draws everything, so the same
+interaction contract backs a button, a chip, a switch and a menu row without
+any of them inheriting a look they did not ask for.
+
+**Not for:** anything with its own gesture model — a slider, the timeline
+scrubber, a drag handle. Those need pointer deltas, not a press.
+
+## Anatomy
+
+```
+Semantics                 ← name, role, enabled, focused, selected/toggled
+└── Focus                 ← key handling, focus reporting
+    └── MouseRegion       ← hover, cursor
+        └── GestureDetector   ← tap, secondary tap, long press
+            └── builder(context, state)   ← the caller's pixels
+```
+
+The order matters. `Semantics` is outermost so a screen reader sees one
+node, not the builder's internals; `GestureDetector` is innermost so it
+covers exactly the painted area.
+
+## API
+
+**Native** — `flutter_app/lib/analog/chrome/analog_pressable.dart`
+
+| Param | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `builder` | `AnalogControlBuilder` | required | Draws the control from its state |
+| `onPressed` | `VoidCallback?` | `null` | **Null is the disabled state** |
+| `onSecondaryPressed` | `void Function(Offset)?` | `null` | Right-click / long-press |
+| `semanticLabel` | `String?` | `null` | The accessible name |
+| `selected` | `bool?` | `null` | `Semantics.selected` — one of several |
+| `toggled` | `bool?` | `null` | `Semantics.toggled` — a switch |
+| `button` | `bool` | `true` | False for radio-ish controls |
+| `autofocus` | `bool` | `false` | |
+| `focusNode` | `FocusNode?` | `null` | |
+| `cursor` | `MouseCursor` | `click` | |
+| `excludeSemantics` | `bool` | `false` | When the caller wraps richer semantics |
+
+**Web** — no direct equivalent. The browser gives `<button>` focus, Enter/Space
+and semantics for free, so the web kit uses real buttons and supplies the
+state layer in CSS. That is not a parity gap; it is the same contract
+obtained differently.
+
+## States
+
+`AnalogControlState` is passed to the builder and carries four booleans plus
+two derived values.
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | `onPressed != null` |
+| `hovered` / `focused` / `pressed` | The raw inputs |
+| `lit` | `enabled && (hovered \|\| focused \|\| pressed)` — the control has been *reached* |
+| `stateLayerOpacity` | The M3 opacity for this state, 0..1 |
+
+**States do not sum.** `stateLayerOpacity` returns the strongest, not the
+total:
+
+```dart
+if (!enabled) return 0;
+if (pressed)  return AnalogStateLayer.pressedPct / 100;  // 0.10
+if (focused)  return AnalogStateLayer.focusPct   / 100;  // 0.10
+if (hovered)  return AnalogStateLayer.hoverPct   / 100;  // 0.08
+return 0;
+```
+
+A pressed control is nearly always also hovered, so adding them would wash
+the plate out and make the press invisible. Taking the max is the only
+reading that produces a visible press.
+
+### Applying the layer
+
+```dart
+color: analogStateLayerOver(skin.fill, state)
+```
+
+`analogStateLayerOver` blends the wash **into** the container colour rather
+than stacking a translucent box on top. Three reasons, all load-bearing:
+
+1. It lands where M3 puts it — above the container, below the content — so a
+   label is never tinted.
+2. It animates for free inside the `AnimatedContainer` the control already
+   has.
+3. It costs no extra widget, on a stage that paints these by the hundred.
+
+Pass `extra:` for selection, which M3 stacks *underneath* the interaction
+states.
+
+## Tokens
+
+| Token | Used for |
+| --- | --- |
+| `stateLayer.hoverPct` / `focusPct` / `pressedPct` / `selectedPct` | The wash |
+| `color.ink` | What the wash is made of — never Material's palette |
+| `motion.chromeFadeMs` / `chromeFadeEase` | The wash's transition |
+| `poster.framePx` | The focus ring's stroke width |
+| `radius.chromePx` | The focus ring's corner |
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Disabling mid-interaction must not leave the control stuck looking hot | `didUpdateWidget` clears hover/pressed; **no test yet** |
+| 2 | A held key reads like a held pointer, not a repeat | Key **down** sinks, key **up** fires |
+| 3 | Disabled controls take no focus, hover, keys or pointer | `canRequestFocus: _enabled`, null callbacks |
+| 4 | Focus is drawn *inside* the bounds | `AnalogFocusRing` insets — an outer ring vanishes the moment an ancestor clips, and chrome sits in clipped rows all over this app |
+
+## Parity notes
+
+The web has no `AnalogPressable` and should not grow one. The equivalent
+guarantee there comes from using real `<button>` elements plus the shared
+state-layer tokens in CSS. What both clients must agree on is the *values* —
+which is why the opacities live in `analog-tokens.json` and not in either
+implementation.

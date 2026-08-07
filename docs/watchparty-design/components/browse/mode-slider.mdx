@@ -1,0 +1,52 @@
+---
+title: Mode slider
+kit: browse
+web: AnalogModeSlider
+native: — (planned)
+status: web-only
+---
+
+# Mode slider
+
+Singles ⇄ Collections, on the side of the Movies stage.
+
+## Purpose
+
+> "The way we have a slider for seasons in the show screen, on movies tab
+> will have two options — singles and collections."
+
+So it is presented the way the season slider is: **plain text positions,
+each carrying its own detent rule** — not a pill, not a segmented control.
+
+## Why the rule belongs to the position
+
+The positions are label-width, and "Singles" and "Collections" are not the
+same width. A single sliding rule would have to be measured at runtime and
+would be wrong on the first paint and after every font swap. Giving each
+position its own rule sidesteps the measurement entirely.
+
+## Driven three ways
+
+| Input | Route |
+| --- | --- |
+| Up / Down arrows | `stageKeyIntent` → `mode-prev` / `mode-next` |
+| Stepped scroll, outside the rail | `modeForScrollStep` |
+| Click | `onChange` |
+
+It is still a real pair of buttons. A mode switch reachable only by gesture
+would be an important action hidden behind one — forbidden by the
+reference.
+
+All three routes funnel through `stepBrowseMode`, which **clamps rather
+than wrapping**: a two-position slider that wraps is indistinguishable from
+a toggle, and holding Down must settle on Collections rather than
+flickering.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Reachable without a gesture | Real `<button role="tab">` elements |
+| 2 | Clamps, never wraps | `stepBrowseMode`; parity test in both clients |
+| 3 | Selection carries a detent, not colour alone | Per-position rule |
+| 4 | Switching modes leaves any franchise you were inside | `withMode` truncates to the root |

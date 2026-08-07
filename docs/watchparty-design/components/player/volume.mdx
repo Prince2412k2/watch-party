@@ -1,0 +1,31 @@
+---
+title: Volume
+kit: player
+web: player/
+native: AnalogVolume
+status: parity
+---
+
+# Volume
+
+The same precision-line treatment as the [timeline](./timeline.mdx),
+vertical.
+
+## Purpose
+
+Level and mute. Shares `hairline.*` with the timeline so the two controls
+are visibly the same instrument family.
+
+## Mute is a state, not a level of zero
+
+Muting and then unmuting restores the previous level. A control that
+implements mute as "set to 0" loses the level and is a bug users notice
+immediately.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Mute preserves the level | Separate `muted` flag |
+| 2 | Hit target is `hairline.hitPx` | Token |
+| 3 | Operable by keyboard | Arrows adjust, `M` toggles mute |

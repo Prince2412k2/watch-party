@@ -1,0 +1,55 @@
+---
+title: Dialog
+kit: chrome
+web: —
+native: showAnalogDialog / AnalogDialog
+status: native-only
+---
+
+# Dialog
+
+A modal question.
+
+## Purpose
+
+For a decision that must be made before anything else continues —
+destructive confirmations, a blocking error. Rare on purpose: a modal that
+appears for information is an interruption, and this app has a
+[toast rail](./toast.mdx) for that.
+
+## API
+
+```dart
+Future<T?> showAnalogDialog<T>({
+  required BuildContext context,
+  required Widget Function(BuildContext) builder,
+  bool barrierDismissible = true,
+})
+```
+
+`AnalogDialog({title, body, actions, child, maxWidth = 460})`
+
+Built on Material's modal route, which already owns the focus trap, the
+barrier, Escape, and route semantics.
+
+## Anatomy
+
+```
+╔════════════════════════════════════╗
+║ Title                              ║   ← titleLarge
+║                                    ║
+║ Body text, or an arbitrary child.  ║
+║                                    ║
+║                [Cancel]  [Confirm] ║   ← actions, trailing
+╚════════════════════════════════════╝
+   AnalogPanel, lift: over, max width 460
+```
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Focus is trapped and returns on close | Material's modal route |
+| 2 | Escape dismisses unless the decision is destructive | `barrierDismissible` |
+| 3 | The destructive action is `danger`-toned, never the default focus | Review |
+| 4 | Never used for information | Review — use a toast |

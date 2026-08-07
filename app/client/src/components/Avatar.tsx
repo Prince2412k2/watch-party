@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import type { CSSProperties } from 'react'
 import { Avatar as HumationAvatar } from '@humation/react'
-import { assets, effectiveConfig, DEFAULT_BACKGROUND } from '../lib/avatar'
-import type { AvatarConfig } from '../lib/avatar'
+import { assets, effectiveConfig, DEFAULT_BACKGROUND } from '../lib/avatar.ts'
+import type { AvatarConfig } from '../lib/avatar.ts'
 
 /**
  * Somebody's face, wherever we need one. Draws entirely from the asset package

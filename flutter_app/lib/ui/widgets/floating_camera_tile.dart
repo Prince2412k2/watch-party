@@ -19,7 +19,13 @@ abstract final class FloatingTileGeometry {
   static const double aspect = 4 / 3;
 
   static const double minWidth = 112;
-  static const double maxWidth = 340;
+
+  /// There is no fixed maximum. A hard 340px cap meant a resize simply stopped
+  /// responding partway through the drag, which reads as the handle breaking
+  /// rather than as a limit being enforced. The only ceiling now is the stage
+  /// itself, applied in [clampWidth] — the tile can grow until it runs out of
+  /// window, and a bound you can see the reason for is not a bound anyone
+  /// fights.
 
   /// Height of a collapsed tile — just its chrome header.
   static const double headerHeight = 26;
@@ -38,11 +44,16 @@ abstract final class FloatingTileGeometry {
 
   /// Clamp a width to the min/max, also never wider than the stage allows.
   static double clampWidth(double width, Size stage) {
-    final cap = math.min(
-      maxWidth,
-      math.max(minWidth, stage.width - 2 * margin),
+    // The stage is the only ceiling. Also bounded by height, which the old cap
+    // was quietly standing in for: at 4:3 a tile 1200px wide is 900px tall, so
+    // without this a wide short window would let you drag a tile taller than
+    // the video it floats over.
+    final byWidth = math.max(minWidth, stage.width - 2 * margin);
+    final byHeight = math.max(
+      minWidth,
+      (stage.height - 2 * margin - headerHeight) * aspect,
     );
-    return width.clamp(minWidth, cap);
+    return width.clamp(minWidth, math.min(byWidth, byHeight));
   }
 
   /// Clamp a top-left [offset] so a tile of [tile] size stays within [stage].

@@ -11,7 +11,6 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  cupertino_icons: ^1.0.8
 
   # Playback (libmpv, all-codec, GPU texture) — proven in the spike.
   media_kit: ^1.2.6
@@ -36,13 +35,10 @@ dependencies:
   flutter_riverpod: ^2.6.1
   go_router: ^14.8.1
   shared_preferences: ^2.5.3
-  url_launcher: ^6.3.1
   file_picker: ^8.1.7
   # Resumable, background, restart-surviving downloads.
   background_downloader: ^9.2.0
 
-  # Design-system primitives (theme bridge in lib/ui/shadcn_theme.dart).
-  shadcn_flutter: ^0.0.52
   # Watch-party invite QR (popcorn widget invite panel).
   qr_flutter: ^4.1.0
   # Profile avatars. Humation is a JavaScript renderer, so the server draws

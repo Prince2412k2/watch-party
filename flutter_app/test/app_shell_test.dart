@@ -1,19 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:watchparty/analog/chrome/chrome.dart';
+import 'package:go_router/go_router.dart';
 import 'package:watchparty/app/screens/app_shell.dart';
+import 'package:watchparty/data/catalog_repository.dart';
+import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
 
-/// AppShell chrome renders shadcn tooltips/badges, so it needs a shadcn `Theme`
-/// ancestor — mirror the app's `ShadcnLayer` wrap here.
-Widget _shadcn(BuildContext context, Widget? child) => sc.ShadcnLayer(
-  theme: AppShadcnTheme.dark,
-  themeMode: sc.ThemeMode.dark,
-  child: child!,
-);
+/// Counts browse-catalog fetches, which is the only thing the launch warm does.
+class _CountingApi extends MockApiClient {
+  int itemCalls = 0;
+
+  @override
+  Future<List<LibraryItem>> items({String? parentId}) async {
+    itemCalls++;
+    return const [];
+  }
+}
+
+/// AppShell chrome renders analog tooltips/badges and can raise notices, so it
+/// needs the theme plus an [AnalogToastHost] above it — mirror app.dart's
+/// builder wrap here.
+Widget _analog(BuildContext context, Widget? child) =>
+    Theme(data: AppTheme.dark, child: AnalogToastHost(child: child!));
 
 /// A bare `ProviderScope` defaults `authProvider` to its un-initialized,
 /// logged-out `AuthState()`. Signed-in tests need an authenticated override to
@@ -34,7 +46,7 @@ Widget _shell({
   String location = '/movies',
 }) => MaterialApp(
   theme: AppTheme.dark,
-  builder: _shadcn,
+  builder: _analog,
   home: ProviderScope(
     overrides: overrides,
     child: AppShell(location: location, child: const SizedBox()),
@@ -73,6 +85,51 @@ void main() {
     expect(find.byIcon(Icons.login), findsOneWidget);
   });
 
+  group('catalog warm on launch', () {
+    Future<_CountingApi> launch(WidgetTester tester, String location) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      final api = _CountingApi();
+      final container = ProviderContainer(
+        overrides: [
+          ..._signedIn(),
+          catalogNamespaceProvider.overrideWithValue('server|user'),
+          catalogRepositoryProvider.overrideWithValue(
+            CatalogRepository(api: api),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: AppTheme.dark,
+            builder: _analog,
+            home: AppShell(location: location, child: const SizedBox()),
+          ),
+        ),
+      );
+      await tester.pump();
+      await container.read(catalogPrefetcherProvider).settle();
+      return api;
+    }
+
+    testWidgets('coming up away from browse warms the catalog', (tester) async {
+      expect((await launch(tester, '/downloads')).itemCalls, 1);
+    });
+
+    testWidgets('coming up on browse leaves the fetch to the screen', (
+      tester,
+    ) async {
+      // The browse screen subscribes to the same key as it builds; warming it
+      // underneath would be a second request for a payload already in flight.
+      expect((await launch(tester, '/movies')).itemCalls, 0);
+      expect((await launch(tester, '/series')).itemCalls, 0);
+    });
+  });
+
   group('shellSectionTitle', () {
     test('maps shelled locations (incl. nested paths) to their section', () {
       expect(shellSectionTitle('/movies'), 'Movies');
@@ -87,6 +144,106 @@ void main() {
       expect(shellSectionTitle('/detail/xyz'), 'Watchparty');
       expect(shellSectionTitle('/'), 'Watchparty');
     });
+  });
+
+  // ── Auto-open vs. minimize (audit #61) ─────────────────────────────────
+  //
+  // `/party/:id` is a top-level route, so entering it REPLACES the shell — the
+  // shell is built from scratch on the way back with no memory of having been
+  // minimized. These drive a real router so that rebuild actually happens.
+
+  const watching = PartyState(
+    id: 'ROOM1234',
+    hostId: 'u1',
+    stage: 'watching',
+    mediaItemId: 'movie-1',
+  );
+
+  Widget shellRouter(ProviderContainer container) => UncontrolledProviderScope(
+    container: container,
+    child: MaterialApp.router(
+      theme: AppTheme.dark,
+      builder: _analog,
+      routerConfig: GoRouter(
+        initialLocation: '/movies',
+        routes: [
+          ShellRoute(
+            builder: (_, state, child) =>
+                AppShell(location: state.uri.path, child: child),
+            routes: [
+              GoRoute(path: '/movies', builder: (_, _) => const SizedBox()),
+            ],
+          ),
+          GoRoute(
+            path: '/party/:id',
+            builder: (_, state) =>
+                Text('Party ${state.pathParameters['id']}'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  ProviderContainer partyContainer() {
+    final container = ProviderContainer(overrides: _signedIn());
+    addTearDown(container.dispose);
+    container.read(partyProvider.notifier).setState(watching);
+    return container;
+  }
+
+  testWidgets('the shell opens the player for a watching party', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    final container = partyContainer();
+
+    await tester.pumpWidget(shellRouter(container));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Party ROOM1234'), findsOneWidget);
+  });
+
+  testWidgets('a minimized party is not re-opened, and stays live', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    final container = partyContainer();
+    // What the party surface's Back does before returning to the shell.
+    container.read(partyMinimizedProvider.notifier).minimize('ROOM1234');
+
+    await tester.pumpWidget(shellRouter(container));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Party ROOM1234'), findsNothing);
+    expect(find.text('Movies'), findsOneWidget);
+    // Minimize is not a leave: the session is untouched behind the popcorn.
+    expect(container.read(partyProvider), isNotNull);
+  });
+
+  testWidgets('leaving the player surface clears the minimize latch', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    final container = partyContainer();
+    container.read(partyMinimizedProvider.notifier).minimize('ROOM1234');
+
+    await tester.pumpWidget(shellRouter(container));
+    await tester.pumpAndSettle();
+
+    // Back to the lobby: there is no player surface to be minimized away from,
+    // so the next `watching` stage has to open normally again.
+    container
+        .read(partyProvider.notifier)
+        .setState(watching.copyWith(stage: 'lobby'));
+    await tester.pumpAndSettle();
+    expect(container.read(partyMinimizedProvider), isNull);
+
+    container.read(partyProvider.notifier).setState(watching);
+    await tester.pumpAndSettle();
+    expect(find.text('Party ROOM1234'), findsOneWidget);
   });
 
   test('partyPlayerRoute opens only a watching session with selected media', () {

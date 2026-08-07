@@ -3,12 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/app/screens/detail_screen.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
-import 'package:watchparty/ui/ui.dart';
 
 class _ZeroRuntimeApi extends MockApiClient {
   @override
@@ -104,11 +103,7 @@ void main() {
           }),
         ],
         child: MaterialApp(
-          builder: (context, child) => sc.ShadcnLayer(
-            theme: AppShadcnTheme.dark,
-            themeMode: sc.ThemeMode.dark,
-            child: child!,
-          ),
+          builder: (context, child) => AnalogToastHost(child: child!),
           home: const DetailScreen(itemId: 'mock-item-0'),
         ),
       ),
@@ -156,11 +151,7 @@ void main() {
           }),
         ],
         child: MaterialApp(
-          builder: (context, child) => sc.ShadcnLayer(
-            theme: AppShadcnTheme.dark,
-            themeMode: sc.ThemeMode.dark,
-            child: child!,
-          ),
+          builder: (context, child) => AnalogToastHost(child: child!),
           home: const DetailScreen(itemId: 'series'),
         ),
       ),
@@ -170,7 +161,10 @@ void main() {
     await tester.tap(find.text(_SeriesApi.second.name));
     await tester.pump();
 
-    expect(find.text('Signal'), findsOneWidget);
+    // Episodes follow the movies rule now: the cursor's episode is the subject
+    // of the copy, and the series it belongs to is the breadcrumb above it —
+    // so 'Signal' reads as the uppercase crumb rather than as the heading.
+    expect(find.text('SIGNAL'), findsOneWidget);
     expect(find.textContaining('S1 E2'), findsOneWidget);
     expect(api.secondDetail.isCompleted, isFalse);
     expect(errors, isEmpty, reason: 'layout errors: ${errors.take(2)}');

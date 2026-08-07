@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../analog/chrome/chrome.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
@@ -52,6 +54,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _saving = false;
   String? _status;
   bool _statusIsError = false;
+
+  // One counter per independent request family. Every one of these can be
+  // restarted (Retry, a part tap, a colour change) while the previous round is
+  // still in flight, and the responses arrive in whatever order the network
+  // decides. Each request captures the counter it was issued under and drops
+  // itself if a newer round has started, so a slow answer can no longer paint
+  // over a configuration the user has already moved past.
+  int _bootstrapGeneration = 0;
+  int _previewGeneration = 0;
+  int _thumbnailGeneration = 0;
   // Kept apart from [_status] (which reports saving): this is "the editor could
   // not be assembled", and it has to be visible on its own rather than inside
   // the options it is reporting the absence of.
@@ -91,44 +103,53 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   /// only need the second, so one of them failing must not blank the other —
   /// which is exactly what a single combined await used to do.
   Future<void> _bootstrap() async {
+    final generation = ++_bootstrapGeneration;
     final api = ref.read(apiClientProvider);
 
     try {
       final profile = await api.profile();
-      if (!mounted) return;
+      if (!_isCurrent(generation)) return;
       _name.text = profile.displayName ?? '';
       setState(() {
         _accountName = profile.accountName;
         _config = profile.avatar ?? const AvatarConfig();
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!_isCurrent(generation)) return;
       setState(() => _loadError = _messageFor(error, 'Could not load your profile'));
     }
 
     try {
       final options = await api.avatarOptions();
-      if (!mounted) return;
+      if (!_isCurrent(generation)) return;
       setState(() => _options = options);
     } catch (error) {
-      if (!mounted) return;
+      if (!_isCurrent(generation)) return;
       setState(
         () => _loadError = _messageFor(error, 'Could not load the avatar options'),
       );
     }
 
-    if (!mounted) return;
+    if (!_isCurrent(generation)) return;
     setState(() => _loading = false);
     await _refreshPreview();
     await _refreshThumbnails();
   }
 
+  /// Whether the round that captured [generation] is still the current one and
+  /// this screen is still on screen.
+  bool _isCurrent(int generation) =>
+      mounted && generation == _bootstrapGeneration;
+
   Future<void> _refreshPreview() async {
+    final generation = ++_previewGeneration;
+    // Captured before the await: this is the configuration the answer will
+    // describe, and by the time it lands `_config` may be two taps further on.
+    final config = _config.isEmpty ? null : _config;
     try {
-      final svg = await ref
-          .read(apiClientProvider)
-          .avatarPreviewSvg(_config.isEmpty ? null : _config);
-      if (mounted) setState(() => _previewSvg = svg.isEmpty ? null : svg);
+      final svg = await ref.read(apiClientProvider).avatarPreviewSvg(config);
+      if (!mounted || generation != _previewGeneration) return;
+      setState(() => _previewSvg = svg.isEmpty ? null : svg);
     } catch (_) {
       // Keep whatever is on screen; the preview is not worth an error banner.
     }
@@ -141,15 +162,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (key == _thumbnailColors && _thumbnails.isNotEmpty) return;
     _thumbnailColors = key;
 
+    final generation = ++_thumbnailGeneration;
+    // Captured, not read live inside the loop: the previous version reread
+    // `_config.colors` per slot, so one colour change mid-walk left the grid
+    // holding half the old palette and half the new one.
+    final colors = Map<String, String>.from(_config.colors);
     final api = ref.read(apiClientProvider);
     for (final group in options.groups) {
       for (final slot in group.slots) {
+        // A colour change starts a new round. The old one has to stop here:
+        // it is fetching in the previous palette, and every slot it still has
+        // to walk would overwrite the new palette's thumbnails with it.
+        if (!mounted || generation != _thumbnailGeneration) return;
         try {
-          final previews = await api.avatarPartSvgs(
-            slot.id,
-            colors: _config.colors,
-          );
-          if (!mounted) return;
+          final previews = await api.avatarPartSvgs(slot.id, colors: colors);
+          if (!mounted || generation != _thumbnailGeneration) return;
           setState(() => _thumbnails[slot.id] = previews);
         } catch (_) {
           // A slot without thumbnails still lists its parts by name.
@@ -356,16 +383,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       const SizedBox(height: AppSpacing.md),
       Row(
         children: [
-          TextButton(
+          AnalogButton(
+            label: 'Reset to my default avatar',
+            tone: AnalogButtonTone.ghost,
+            dense: true,
             onPressed: _reset,
-            child: Text(
-              'Reset to my default avatar',
-              style: TextStyle(
-                fontFamily: AppFonts.sans,
-                fontSize: 13,
-                color: wp.dim,
-              ),
-            ),
           ),
           const SizedBox(width: AppSpacing.md),
           if (_status != null)
@@ -422,9 +444,11 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
-          FilledButton(
-            onPressed: saving ? null : onSave,
-            child: Text(saving ? 'Saving...' : 'Save'),
+          AnalogButton(
+            label: saving ? 'Saving...' : 'Save',
+            tone: AnalogButtonTone.primary,
+            busy: saving,
+            onPressed: onSave,
           ),
         ],
       ),
@@ -464,7 +488,12 @@ class _Notice extends StatelessWidget {
               ),
             ),
           ),
-          TextButton(onPressed: onRetry, child: const Text('Retry')),
+          AnalogButton(
+            label: 'Retry',
+            tone: AnalogButtonTone.ghost,
+            dense: true,
+            onPressed: onRetry,
+          ),
         ],
       ),
     );

@@ -1,0 +1,34 @@
+---
+title: Settings stack
+kit: player
+web: player/
+native: AnalogSettingsStack
+status: parity
+---
+
+# Settings stack
+
+The player's nested settings surface — quality, audio, subtitles.
+
+## Purpose
+
+A drill-in stack rather than a wide menu, because the options are nested
+(Subtitles → track → styling) and a remote can only move in four
+directions.
+
+`AnalogSettingsEntry` describes one row; the stack owns the navigation and
+the back behaviour.
+
+## Auto-hide interaction
+
+The player chrome auto-hides on `timing.chromeAutoHideMs` (3000). **The
+settings stack suppresses that while open** — chrome vanishing under an
+open menu is disorienting and loses the user's place.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Open settings suppress chrome auto-hide | `AnalogAutoHideController`; covered by the auto-hide fixture |
+| 2 | Back always exists, at every depth | The stack, not the caller, owns it |
+| 3 | Drill-in depth is navigable by d-pad alone | Four-direction model |

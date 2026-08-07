@@ -1,0 +1,52 @@
+---
+title: Timeline
+kit: player
+web: player/
+native: AnalogTimeline
+status: parity
+---
+
+# Timeline
+
+The scrub bar. A precision line, not a filled bar.
+
+## Purpose
+
+Position, buffer, and — in a party — everyone else's position. The visible
+line is thin; **the hit target is not**.
+
+## Thin line, fat target
+
+| Token | Value | What it is |
+| --- | --- | --- |
+| `hairline.idlePx` | 2 | The resting line |
+| `hairline.activePx` | 4 | The line while scrubbing |
+| `hairline.hitPx` | **24** | The pointer/touch target |
+| `hairline.handlePx` | 10 | The scrub handle |
+| `hairline.handleFocusPx` | 14 | The handle when focused |
+| `hairline.rangeGapPx` | 2 | Gap between buffered ranges |
+
+A 2px line with a 2px target is unusable on touch and nearly unusable with
+a mouse. Separating the two is the whole reason `hitPx` exists as a token
+rather than as a magic number.
+
+## Keyboard
+
+Arrow keys seek by a fixed step; Home/End jump to the ends. The handle
+takes focus and grows to `handleFocusPx` — a **size** change, so it is
+visible without colour.
+
+## Party positions
+
+Other viewers' positions are marks on the same line. They are not
+interactive and must never be mistakable for the scrub handle, so they
+differ in shape rather than only in tint.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | The hit target is `hairline.hitPx`, whatever the line looks like | Token; asserted in the player parity test |
+| 2 | Focus grows the handle | `handleFocusPx` |
+| 3 | Other viewers' marks are not confusable with the handle | Distinct shape |
+| 4 | Seeking is possible without a pointer | Arrows / Home / End |

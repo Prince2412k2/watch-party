@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { createPartPreview, getPartsForSlot } from '@humation/core'
 import type { PartOption } from '@humation/core'
-import { useAuth } from '../context/AuthContext'
-import { useMediaQuery } from '../hooks/useIsMobile'
-import Avatar from '../components/Avatar'
-import { assets, effectiveConfig, PALETTES } from '../lib/avatar'
-import type { AvatarConfig } from '../lib/avatar'
-import { errorMessage, isUserProfile } from '../guards'
-import { apiJson, stringField } from '../types/guards'
+import { useAuth } from '../context/AuthContext.tsx'
+import { useMediaQuery } from '../hooks/useIsMobile.ts'
+import Avatar from '../components/Avatar.tsx'
+import { assets, effectiveConfig, PALETTES } from '../lib/avatar.ts'
+import type { AvatarConfig } from '../lib/avatar.ts'
+import { errorMessage, isUserProfile } from '../guards.ts'
+import { apiJson, stringField } from '../types/guards.ts'
 
 // Matches the server's limit. Enforced here so the field stops accepting rather
 // than letting a save fail for a reason the user can't see.

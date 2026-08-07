@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:watchparty/analog/player_core.dart';
 import 'package:watchparty/player/player_chrome.dart';
 import 'package:watchparty/player/player_controller.dart';
 import 'package:watchparty/player/party_track_mapping.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/playback_info.dart';
 import 'package:watchparty/models/trickplay_manifest.dart';
+import 'package:watchparty/ui/analog_tokens.dart';
 import 'package:watchparty/ui/ui.dart';
 
 /// Records every write the chrome makes to the controller so the tests can
@@ -24,9 +27,14 @@ class _SpyController implements PlayerController {
 
   final _tracksCtrl = StreamController<PlayerTracks>.broadcast();
   final _positionCtrl = StreamController<Duration>.broadcast();
+  final _playingCtrl = StreamController<bool>.broadcast();
 
   void emitTracks(PlayerTracks t) => _tracksCtrl.add(t);
   void emitPosition(Duration position) => _positionCtrl.add(position);
+  void emitPlaying(bool playing) => _playingCtrl.add(playing);
+
+  /// Whether the chrome is still subscribed to this controller's streams.
+  bool get isBound => _positionCtrl.hasListener || _tracksCtrl.hasListener;
 
   @override
   Future<void> setVolume(double volume) async => volumes.add(volume);
@@ -53,6 +61,7 @@ class _SpyController implements PlayerController {
   Future<void> dispose() async {
     await _tracksCtrl.close();
     await _positionCtrl.close();
+    await _playingCtrl.close();
   }
 
   @override
@@ -62,14 +71,14 @@ class _SpyController implements PlayerController {
   @override
   Stream<bool> get buffering => const Stream.empty();
   @override
-  Stream<bool> get playing => const Stream.empty();
+  Stream<bool> get playing => _playingCtrl.stream;
   @override
   Stream<bool> get completed => const Stream.empty();
   @override
   Stream<PlayerTracks> get tracks => _tracksCtrl.stream;
 
   @override
-  Duration get positionNow => Duration.zero;
+  Duration positionNow = Duration.zero;
   @override
   Duration get durationNow => const Duration(minutes: 90);
   @override
@@ -151,13 +160,16 @@ void main() {
     expect(c.volumes, [0.0, 100.0]);
   });
 
-  testWidgets('dragging the volume slider calls setVolume', (tester) async {
+  // The volume control is now a VERTICAL hairline near the right edge rather
+  // than a 76px horizontal slider inside the transport row, so the drag that
+  // lowers it is downward.
+  testWidgets('dragging the volume control calls setVolume', (tester) async {
     final c = _SpyController();
     await pumpChrome(tester, c);
 
     await tester.drag(
       find.byKey(const Key('volumeSlider')),
-      const Offset(-40, 0),
+      const Offset(0, 40),
     );
     await tester.pump();
     expect(c.volumes, isNotEmpty);
@@ -486,5 +498,328 @@ void main() {
     await tester.pump();
 
     expect(c.seeks, hasLength(1));
+  });
+
+  // ── #67: the analog control kit, wired end to end ───────────────────────
+
+  // `keyC` used to be matched on the logical key ALONE and returned `handled`,
+  // so Ctrl+C / Cmd+C toggled chat and swallowed the platform copy. The guard
+  // is analog/player_core.dart's shouldToggleChat, shared with React.
+  testWidgets('Ctrl+C toggles chat, and never at the cost of copy', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    var chatToggles = 0;
+    var pttStarts = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: PlayerChrome(
+            controller: c,
+            onToggleChat: () => chatToggles++,
+            onPushToTalkStart: () => pttStarts++,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Bare `c` keeps working.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.pump();
+    expect(chatToggles, 1);
+
+    // Ctrl+C with nothing selected is the analog chat shortcut.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.pump();
+    expect(chatToggles, 2);
+
+    // Every OTHER accelerator the player used to swallow is left to the
+    // platform: Ctrl+T is a new window, not push-to-talk.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
+    await tester.pump();
+    expect(pttStarts, 0);
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
+    await tester.pump();
+    expect(pttStarts, 1);
+  });
+
+  testWidgets('Ctrl+C inside a text field leaves copy alone', (tester) async {
+    final c = _SpyController();
+    var chatToggles = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: Column(
+            children: [
+              Expanded(
+                child: PlayerChrome(
+                  controller: c,
+                  onToggleChat: () => chatToggles++,
+                ),
+              ),
+              const TextField(key: Key('composer')),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('composer')));
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(chatToggles, 0);
+  });
+
+  // Volume, mute and fullscreen BUTTONS were always ungated (volume is a
+  // personal setting), but their keys sat behind canControl, so a read-only
+  // guest's ↑/↓/M did nothing while the same guest's slider worked.
+  testWidgets('a read-only guest can still work volume from the keyboard', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(body: PlayerChrome(controller: c, canControl: false)),
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(c.volumes, [90.0]);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+    await tester.pump();
+    expect(c.volumes, [90.0, 0.0]);
+
+    // Transport keys stay gated.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(c.seeks, isEmpty);
+  });
+
+  testWidgets('chat messages toast over the player and expire on their own '
+      'four second clock', (tester) async {
+    final c = _SpyController();
+    Widget chrome({
+      required bool chatOpen,
+      required List<ToastMessage> toasts,
+    }) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(
+        body: PlayerChrome(
+          controller: c,
+          chatOpen: chatOpen,
+          chatToasts: toasts,
+          onToggleChat: () {},
+        ),
+      ),
+    );
+
+    const first = ToastMessage(
+      id: 'a',
+      sender: 'Ada',
+      preview: 'this bit is the best',
+      receivedAtMs: 0,
+    );
+    await tester.pumpWidget(chrome(chatOpen: false, toasts: const []));
+    await tester.pump();
+    await tester.pumpWidget(chrome(chatOpen: false, toasts: const [first]));
+    await tester.pumpAndSettle();
+    expect(find.text('Ada'), findsOneWidget);
+    expect(find.text('this bit is the best'), findsOneWidget);
+
+    // Four seconds on its own clock, no dismissal required.
+    await tester.pump(AnalogTiming.toastLifetimeMs);
+    await tester.pumpAndSettle();
+    expect(find.text('this bit is the best'), findsNothing);
+
+    // A message that arrives while the drawer is open is never queued, so it
+    // cannot toast the moment chat closes.
+    const second = ToastMessage(
+      id: 'b',
+      sender: 'Grace',
+      preview: 'wait, rewind',
+      receivedAtMs: 0,
+    );
+    await tester.pumpWidget(
+      chrome(chatOpen: true, toasts: const [first, second]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('wait, rewind'), findsNothing);
+    await tester.pumpWidget(
+      chrome(chatOpen: false, toasts: const [first, second]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('wait, rewind'), findsNothing);
+  });
+
+  testWidgets('opening chat dismisses the toasts on screen', (tester) async {
+    final c = _SpyController();
+    const message = ToastMessage(
+      id: 'a',
+      sender: 'Ada',
+      preview: 'over here',
+      receivedAtMs: 0,
+    );
+    Widget chrome(bool chatOpen, List<ToastMessage> toasts) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(
+        body: PlayerChrome(
+          controller: c,
+          chatOpen: chatOpen,
+          chatToasts: toasts,
+          onToggleChat: () {},
+        ),
+      ),
+    );
+    // Joining a party mid-session must not fire the backlog at the viewer, so
+    // the log present at mount is seeded as already-seen.
+    await tester.pumpWidget(chrome(false, const [message]));
+    await tester.pumpAndSettle();
+    expect(find.text('over here'), findsNothing);
+
+    const arriving = ToastMessage(
+      id: 'b',
+      sender: 'Ada',
+      preview: 'over here',
+      receivedAtMs: 0,
+    );
+    await tester.pumpWidget(chrome(false, const [message, arriving]));
+    await tester.pumpAndSettle();
+    expect(find.text('over here'), findsOneWidget);
+
+    await tester.pumpWidget(chrome(true, const [message, arriving]));
+    await tester.pumpAndSettle();
+    expect(find.text('over here'), findsNothing);
+
+    // Closing chat does not resurrect it.
+    await tester.pumpWidget(chrome(false, const [message, arriving]));
+    await tester.pumpAndSettle();
+    expect(find.text('over here'), findsNothing);
+  });
+
+  // Solo playback used to run its own idle Timer here while the party screen
+  // ran a second one; both now drive AnalogAutoHideController, which is
+  // analog/player_core.dart's machine.
+  testWidgets('self-managed chrome hides three seconds into playback and '
+      'returns on input', (tester) async {
+    final c = _SpyController();
+    await pumpChrome(tester, c);
+
+    final transport = find.ancestor(
+      of: find.byKey(const Key('playbackScrubber')),
+      matching: find.byType(AnimatedOpacity),
+    );
+    double opacity() => tester.widget<AnimatedOpacity>(transport.first).opacity;
+
+    // Paused: nothing to hide from.
+    await tester.pump(const Duration(seconds: 10));
+    expect(opacity(), 1);
+
+    c.emitPlaying(true);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 2900));
+    expect(opacity(), 1);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(opacity(), 0);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+    await tester.pump();
+    expect(opacity(), 1);
+  });
+
+  testWidgets('parent-owned visibility still wins and forwards every wake', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    var wakes = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: PlayerChrome(
+            controller: c,
+            visible: false,
+            onWake: () => wakes++,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final transport = find.ancestor(
+      of: find.byKey(const Key('playbackScrubber')),
+      matching: find.byType(AnimatedOpacity),
+    );
+    expect(tester.widget<AnimatedOpacity>(transport.first).opacity, 0);
+
+    c.emitPlaying(true);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 10));
+    // Still hidden: the parent owns the flag, and this chrome never overrides.
+    expect(tester.widget<AnimatedOpacity>(transport.first).opacity, 0);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+    await tester.pump();
+    expect(wakes, greaterThan(0));
+  });
+
+  // A replaced controller used to leave the chrome subscribed to the old
+  // player: it kept mirroring a position/track set nobody was watching, while
+  // every control wrote to the new one (audit #61).
+  testWidgets('replacing the controller unbinds the old player and seeds '
+      'the new one', (tester) async {
+    final first = _SpyController();
+    final second = _SpyController()..positionNow = const Duration(minutes: 10);
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+
+    Widget chrome(_SpyController c) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(body: PlayerChrome(controller: c)),
+    );
+
+    await tester.pumpWidget(chrome(first));
+    await tester.pump();
+    first.emitPosition(const Duration(minutes: 3));
+    await tester.pump(); // deliver the stream event (schedules setState)
+    await tester.pump(); // rebuild with it
+    expect(find.text('3:00 / 1:30:00'), findsOneWidget);
+    expect(first.isBound, isTrue);
+
+    await tester.pumpWidget(chrome(second));
+    await tester.pump();
+
+    // Seeded from the replacement's own state, not carried over from the old.
+    expect(find.text('10:00 / 1:30:00'), findsOneWidget);
+    expect(first.isBound, isFalse);
+    expect(second.isBound, isTrue);
+
+    // The old player can no longer move the chrome…
+    first.emitPosition(const Duration(minutes: 40));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('10:00 / 1:30:00'), findsOneWidget);
+
+    // …and the new one can, on every stream the chrome reads.
+    second.emitPosition(const Duration(minutes: 20));
+    second.emitTracks(tracks);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('20:00 / 1:30:00'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.subtitles));
+    await tester.pumpAndSettle();
+    expect(find.text('English SDH'), findsOneWidget);
   });
 }

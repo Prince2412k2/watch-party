@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
 
+import '../../analog/chrome/chrome.dart';
 import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
 import 'servarr_detail_screen.dart';
@@ -96,17 +96,14 @@ class _ServarrScreenState extends ConsumerState<ServarrScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  sc.ButtonGroup(
-                    children: [
+                  AnalogSegmented<ServarrKind>(
+                    semanticLabel: 'Discover',
+                    value: _activeKind,
+                    segments: [
                       for (final kind in ServarrKind.values)
-                        sc.Toggle(
-                          value: _activeKind == kind,
-                          onChanged: (_) => setState(() {
-                            _activeKind = kind;
-                          }),
-                          child: Text(kind.label),
-                        ),
+                        AnalogSegment(value: kind, label: kind.label),
                     ],
+                    onChanged: (kind) => setState(() => _activeKind = kind),
                   ),
                 ],
               ),
@@ -249,10 +246,12 @@ class _RailUnavailable extends StatelessWidget {
                   style: TextStyle(fontSize: 14, color: wp.dim),
                 ),
               ),
-              TextButton.icon(
+              AnalogButton(
+                label: 'Retry',
+                icon: Icons.refresh,
+                tone: AnalogButtonTone.ghost,
+                dense: true,
                 onPressed: onRetry,
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('Retry'),
               ),
             ],
           ),

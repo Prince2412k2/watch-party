@@ -8,21 +8,12 @@ export const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export const stringValue = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
-export const numberValue = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? value : undefined
-export const booleanValue = (value: unknown): boolean | undefined =>
-  typeof value === 'boolean' ? value : undefined
-
 export const arrayOf = <T>(value: unknown, guard: (item: unknown) => item is T): T[] =>
   Array.isArray(value) ? value.filter(guard) : []
 
 export async function apiJson(response: Response): Promise<unknown> {
   return response.json() as Promise<unknown>
 }
-
-export interface LibraryView { Id: string; Name: string; CollectionType?: string }
-export const isLibraryView = (value: unknown): value is LibraryView =>
-  isRecord(value) && typeof value.Id === 'string' && typeof value.Name === 'string'
 
 export interface TorrentJson extends Record<string, unknown> { hash: string }
 export const isTorrentJson = (value: unknown): value is TorrentJson =>

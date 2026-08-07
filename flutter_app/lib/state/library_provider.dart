@@ -191,8 +191,37 @@ final browseByTypeProvider =
           : items.where((item) => item.type == type).toList());
 });
 
-String? _catalogNamespace(Ref ref) {
+/// The namespace the catalog cache is keyed under: `'{baseUrl}|{userId}'`, so
+/// two accounts on one machine — or one account across two servers — can never
+/// read each other's catalog. Null when nobody is signed in, which is what
+/// tells CatalogRepository not to persist at all.
+///
+/// Exposed as a provider because prefetch needs it too: warming a key means
+/// naming the same namespace the read will look under, and a second copy of
+/// this expression would be a second chance to get that wrong.
+final catalogNamespaceProvider = Provider<String?>((ref) {
   final userId = ref.watch(authProvider).user?.userId;
   if (userId == null) return null;
   return '${ref.watch(apiClientProvider).baseUrl}|$userId';
-}
+});
+
+String? _catalogNamespace(Ref ref) => ref.watch(catalogNamespaceProvider);
+
+
+// ── Movies: Singles ⇄ Collections ──────────────────────────────────────────
+
+/// Movie collections / franchises, for the Movies stage's Collections mode.
+///
+/// Its own endpoint rather than a filter over the catalog: the library listing
+/// does not return box sets at all, so filtering `items()` by `type == 'BoxSet'`
+/// yields an empty rail no matter how many franchises the server has.
+final movieCollectionsProvider = FutureProvider<List<LibraryItem>>((ref) async {
+  return ref.watch(apiClientProvider).collections();
+});
+
+/// The parts of one collection, in release order — the show-like level you get
+/// by opening a franchise.
+final collectionItemsProvider =
+    FutureProvider.family<List<LibraryItem>, String>((ref, collectionId) async {
+  return ref.watch(apiClientProvider).collectionItems(collectionId);
+});

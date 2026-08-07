@@ -6,13 +6,22 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../analog/chrome/chrome.dart';
 import 'package:flutter/services.dart';
 
+import '../analog/player/analog_settings_stack.dart';
+import '../analog/player/analog_timeline.dart';
+import '../analog/player/analog_toast_stack.dart';
+import '../analog/player/analog_volume.dart';
+import '../analog/player/auto_hide_controller.dart';
+import '../analog/player_core.dart';
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
 import '../models/subtitle_preferences.dart';
 import '../models/trickplay_manifest.dart';
+import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
 import 'media_kit_player_controller.dart';
 import 'party_track_mapping.dart';
@@ -47,7 +56,6 @@ class PlayerChrome extends StatefulWidget {
     this.onBack,
     this.onToggleFullscreen,
     this.isFullscreen = false,
-    this.idleTimeout = const Duration(seconds: 3),
     this.onSeek,
     this.itemId,
     this.mediaSourceId,
@@ -64,6 +72,8 @@ class PlayerChrome extends StatefulWidget {
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
+    this.chatOpen = false,
+    this.chatToasts = const [],
   });
 
   final PlayerController controller;
@@ -83,6 +93,16 @@ class PlayerChrome extends StatefulWidget {
   final VoidCallback? onToggleChat;
   final VoidCallback? onPushToTalkStart;
   final VoidCallback? onPushToTalkStop;
+
+  /// Whether the party chat drawer is open. Toasts exist only while it is
+  /// closed, and opening it dismisses the ones on screen.
+  final bool chatOpen;
+
+  /// The party chat log, oldest first. Entries the chrome has not seen before
+  /// are queued as toasts (stamped with the LOCAL clock, so a skewed server
+  /// timestamp cannot expire a message the instant it arrives). Empty in solo
+  /// playback — there is no chat to notify about.
+  final List<ToastMessage> chatToasts;
 
   /// Cached ("downloaded") byte-range spans for [itemId], as 0..1 fractions
   /// of total length, painted behind the scrubber's play-progress as a
@@ -111,17 +131,26 @@ class PlayerChrome extends StatefulWidget {
   final VoidCallback? onToggleFullscreen;
   final bool isFullscreen;
 
-  final Duration idleTimeout;
-
   @override
   State<PlayerChrome> createState() => _PlayerChromeState();
 }
 
-class _PlayerChromeState extends State<PlayerChrome> {
+class _PlayerChromeState extends State<PlayerChrome>
+    with WidgetsBindingObserver {
   final _focusNode = FocusNode();
 
-  bool _visible = true;
-  Timer? _idleTimer;
+  /// The single auto-hide clock, driven by `analog/player_core.dart`. Only
+  /// armed on the solo path — the party screen owns an identical controller and
+  /// passes the resolved flag down through [PlayerChrome.visible].
+  late final AnalogAutoHideController _autoHide;
+
+  ToastQueueState _toasts = const ToastQueueState();
+  final Set<String> _seenToastIds = {};
+  final Map<String, Timer> _toastTimers = {};
+  int _toastStampMs = 0;
+
+  /// How far libmpv has read ahead, when the concrete controller can say.
+  Duration _bufferedTo = Duration.zero;
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -165,8 +194,24 @@ class _PlayerChromeState extends State<PlayerChrome> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     FocusManager.instance.addListener(_onGlobalFocusChange);
-    final c = widget.controller;
+    _autoHide = AnalogAutoHideController(playing: widget.controller.isPlayingNow)
+      ..addListener(_onAutoHide);
+    _bindController(widget.controller);
+    _syncToasts(seed: true);
+    _loadTrickplay();
+    _loadExternalSubtitles();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _applyCanonicalSubtitlePreferences();
+      _applyCanonicalTracks();
+    });
+  }
+
+  /// Seed every mirrored field from [c]'s real state and subscribe to its
+  /// streams. Assignments only, no `setState` — callers own the rebuild
+  /// (`initState` runs before the first build; [didUpdateWidget] wraps it).
+  void _bindController(PlayerController c) {
     _position = c.positionNow;
     _duration = c.durationNow;
     _playing = c.isPlayingNow;
@@ -195,7 +240,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _subs.add(
       c.playing.listen((p) {
         setState(() => _playing = p);
-        _scheduleIdle();
+        _autoHide.setPlaying(p);
       }),
     );
     _subs.add(c.buffering.listen((b) => setState(() => _buffering = b)));
@@ -219,28 +264,51 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
     // media_kit surfaces decode/network errors on an additive `errors` stream
     // (not part of the frozen contract) — drive the E4.3 error overlay off it
-    // when the concrete controller supports it.
+    // when the concrete controller supports it. `bufferedTo` is additive in the
+    // same way and feeds the timeline's buffered layer; a controller without it
+    // (mock/spy, or an offline local file) renders that layer empty.
     if (c is MediaKitPlayerController) {
       _subs.add(c.errors.listen((e) => setState(() => _error = e)));
+      _bufferedTo = c.bufferedToNow;
+      _subs.add(c.bufferedTo.listen((b) => setState(() => _bufferedTo = b)));
+    } else {
+      _bufferedTo = Duration.zero;
     }
+  }
 
-    _scheduleIdle();
-    _loadTrickplay();
-    _loadExternalSubtitles();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _applyCanonicalSubtitlePreferences();
-      _applyCanonicalTracks();
-    });
+  void _unbindController() {
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
   }
 
   @override
   void didUpdateWidget(PlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
+      // A replaced controller left this chrome subscribed to the OLD player: the
+      // transport bar kept mirroring a position/duration/track set nobody was
+      // watching, every control wrote to the new player, and none of the new
+      // player's own state was ever read. Drop the old streams and re-seed.
+      _unbindController();
+      // Anything still resolving against the previous player (an external
+      // subtitle fetch) must not land on the new one.
+      _subtitleSelectionVersion++;
       setState(() {
         _subtitleCues = const [];
         _selectedSubtitle = null;
+        // These native track ids were injected into the OLD player; the new one
+        // has no such tracks, so keeping them would hide real subtitle entries.
+        _loadedExternalSubtitleTrackIds.clear();
+        _bindController(widget.controller);
       });
+      // Idle behaviour follows the new player's play state, and the party's
+      // canonical audio/subtitle/appearance choices have to be re-applied —
+      // the replacement starts on libmpv's own defaults.
+      _autoHide.setPlaying(widget.controller.isPlayingNow);
+      unawaited(_applyCanonicalSubtitlePreferences());
+      unawaited(_applyCanonicalTracks());
     }
     if (oldWidget.itemId != widget.itemId ||
         oldWidget.mediaSourceId != widget.mediaSourceId ||
@@ -255,6 +323,90 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (oldWidget.subtitlePreferences != widget.subtitlePreferences) {
       _applyCanonicalSubtitlePreferences();
     }
+    if (oldWidget.chatOpen != widget.chatOpen) {
+      // Opening chat dismisses what is on screen and does not resurrect it on
+      // close; the drawer shows the messages in full.
+      _toasts = setChatOpen(_toasts, widget.chatOpen);
+      _armToastTimers();
+    }
+    if (!identical(oldWidget.chatToasts, widget.chatToasts)) _syncToasts();
+  }
+
+  // ── chat toasts ───────────────────────────────────────────────────────────
+
+  /// Queue every message this chrome has not seen before. Ids are remembered
+  /// separately from the queue so a toast that already expired (or arrived
+  /// while chat was open) is never re-queued when the log rebuilds.
+  ///
+  /// [seed] marks the log as already-seen without queueing any of it: joining a
+  /// party mid-session must not fire the whole backlog at the viewer.
+  void _syncToasts({bool seed = false}) {
+    var next = setChatOpen(_toasts, widget.chatOpen);
+    for (final message in widget.chatToasts) {
+      if (!_seenToastIds.add(message.id)) continue;
+      if (seed) continue;
+      next = pushToast(
+        next,
+        ToastMessage(
+          id: message.id,
+          sender: message.sender,
+          preview: message.preview,
+          // Stamps are a strictly increasing sequence, not epoch time: the four
+          // seconds are measured by the toast's OWN Timer below, and using wall
+          // time here would only introduce clock skew against the server
+          // timestamp and make the rule undrivable from a test clock.
+          receivedAtMs: _toastStampMs++,
+        ),
+      );
+    }
+    if (identical(next, _toasts)) return;
+    setState(() => _toasts = next);
+    _armToastTimers();
+  }
+
+  /// "Each toast remains for four seconds unless chat is opened first" — so
+  /// each one gets its own timer rather than a shared poll. When it fires, the
+  /// shared [expireToasts] is handed that toast's deadline, which drops it and
+  /// anything older still lingering.
+  void _armToastTimers() {
+    final live = {for (final toast in _toasts.queue) toast.id};
+    _toastTimers.removeWhere((id, timer) {
+      if (live.contains(id)) return false;
+      timer.cancel();
+      return true;
+    });
+    for (final toast in _toasts.queue) {
+      if (_toastTimers.containsKey(toast.id)) continue;
+      _toastTimers[toast.id] = Timer(AnalogTiming.toastLifetimeMs, () {
+        _toastTimers.remove(toast.id);
+        if (!mounted) return;
+        final next = expireToasts(
+          _toasts,
+          toast.receivedAtMs + AnalogTiming.toastLifetimeMs.inMilliseconds,
+        );
+        if (identical(next, _toasts)) return;
+        setState(() => _toasts = next);
+        _armToastTimers();
+      });
+    }
+  }
+
+  void _cancelToastTimers() {
+    for (final timer in _toastTimers.values) {
+      timer.cancel();
+    }
+    _toastTimers.clear();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // "Message content must not remain visible on a locked or backgrounded
+    // device." Anything queued is dropped rather than held for the return.
+    if (state == AppLifecycleState.resumed) return;
+    if (_toasts.queue.isEmpty) return;
+    _cancelToastTimers();
+    setState(() => _toasts = ToastQueueState(chatOpen: _toasts.chatOpen));
   }
 
   Future<void> _loadTrickplay() async {
@@ -401,11 +553,13 @@ class _PlayerChromeState extends State<PlayerChrome> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     FocusManager.instance.removeListener(_onGlobalFocusChange);
-    _idleTimer?.cancel();
-    for (final s in _subs) {
-      s.cancel();
-    }
+    _cancelToastTimers();
+    _autoHide
+      ..removeListener(_onAutoHide)
+      ..dispose();
+    _unbindController();
     _focusNode.dispose();
     super.dispose();
   }
@@ -421,30 +575,46 @@ class _PlayerChromeState extends State<PlayerChrome> {
     if (stranded) _reclaimKeyboard();
   }
 
-  void _scheduleIdle() {
-    // Parent-owned visibility (party path): the single unified timer lives in
-    // the party screen, so don't run a second one here.
-    if (widget.visible != null) return;
-    _idleTimer?.cancel();
-    if (!_playing) {
-      // Stay visible while paused/buffering — nothing to hide from.
-      setState(() => _visible = true);
-      return;
-    }
-    _idleTimer = Timer(widget.idleTimeout, () {
-      if (mounted) setState(() => _visible = false);
-    });
+  void _onAutoHide() {
+    if (mounted) setState(() {});
   }
 
-  void _wake() {
-    // Parent-owned visibility: forward the activity so the single timer re-arms.
+  /// Relevant input: reveal the chrome and restart the three second clock.
+  ///
+  /// Both auto-hide owners run the SAME `analog/player_core.dart` machine — the
+  /// party screen holds one [AnalogAutoHideController] for the whole immersive
+  /// stage and passes its flag down as [PlayerChrome.visible]; solo playback
+  /// uses the one this state owns. When the parent owns it, activity is
+  /// forwarded so its timer re-arms.
+  void _wake([PlayerInputKind kind = PlayerInputKind.pointer]) {
     if (widget.visible != null) {
       widget.onWake?.call();
       return;
     }
-    setState(() => _visible = true);
-    _scheduleIdle();
+    _autoHide.noteInput(kind);
   }
+
+  /// Pin the chrome open for the length of an interaction (a scrub, an open
+  /// settings stack). Without it the surface you are using vanishes under the
+  /// cursor after three seconds.
+  void _hold(String reason) {
+    if (widget.visible != null) {
+      widget.onWake?.call();
+      return;
+    }
+    _autoHide.hold(reason);
+  }
+
+  void _release(String reason) {
+    if (widget.visible != null) {
+      widget.onWake?.call();
+      return;
+    }
+    _autoHide.release(reason);
+  }
+
+  void _setHold(String reason, bool held) =>
+      held ? _hold(reason) : _release(reason);
 
   Future<void> _togglePlay() async {
     if (!widget.canControl) return;
@@ -661,7 +831,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
   /// sliders are ordinary Material [Slider]s.
   Future<void> _openSubtitleSettings() async {
     if (widget.controller is! MediaKitPlayerController) return;
-    _idleTimer?.cancel(); // keep the chrome awake while the dialog is open
+    _hold('subtitleSettings'); // keep the chrome awake while the dialog is open
     await showDialog<void>(
       context: context,
       barrierColor: Colors.black54,
@@ -681,7 +851,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
         onBackgroundOpacity: _setSubtitleBackgroundOpacity,
       ),
     );
-    _wake();
+    _release('subtitleSettings');
   }
 
   Future<void> _setAudio(String? id, {bool authored = true}) async {
@@ -825,6 +995,19 @@ class _PlayerChromeState extends State<PlayerChrome> {
     _focusNode.requestFocus();
   }
 
+  /// Whether keyboard focus is inside a text field, and whether that field has a
+  /// live selection. Flutter has no global selection registry outside a
+  /// [SelectableRegion], so a selection is only observable where the platform
+  /// copy command is actually meaningful: an editable.
+  (bool editable, bool hasSelection) get _editableFocus {
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused == null) return (false, false);
+    final editor = focused.findAncestorStateOfType<EditableTextState>();
+    if (editor == null) return (false, false);
+    final selection = editor.textEditingValue.selection;
+    return (true, selection.isValid && !selection.isCollapsed);
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     // Push-to-talk releases on key up — independent of playback-control rights.
     if (event is KeyUpEvent) {
@@ -836,20 +1019,68 @@ class _PlayerChromeState extends State<PlayerChrome> {
       return KeyEventResult.ignored;
     }
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    _wake();
+
+    // Every binding below is a BARE key. Holding Ctrl/Cmd turns the same
+    // keystroke into a platform or application command — Ctrl+C copy, Ctrl+T
+    // new tab/window, Ctrl+F find — and the player used to match on the logical
+    // key alone and return `handled`, swallowing all of them. The one
+    // deliberate exception is Ctrl/Cmd+C, which the analog player defines as
+    // the chat shortcut and which `shouldToggleChat` guards.
+    final ctrlOrMeta = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+
+    if (event.logicalKey == LogicalKeyboardKey.keyC &&
+        widget.onToggleChat != null) {
+      final (editable, hasSelection) = _editableFocus;
+      final accelerator = shouldToggleChat(
+        ChatShortcutContext(
+          ctrlOrMeta: ctrlOrMeta,
+          key: 'c',
+          editable: editable,
+          hasSelection: hasSelection,
+        ),
+      );
+      if (accelerator || (!ctrlOrMeta && !editable)) {
+        _wake(PlayerInputKind.key);
+        widget.onToggleChat!();
+        return KeyEventResult.handled;
+      }
+      // Ctrl+C with a selection, or any C typed into a field: leave it to the
+      // platform so copy still copies.
+      return KeyEventResult.ignored;
+    }
+
+    if (ctrlOrMeta) return KeyEventResult.ignored;
+    _wake(PlayerInputKind.key);
+
     // Chat + push-to-talk are A/V-layer bindings available to guests too, so
     // they run before the canControl transport gate. Key-repeat arrives as a
     // KeyRepeatEvent (not KeyDownEvent), so hold-T fires start exactly once.
-    if (event.logicalKey == LogicalKeyboardKey.keyC &&
-        widget.onToggleChat != null) {
-      widget.onToggleChat!();
-      return KeyEventResult.handled;
-    }
     if (event.logicalKey == LogicalKeyboardKey.keyT &&
         widget.onPushToTalkStart != null) {
       widget.onPushToTalkStart!();
       return KeyEventResult.handled;
     }
+
+    // Volume, mute and fullscreen are personal, per-viewer settings: their
+    // BUTTONS have always been ungated (a no-control guest can still turn the
+    // sound down), but their keys used to sit behind `canControl`, so the same
+    // guest's ↑/↓/M/F did nothing. The buttons are right — the keys move out.
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowUp:
+        _setVolume(math.min(100, _volume + kAnalogVolumeKeyStep));
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        _setVolume(math.max(0, _volume - kAnalogVolumeKeyStep));
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyF:
+        widget.onToggleFullscreen?.call();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyM:
+        _toggleMute();
+        return KeyEventResult.handled;
+    }
+
     if (!widget.canControl) return KeyEventResult.ignored;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.space:
@@ -868,20 +1099,48 @@ class _PlayerChromeState extends State<PlayerChrome> {
       case LogicalKeyboardKey.keyJ:
         _seekBy(const Duration(seconds: -10));
         return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowUp:
-        _setVolume(math.min(100, _volume + 10));
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowDown:
-        _setVolume(math.max(0, _volume - 10));
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyF:
-        widget.onToggleFullscreen?.call();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyM:
-        _toggleMute();
-        return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  /// The settings stack's contents. Both entries are libmpv-only, so a mock or
+  /// spy controller yields an empty list and the gear is not rendered at all.
+  ///
+  /// The direct subtitle control stays OUTSIDE this stack, as does the audio
+  /// track menu — fast track selection must not cost two taps.
+  List<AnalogSettingsEntry> _settingsEntries() {
+    if (widget.controller is! MediaKitPlayerController) return const [];
+    return [
+      AnalogSettingsEntry(
+        icon: Icons.tune,
+        label: 'Subtitle settings',
+        onTap: _openSubtitleSettings,
+      ),
+      AnalogSettingsEntry(
+        icon: Icons.memory,
+        label: 'Video decoder',
+        detail: _hwDecoding ? 'Hardware' : 'Software',
+        // Same gate the decode menu carried: a guest sees which decoder is in
+        // use but cannot switch it.
+        enabled: widget.canControl,
+        onTap: () => _setHardwareDecoding(!_hwDecoding),
+      ),
+    ];
+  }
+
+  /// libmpv reports only the forward edge of its demuxer cache, so this is one
+  /// contiguous range from the playhead to that edge — never the several
+  /// disjoint ranges an HTML media element can expose. [AnalogTimeline] draws a
+  /// list either way, so a richer engine needs no change here.
+  List<TimelineRange> get _bufferedRanges {
+    final total = _duration.inMilliseconds;
+    if (total <= 0 || _bufferedTo <= _position) return const [];
+    return [
+      TimelineRange(
+        _position.inMilliseconds / total,
+        _bufferedTo.inMilliseconds / total,
+      ),
+    ];
   }
 
   @override
@@ -891,8 +1150,9 @@ class _PlayerChromeState extends State<PlayerChrome> {
       _position,
       delay: Duration(milliseconds: (_subDelay * 1000).round()),
     );
-    // Parent-owned visibility (party) wins; otherwise the internal idle state.
-    final visible = widget.visible ?? _visible;
+    // Parent-owned visibility (party) wins; otherwise this chrome's own
+    // controller — both are the same player_core state machine.
+    final visible = widget.visible ?? _autoHide.visible;
     return Focus(
       focusNode: _focusNode,
       autofocus: true,
@@ -903,7 +1163,7 @@ class _PlayerChromeState extends State<PlayerChrome> {
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onTap: () {
-            _wake();
+            _wake(PlayerInputKind.tap);
             // Re-anchor the keymap. autofocus only fires once, at mount: after
             // focus moves to an overlay (the settings menu) or the window loses
             // and regains it, primary focus can land outside this subtree and
@@ -943,7 +1203,6 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   playing: _playing,
                   position: _dragPosition ?? _position,
                   duration: _duration,
-                  volume: _volume,
                   tracks: PlayerTracks(
                     video: _tracks.video,
                     audio: _tracks.audio,
@@ -952,17 +1211,13 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   selectedAudio: _selectedAudio,
                   selectedSubtitle: _selectedSubtitle,
                   isFullscreen: widget.isFullscreen,
-                  // Decode + subtitle-settings are additive libmpv features:
+                  // Decode + subtitle-styling are additive libmpv features:
                   // only surface them when the live MediaKitPlayerController is
-                  // in use (mock/spy controllers get the base bar).
-                  hardwareDecoding: _hwDecoding,
-                  onDecode: widget.controller is MediaKitPlayerController
-                      ? _setHardwareDecoding
-                      : null,
-                  onSubtitleSettings:
-                      widget.controller is MediaKitPlayerController
-                      ? _openSubtitleSettings
-                      : null,
+                  // in use (mock/spy controllers get the base bar). They are the
+                  // settings stack's contents; an empty list hides the gear.
+                  settings: _settingsEntries(),
+                  onSettingsOpenChanged: (open) =>
+                      _setHold('settingsStack', open),
                   onAddSubtitle: widget.controller is MediaKitPlayerController
                       ? _addSubtitleFile
                       : null,
@@ -972,13 +1227,14 @@ class _PlayerChromeState extends State<PlayerChrome> {
                     setState(() => _dragPosition = null);
                     _seekTo(p);
                   },
-                  onVolume: _setVolume,
-                  onToggleMute: _toggleMute,
+                  onScrubbingChanged: (scrubbing) =>
+                      _setHold('scrub', scrubbing),
                   onAudio: _setAudio,
                   onSubtitle: _setSubtitle,
                   onToggleFullscreen: widget.onToggleFullscreen,
                   trickplay: _trickplay,
                   apiClient: widget.apiClient,
+                  buffered: _bufferedRanges,
                   cachedSpans: widget.cachedSpans,
                   previewPosition: _previewPosition,
                   previewFraction: _previewFraction,
@@ -988,6 +1244,37 @@ class _PlayerChromeState extends State<PlayerChrome> {
                   }),
                   onHoverEnd: () => setState(() => _previewPosition = null),
                 ),
+              ),
+
+              // Volume: a compact VERTICAL control near the right edge, out of
+              // the transport row. Sits above the transport bar's own height so
+              // the two never overlap, and fades with the rest of the chrome.
+              _AnimatedEdge(
+                visible: visible,
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                    right: AnalogSpace.smPx,
+                    bottom: 118,
+                  ),
+                  child: AnalogVolume(
+                    volume: _volume,
+                    trackKey: const Key('volumeSlider'),
+                    onChanged: _setVolume,
+                    onToggleMute: _toggleMute,
+                    onAdjustingChanged: (adjusting) =>
+                        _setHold('volume', adjusting),
+                  ),
+                ),
+              ),
+
+              // Chat toasts: TOP-LEFT, clear of the subtitles and transport at
+              // the bottom, the chat toggle at the top right, and the floating
+              // participant tiles that cascade up from the bottom right.
+              Positioned(
+                left: AnalogSpace.lgPx,
+                top: 72,
+                child: AnalogToastStack(view: toastView(_toasts)),
               ),
 
               if (activeCues.isNotEmpty)
@@ -1140,25 +1427,23 @@ class _TransportBar extends StatelessWidget {
     required this.playing,
     required this.position,
     required this.duration,
-    required this.volume,
     required this.tracks,
     required this.selectedAudio,
     required this.selectedSubtitle,
     required this.isFullscreen,
-    required this.hardwareDecoding,
-    required this.onDecode,
-    required this.onSubtitleSettings,
+    required this.settings,
+    required this.onSettingsOpenChanged,
     required this.onAddSubtitle,
     required this.onTogglePlay,
     required this.onSeekPreview,
     required this.onSeekCommit,
-    required this.onVolume,
-    required this.onToggleMute,
+    required this.onScrubbingChanged,
     required this.onAudio,
     required this.onSubtitle,
     required this.onToggleFullscreen,
     required this.trickplay,
     required this.apiClient,
+    required this.buffered,
     this.cachedSpans,
     required this.previewPosition,
     required this.previewFraction,
@@ -1171,21 +1456,14 @@ class _TransportBar extends StatelessWidget {
   final bool playing;
   final Duration position;
   final Duration duration;
-  final double volume;
   final PlayerTracks tracks;
   final String? selectedAudio;
   final String? selectedSubtitle;
   final bool isFullscreen;
 
-  /// Whether hardware decode is active. Only rendered when [onDecode] != null.
-  final bool hardwareDecoding;
-
-  /// Toggle hardware/software decode. Null hides the decode menu (non-media_kit
-  /// controller).
-  final ValueChanged<bool>? onDecode;
-
-  /// Opens the subtitle appearance panel. Null hides the gear (non-media_kit).
-  final VoidCallback? onSubtitleSettings;
+  /// Rows of the upward settings stack. Empty hides the gear entirely.
+  final List<AnalogSettingsEntry> settings;
+  final ValueChanged<bool> onSettingsOpenChanged;
 
   /// Picks a local subtitle file to side-load. Null on non-media_kit
   /// controllers; when non-null the subtitle menu is always shown (so the user
@@ -1195,13 +1473,15 @@ class _TransportBar extends StatelessWidget {
   final VoidCallback onTogglePlay;
   final ValueChanged<Duration> onSeekPreview;
   final ValueChanged<Duration> onSeekCommit;
-  final ValueChanged<double> onVolume;
-  final VoidCallback onToggleMute;
+  final ValueChanged<bool> onScrubbingChanged;
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onSubtitle;
   final VoidCallback? onToggleFullscreen;
   final TrickplayManifest? trickplay;
   final ApiClient? apiClient;
+
+  /// Transient network buffer (media_kit's demuxer cache edge).
+  final List<TimelineRange> buffered;
   final ValueListenable<List<CachedSpan>>? cachedSpans;
   final Duration? previewPosition;
   final double previewFraction;
@@ -1235,15 +1515,17 @@ class _TransportBar extends StatelessWidget {
             builder: (context, constraints) => Stack(
               clipBehavior: Clip.none,
               children: [
-                _Scrubber(
+                _Timeline(
                   key: const Key('playbackScrubber'),
                   position: position,
                   duration: duration,
                   enabled: canControl,
                   onPreview: onSeekPreview,
                   onCommit: onSeekCommit,
+                  onScrubbingChanged: onScrubbingChanged,
                   onHoverPreview: onHoverPreview,
                   onHoverEnd: onHoverEnd,
+                  buffered: buffered,
                   cachedSpans: cachedSpans,
                 ),
                 if (previewPosition != null &&
@@ -1261,6 +1543,21 @@ class _TransportBar extends StatelessWidget {
                         frame: trickplay!.frameAt(previewPosition!),
                         apiClient: apiClient!,
                       ),
+                    ),
+                  ),
+                // Hover/drag time label. Only stands in when there is no
+                // trickplay card — with no manifest, hovering the bar used to
+                // show nothing at all.
+                if (previewPosition != null &&
+                    (trickplay == null || apiClient == null))
+                  Positioned(
+                    bottom: 24,
+                    left: (previewFraction * constraints.maxWidth - 28).clamp(
+                      0.0,
+                      math.max(0.0, constraints.maxWidth - 56),
+                    ),
+                    child: IgnorePointer(
+                      child: _HoverTimeLabel(label: _fmt(previewPosition!)),
                     ),
                   ),
               ],
@@ -1282,17 +1579,6 @@ class _TransportBar extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              _VolumeControl(
-                volume: volume,
-                onChanged: onVolume,
-                onToggleMute: onToggleMute,
-              ),
-              if (onDecode != null)
-                _DecodeMenu(
-                  hardware: hardwareDecoding,
-                  enabled: canControl,
-                  onChanged: onDecode!,
-                ),
               if (tracks.audio.isNotEmpty)
                 _TrackMenu(
                   icon: Icons.audiotrack,
@@ -1311,11 +1597,10 @@ class _TransportBar extends StatelessWidget {
                   onChanged: onSubtitle,
                   onAddFile: onAddSubtitle,
                 ),
-              if (onSubtitleSettings != null)
-                _ChromeIconButton(
-                  icon: Icons.tune,
-                  tooltip: 'Subtitle settings',
-                  onPressed: onSubtitleSettings,
+              if (settings.isNotEmpty)
+                AnalogSettingsStack(
+                  entries: settings,
+                  onOpenChanged: onSettingsOpenChanged,
                 ),
               if (onToggleFullscreen != null)
                 _ChromeIconButton(
@@ -1341,16 +1626,26 @@ class _TransportBar extends StatelessWidget {
   }
 }
 
-class _Scrubber extends StatelessWidget {
-  const _Scrubber({
+/// Adapts the analog [AnalogTimeline] to the transport bar's inputs: cached
+/// spans arrive as a [ValueListenable] of byte fractions from the media cache
+/// proxy, and are mapped straight onto normalised timeline ranges.
+///
+/// Replaces the Material [Slider] + custom track shape this used to be. The
+/// slider could not render disjoint ranges (its only extra layer was one flat
+/// run of `drawRect`s), and its thumb radius collapsed to 0 when disabled, so a
+/// read-only guest saw a bar with no position marker at all.
+class _Timeline extends StatelessWidget {
+  const _Timeline({
     super.key,
     required this.position,
     required this.duration,
     required this.enabled,
     required this.onPreview,
     required this.onCommit,
+    required this.onScrubbingChanged,
     required this.onHoverPreview,
     required this.onHoverEnd,
+    required this.buffered,
     this.cachedSpans,
   });
 
@@ -1359,236 +1654,67 @@ class _Scrubber extends StatelessWidget {
   final bool enabled;
   final ValueChanged<Duration> onPreview;
   final ValueChanged<Duration> onCommit;
+  final ValueChanged<bool> onScrubbingChanged;
   final void Function(Duration position, double fraction) onHoverPreview;
   final VoidCallback onHoverEnd;
 
-  /// Cached ("downloaded") spans to paint behind the play-progress track, as
-  /// an indicator of what's already on disk. Null/empty renders nothing.
+  /// Transient network buffer.
+  final List<TimelineRange> buffered;
+
+  /// Cached ("downloaded") spans, already on disk. Byte fractions, which only
+  /// approximate time for variable-bitrate media — see the caveat on
+  /// [CachedSpan]. Null/empty renders that layer empty.
   final ValueListenable<List<CachedSpan>>? cachedSpans;
 
+  AnalogTimeline _timeline(List<CachedSpan> spans) => AnalogTimeline(
+    position: position,
+    duration: duration,
+    enabled: enabled,
+    onPreview: onPreview,
+    onCommit: onCommit,
+    onScrubbingChanged: onScrubbingChanged,
+    onHoverPreview: onHoverPreview,
+    onHoverEnd: onHoverEnd,
+    buffered: buffered,
+    cached: [
+      for (final span in spans) TimelineRange(span.start, span.end),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
-    final totalMs = duration.inMilliseconds;
-    final value = totalMs > 0
-        ? (position.inMilliseconds / totalMs).clamp(0.0, 1.0)
-        : 0.0;
-    return MouseRegion(
-      onHover: (event) {
-        if (totalMs <= 0) return;
-        final box = context.findRenderObject()! as RenderBox;
-        final fraction = (event.localPosition.dx / box.size.width).clamp(
-          0.0,
-          1.0,
-        );
-        onHoverPreview(
-          Duration(milliseconds: (fraction * totalMs).round()),
-          fraction,
-        );
-      },
-      onExit: (_) => onHoverEnd(),
-      child: SizedBox(
-        height: 24,
-        child: cachedSpans == null
-            ? _buildSlider(value, totalMs, const [])
-            : ValueListenableBuilder<List<CachedSpan>>(
-                valueListenable: cachedSpans!,
-                builder: (context, spans, _) =>
-                    _buildSlider(value, totalMs, spans),
-              ),
-      ),
-    );
-  }
-
-  Widget _buildSlider(double value, int totalMs, List<CachedSpan> spans) {
-    return SliderTheme(
-      data: SliderThemeData(
-        trackHeight: 3,
-        activeTrackColor: AppColors.accent,
-        inactiveTrackColor: AppColors.line2,
-        thumbColor: AppColors.accent,
-        overlayShape: SliderComponentShape.noOverlay,
-        thumbShape: enabled
-            ? const RoundSliderThumbShape(enabledThumbRadius: 6)
-            : const RoundSliderThumbShape(enabledThumbRadius: 0),
-        // Paint the cached ("downloaded") spans inside the slider's own track
-        // rect so the gray bar lines up exactly with the accent play-progress
-        // and thumb — no inset guesswork / horizontal offset.
-        trackShape: _CachedRangesTrackShape(spans),
-      ),
-      child: Slider(
-        value: value,
-        onChanged: (!enabled || totalMs <= 0)
-            ? null
-            : (v) => onPreview(Duration(milliseconds: (v * totalMs).round())),
-        onChangeEnd: (!enabled || totalMs <= 0)
-            ? null
-            : (v) => onCommit(Duration(milliseconds: (v * totalMs).round())),
-      ),
+    final listenable = cachedSpans;
+    if (listenable == null) return _timeline(const []);
+    return ValueListenableBuilder<List<CachedSpan>>(
+      valueListenable: listenable,
+      builder: (context, spans, _) => _timeline(spans),
     );
   }
 }
 
-/// A slider track that also paints [CachedSpan]s (downloaded byte ranges) in
-/// the SAME track rect the active track + thumb use, so the "downloaded"
-/// overlay lines up exactly with the play-progress highlight. Draw order:
-/// inactive base -> cached spans -> active (played) portion.
-class _CachedRangesTrackShape extends SliderTrackShape
-    with BaseSliderTrackShape {
-  const _CachedRangesTrackShape(this.cachedSpans);
+/// The scrub-time readout that follows the pointer along the bar. Stands in for
+/// the trickplay card when the title has no manifest.
+class _HoverTimeLabel extends StatelessWidget {
+  const _HoverTimeLabel({required this.label});
 
-  final List<CachedSpan> cachedSpans;
-
-  static const Color _cachedColor = Colors.white54;
-
-  @override
-  void paint(
-    PaintingContext context,
-    Offset offset, {
-    required RenderBox parentBox,
-    required SliderThemeData sliderTheme,
-    required Animation<double> enableAnimation,
-    required Offset thumbCenter,
-    Offset? secondaryOffset,
-    bool isEnabled = false,
-    bool isDiscrete = false,
-    required TextDirection textDirection,
-  }) {
-    final rect = getPreferredRect(
-      parentBox: parentBox,
-      offset: offset,
-      sliderTheme: sliderTheme,
-      isEnabled: isEnabled,
-      isDiscrete: isDiscrete,
-    );
-    if (rect.width <= 0 || rect.height <= 0) return;
-    final canvas = context.canvas;
-    final radius = Radius.circular(rect.height / 2);
-
-    // Inactive base (whole track).
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, radius),
-      Paint()..color = sliderTheme.inactiveTrackColor ?? AppColors.line2,
-    );
-
-    // Cached ("downloaded") spans, in the same track coordinate space.
-    final cachedPaint = Paint()..color = _cachedColor;
-    for (final span in cachedSpans) {
-      final s = span.start.clamp(0.0, 1.0);
-      final e = span.end.clamp(0.0, 1.0);
-      if (e <= s) continue;
-      final l = rect.left + s * rect.width;
-      final r = rect.left + e * rect.width;
-      canvas.drawRect(Rect.fromLTRB(l, rect.top, r, rect.bottom), cachedPaint);
-    }
-
-    // Active (played) portion: left edge -> thumb center.
-    if (thumbCenter.dx > rect.left) {
-      final activeRect = Rect.fromLTRB(
-        rect.left,
-        rect.top,
-        thumbCenter.dx.clamp(rect.left, rect.right),
-        rect.bottom,
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(activeRect, radius),
-        Paint()..color = sliderTheme.activeTrackColor ?? AppColors.accent,
-      );
-    }
-  }
-}
-
-/// Inline mute-toggle icon + always-visible volume slider. Kept inline (rather
-/// than in a popover behind a disabled button) so the control is obviously live
-/// and directly wired to `setVolume`. Volume is a personal setting, so it stays
-/// enabled regardless of `canControl`.
-class _VolumeControl extends StatelessWidget {
-  const _VolumeControl({
-    required this.volume,
-    required this.onChanged,
-    required this.onToggleMute,
-  });
-
-  final double volume;
-  final ValueChanged<double> onChanged;
-  final VoidCallback onToggleMute;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    final muted = volume <= 0;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _ChromeIconButton(
-          icon: muted
-              ? Icons.volume_off
-              : (volume < 50 ? Icons.volume_down : Icons.volume_up),
-          tooltip: muted ? 'Unmute' : 'Mute',
-          onPressed: onToggleMute,
-        ),
-        SizedBox(
-          width: 76,
-          child: SliderTheme(
-            data: SliderThemeData(
-              trackHeight: 3,
-              activeTrackColor: AppColors.accent,
-              inactiveTrackColor: AppColors.line2,
-              thumbColor: AppColors.accent,
-              overlayShape: SliderComponentShape.noOverlay,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-            ),
-            child: Slider(
-              key: const Key('volumeSlider'),
-              value: volume.clamp(0, 100),
-              min: 0,
-              max: 100,
-              onChanged: onChanged,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Hardware/software video-decode toggle using the same anchored panel as the
-/// audio and subtitle selectors.
-class _DecodeMenu extends StatelessWidget {
-  const _DecodeMenu({
-    required this.hardware,
-    required this.enabled,
-    required this.onChanged,
-  });
-  final bool hardware;
-  final bool enabled;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _AnchoredPlayerMenu(
-      icon: Icons.memory,
-      tooltip: 'Decode',
-      enabled: enabled,
-      menuBuilder: (close) => [
-        const _PlayerMenuHeader('VIDEO DECODER'),
-        _PlayerMenuItem(
-          label: 'Hardware',
-          detail: 'GPU accelerated',
-          selected: hardware,
-          onTap: () {
-            close();
-            onChanged(true);
-          },
-        ),
-        _PlayerMenuItem(
-          label: 'Software',
-          detail: 'CPU fallback',
-          selected: !hardware,
-          onTap: () {
-            close();
-            onChanged(false);
-          },
-        ),
-      ],
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AnalogSpace.smPx,
+        vertical: AnalogSpace.xsPx,
+      ),
+      decoration: BoxDecoration(
+        color: AnalogColor.backdropScrim,
+        borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
+        border: Border.all(color: AnalogColor.line),
+      ),
+      child: Text(
+        label,
+        style: AppTheme.mono.copyWith(color: AnalogColor.ink, fontSize: 11),
+      ),
     );
   }
 }
@@ -1784,7 +1910,9 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  TextButton(
+                  AnalogButton(
+                    tone: AnalogButtonTone.ghost,
+                    dense: true,
                     onPressed: !widget.enabled
                         ? null
                         : () {
@@ -1803,11 +1931,13 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
                             widget.onColor(_color);
                             widget.onBackgroundOpacity(_backgroundOpacity);
                           },
-                    child: Text('Reset', style: bodyStyle),
+                    label: 'Reset',
                   ),
-                  TextButton(
+                  AnalogButton(
+                    tone: AnalogButtonTone.ghost,
+                    dense: true,
                     onPressed: () => Navigator.of(context).pop(),
-                    child: Text('Done', style: bodyStyle),
+                    label: 'Done',
                   ),
                 ],
               ),
@@ -1900,7 +2030,9 @@ class _TrackMenu extends StatelessWidget {
       tooltip: tooltip,
       enabled: enabled,
       menuBuilder: (close) => [
-        _PlayerMenuHeader(tooltip.toUpperCase()),
+        // No word heading. The button you pressed to get here already said
+        // which menu this is, and a menu whose first row is a label you cannot
+        // select is a row spent on nothing.
         if (allowNone)
           _PlayerMenuItem(
             label: 'Off',
@@ -1953,18 +2085,6 @@ class _SubtitleControl extends StatelessWidget {
       tooltip: 'Subtitles',
       enabled: enabled,
       menuBuilder: (close) => [
-        const _PlayerMenuHeader('SUBTITLES'),
-        if (onAddFile != null)
-          _PlayerMenuItem(
-            icon: Icons.upload_file_outlined,
-            label: 'Load subtitle file',
-            detail: 'SRT, VTT, ASS or SSA',
-            onTap: () {
-              close();
-              onAddFile?.call();
-            },
-          ),
-        if (onAddFile != null) const _PlayerMenuDivider(),
         _PlayerMenuItem(
           label: 'Off',
           selected: selected == null,
@@ -1983,6 +2103,22 @@ class _SubtitleControl extends StatelessWidget {
               onChanged(t.id);
             },
           ),
+        // Side-loading a file sits UNDER the list as a glyph, matching the
+        // detail page's track dropdown. It used to lead the menu as a
+        // two-line row — a heading, a title and a subtitle of supported
+        // extensions — which is three lines of chrome above the thing you
+        // actually came to pick.
+        if (onAddFile != null) ...[
+          const _PlayerMenuDivider(),
+          _PlayerMenuItem(
+            icon: Icons.upload_file_outlined,
+            label: 'Load subtitle file',
+            onTap: () {
+              close();
+              onAddFile?.call();
+            },
+          ),
+        ],
       ],
     );
   }
@@ -2139,27 +2275,6 @@ class _AnchoredPlayerMenuState extends State<_AnchoredPlayerMenu> {
   }
 }
 
-class _PlayerMenuHeader extends StatelessWidget {
-  const _PlayerMenuHeader(this.label);
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 7),
-      child: Text(
-        label,
-        style: AppTheme.mono.copyWith(
-          color: AppColors.faint,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.4,
-        ),
-      ),
-    );
-  }
-}
-
 class _PlayerMenuDivider extends StatelessWidget {
   const _PlayerMenuDivider();
 
@@ -2250,10 +2365,9 @@ class _PlayerMenuItem extends StatelessWidget {
   }
 }
 
-/// Normalise picked subtitle bytes to UTF-8 text for side-loading (mirrors the
-/// upload path in subtitle_manager_dialog): pass valid UTF-8 through, otherwise
-/// re-decode as Latin-1, and strip any stray U+FFFD so one bad glyph doesn't
-/// corrupt rendering.
+/// Normalise picked subtitle bytes to UTF-8 text for side-loading: pass valid
+/// UTF-8 through, otherwise re-decode as Latin-1, and strip any stray U+FFFD so
+/// one bad glyph doesn't corrupt rendering.
 String _subtitleToUtf8(List<int> raw) {
   String text;
   try {

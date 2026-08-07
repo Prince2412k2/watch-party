@@ -2,9 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shadcn_flutter/shadcn_flutter.dart' as sc;
+import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/ui/ui.dart';
-import 'package:watchparty/ui/widgets/party_widget.dart';
 
 void main() {
   testWidgets('Windows caption controls are compact and preserve actions', (
@@ -79,35 +78,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('PartyWidget stays inside a compact desktop viewport', (
+  testWidgets('the open party tray stays inside a compact desktop viewport', (
     tester,
   ) async {
+    // Was 300x240. The control is 3x the size it was, so that viewport is now
+    // smaller than the chrome by construction and asserts nothing useful. This
+    // is the app's actual minimum desktop window.
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.binding.setSurfaceSize(const Size(300, 240));
+    await tester.binding.setSurfaceSize(const Size(640, 480));
 
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
           theme: AppTheme.light,
-          builder: (context, child) => sc.ShadcnLayer(
-            theme: AppShadcnTheme.light,
-            themeMode: sc.ThemeMode.light,
-            child: child!,
-          ),
+          builder: (context, child) => AnalogToastHost(child: child!),
           home: const MediaQuery(
-            data: MediaQueryData(size: Size(300, 240)),
-            child: Scaffold(body: Align(child: PartyWidget())),
+            data: MediaQueryData(size: Size(640, 480)),
+            child: Scaffold(
+              body: Align(
+                alignment: Alignment.bottomRight,
+                child: PopcornControl(),
+              ),
+            ),
           ),
         ),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    final size = tester.getSize(
-      find.byKey(const ValueKey('party-widget-panel')),
-    );
-    expect(size.width, lessThanOrEqualTo(262));
-    expect(size.height, lessThanOrEqualTo(158));
+    // This replaced a 320px panel that had to be clamped against the viewport
+    // to fit here at all. The tray is a COLUMN of buttons rising off the
+    // handle, so the axis that can now overrun is the short one.
+    await tester.tap(find.byType(PopcornControl));
+    await tester.pumpAndSettle();
+
+    expect(tester.getSize(find.byType(PopcornControl)).height, lessThan(480));
     expect(tester.takeException(), isNull);
   });
 }

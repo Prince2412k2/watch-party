@@ -1,0 +1,59 @@
+---
+title: Details
+kit: browse
+web: AnalogDetails
+native: — (planned)
+status: web-only
+---
+
+# Details
+
+Title metadata and actions, rendered **in the library itself**.
+
+## Purpose
+
+> "The backdrop will not be this dark and will show the movie's details in
+> the library itself — similar to the show screen, where movies will act
+> like episodes."
+
+This is the change that removed a whole navigation level. There is no
+separate movie detail page: the details for the focused item render on the
+stage, above the rail, and Enter **plays** rather than opening anything.
+
+That is why `activationFor` returns `play` for a movie and `open` only for
+a box set — the details are already on screen, so there is nothing to open.
+
+## API
+
+| Prop | Type | Notes |
+| --- | --- | --- |
+| `item` | `StageItem \| null` | |
+| `fallbackTitle` | `string` | Shown while the item resolves |
+| `context` | `string \| null` | e.g. the franchise name |
+| `error` | `string \| null` | |
+| `native` | `boolean` | |
+| `actions` | `StageActions?` | |
+| `disabled` | `boolean?` | |
+| `onPlay` / `onDownload` / `onTracks` | `() => void` | |
+| `tracksOpen` | `boolean?` | |
+| `downloadState` | `'idle' \| 'busy' \| 'queued' \| 'failed'` | |
+
+## Download state is a word, not a spinner
+
+```
+idle   → "Download for offline"
+busy   → "Starting download"
+queued → "Downloading"
+failed → "Download failed — try again"
+```
+
+Each state says what happened. `failed` says what to do about it. A bare
+red icon would satisfy neither.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | There is no separate detail route for a movie | `activationFor` returns `play` |
+| 2 | Every download state has words | The label map above |
+| 3 | `fallbackTitle` means the surface never renders untitled | Required prop |

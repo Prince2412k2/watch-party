@@ -32,8 +32,3 @@ export function glass(level: keyof typeof SURFACE = 'medium', opts: CSSPropertie
     ...extra,
   }
 }
-
-// Legacy no-op: the refraction filter is gone, but callers still mount this.
-export function GlassDefs() {
-  return null
-}

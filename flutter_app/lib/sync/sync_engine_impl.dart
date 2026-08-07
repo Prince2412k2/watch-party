@@ -60,6 +60,7 @@ class SyncEngineImpl implements SyncEngine {
   Timer? _controlLoop;
   final List<void Function()> _unsubs = [];
   StreamSubscription<bool>? _playingSub;
+  bool _disposed = false;
 
   final _scheduleCtrl = StreamController<SyncSchedule>.broadcast();
   final _driftCtrl = StreamController<Duration>.broadcast();
@@ -82,6 +83,7 @@ class SyncEngineImpl implements SyncEngine {
     required String partyId,
     required bool canControl,
   }) async {
+    if (_disposed) return;
     await detach();
     _player = player;
     _socket = socket;
@@ -356,4 +358,22 @@ class SyncEngineImpl implements SyncEngine {
 
   @override
   Stream<Duration> get drift => _driftCtrl.stream;
+
+  /// True once [dispose] has run: no control loop, applying timers, user-seek
+  /// timer, socket handlers, clock ping, or open stream controllers remain.
+  bool get isDisposed => _disposed;
+
+  /// Final teardown, wired to `syncEngineProvider`'s `onDispose`. [detach]
+  /// alone leaves the engine reusable (and its schedule/drift controllers
+  /// open); this releases it for good, because a container teardown used to
+  /// leave the 200ms control loop and the clock's ping timer running against a
+  /// player and socket nobody owns anymore. Kept off the frozen [SyncEngine]
+  /// interface — the provider builds the concrete engine.
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    await detach();
+    await _scheduleCtrl.close();
+    await _driftCtrl.close();
+  }
 }

@@ -27,6 +27,7 @@ by app/server. This agent trusts its caller precisely because the token gates it
 """
 
 import json
+import ipaddress
 import os
 import re
 import shutil
@@ -35,11 +36,18 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import urllib.error
+import urllib.request
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from network import blocked_hostname, is_denied_address
 
 AGENT_PORT = int(os.environ.get("AGENT_PORT", "8080"))
 LOOPBACK_PORT = int(os.environ.get("LOOPBACK_PORT", "9000"))
 AGENT_TOKEN = os.environ.get("BROWSER_AGENT_TOKEN", "")
+TARGET_AGENT_TOKEN = os.environ.get("BROWSER_TARGET_TOKEN", "")
+NETWORK_MODE = os.environ.get("BROWSER_NETWORK_MODE", "")
+TARGET_AGENT_URL = os.environ.get("TARGET_AGENT_URL", "http://browser-target:8081").rstrip("/")
 DISPLAY = os.environ.get("DISPLAY", ":99")
 SCREEN_W = int(os.environ.get("SCREEN_W", "1280"))
 SCREEN_H = int(os.environ.get("SCREEN_H", "720"))
@@ -47,34 +55,32 @@ SCREEN_FPS = int(os.environ.get("SCREEN_FPS", "30"))
 MAX_BITRATE_KBPS = int(os.environ.get("MAX_BITRATE_KBPS", "2500"))
 PROFILE_ROOT = os.environ.get("PROFILE_ROOT", "/profiles")
 PUBLISHER_ROOT = "/opt/browser/publisher"
+EXTRA_CA_ROOT = "/opt/browser/extra-ca"
 
-# xdotool key syntax: optional modifiers then one keysym. Anything else is
-# refused rather than passed through and hoped about — this is the one place
-# where a string from a browser becomes an argument to a program. Four modifiers
-# because there are four modifier keys; app/server's KEY_PATTERN must agree with
-# this, or events pass there and vanish here.
-KEY_RE = re.compile(r"^(?:(?:ctrl|alt|shift|super)\+){0,4}[A-Za-z0-9_]{1,20}$")
-MAX_TEXT = 256
-MAX_BATCH = 64
-MAX_BODY = 16384
+with open(os.path.join(os.path.dirname(__file__), "policy.json"), encoding="utf-8") as handle:
+    POLICY = json.load(handle)
+
+KEY_RE = re.compile(POLICY["keyPattern"])
+MAX_TEXT = POLICY["maxText"]
+MAX_BATCH = POLICY["maxBatch"]
+MAX_BODY = POLICY["maxBody"]
+MAX_URL = POLICY["maxUrlLength"]
 
 # Chromium flags shared by both windows.
-#   --test-type suppresses the "unsupported command-line flag: --no-sandbox"
-#     infobar, which otherwise sits across the top ~50px of the capture.
 #   --use-fake-ui-for-media-stream auto-grants the capture permission prompt.
 #   The backgrounding flags are hygiene for a permanently-occluded publisher
 #     window; they were NOT the cause of the 15fps the spike chased (that was
 #     livekit-client's screen-share preset — see publisher.js).
 COMMON_FLAGS = [
-    "--no-sandbox",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-search-engine-choice-screen",
     "--disable-features=Translate,MediaRouter,AcceptCHFrame",
     "--autoplay-policy=no-user-gesture-required",
     "--use-fake-ui-for-media-stream",
-    "--test-type",
     "--disable-infobars",
+    "--disable-setuid-sandbox",
+    "--disable-quic",
     "--hide-scrollbars",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
@@ -97,6 +103,38 @@ def clamp(value, low, high):
     return max(low, min(high, int(value)))
 
 
+def initialize_storage(root=PROFILE_ROOT):
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    for entry in os.listdir(root):
+        path = os.path.join(root, entry)
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        else:
+            os.unlink(path)
+
+
+def target_call(method, path, body=None, timeout=15):
+    payload = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(
+        f"{TARGET_AGENT_URL}{path}", data=payload, method=method,
+        headers={
+            "Authorization": f"Bearer {TARGET_AGENT_TOKEN}",
+            **({"Content-Type": "application/json"} if payload is not None else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return {"ok": True, "status": response.status, "body": json.loads(response.read())}
+    except urllib.error.HTTPError as exc:
+        try:
+            parsed = json.loads(exc.read())
+        except (ValueError, UnicodeDecodeError):
+            parsed = {}
+        return {"ok": False, "status": exc.code, "error": parsed.get("error", "target refused")}
+    except (OSError, ValueError):
+        return {"ok": False, "status": 0, "error": "target unreachable"}
+
+
 class Session:
     """The one browser session this container can hold at a time.
 
@@ -108,21 +146,31 @@ class Session:
     def __init__(self):
         self._lock = threading.Lock()
         self.publisher = None      # subprocess.Popen
-        self.target = None         # subprocess.Popen
         self.url = None
         self.started_at = None
         self.publishing = False
         self.last_error = None
         self.exited = None         # {"who": ..., "code": ...} once something dies
         self.stats = None
+        self.generation = None
+        self.publisher_config = None
+        self._cancelled = set()
+        self._cancelled_order = deque()
 
     # ── state ────────────────────────────────────────────────────────────────
 
     def status(self):
+        target = target_call("GET", "/status", timeout=3)
+        target_body = target.get("body", {})
         with self._lock:
+            publisher_running = self.publisher is not None and self.publisher.poll() is None
+            target_running = target["ok"] and target_body.get("running", False)
             return {
                 "ok": True,
-                "running": self.target is not None,
+                "running": publisher_running and target_running,
+                "publisherRunning": publisher_running,
+                "targetRunning": target_running,
+                "targetReachable": target["ok"],
                 "publishing": self.publishing,
                 "url": self.url,
                 "startedAt": self.started_at,
@@ -130,6 +178,9 @@ class Session:
                 "exited": self.exited,
                 "screen": {"w": SCREEN_W, "h": SCREEN_H},
                 "stats": self.stats,
+                "generation": target_body.get("generation") if target["ok"] else self.generation,
+                "expectedGeneration": self.generation,
+                "networkMode": NETWORK_MODE,
             }
 
     def note_publisher_event(self, event, message=None, stats=None):
@@ -145,15 +196,29 @@ class Session:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
-    def start(self, url, token, lk_url, kbps, fps):
+    def start(self, url, token, lk_url, kbps, fps, generation):
         with self._lock:
-            if self.target is not None and self.target.poll() is None:
+            if generation in self._cancelled:
+                return False, "stale generation"
+            if self.generation is not None:
                 return False, "already running"
 
             # A previous session that crashed leaves processes behind; clearing
             # here (not only in stop) means a start can always succeed.
-            self._kill_locked()
-            self._wipe_profiles_locked()
+            if not self._kill_locked():
+                return False, "cleanup pending"
+            target_call("POST", "/stop", {"generation": None})
+            if not self._wipe_profiles_locked():
+                return False, "cleanup pending"
+
+            for command in (
+                ("set-sink-mute", "wp_sink", "0"),
+                ("set-sink-volume", "wp_sink", "100%"),
+                ("suspend-sink", "wp_sink", "0"),
+                ("set-source-mute", "wp_mic", "0"),
+                ("suspend-source", "wp_mic", "0"),
+            ):
+                subprocess.run(["pactl", *command], capture_output=True, check=False)
 
             self.url = url
             self.started_at = int(time.time() * 1000)
@@ -161,59 +226,118 @@ class Session:
             self.last_error = None
             self.exited = None
             self.stats = None
+            self.generation = generation
+            self.publisher_config = {
+                "url": lk_url, "token": token, "kbps": kbps, "fps": fps,
+                "w": SCREEN_W, "h": SCREEN_H,
+            }
 
-            query = urllib.parse.urlencode({
-                "lk": lk_url,
-                "token": token,
-                "kbps": kbps,
-                "fps": fps,
-                "w": SCREEN_W,
-                "h": SCREEN_H,
-            })
-            publisher_url = f"http://127.0.0.1:{LOOPBACK_PORT}/publisher.html?{query}"
+            publisher_url = f"http://127.0.0.1:{LOOPBACK_PORT}/publisher.html"
 
             # Order matters. The publisher starts FIRST and small so the target,
             # started second at full size, stacks above it — a whole-screen grab
             # then sees only the target. Reversing this publishes a stream with
             # the publisher's own diagnostics window in the corner of it.
-            self.publisher = self._spawn([
-                *COMMON_FLAGS,
-                f"--user-data-dir={PROFILE_ROOT}/publisher",
-                "--window-size=480,320",
-                "--window-position=0,0",
-                # No picker appears: the source is resolved from this flag.
-                "--auto-select-desktop-capture-source=Entire screen",
-                publisher_url,
-            ])
-            self.target = self._spawn([
-                *COMMON_FLAGS,
-                f"--user-data-dir={PROFILE_ROOT}/target",
-                f"--window-size={SCREEN_W},{SCREEN_H}",
-                "--window-position=0,0",
-                # Maximized, not fullscreen: the party drives Chromium's own tab
-                # strip and address bar, so they have to be in the capture.
-                "--start-maximized",
-                url,
-            ])
+            lk_host = urllib.parse.urlparse(lk_url).hostname
+            try:
+                publisher_state = self._prepare_state_locked("publisher")
+                self.publisher = self._spawn([
+                    *COMMON_FLAGS,
+                    f"--user-data-dir={publisher_state}/profile",
+                    f"--disk-cache-dir={publisher_state}/cache",
+                    f"--download-default-directory={publisher_state}/downloads",
+                    "--window-size=480,320",
+                    "--window-position=0,0",
+                    f"--proxy-bypass-list=127.0.0.1;localhost;{lk_host}",
+                    # No picker appears: the source is resolved from this flag.
+                    "--auto-select-desktop-capture-source=Entire screen",
+                    publisher_url,
+                ], publisher_state)
+            except OSError:
+                self._kill_locked()
+                self._wipe_profiles_locked()
+                self.generation = None
+                raise
+            target = target_call("POST", "/start", {"url": url, "generation": generation})
+            if not target["ok"]:
+                target_call("POST", "/stop", {"generation": generation})
+                self._kill_locked()
+                self._wipe_profiles_locked()
+                self.generation = None
+                return False, target["error"]
             log(f"session started url={url}")
             return True, None
 
-    def stop(self, reason="stop"):
+    def stop(self, reason="stop", generation=None):
         with self._lock:
-            was_running = self.target is not None
-            self._kill_locked()
-            self._wipe_profiles_locked()
+            if generation and self.generation not in (None, generation):
+                return False, "generation mismatch", False
+            if generation:
+                self._cancel_generation_locked(generation)
+            target = target_call("POST", "/stop", {"generation": generation})
+            if not target["ok"]:
+                return False, target["error"], False
+            was_running = bool(target.get("body", {}).get("stopped"))
+            if not self._kill_locked():
+                self.last_error = "browser cleanup failed"
+                return False, "cleanup failed", was_running
+            if not self._wipe_profiles_locked():
+                self.last_error = "browser state cleanup failed"
+                return False, "cleanup failed", was_running
             self.url = None
             self.started_at = None
             self.publishing = False
+            self.last_error = None
             self.exited = None
             self.stats = None
+            self.generation = None
+            self.publisher_config = None
             if was_running:
                 log(f"session stopped ({reason})")
-            return was_running
+            return True, None, was_running
 
-    def _spawn(self, args):
-        env = dict(os.environ, DISPLAY=DISPLAY)
+    def _cancel_generation_locked(self, generation):
+        if generation in self._cancelled:
+            return
+        self._cancelled.add(generation)
+        self._cancelled_order.append(generation)
+        while len(self._cancelled_order) > 256:
+            self._cancelled.discard(self._cancelled_order.popleft())
+
+    def _prepare_state_locked(self, name):
+        state_root = os.path.join(PROFILE_ROOT, name)
+        for entry in ("profile", "cache", "downloads", "home", "tmp"):
+            os.makedirs(os.path.join(state_root, entry), mode=0o700, exist_ok=True)
+        nssdb = os.path.join(state_root, "home", ".pki", "nssdb")
+        os.makedirs(nssdb, mode=0o700, exist_ok=True)
+        subprocess.run(
+            ["certutil", "-d", f"sql:{nssdb}", "-N", "--empty-password"],
+            capture_output=True, check=False,
+        )
+        if os.path.isdir(EXTRA_CA_ROOT):
+            for cert in os.listdir(EXTRA_CA_ROOT):
+                if not cert.endswith(".crt"):
+                    continue
+                subprocess.run([
+                    "certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,",
+                    "-n", cert, "-i", os.path.join(EXTRA_CA_ROOT, cert),
+                ], capture_output=True, check=False)
+        return state_root
+
+    def _spawn(self, args, state_root):
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "DISPLAY": DISPLAY,
+            "XAUTHORITY": os.environ.get("XAUTHORITY", "/tmp/browser-xauthority"),
+            "PULSE_SERVER": os.environ.get("PULSE_SERVER", "unix:/pulse/native"),
+            "HOME": os.path.join(state_root, "home"),
+            "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR", "/tmp/runtime-browser"),
+            "XDG_CACHE_HOME": os.path.join(state_root, "cache"),
+            "XDG_CONFIG_HOME": os.path.join(state_root, "home", ".config"),
+            "XDG_DATA_HOME": os.path.join(state_root, "home", ".local", "share"),
+            "TMPDIR": os.path.join(state_root, "tmp"),
+        }
         return subprocess.Popen(
             ["chromium", *args],
             env=env,
@@ -225,26 +349,35 @@ class Session:
         )
 
     def _kill_locked(self):
-        for name in ("target", "publisher"):
+        clean = True
+        for name in ("publisher",):
             proc = getattr(self, name)
-            setattr(self, name, None)
             if proc is None:
                 continue
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
-                continue
+                if proc.poll() is None:
+                    clean = False
+                    continue
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
-                    pass
+                    clean = False
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    clean = False
+            if proc.poll() is not None:
+                setattr(self, name, None)
         # Belt and braces: anything still holding a profile dir would survive the
         # wipe below and leak a signed-in session into the next party.
         subprocess.run(["pkill", "-9", "-f", f"--user-data-dir={PROFILE_ROOT}"],
                        capture_output=True, check=False)
+        return clean and self.publisher is None
 
     def _wipe_profiles_locked(self):
         """Destroy cookies, history, downloads and extensions.
@@ -253,14 +386,17 @@ class Session:
         remove dies with the container anyway. A failure here must never block a
         stop, because a stop is on the path of a party ending.
         """
-        for entry in ("publisher", "target"):
+        clean = True
+        for entry in ("publisher",):
             path = os.path.join(PROFILE_ROOT, entry)
             try:
                 shutil.rmtree(path)
             except FileNotFoundError:
                 pass
             except OSError as exc:
+                clean = False
                 log(f"WARN: could not wipe {path}: {exc}")
+        return clean
 
     # ── watchdog ─────────────────────────────────────────────────────────────
 
@@ -271,7 +407,7 @@ class Session:
         truthful without anyone having asked for a stop.
         """
         with self._lock:
-            for name in ("target", "publisher"):
+            for name in ("publisher",):
                 proc = getattr(self, name)
                 if proc is None:
                     continue
@@ -284,10 +420,13 @@ class Session:
                 # One half dying makes the session useless: a dead target leaves
                 # the publisher streaming an empty desktop, and a dead publisher
                 # leaves a browser nobody can see.
-                self._kill_locked()
-                self._wipe_profiles_locked()
-                self.url = None
-                self.started_at = None
+                if self._kill_locked():
+                    target_call("POST", "/stop", {"generation": self.generation})
+                    self._wipe_profiles_locked()
+                    self.url = None
+                    self.started_at = None
+                    self.publisher_config = None
+                    self.generation = None
                 return
 
     # ── input ────────────────────────────────────────────────────────────────
@@ -311,7 +450,7 @@ class Session:
 
     def apply(self, events):
         with self._lock:
-            live = self.target is not None and self.target.poll() is None
+            live = self.generation is not None
         if not live:
             return 0
         applied = 0
@@ -369,13 +508,41 @@ SESSION = Session()
 
 
 def valid_target_url(value):
-    if not isinstance(value, str) or len(value) > 2048:
+    if not isinstance(value, str) or len(value) > MAX_URL:
         return False
     try:
         parsed = urllib.parse.urlparse(value)
     except ValueError:
         return False
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    try:
+        literal = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        return not blocked_hostname(parsed.hostname)
+    if is_denied_address(literal):
+        return False
+    return True
+
+
+def valid_livekit_url(value):
+    if not isinstance(value, str) or len(value) > MAX_URL:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(value)
+        parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in ("ws", "wss")
+        and bool(parsed.hostname)
+        and parsed.username is None
+        and parsed.password is None
+        and ";" not in parsed.hostname
+        and "*" not in parsed.hostname
+    )
 
 
 class BaseHandler(BaseHTTPRequestHandler):
@@ -440,16 +607,19 @@ class ControlHandler(BaseHandler):
             url = body.get("url")
             token = body.get("token")
             lk_url = body.get("lkUrl")
+            generation = body.get("generation")
             if not valid_target_url(url):
                 return self.send_json(400, {"error": "invalid url"})
             if not isinstance(token, str) or not token:
                 return self.send_json(400, {"error": "missing token"})
-            if not isinstance(lk_url, str) or not lk_url.startswith(("ws://", "wss://")):
+            if not valid_livekit_url(lk_url):
                 return self.send_json(400, {"error": "invalid lkUrl"})
+            if not isinstance(generation, str) or not generation or len(generation) > 128:
+                return self.send_json(400, {"error": "invalid generation"})
             kbps = clamp(body.get("kbps", MAX_BITRATE_KBPS), 200, 8000)
             fps = clamp(body.get("fps", SCREEN_FPS), 5, 60)
             try:
-                ok, error = SESSION.start(url, token, lk_url, kbps, fps)
+                ok, error = SESSION.start(url, token, lk_url, kbps, fps, generation)
             except OSError as exc:
                 log(f"start failed: {exc}")
                 return self.send_json(500, {"error": "start failed"})
@@ -458,8 +628,15 @@ class ControlHandler(BaseHandler):
             return self.send_json(200, {"ok": True})
 
         if path == "/session/stop":
-            SESSION.stop(reason=str(body.get("reason", "stop"))[:40])
-            return self.send_json(200, {"ok": True})
+            generation = body.get("generation")
+            if generation is not None and (not isinstance(generation, str) or len(generation) > 128):
+                return self.send_json(400, {"error": "invalid generation"})
+            ok, error, stopped = SESSION.stop(
+                reason=str(body.get("reason", "stop"))[:40], generation=generation
+            )
+            if not ok:
+                return self.send_json(409 if error == "generation mismatch" else 503, {"error": error})
+            return self.send_json(200, {"ok": True, "stopped": stopped})
 
         if path == "/session/navigate":
             url = body.get("url")
@@ -471,7 +648,7 @@ class ControlHandler(BaseHandler):
                 return self.send_json(409, {"error": "no window"})
             inject({"type": "key", "key": "ctrl+l"})
             time.sleep(0.09)
-            inject({"type": "text", "text": url})
+            xdo("type", "--delay", "12", "--", url)
             time.sleep(0.13)
             inject({"type": "key", "key": "Return"})
             return self.send_json(200, {"ok": True})
@@ -493,6 +670,9 @@ class LoopbackHandler(BaseHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
+        if path == "/config":
+            config = SESSION.publisher_config
+            return self.send_json(200 if config else 404, config or {"error": "not ready"})
         # Relative paths are preserved, not flattened to a basename: the page
         # loads ./vendor/livekit-client.umd.js, and serving only basenames turned
         # that into a 404 — leaving window.LivekitClient undefined and the
@@ -539,6 +719,14 @@ def main():
     if not AGENT_TOKEN:
         log("FATAL: BROWSER_AGENT_TOKEN is empty — refusing to start")
         raise SystemExit(1)
+    if NETWORK_MODE != "isolated-sidecars-v1":
+        log("FATAL: BROWSER_NETWORK_MODE must be isolated-sidecars-v1")
+        raise SystemExit(1)
+    if not TARGET_AGENT_TOKEN:
+        log("FATAL: BROWSER_TARGET_TOKEN is empty — refusing to start")
+        raise SystemExit(1)
+
+    initialize_storage()
 
     loopback = ThreadingHTTPServer(("127.0.0.1", LOOPBACK_PORT), LoopbackHandler)
     threading.Thread(target=loopback.serve_forever, daemon=True).start()

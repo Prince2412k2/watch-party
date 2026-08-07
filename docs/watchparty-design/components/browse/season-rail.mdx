@@ -1,0 +1,53 @@
+---
+title: Season rail
+kit: browse
+web: AnalogSeasonRail
+native: — (planned)
+status: web-only
+---
+
+# Season rail
+
+The season selector on the Shows stage — and the model for the Movies
+[mode slider](./mode-slider.mdx).
+
+## Purpose
+
+Seasons down the side, episodes along the bottom. The user explicitly asked
+for the Movies Singles/Collections toggle to be presented "on the side like
+we have seasons on show screen", which makes this component the reference
+for that whole pattern.
+
+## Season artwork resolution
+
+Season artwork is frequently missing, and the fallback chain is shared
+logic (`resolveSeasonArtwork`, driven by `interaction.json`) rather than a
+per-client guess:
+
+| Kind | When |
+| --- | --- |
+| `season` | The season has its own image |
+| `series` | It does not; fall back to the series image |
+| `placeholder` | Neither exists |
+
+`placeholder` is a real rendered state, not an empty box — see
+[poster](./poster.mdx) rule 3.
+
+## API
+
+| Prop | Type |
+| --- | --- |
+| `seasons` | `readonly SeasonItem[]` |
+| `selectedId` | `string \| null` |
+| `series` | `SeriesLike \| null` |
+| `onSelect` | `(seasonId: string) => void` |
+| `motion` | `MotionProfile` |
+| `disabled` | `boolean?` |
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Artwork fallback is shared, not per-client | `resolveSeasonArtwork` + `interaction.json` fixture, tested in both languages |
+| 2 | Selection carries a detent | Same pattern as the mode slider |
+| 3 | A season with no artwork still renders | `placeholder` kind |

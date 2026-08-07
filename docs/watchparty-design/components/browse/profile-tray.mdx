@@ -1,0 +1,38 @@
+---
+title: Profile tray
+kit: browse
+web: AnalogProfileTray
+native: — (planned)
+status: web-only
+---
+
+# Profile tray
+
+Icon-only profile button that slides out.
+
+## Purpose
+
+> "Redo the profile button on top to only have icons and smaller form
+> factor" — with the settings and sign-out actions in a slide-out tray
+> rather than inline.
+
+## API
+
+| Prop | Type |
+| --- | --- |
+| `userId` / `name` | `string?` |
+| `avatar` | `AvatarConfig \| null` |
+| `onSettings` / `onSignOut` | `() => void` |
+
+## It owns its own open state
+
+Like the [party widget](./party-widget.mdx), the tray holds `open` itself.
+The stage passes data and callbacks, never visibility.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | The trigger has an accessible name despite being icon-only | Required label |
+| 2 | The tray traps focus while open and restores it on close | **Not yet implemented — known gap** |
+| 3 | Escape closes | Review |

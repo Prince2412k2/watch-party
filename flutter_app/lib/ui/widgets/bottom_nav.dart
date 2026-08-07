@@ -12,6 +12,13 @@ import 'nav_rail.dart' show NavDestination;
 ///
 /// Layout/positioning (the `left:20% right:20% bottom:10` band) is owned by the
 /// shell; this widget only paints the tab row.
+/// Vertical space the shell's floating chrome occupies at the foot of the
+/// stage: the nav's own height plus the gap the shell positions it by.
+///
+/// Exported so a stage can hold its content clear of the nav. Before this, the
+/// Movies rail's captions rendered underneath it.
+const double kBottomNavReservedPx = 62 + 10;
+
 class BottomNav extends StatelessWidget {
   const BottomNav({
     super.key,

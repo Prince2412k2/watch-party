@@ -1,15 +1,15 @@
 # Unified watch-party deployment — SINGLE source of truth.
 #
-# All services share one bridge network (watchparty-net) so they resolve each
-# other by container name (e.g. the app reaches http://jellyfin:8096,
-# http://sonarr:8989, ws://livekit:7880). The app builds + serves the frontend
-# and exposes /api + Socket.io on ONE host port (3000).
+# Core services share watchparty-net so the app reaches them by container name.
+# The optional browser uses separate control, media, and egress networks so it
+# cannot resolve or connect to Jellyfin, Servarr, or qBittorrent containers.
+# The app builds + serves the frontend and exposes /api + Socket.io on one port.
 #
 # Bring up:  docker compose up -d --build
 #
-# NOTE: docker-compose.servarr.yml is superseded by this file — the servarr
-# services below are the canonical definitions. Do not run both compose files
-# for the same services at once.
+# NOTE: the servarr services below are the canonical definitions. The separate
+# docker-compose.servarr.yml they superseded was removed in #63 — running both
+# would have started a second copy of every service over the same volumes.
 
 services:
   jellyfin:
@@ -35,7 +35,7 @@ services:
     image: livekit/livekit-server:latest
     container_name: watchparty-livekit
     restart: unless-stopped
-    networks: [watchparty-net]
+    networks: [watchparty-net, browser-media-net]
     ports:
       - "7880:7880"
       - "7881:7881"
@@ -54,7 +54,11 @@ services:
       - NODE_IP=${LIVEKIT_NODE_IP:-}
     command: --config /etc/livekit.yaml
 
-  # coturn — uncomment for VPS deploy
+  # coturn — uncomment for VPS deploy. First copy the template to a real config;
+  # coturn.conf.example is all placeholders, and *.conf is gitignored so your
+  # filled-in copy stays out of git:
+  #     cp coturn.conf.example coturn.conf   # then fill it in
+  # (Production uses secrets/coturn.conf via docker-compose.prod.yml instead.)
   # coturn:
   #   image: coturn/coturn:latest
   #   container_name: watchparty-coturn
@@ -66,7 +70,7 @@ services:
     build: ./app
     container_name: watchparty-app
     restart: unless-stopped
-    networks: [watchparty-net]
+    networks: [watchparty-net, browser-control-net]
     ports:
       # One port: built web UI + /api + Socket.io + /jellyfin + /livekit proxies.
       # Host 3000 was occupied by an unrelated process on this machine, so the
@@ -79,6 +83,9 @@ services:
       # container recreate. See app/server/index.js's sessionStoreDir.
       - ./data/sessions:/data/sessions
       - ./data/subtitles:/data/subtitles
+      # Party and picker-lease SQLite state. This deployment intentionally runs
+      # one app replica; SQLite is not a multi-replica coordination backend.
+      - ./data/watchparty:/app/data
     env_file:
       # .env  = base (internal URLs, LiveKit keys, SESSION_SECRET)
       # .env.local = optional real secrets (servarr API keys, LiveKit keys).
@@ -90,6 +97,7 @@ services:
       # ── Server → service: INTERNAL container names (never sent to browser) ──
       - JELLYFIN_URL=http://jellyfin:8096
       - LIVEKIT_URL=ws://livekit:7880
+      - PARTY_DB_PATH=/app/data/watchparty.sqlite
       - SONARR_URL=http://sonarr:8989
       - RADARR_URL=http://radarr:7878
       - PROWLARR_URL=http://prowlarr:9696
@@ -106,8 +114,12 @@ services:
       # absent container reads as "the feature is unavailable", never as a fault,
       # so setting the flag without the container degrades safely.
       - BROWSER_ENABLED=${BROWSER_ENABLED:-}
-      - BROWSER_AGENT_URL=http://watchparty-browser:8080
+      - BROWSER_AGENT_URL=http://browser-control-gateway:8080
       - BROWSER_AGENT_TOKEN=${BROWSER_AGENT_TOKEN:-}
+      - BROWSER_LIVEKIT_URL=ws://livekit:7880
+      # Set to every deployment host public/interface address or CIDR. Tailscale,
+      # private, loopback, link-local, and reserved ranges are denied by default.
+      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
       - BROWSER_HOME_URL=${BROWSER_HOME_URL:-https://www.google.com}
       - BROWSER_MAX_BITRATE_KBPS=${BROWSER_MAX_BITRATE_KBPS:-2500}
       # The same two values the container gets below. The server sends them to
@@ -150,7 +162,13 @@ services:
     restart: unless-stopped
     profiles: [browser]
     init: true
-    networks: [watchparty-net]
+    cap_drop: [ALL]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./browser/chromium-seccomp.json
+    pids_limit: 512
+    networks: [browser-media-net, browser-sandbox-net]
     # No `ports:` on purpose. The control API accepts input injection and must be
     # reachable only from app/server on this network — publishing it would put a
     # remote-keyboard endpoint on the host's interfaces.
@@ -163,34 +181,132 @@ services:
       # Chromium profiles: cookies, history, downloads, extensions. On a tmpfs so
       # a wipe that fails, or a container killed outright, still cannot leak a
       # signed-in session into the next party.
-      - /profiles:size=512m,mode=1777
+      - /profiles:size=512m,mode=0700,uid=10001,gid=10001
+      - /tmp:size=64m,mode=1777,uid=10001,gid=10001
     volumes:
-      # Optional corporate TLS-inspection CA. Empty is the normal case; only a
-      # developer behind an HTTPS-intercepting appliance needs this.
+      - browser-x11:/tmp/.X11-unix
+      - browser-target-xauth:/target-xauth
+      - browser-pulse:/pulse
+      # Optional corporate TLS-inspection CA. It is imported into each ephemeral
+      # publisher profile and wiped with that session.
       - ./browser/extra-ca:/opt/browser/extra-ca:ro
     environment:
       # Interpolated with :- not :? — a `:?` guard here fails every compose
       # command in the repo, even ones that do not select this profile.
       # entrypoint.sh refuses to start without it instead.
       - BROWSER_AGENT_TOKEN=${BROWSER_AGENT_TOKEN:-}
+      - BROWSER_TARGET_TOKEN=${BROWSER_TARGET_TOKEN:-}
+      - BROWSER_NETWORK_MODE=isolated-sidecars-v1
+      - TARGET_AGENT_URL=http://browser-target:8081
+      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
       - SCREEN_W=${BROWSER_SCREEN_W:-1280}
       - SCREEN_H=${BROWSER_SCREEN_H:-720}
       - SCREEN_FPS=${BROWSER_FPS:-30}
       - MAX_BITRATE_KBPS=${BROWSER_MAX_BITRATE_KBPS:-2500}
-    # Measured, not guessed: 720p30 of YouTube cost 68.6% of one core (peaks to
-    # ~160%) and 1.15 GiB. 4 vCPUs of the prod box's 8 covers the peaks; 3 GiB is
-    # ~2.6x the measured peak, and prod has NO SWAP, so an over-tight limit is an
-    # OOM kill rather than a slowdown. See the spike decision record.
-    cpus: "4.0"
-    mem_limit: 3g
+    # The measured 4-vCPU/3-GiB browser budget is split across the publisher and
+    # untrusted target so neither sidecar can consume the host by itself.
+    cpus: "2.0"
+    mem_limit: 1536m
     depends_on:
       livekit:
         condition: service_started
+      browser-target:
+        condition: service_started
+      browser-egress-proxy:
+        condition: service_started
+
+  # Topology contract for the browser profile:
+  # app -> control gateway -> publisher/controller; publisher -> LiveKit;
+  # target -> filtered egress proxy -> Internet. The target has no app, LiveKit,
+  # core-service, or direct-egress network attachment.
+  browser-target:
+    build: ./browser
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    entrypoint: ["python3", "/opt/browser/target_agent.py"]
+    cap_drop: [ALL]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./browser/chromium-seccomp.json
+    pids_limit: 512
+    networks: [browser-sandbox-net]
+    shm_size: "1gb"
+    tmpfs:
+      - /target-state:size=512m,mode=0700,uid=10001,gid=10001
+      - /tmp:size=64m,mode=1777,uid=10001,gid=10001
+    volumes:
+      - browser-x11:/tmp/.X11-unix
+      - browser-target-xauth:/xauth:ro
+      - browser-pulse:/pulse:ro
+      - ./browser/extra-ca:/opt/browser/extra-ca:ro
+    environment:
+      - BROWSER_TARGET_TOKEN=${BROWSER_TARGET_TOKEN:-}
+      - BROWSER_NETWORK_MODE=isolated-sidecars-v1
+      - TARGET_PROXY_URL=http://browser-egress-proxy:8888
+      - XAUTHORITY=/xauth/authority
+      - PULSE_SERVER=unix:/pulse/native
+      - PULSE_COOKIE=/pulse/cookie
+      - SCREEN_W=${BROWSER_SCREEN_W:-1280}
+      - SCREEN_H=${BROWSER_SCREEN_H:-720}
+    cpus: "2.0"
+    mem_limit: 1536m
+    depends_on:
+      browser-egress-proxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  browser-egress-proxy:
+    build: ./browser
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    entrypoint: ["python3", "/opt/browser/network.py", "proxy", "--port", "8888"]
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 96
+    networks: [browser-sandbox-net, browser-egress-net]
+    environment:
+      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
+      - VPS_PUBLIC_IP=${VPS_PUBLIC_IP:-}
+      - REQUIRE_DENY_ADDRESSES=1
+      - PROXY_MAX_CONNECTIONS=${BROWSER_PROXY_MAX_CONNECTIONS:-64}
+      - PROXY_IDLE_TIMEOUT_SECONDS=${BROWSER_PROXY_IDLE_TIMEOUT_SECONDS:-30}
+      - PROXY_MAX_TUNNEL_SECONDS=${BROWSER_PROXY_MAX_TUNNEL_SECONDS:-600}
+    cpus: "0.25"
+    mem_limit: 128m
+    healthcheck:
+      disable: true
+
+  browser-control-gateway:
+    build: ./browser
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    entrypoint: ["python3", "/opt/browser/network.py", "gateway", "8080:browser:8080"]
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    cpus: "0.10"
+    mem_limit: 64m
+    networks: [browser-control-net, browser-sandbox-net]
+    depends_on:
+      browser:
+        condition: service_started
+    healthcheck:
+      disable: true
 
   # ── Media-acquisition stack (Servarr + qBittorrent) ────────────────────────
   # All on watchparty-net so the app reaches them by name and they reach each
   # other (Prowlarr -> Sonarr, Sonarr -> qBittorrent). Config + media bind
-  # mounts are preserved from the previous docker-compose.servarr.yml layout.
+  # mounts are preserved from the standalone servarr stack this replaced.
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: watchparty-prowlarr
@@ -306,7 +422,23 @@ services:
       - "${QBITTORRENT_BT_PORT:-6881}:6881/udp"
 
 networks:
-  # Single shared network — every service resolves the others by container name.
+  # Core application network. The browser is deliberately not attached.
   watchparty-net:
     name: watchparty-net
     driver: bridge
+  browser-control-net:
+    driver: bridge
+    internal: true
+  browser-media-net:
+    driver: bridge
+    internal: true
+  browser-egress-net:
+    driver: bridge
+  browser-sandbox-net:
+    driver: bridge
+    internal: true
+
+volumes:
+  browser-x11:
+  browser-target-xauth:
+  browser-pulse:

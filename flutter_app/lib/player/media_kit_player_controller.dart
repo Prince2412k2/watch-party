@@ -121,6 +121,22 @@ class MediaKitPlayerController implements PlayerController {
   /// Error text stream. Additive.
   Stream<String> get errors => _errorCtrl.stream;
 
+  /// How far ahead of the start of the media libmpv has decoded and cached —
+  /// mpv's `demuxer-cache-time`, as an absolute timestamp. Additive: the frozen
+  /// [PlayerController] contract has no buffered-range API, which is why the
+  /// seek bar had no buffered indicator at all before #67.
+  ///
+  /// libmpv reports only the FORWARD edge of the demuxer cache, not a list of
+  /// seekable ranges, so this yields exactly one contiguous range (playhead →
+  /// [bufferedTo]) rather than the multiple disjoint ranges an HTML
+  /// `MediaElement.buffered` can expose. The timeline widget renders a list of
+  /// ranges regardless, so a future engine that can report several needs no
+  /// change there.
+  Stream<Duration> get bufferedTo => _player.stream.buffer;
+
+  /// Synchronous twin of [bufferedTo]. Additive.
+  Duration get bufferedToNow => _player.state.buffer;
+
   /// Most recent track list, including events emitted before the chrome mounts.
   PlayerTracks get latestTracks => _latestTracks;
 
