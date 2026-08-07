@@ -69,9 +69,16 @@ class DownloadButton extends ConsumerWidget {
         download.status == DownloadStatus.complete) {
       // `complete` briefly races the offline-manifest write (E8.3 wiring) —
       // treat it the same as "not started" rather than flash a dead-end state.
-      return AppButton(
-        label: 'Download',
+      // Icon-only. A downward arrow into a tray is one of maybe five glyphs
+      // that need no gloss anywhere on earth, and the word next to it was
+      // costing 90px on a surface whose whole argument is that the artwork is
+      // the interface. The tooltip is not a consolation prize — it is the
+      // control's accessible name, and [AnalogIconButton] will not compile
+      // without one.
+      return AnalogIconButton(
         icon: Icons.download_outlined,
+        tooltip: 'Download',
+        tone: AnalogIconButtonTone.solid,
         onPressed: () => _start(ref),
       );
     }
@@ -93,9 +100,11 @@ class DownloadButton extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: AnalogSpace.smPx),
-          AppButton(
-            label: 'Retry',
+          // The failure message beside it is already carrying the words. A
+          // "Retry" label here would be the second sentence about one event.
+          AnalogIconButton(
             icon: Icons.refresh,
+            tooltip: 'Retry the download',
             onPressed: () => _start(ref),
           ),
         ],

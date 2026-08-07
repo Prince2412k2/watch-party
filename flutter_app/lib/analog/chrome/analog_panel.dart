@@ -3,6 +3,8 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/widgets.dart';
 
 import '../../ui/analog_tokens.dart';
+import 'analog_button.dart' show AnalogReact;
+import 'analog_pressable.dart';
 
 /// How far a panel stands off the stage.
 ///
@@ -21,11 +23,24 @@ enum AnalogLift {
   over,
 }
 
-/// The kit's one framed surface.
+/// The kit's one card surface.
 ///
 /// Everything that used to be a shadcn `Card`/`SurfaceCard` is this: a warm
-/// surface from the ramp, a fine hairline, chrome radius (never poster radius),
-/// and a directional cast shadow keyed to the same light as the artwork.
+/// surface from the ramp, a soft [AnalogRadius.cardPx] corner (never poster
+/// radius), and a directional cast shadow keyed to the same light as the
+/// artwork.
+///
+/// The corner used to be [AnalogRadius.chromePx] — 4px, which at 400px wide
+/// reads as a rectangle somebody forgot to round rather than as an object. The
+/// hairline is gone from lifted panels for the same reason it left the buttons:
+/// a frame plus a fill plus a shadow is three ways of saying the same thing,
+/// and the one that survives greyscale is the fill. [AnalogLift.flush] keeps
+/// its hairline, because with no shadow it has nothing else to sit on.
+///
+/// Pass [onPressed] to make the card a control: it then answers to hover and
+/// press exactly as a button does, through the same [AnalogReact], and takes
+/// the kit's focus ring. A card you can click that does not move under the
+/// cursor is the commonest way a list of them reads as dead.
 ///
 /// [translucent] is for chrome that sits over moving picture — the party
 /// overlays and the toast rail. It blurs what is behind it rather than hiding
@@ -37,12 +52,14 @@ class AnalogPanel extends StatelessWidget {
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(AnalogSpace.lgPx),
-    this.radius = AnalogRadius.chromePx,
+    this.radius = AnalogRadius.cardPx,
     this.fill,
     this.border,
     this.lift = AnalogLift.rest,
     this.translucent = false,
     this.blur = 16,
+    this.onPressed,
+    this.semanticLabel,
   });
 
   final Widget child;
@@ -56,9 +73,33 @@ class AnalogPanel extends StatelessWidget {
   final bool translucent;
   final double blur;
 
+  /// Makes the card a control. Null leaves it inert.
+  final VoidCallback? onPressed;
+
+  /// The card's accessible name. Wanted whenever [onPressed] is set — a
+  /// clickable region whose name is "a column of four Texts" is not usable on
+  /// a screen reader.
+  final String? semanticLabel;
+
   @override
   Widget build(BuildContext context) {
-    final reduceTransparency = MediaQuery.maybeOf(context)?.highContrast ?? false;
+    if (onPressed != null) {
+      return AnalogPressable(
+        onPressed: onPressed,
+        semanticLabel: semanticLabel,
+        builder: (context, state) => AnalogFocusRing(
+          visible: state.focused,
+          radius: radius,
+          child: AnalogReact(state: state, child: _surface(context, state)),
+        ),
+      );
+    }
+    return _surface(context, null);
+  }
+
+  Widget _surface(BuildContext context, AnalogControlState? state) {
+    final reduceTransparency =
+        MediaQuery.maybeOf(context)?.highContrast ?? false;
     final blurred = translucent && !reduceTransparency && blur > 0;
 
     final fillColor =
@@ -67,11 +108,28 @@ class AnalogPanel extends StatelessWidget {
             ? AnalogColor.backdropScrim
             : AnalogColor.stageSurface);
 
-    final decorated = DecoratedBox(
+    // A card being reached lightens, the same M3 state layer every control in
+    // the kit uses — so a hoverable card and a hoverable button agree about
+    // what "reached" looks like.
+    final washed = state == null
+        ? fillColor
+        : analogStateLayerOver(fillColor, state);
+
+    final decorated = AnimatedContainer(
+      duration: AnalogMotion.chromeFadeMs,
+      curve: AnalogMotion.chromeFadeEase,
       decoration: BoxDecoration(
-        color: fillColor,
+        color: washed,
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: border ?? AnalogColor.line),
+        // Only the flush variant keeps a frame. A lifted panel already says
+        // "separate object" with its fill and its shadow; the hairline was the
+        // third telling, and it is the one that made these read as cards in
+        // the pejorative sense.
+        border: border != null
+            ? Border.all(color: border!)
+            : lift == AnalogLift.flush
+            ? Border.all(color: AnalogColor.line)
+            : null,
         boxShadow: switch (lift) {
           AnalogLift.flush => const [],
           AnalogLift.rest => const [

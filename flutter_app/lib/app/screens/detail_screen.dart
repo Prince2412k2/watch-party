@@ -118,10 +118,16 @@ class _GuestOfflineDetailBody extends StatelessWidget {
             Text(runtime, style: AppTheme.mono.copyWith(color: wp.dim)),
           ],
           const SizedBox(height: AppSpacing.lg),
-          AppButton(
-            label: 'Play',
+          // A play triangle is the most legible mark in the medium and does
+          // not need the word. Kept at primary weight and given a bigger
+          // target than the default: losing the label must not read as
+          // demoting the one thing this page exists to do.
+          AnalogIconButton(
             icon: Icons.play_arrow,
-            variant: AppButtonVariant.primary,
+            tooltip: 'Play',
+            tone: AnalogIconButtonTone.primary,
+            size: 56,
+            iconSize: 28,
             onPressed: () => Navigator.of(
               context,
             ).push(_playerRouteFor(itemId: record.itemId)),
@@ -359,9 +365,9 @@ class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
                   PlayerView(
                     controller: ref.watch(playerControllerProvider),
                     itemId: widget.itemId,
-                  apiClient: ref.watch(apiClientProvider),
-                  preferredSubtitleStreamIndex: widget.subtitleStreamIndex,
-                  onToggleFullscreen: _toggleFullscreen,
+                    apiClient: ref.watch(apiClientProvider),
+                    preferredSubtitleStreamIndex: widget.subtitleStreamIndex,
+                    onToggleFullscreen: _toggleFullscreen,
                     isFullscreen: _isFullscreen,
                     cachedSpans: _usesCacheProxy
                         ? ref

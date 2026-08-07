@@ -158,6 +158,7 @@
   --an-radius-sheet-px: 8px;
   --an-radius-pill-px: 999px;
   --an-radius-button-px: 999px;
+  --an-radius-card-px: 14px;
 
   --an-type-sans: 'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --an-type-mono: 'JetBrains Mono', ui-monospace, monospace;

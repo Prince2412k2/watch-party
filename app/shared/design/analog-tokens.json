@@ -180,7 +180,10 @@
     "pillPx": 999,
 
     "$button": "Buttons are pills, and they are the ONE piece of chrome that is. A 4px radius on a bordered plate with a cast shadow reads as a small card - which is exactly what it looked like, and a stage made of rectangular artwork does not need more rectangles competing with it. A pill is unmistakably a control: nothing else on the stage is that shape. Kept separate from chromePx because text fields, toasts and the settings stack are still plates and should stay square-ish; rounding those too would just move the problem.",
-    "buttonPx": 999
+    "buttonPx": 999,
+
+    "$card": "Panels and rows - the surfaces that HOLD things rather than the controls you press. Generous enough to read as a soft object at 400px wide, where the old 4px read as a rectangle someone forgot to round. Not a pill: a pill at this size is a lozenge, and the shape is supposed to say container, not control.",
+    "cardPx": 14
   },
 
   "type": {
