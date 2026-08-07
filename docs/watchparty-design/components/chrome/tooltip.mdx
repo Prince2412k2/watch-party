@@ -1,0 +1,45 @@
+---
+title: Tooltip
+kit: chrome
+web: title / .an-tip
+native: AnalogTooltip
+status: parity
+---
+
+# Tooltip
+
+A hover/focus label for a control that already has an accessible name.
+
+## Purpose
+
+To tell a **mouse** user what a glyph means. That is its entire job.
+
+## The rule that matters
+
+**A tooltip is never how a control gets its accessible name, and never the
+only way to discover an action.**
+
+Tooltips do not exist for keyboard-only users in any useful way, do not
+exist on touch at all, and are invisible to a remote. This is why
+[`AnalogIconButton`](./icon-button.mdx) takes a required `tooltip` and
+passes it to *both* `Semantics.label` and the tooltip — one string, two
+destinations, so they cannot drift apart or be half-supplied.
+
+## API
+
+**Native** — `AnalogTooltip({message, child})`
+
+Wraps Material's tooltip for placement (edge collision, follow, delay) and
+replaces the surface.
+
+## Tokens
+
+`color.stageSurface2`, `ink`, `line` · `radius.chromePx` ·
+`motion.chromeFadeMs` · `space.smPx` / `mdPx`
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Never the sole source of an accessible name | `AnalogIconButton` supplies both from one string |
+| 2 | Never the sole route to an action | Review; every menu action also exists as a visible control |

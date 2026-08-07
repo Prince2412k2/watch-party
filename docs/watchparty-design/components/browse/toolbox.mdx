@@ -1,0 +1,34 @@
+---
+title: Toolbox
+kit: browse
+web: —
+native: AnalogToolbox
+status: native-only
+---
+
+# Toolbox
+
+A corner cluster of stage-level controls.
+
+## Purpose
+
+The native stage's slot for controls that belong to the surface rather than
+to any item — the web equivalent is the combination of the
+[party widget](./party-widget.mdx) and [profile tray](./profile-tray.mdx).
+
+Sits at `z.toolbox`, above the shelf and below sheets and toasts.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Never overlaps the focused poster's lift | `z` ordering + stage gutters |
+| 2 | Collapses on the phone breakpoint | `breakpoint.phoneMaxPx` |
+
+## Parity notes
+
+Web and native solve this differently and that is currently **accepted
+divergence**, not a gap: the web splits the same controls across two
+self-contained corner components. If the native stages are rebuilt to match
+the web (the current plan), this component is likely to be replaced by
+ports of those two rather than kept.

@@ -1,0 +1,76 @@
+---
+title: Poster
+kit: browse
+web: AnalogPoster
+native: AnalogPosterTile
+status: parity
+---
+
+# Poster
+
+One piece of artwork, focusable.
+
+## Purpose
+
+The atom of every browse surface. A 2:3 image, a caption, an optional badge
+and progress line — and the focus treatment that is the design's whole
+identity.
+
+## Artwork is square
+
+`poster.radiusPx` is **0**. Never apply `radius.chromePx`, `sheetPx` or
+`pillPx` to a poster, still, skeleton or placeholder. A rounded poster reads
+as a web card; a square one reads as film.
+
+This applies to the **placeholder and skeleton too** — a rounded skeleton
+that becomes a square poster is a visible pop on every load.
+
+## Focus is built from four things
+
+| Signal | Token | Survives reduced motion? |
+| --- | --- | --- |
+| Scale up | `selection.focusScale` | no |
+| Lift forward | `selection.focusLiftPx` | no |
+| Frame thickens | `poster.framePx` | **yes** |
+| Backdrop darkens behind | `selection.focusBackdropDarkenPct` | yes |
+
+Under reduced motion, two of the four go away. Because
+"selection must not rely on colour alone" rules out replacing them with a
+tint, **the frame thickens instead** — a size change rather than a spatial
+one, and it survives on a monochrome display.
+
+That is why `MotionProfile.framePx` is *thicker* when motion is off. It
+looks like a bug in the token table and is the opposite.
+
+## The light
+
+`selection.sceneLightAngleDeg` is 315° — above and to the left. Every edge
+light and cast shadow in the app keys to it, posters and chrome alike.
+`edgeLightOffsets(angle, weight)` derives the offsets so nothing hard-codes
+a direction.
+
+## API
+
+**Web** — `AnalogPoster`
+
+| Prop | Type |
+| --- | --- |
+| `item` | `ArtworkItem \| null` |
+| `focused` | `boolean` |
+| `motion` | `MotionProfile` |
+| `caption` / `badge` | `string \| null` |
+| `progressPct` | `number \| null` |
+| `src` | `string \| null` |
+| `eager` | `boolean` |
+
+**Native** — `AnalogPosterTile`, plus `AnalogPosterPlaceholder` and
+`AnalogPosterSkeleton`.
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Never rounded — including placeholder and skeleton | `poster.radiusPx = 0`; parity tests assert it in both clients |
+| 2 | Focus is never colour alone | Four signals, at least two of which survive reduced motion |
+| 3 | A failed image still renders a placeholder | The web `Img` returning `null` on 404 was a real bug — never leave the slot empty |
+| 4 | One scene light for the whole app | `edgeLightOffsets` derives from `sceneLightAngleDeg` |

@@ -1,0 +1,62 @@
+---
+title: Badge and Chip
+kit: chrome
+web: .an-badge
+native: AnalogBadge, AnalogChip
+status: parity
+---
+
+# Badge and Chip
+
+A badge states a fact. A chip is a control.
+
+## Purpose
+
+They look related and behave nothing alike, which is exactly why they live
+on one page: the difference must stay visible to whoever is choosing
+between them.
+
+- **Badge** — non-interactive. A count, a `HOST` marker, a status word. It
+  takes no focus and has no press.
+- **Chip** — interactive and usually one of a set. It takes focus, presses,
+  and can be `selected`.
+
+If a badge ever needs an `onPressed`, it is a chip.
+
+## API
+
+**Native**
+
+`AnalogBadge({child, leading})` and `AnalogBadge.outline({child, leading})`
+
+`AnalogChip({label, onPressed, selected, ink, leading})`
+
+## States
+
+Badges have no states — they are text on a plate.
+
+Chips carry the full [state layer](./pressable.mdx#states), plus selection:
+
+| State | Fill | Frame |
+| --- | --- | --- |
+| Rest | transparent | `line` |
+| Reached | + state layer | `lineStrong` |
+| Selected | `stageSurface2` | `lineStrong` at **2× width** |
+
+**Selection doubles the frame** rather than only changing the fill —
+invariant 2 again. Selected-and-unfocused and unselected-and-hovered must
+not be the same rectangle.
+
+## Tokens
+
+`color.ink`, `inkDim`, `stageSurface2`, `line`, `lineStrong` ·
+`radius.chromePx` / `pillPx` · `poster.framePx` · `space.mdPx` / `xsPx` ·
+`stateLayer.*`
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | A badge never takes focus | It is not built on `AnalogPressable` |
+| 2 | Selection is not colour alone | Doubled frame + bolder ink |
+| 3 | Minimum height 26 (chip) / 20 (badge) | Constraints |

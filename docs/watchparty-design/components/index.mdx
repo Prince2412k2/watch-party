@@ -1,0 +1,191 @@
+---
+title: Analog component library
+kind: index
+status: living
+audience: anyone building a surface in either client
+---
+
+# Analog component library
+
+The reference for every component in Watchparty, in both clients.
+
+There are two implementations of this design — React on the web, Flutter on
+the desktop app — and they are supposed to be **the same product**. Nothing
+enforces that on its own. These pages are where the contract lives: one page
+per component, stating what it is, what it must do, and how each client
+spells it. If the two implementations disagree, the page is right and the
+code is wrong.
+
+## How to read a page
+
+Every page has the same six sections, in the same order:
+
+| Section | What it answers |
+| --- | --- |
+| **Purpose** | What this is for, and what it is *not* for |
+| **Anatomy** | The parts, named — so both clients name them the same |
+| **API** | The props (web) and constructor params (native), side by side |
+| **States** | What every interaction state looks like |
+| **Tokens** | Which design tokens it reads. It may read no others |
+| **Rules** | The invariants, each with the test that enforces it |
+
+A rule without a test is a wish. Where a rule has no test yet, the page says
+so rather than implying coverage that does not exist.
+
+That distinction is not decorative. Writing these pages turned up that
+`chrome.dart` claimed every kit rule "has a test" while the chrome kit had
+**no tests at all** — the player kit was covered, the chrome kit was not.
+`flutter_app/test/analog/chrome_kit_test.dart` now enforces both invariants
+across every control, as a loop over the kit rather than a per-widget suite,
+so a newly added control that skips them fails without anyone remembering to
+write a case for it.
+
+## The three kits
+
+| Kit | Directory (web) | Directory (native) | What it is |
+| --- | --- | --- | --- |
+| **Chrome** | `app/client/src/analog/` | `flutter_app/lib/analog/chrome/` | What the app frames content *with* — buttons, panels, inputs, menus, toasts |
+| **Browse** | `app/client/src/analog/` | `flutter_app/lib/analog/widgets/` | The stage itself — posters, rails, shelves, the backdrop |
+| **Player** | `app/client/src/analog/player/` | `flutter_app/lib/analog/player/` | Transport — timeline, volume, settings, chat toasts |
+
+The split matters: the browse kit *is* the content, and the chrome kit is
+everything around it. A component that blurs the two usually belongs in
+neither.
+
+## The invariants
+
+These hold across every component in every kit. They are not style
+preferences; each one exists because it broke something.
+
+### 1. Nothing is hover-only
+
+Every control takes focus, activates on Enter/Space/Select, and carries an
+accessible name. The app is driven by remote and by touch as well as by
+mouse, and a control that only reveals itself on hover does not exist on
+either.
+
+### 2. No state is signalled by colour alone
+
+Focus draws a ring. Selection draws a detent. A press sinks the plate.
+Disabled flattens it. Danger doubles the frame. Colour reinforces all of
+these and carries none of them by itself — the design is a warm-black ramp
+with very little hue to spend, and a monochrome or low-vision viewer must
+still be able to tell where they are.
+
+### 3. Artwork is never rounded
+
+`poster.radiusPx` is `0` and the chrome radii (`radius.chromePx`,
+`sheetPx`, `pillPx`) must never be applied to a poster, still, skeleton or
+placeholder. A rounded poster reads as a web card; a square one reads as
+film.
+
+### 4. One canonical token source
+
+`app/shared/design/analog-tokens.json` is the only file anyone edits.
+`node app/shared/design/generate.mjs` emits the TypeScript, the CSS and the
+Dart. A component that hard-codes a colour, a duration or a curve has
+already broken parity, because the other client will not have hard-coded
+the same one.
+
+Easing is stored as **four control points** precisely so that CSS
+`cubic-bezier(a,b,c,d)` and Flutter `Cubic(a,b,c,d)` are literally the same
+numbers. `analog_tokens_parity_test.dart` and `tokenParity.test.ts` both
+assert it.
+
+### 5. Motion is mechanical
+
+Short travel, clear detents, no elastic overshoot anywhere. The curves are
+Material 3's easing set — standard for chrome, emphasized-decelerate for
+anything that travels a distance. M3's curves suit this design *because*
+none of them overshoot; they only redistribute weight across the move.
+
+## What we take from Material 3, and what we do not
+
+This is worth being explicit about, because "use Material 3" can mean two
+very different things.
+
+**Taken — the mechanics:**
+
+- **State layers.** A translucent wash of the ink colour over a control that
+  has been reached, at M3's opacities (hover 8%, focus 10%, pressed 10%,
+  selected 12%). It is composited *into* the container colour rather than
+  stacked over it, which puts it where M3 specifies — above the container,
+  below the content, so a label is never tinted.
+- **Easing and duration.** Standard, emphasized-decelerate, and an
+  enter/exit pair so an arrival and a departure are not symmetrical.
+- **Focus and touch-target discipline.** Nothing thinner than
+  `hairline.hitPx` (24px) is hittable, whatever it looks like.
+
+**Not taken — the look:**
+
+Tonal pills, ripples, elevation tints, and M3's colour system are a
+different visual language from the analog stage. Adopting them would undo
+the browse and player kits. The state layer washes **our** ink, never
+Material's palette.
+
+Where Material already owns plumbing worth keeping — text editing, menu
+routes, modal routes, tooltip placement — the native kit wraps it and
+replaces only the paint.
+
+## Component index
+
+### Chrome
+
+| Component | Web | Native | Page |
+| --- | --- | --- | --- |
+| Pressable | — | `AnalogPressable` | [pressable](./chrome/pressable.mdx) |
+| Button | `.an-btn` | `AnalogButton` | [button](./chrome/button.mdx) |
+| Icon button | `.an-icon-btn` | `AnalogIconButton` | [icon-button](./chrome/icon-button.mdx) |
+| Panel | `.an-panel` | `AnalogPanel` | [panel](./chrome/panel.mdx) |
+| Badge / Chip | `.an-badge` | `AnalogBadge`, `AnalogChip` | [badge](./chrome/badge.mdx) |
+| Switch | — | `AnalogSwitch` | [switch](./chrome/switch.mdx) |
+| Segmented | `.an-modes` | `AnalogSegmented` | [segmented](./chrome/segmented.mdx) |
+| Text field | `.an-field` | `AnalogTextField` | [text-field](./chrome/text-field.mdx) |
+| Tooltip | `title` | `AnalogTooltip` | [tooltip](./chrome/tooltip.mdx) |
+| Menu | — | `AnalogContextMenu` | [menu](./chrome/menu.mdx) |
+| Dialog | — | `showAnalogDialog` | [dialog](./chrome/dialog.mdx) |
+| Progress | — | `AnalogProgress` | [progress](./chrome/progress.mdx) |
+| Toast | — | `AnalogToastHost` | [toast](./chrome/toast.mdx) |
+
+### Browse
+
+| Component | Web | Native | Page |
+| --- | --- | --- | --- |
+| Stage | `AnalogStage` | `AnalogStage` | [stage](./browse/stage.mdx) |
+| Rail | `AnalogRail` | — | [rail](./browse/rail.mdx) |
+| Shelf | `AnalogShelf` | `AnalogShelf` | [shelf](./browse/shelf.mdx) |
+| Poster | `AnalogPoster` | `AnalogPosterTile` | [poster](./browse/poster.mdx) |
+| Nav | `AnalogNav` | `AnalogNav` | [nav](./browse/nav.mdx) |
+| Mode slider | `AnalogModeSlider` | — | [mode-slider](./browse/mode-slider.mdx) |
+| Season rail | `AnalogSeasonRail` | — | [season-rail](./browse/season-rail.mdx) |
+| Details | `AnalogDetails` | — | [details](./browse/details.mdx) |
+| Party widget | `AnalogPartyWidget` | — | [party-widget](./browse/party-widget.mdx) |
+| Profile tray | `AnalogProfileTray` | — | [profile-tray](./browse/profile-tray.mdx) |
+| Toolbox | — | `AnalogToolbox` | [toolbox](./browse/toolbox.mdx) |
+
+### Player
+
+| Component | Web | Native | Page |
+| --- | --- | --- | --- |
+| Timeline | `player/` | `AnalogTimeline` | [timeline](./player/timeline.mdx) |
+| Volume | `player/` | `AnalogVolume` | [volume](./player/volume.mdx) |
+| Settings stack | `player/` | `AnalogSettingsStack` | [settings-stack](./player/settings-stack.mdx) |
+| Chat toasts | `player/` | `AnalogToastStack` | [toast-stack](./player/toast-stack.mdx) |
+
+## Parity status
+
+An em-dash in the table above is not a style choice — it marks a component
+that exists in **one** client only. Every one of those is a real parity gap,
+and the native app is the side that is behind: `/movies`, `/series`,
+`/discover` and `/downloads` still route to a pre-analog tab shell there.
+
+Tracked as: port the browse-core modules → build the four stages → rewire
+the router and delete the legacy screens.
+
+## Editing these pages
+
+- The page is the contract. Change it *before* changing either client.
+- If a rule cannot be tested, say so on the page rather than implying it is
+  enforced.
+- Keep the API tables generated from the real signatures. A drifted table is
+  worse than no table, because it will be believed.

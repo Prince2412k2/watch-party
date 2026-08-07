@@ -1,0 +1,80 @@
+---
+title: Icon button
+kit: chrome
+web: .an-icon-btn
+native: AnalogIconButton
+status: parity
+---
+
+# Icon button
+
+A square control whose whole label is a glyph.
+
+## Purpose
+
+For actions that are dense, repeated, or sit in a row where a text label
+would not fit — close, approve, reject, transfer host. Because the glyph
+carries no words, the `tooltip` is **required** and doubles as the
+accessible name. There is no way to construct one without it.
+
+**Not for:** a primary action. If the action matters enough to be the reason
+the surface exists, it deserves a [button](./button.mdx) with a label.
+
+## Anatomy
+
+```
+┌────────┐
+│   ✕    │   ← 34x34 default, glyph 18
+└────────┘
+  tooltip = accessible name (required)
+```
+
+## API
+
+**Native** — `AnalogIconButton`
+
+| Param | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `icon` | `IconData` | required | |
+| `tooltip` | `String` | **required** | Accessible name *and* hover label |
+| `onPressed` | `VoidCallback?` | `null` | Null disables |
+| `tone` | `AnalogIconButtonTone` | `ghost` | `ghost` \| `outline` \| `solid` |
+| `iconSize` | `double` | `18` | |
+| `color` | `Color?` | `null` | Overrides resting glyph colour — status reds/greens |
+| `size` | `double` | `34` | The square hit target |
+| `focusNode` | `FocusNode?` | `null` | |
+
+## Tones
+
+| Tone | Plate | Frame |
+| --- | --- | --- |
+| `ghost` | none until reached | none |
+| `outline` | none until reached | always a hairline |
+| `solid` | always `stageSurface2` | always a hairline, raised |
+
+## States
+
+Identical to [button](./button.mdx) — the same state layer, the same focus
+ring (inset 4), the same +1px press translate. The `color` override applies
+to the *resting* glyph only; when lit it goes to full strength, when not it
+sits at 82% alpha, so a status colour still brightens on approach.
+
+## Tokens
+
+`color.ink`, `inkDim`, `inkFaint`, `stageSurface`, `stageSurface2`,
+`line`, `lineStrong` · `radius.chromePx` · `poster.framePx` ·
+`hairline.hitPx` · `motion.chromeFadeMs` / `chromeFadeEase` · `stateLayer.*`
+
+## Rules
+
+| # | Rule | Enforced by |
+| --- | --- | --- |
+| 1 | Every icon button has an accessible name | `tooltip` is a required positional-in-practice param |
+| 2 | The hit target clears the touch floor | `size` defaults to 34, above `hairline.hitPx` (24) |
+| 3 | A tooltip is never the only way to know what it does | Context — icon buttons only appear where the surrounding row explains them |
+
+## Parity notes
+
+Replaced the shadcn pattern of `Tooltip(child: IconButton.ghost(...))`,
+which made the accessible name optional and therefore frequently absent.
+Folding the tooltip into the control is what made rule 1 unbreakable.
