@@ -6,6 +6,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../analog/chrome/analog_button.dart';
+import '../../analog/chrome/analog_select.dart';
 import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../state/state.dart';
@@ -73,7 +75,6 @@ class _DetailStageState extends ConsumerState<DetailStage>
   LibraryItem? _activeFallback;
   int? _selAudio;
   int? _selSubtitle;
-  bool _trackMenuOpen = false;
 
   /// The id we've already seeded default track selection for, so re-fetches
   /// (e.g. after a subtitle upload) don't clobber a user's choice.
@@ -84,7 +85,6 @@ class _DetailStageState extends ConsumerState<DetailStage>
     setState(() {
       _activeId = item.id;
       _activeFallback = item;
-      _trackMenuOpen = false;
     });
   }
 
@@ -99,8 +99,6 @@ class _DetailStageState extends ConsumerState<DetailStage>
 
   void _selectAudio(int? index) => setState(() => _selAudio = index);
   void _selectSubtitle(int? index) => setState(() => _selSubtitle = index);
-  void _toggleTrackMenu() => setState(() => _trackMenuOpen = !_trackMenuOpen);
-  void _closeTrackMenu() => setState(() => _trackMenuOpen = false);
 
   @override
   Widget build(BuildContext context) {
@@ -512,8 +510,12 @@ class _CopyColumn extends StatelessWidget {
                   ),
                   if (active.type != 'Series') ...[
                     _TrackButton(
-                      open: state._trackMenuOpen,
-                      onTap: state._toggleTrackMenu,
+                      itemId: active.id,
+                      playback: playback,
+                      selectedAudio: state._selAudio,
+                      selectedSubtitle: state._selSubtitle,
+                      onSelectAudio: state._selectAudio,
+                      onSelectSubtitle: state._selectSubtitle,
                     ),
                     DownloadButton(
                       itemId: active.id,
@@ -524,18 +526,9 @@ class _CopyColumn extends StatelessWidget {
                 ],
               ),
             ),
-            if (state._trackMenuOpen && playback != null) ...[
-              const SizedBox(height: 12),
-              _TrackMenuPanel(
-                itemId: active.id,
-                playback: playback!,
-                selectedAudio: state._selAudio,
-                selectedSubtitle: state._selSubtitle,
-                onSelectAudio: state._selectAudio,
-                onSelectSubtitle: state._selectSubtitle,
-                onClose: state._closeTrackMenu,
-              ),
-            ],
+            // The menu is an OVERLAY now, opened by the button itself — it used
+            // to be an inline child right here, which is why it pushed the copy
+            // around when it opened and got clipped by this column.
           ],
         ],
       ),
@@ -1203,64 +1196,39 @@ class _EpisodeCard extends StatelessWidget {
   }
 }
 
-class _TrackButton extends StatelessWidget {
-  const _TrackButton({required this.open, required this.onTap});
-  final bool open;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return Tooltip(
-      message: 'Audio and subtitles',
-      child: Material(
-        color: open ? wp.text : wp.surface.withValues(alpha: 0.6),
-        shape: CircleBorder(side: BorderSide(color: wp.line2)),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: SizedBox.square(
-            dimension: 44,
-            child: Icon(
-              Icons.music_note_outlined,
-              size: 18,
-              color: open ? wp.bg : wp.text,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Inline audio/subtitle track menu — folds the web `DetailTrackMenu`
-/// (selection + SRT/VTT upload/delete) into the detail stage. Reads/refreshes
-/// via [detailPlaybackProvider]; track selection updates the parent's state so
-/// it rides Watch into the player/party.
-class _TrackMenuPanel extends ConsumerStatefulWidget {
-  const _TrackMenuPanel({
+/// The audio/subtitle control: a glyph that opens the kit's dropdown.
+///
+/// This used to be a button plus a 430px panel rendered INLINE in the copy
+/// column. Opening it shoved the title and overview around, and the panel
+/// inherited the column's clip — so it was cut off at the bottom with nothing
+/// able to scroll it. The menu is an overlay now ([showAnalogSelect]), which
+/// is the actual fix; everything else here is the same upload/delete logic it
+/// always had.
+class _TrackButton extends ConsumerStatefulWidget {
+  const _TrackButton({
     required this.itemId,
     required this.playback,
     required this.selectedAudio,
     required this.selectedSubtitle,
     required this.onSelectAudio,
     required this.onSelectSubtitle,
-    required this.onClose,
   });
 
   final String itemId;
-  final PlaybackInfo playback;
+
+  /// Null while the probe is in flight — the button stays visible but inert
+  /// rather than popping into existence once playback info lands.
+  final PlaybackInfo? playback;
   final int? selectedAudio;
   final int? selectedSubtitle;
   final ValueChanged<int?> onSelectAudio;
   final ValueChanged<int?> onSelectSubtitle;
-  final VoidCallback onClose;
 
   @override
-  ConsumerState<_TrackMenuPanel> createState() => _TrackMenuPanelState();
+  ConsumerState<_TrackButton> createState() => _TrackButtonState();
 }
 
-class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
+class _TrackButtonState extends ConsumerState<_TrackButton> {
   bool _busy = false;
   String? _error;
 
@@ -1279,9 +1247,11 @@ class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
       if (file == null) return;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
       final api = ref.read(apiClientProvider);
-      final previous = widget.playback.subtitleStreams
-          .map((track) => track.index)
-          .toSet();
+      final previous =
+          widget.playback?.subtitleStreams
+              .map((track) => track.index)
+              .toSet() ??
+          const <int>{};
       await api.uploadSubtitle(widget.itemId, _toUtf8(bytes), file.name);
 
       PlaybackTrack? uploaded;
@@ -1324,183 +1294,79 @@ class _TrackMenuPanelState extends ConsumerState<_TrackMenuPanel> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
+  final GlobalKey _anchor = GlobalKey();
+
+  /// One menu picks from two different lists, so a bare index cannot say which
+  /// one was chosen. `(kind, index)` can, and a record is cheaper than a pair
+  /// of sealed classes for something that never leaves this file.
+  void _open() {
     final pb = widget.playback;
-    return Container(
-      width: 430,
-      constraints: const BoxConstraints(maxHeight: 460),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: wp.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: wp.line2),
-        boxShadow: wp.cardShadow,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Playback tracks',
-                    style: TextStyle(
-                      color: wp.text,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                InkWell(
-                  onTap: widget.onClose,
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(Icons.close, size: 17, color: wp.dim),
-                  ),
-                ),
-              ],
-            ),
-            if (pb.audioStreams.isNotEmpty) ...[
-              _TrackHeading(label: 'Audio'),
+    if (pb == null) return;
+    showAnalogSelect<(String, int?)>(
+      context: context,
+      anchor: _anchor,
+      selected: _selectedKey(),
+      groups: [
+        if (pb.audioStreams.isNotEmpty)
+          AnalogChoiceGroup(
+            icon: Icons.graphic_eq,
+            choices: [
               for (var i = 0; i < pb.audioStreams.length; i++)
-                _TrackRow(
+                AnalogChoice(
+                  value: ('audio', pb.audioStreams[i].index),
                   label: _trackLabel(pb.audioStreams[i], 'Audio ${i + 1}'),
-                  selected: widget.selectedAudio == pb.audioStreams[i].index,
-                  onTap: () => widget.onSelectAudio(pb.audioStreams[i].index),
                 ),
-              const SizedBox(height: 12),
             ],
-            _TrackHeading(label: 'Subtitles'),
-            _TrackRow(
-              label: 'Off',
-              selected:
-                  widget.selectedSubtitle == null ||
-                  widget.selectedSubtitle! < 0,
-              onTap: () => widget.onSelectSubtitle(null),
-            ),
+          ),
+        AnalogChoiceGroup(
+          icon: Icons.closed_caption_outlined,
+          choices: [
+            const AnalogChoice(value: ('sub', null), label: 'Off'),
             for (var i = 0; i < pb.subtitleStreams.length; i++)
-              _TrackRow(
+              AnalogChoice(
+                value: ('sub', pb.subtitleStreams[i].index),
                 label: _trackLabel(pb.subtitleStreams[i], 'Subtitle ${i + 1}'),
-                selected:
-                    widget.selectedSubtitle == pb.subtitleStreams[i].index,
-                onTap: () =>
-                    widget.onSelectSubtitle(pb.subtitleStreams[i].index),
                 onDelete: pb.subtitleStreams[i].isExternal && !_busy
                     ? () => _delete(pb.subtitleStreams[i])
                     : null,
               ),
-            const SizedBox(height: 8),
-            AppButton(
-              label: _busy ? 'Working…' : 'Upload SRT or VTT',
-              variant: AppButtonVariant.secondary,
-              expand: true,
-              onPressed: _busy ? null : _upload,
-            ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(color: AppColors.red, fontSize: 12),
-                ),
-              ),
           ],
         ),
-      ),
+      ],
+      footerIcon: Icons.upload_file_outlined,
+      footerTooltip: 'Upload a subtitle file (SRT or VTT)',
+      onFooter: _busy ? null : _upload,
+      onSelected: (choice) {
+        if (choice.$1 == 'audio') {
+          widget.onSelectAudio(choice.$2);
+        } else {
+          widget.onSelectSubtitle(choice.$2);
+        }
+      },
     );
   }
-}
 
-class _TrackHeading extends StatelessWidget {
-  const _TrackHeading({required this.label});
-  final String label;
+  (String, int?) _selectedKey() {
+    final sub = widget.selectedSubtitle;
+    return ('sub', sub != null && sub >= 0 ? sub : null);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 5, 10, 5),
-      child: Text(
-        label.toUpperCase(),
-        style: AppTheme.mono.copyWith(
-          color: context.wp.faint,
-          fontSize: 10.5,
-          letterSpacing: 1.3,
-        ),
-      ),
-    );
-  }
-}
-
-class _TrackRow extends StatelessWidget {
-  const _TrackRow({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.onDelete,
-  });
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final VoidCallback? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return Container(
-      constraints: const BoxConstraints(minHeight: 44),
-      decoration: BoxDecoration(
-        color: selected ? wp.surface2 : Colors.transparent,
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: InkWell(
-              onTap: onTap,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 9,
-                ),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 15,
-                      child: selected
-                          ? Icon(Icons.check, size: 14, color: wp.text)
-                          : null,
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: selected ? wp.text : wp.dim,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (onDelete != null)
-            InkWell(
-              onTap: onDelete,
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Icon(Icons.delete_outline, size: 15, color: wp.faint),
-              ),
-            ),
-        ],
-      ),
+    // The upload failure has nowhere to print now that the panel is gone, so
+    // it rides the button's tooltip and turns the glyph red — the same
+    // treatment the party tray gives a failed shared browser.
+    return AnalogIconButton(
+      key: _anchor,
+      icon: _error != null
+          ? Icons.error_outline
+          : Icons.closed_caption_outlined,
+      tooltip: _error ?? 'Audio and subtitles',
+      tone: AnalogIconButtonTone.solid,
+      color: _error != null ? AppColors.red : null,
+      size: 44,
+      iconSize: 20,
+      onPressed: widget.playback == null || _busy ? null : _open,
     );
   }
 }
@@ -1567,10 +1433,14 @@ int? _defaultSubtitle(PlaybackInfo info) {
 
 String _trackLabel(PlaybackTrack t, String fallback) {
   final base = t.displayTitle ?? t.title ?? t.language ?? fallback;
+  // Jellyfin's displayTitle usually ALREADY ends in "Default"/"Forced", so
+  // appending them unconditionally produced "AAC - Stereo - Default · Default".
+  // Only add a flag the base has not already said.
+  final lower = base.toLowerCase();
   return [
     base,
-    if (t.isDefault) 'Default',
-    if (t.isForced) 'Forced',
+    if (t.isDefault && !lower.contains('default')) 'Default',
+    if (t.isForced && !lower.contains('forced')) 'Forced',
   ].join(' · ');
 }
 
