@@ -153,10 +153,18 @@ void main() {
       );
     });
 
-    testWidgets('danger doubles the frame rather than relying on red', (
+    testWidgets('danger is the only framed tone, rather than relying on red', (
       tester,
     ) async {
-      // The frame width is the non-colour signal. statusDanger reinforces it.
+      // The frame is the non-colour signal; statusDanger reinforces it.
+      //
+      // This used to assert that danger's frame was DOUBLE the secondary's,
+      // which was the right assertion when every tone carried a hairline and
+      // danger had to out-weigh them. Buttons are tonal fills now and carry no
+      // frame at all, so danger having one is the entire signal — a stronger
+      // one than 2px-versus-1px ever was. The property under test is unchanged
+      // and is what this asserts: with the red taken away, danger is still the
+      // only button on the surface with an outline.
       await tester.pumpWidget(
         _host(
           Column(
@@ -187,14 +195,20 @@ void main() {
               )
               .first,
         );
-        final border = (container.decoration! as BoxDecoration).border!;
-        return border.top.width;
+        // A tone with no frame has no `border` at all, not a zero-width one.
+        final border = (container.decoration! as BoxDecoration).border;
+        return border?.top.width ?? 0;
       }
 
       expect(
         frameWidthOf('Leave'),
-        frameWidthOf('Stay') * 2,
+        greaterThan(0),
         reason: 'danger must be legible without perceiving the red',
+      );
+      expect(
+        frameWidthOf('Stay'),
+        0,
+        reason: 'a frame on the quiet default would cost danger its signal',
       );
     });
 

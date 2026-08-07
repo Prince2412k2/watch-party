@@ -111,6 +111,9 @@
   --an-motion-hero-return-ms: 380ms;
   --an-motion-settle-fast-ms: 820ms;
   --an-motion-fast-step-ms: 220ms;
+  --an-motion-press-scale-pct: 4%;
+  --an-motion-hover-lift-px: 2px;
+  --an-motion-hover-scale-pct: 2%;
   --an-motion-anticipation-ms: 60ms;
   --an-motion-anticipation-pct: 4%;
   --an-motion-copy-swap-ms: 260ms;
@@ -154,6 +157,7 @@
   --an-radius-chrome-px: 4px;
   --an-radius-sheet-px: 8px;
   --an-radius-pill-px: 999px;
+  --an-radius-button-px: 999px;
 
   --an-type-sans: 'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --an-type-mono: 'JetBrains Mono', ui-monospace, monospace;
