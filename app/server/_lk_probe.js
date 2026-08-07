@@ -12,6 +12,27 @@ export function createLiveKitTokenVerifier(apiKey, apiSecret) {
   return apiKey && apiSecret ? new TokenVerifier(apiKey, apiSecret) : null
 }
 
+// Where a LiveKit client puts its token depends entirely on which SDK it is.
+//
+// The browser SDK appends `?access_token=…` — a browser cannot set headers on a
+// WebSocket handshake, so it has no choice. The Flutter/Dart SDK sends
+// `Authorization: Bearer …` instead, because a native socket can.
+//
+// This only read the query param, so every native client authenticated as
+// "no token at all", fell through to the session check, had no cookie either
+// (a native socket does not share the app's cookie jar) and was rejected 401.
+// Native A/V could never connect: the host silently never joined the room, so
+// nothing crossed in either direction while chat — a different transport —
+// worked perfectly and made it look like a media bug.
+export function liveKitAccessToken(url, headers = {}) {
+  const fromQuery = url?.searchParams?.get('access_token')
+  if (fromQuery) return fromQuery
+  const auth = headers.authorization || headers.Authorization
+  if (typeof auth !== 'string') return null
+  const match = auth.match(/^Bearer\s+(.+)$/i)
+  return match ? match[1].trim() : null
+}
+
 // Authorizes a LiveKit WebSocket upgrade. Two proofs are accepted because the
 // two clients reach this proxy over different transports:
 //  - the browser's WS upgrade carries the session cookie same-origin, so an
