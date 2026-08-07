@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -287,7 +288,9 @@ class _StageBody extends ConsumerWidget {
               Positioned(
                 left: 64,
                 right: 40,
-                bottom: 70,
+                // Closer to the foot than before: the strip is now tall enough
+                // that the old 70px offset pushed it into the copy.
+                bottom: 40,
                 // Rises from beneath the fold, last of everything on the page:
                 // it is the least important thing here and arriving first
                 // would pull the eye down before the title has landed.
@@ -805,91 +808,144 @@ class _SeasonButton extends StatelessWidget {
   }
 }
 
-class _CastStrip extends StatelessWidget {
+class _CastStrip extends StatefulWidget {
   const _CastStrip({required this.api, required this.people});
   final ApiClient api;
   final List<Person> people;
 
-  /// Doubled. The strip was 44px against a stage with a large empty band above
-  /// it — faces too small to recognise, in space that was going unused.
-  static const double _face = 88;
+  /// The face. Large enough to actually recognise someone, which was the point
+  /// of the space under the copy going unused.
+  static const double _face = 136;
+
+  /// Card width. Sized to the face rather than to the longest name — the names
+  /// sit *under* the portrait now, so a card is as wide as its picture.
+  static const double _card = 152;
+
+  static const double _nameSize = 13;
+  static const double _roleSize = 12;
+
+  /// Face, gap, name line, role line.
+  static double get height => _face + 10 + 18 + 17;
+
+  @override
+  State<_CastStrip> createState() => _CastStripState();
+}
+
+class _CastStripState extends State<_CastStrip> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// A horizontal ListView ignores a vertical mouse wheel — the axes do not
+  /// match, so Flutter drops the event and the strip appears frozen on
+  /// desktop. Mapping whichever axis the hardware reports onto the one axis
+  /// this list has is what actually makes it scrollable with a mouse.
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_controller.hasClients) return;
+    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+        ? event.scrollDelta.dx
+        : event.scrollDelta.dy;
+    final target = (_controller.offset + delta).clamp(
+      0.0,
+      _controller.position.maxScrollExtent,
+    );
+    if (target == _controller.offset) return;
+    _controller.jumpTo(target);
+  }
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    // Was capped at 6, which silently hid most of a cast; the strip already
-    // scrolls horizontally, so the extra entries are reachable.
-    final cast = people.where((p) => p.type == 'Actor').take(14).toList();
+    // Was capped at 6, which silently hid most of a cast.
+    final cast = widget.people.where((p) => p.type == 'Actor').toList();
     if (cast.isEmpty) return const SizedBox.shrink();
+
     return SizedBox(
-      height: _face,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: cast.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 40),
-        itemBuilder: (context, i) {
-          final p = cast[i];
-          return SizedBox(
-            width: 380,
-            child: Row(
-              children: [
-                ClipOval(
-                  child: SizedBox(
-                    width: _face,
-                    height: _face,
-                    child: AuthedNetworkImage(
-                      api.imageUrl(p.id, type: ImageType.primary),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => ColoredBox(
-                        color: wp.surface2,
-                        child: Center(
-                          child: Text(
-                            _initials(p.name),
-                            style: TextStyle(
-                              color: wp.dim,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700,
+      height: _CastStrip.height,
+      child: Listener(
+        onPointerSignal: _onPointerSignal,
+        child: ScrollConfiguration(
+          // Let a mouse drag the strip too, not just touch. Desktop users
+          // reach for the wheel first but the drag costs nothing to allow.
+          behavior: ScrollConfiguration.of(context).copyWith(
+            dragDevices: {
+              PointerDeviceKind.touch,
+              PointerDeviceKind.mouse,
+              PointerDeviceKind.trackpad,
+            },
+            scrollbars: false,
+          ),
+          child: ListView.separated(
+            controller: _controller,
+            scrollDirection: Axis.horizontal,
+            itemCount: cast.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 22),
+            itemBuilder: (context, i) {
+              final p = cast[i];
+              return SizedBox(
+                width: _CastStrip._card,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ClipOval(
+                      child: SizedBox(
+                        width: _CastStrip._face,
+                        height: _CastStrip._face,
+                        child: AuthedNetworkImage(
+                          widget.api.imageUrl(
+                            p.id,
+                            type: ImageType.primary,
+                          ),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => ColoredBox(
+                            color: wp.surface2,
+                            child: Center(
+                              child: Text(
+                                _initials(p.name),
+                                style: TextStyle(
+                                  color: wp.dim,
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 18),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                    const SizedBox(height: 10),
+                    Text(
+                      p.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: wp.text,
+                        fontSize: _CastStrip._nameSize,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (p.role != null)
                       Text(
-                        p.name,
+                        p.role!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: wp.text,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
+                          color: wp.faint,
+                          fontSize: _CastStrip._roleSize,
                         ),
                       ),
-                      if (p.role != null)
-                        Text(
-                          p.role!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: wp.faint,
-                            fontSize: 15,
-                            height: 1.3,
-                          ),
-                        ),
-                    ],
-                  ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        },
+              );
+            },
+          ),
+        ),
       ),
     );
   }
