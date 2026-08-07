@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:watchparty/ui/theme.dart';
+import 'package:watchparty/ui/widgets/icon_tray.dart';
 import 'package:watchparty/ui/widgets/profile_menu.dart';
 
 Widget _harness() => MaterialApp(
@@ -56,7 +57,11 @@ void main() {
     await tester.pumpAndSettle();
     final open = tester.getSize(find.byType(ProfileMenu)).width;
 
-    expect(closed, lessThan(48));
-    expect(open, greaterThan(closed + 100));
+    // Derived, not a magic number: the control's size is a design knob that
+    // gets turned, and a literal here just means the test fails every time
+    // somebody adjusts it. What must stay true is the RELATIONSHIP — closed is
+    // the handle and nothing else, open is the handle plus a row of buttons.
+    expect(closed, lessThanOrEqualTo(IconTray.thickness));
+    expect(open, greaterThan(closed + TrayButton.size * 3));
   });
 }

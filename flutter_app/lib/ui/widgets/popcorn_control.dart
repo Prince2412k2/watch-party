@@ -53,12 +53,17 @@ class PopcornControl extends ConsumerStatefulWidget {
 }
 
 class _PopcornControlState extends ConsumerState<PopcornControl>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _tray = AnimationController(
-    vsync: this,
-    duration: AnalogMotion.drawerMs,
-    reverseDuration: AnalogMotion.exitMs,
-  );
+    with TickerProviderStateMixin {
+  /// Built in [initState], not as a `late final` initializer, and vsynced by
+  /// the plural mixin.
+  ///
+  /// A lazy `late final` here crashed on every tap: the first thing to touch
+  /// the field was `onTapOutside`, and after a hot reload the field is reset
+  /// while the ticker the State already handed out is not — so
+  /// `SingleTickerProviderStateMixin` asserts on the second one. Deterministic
+  /// creation plus a provider that tolerates more than one ticker fixes both
+  /// halves of that.
+  late final AnimationController _tray;
 
   bool _busy = false;
   bool _copied = false;
@@ -72,6 +77,16 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   bool get _open => _tray.value > 0;
 
   PartyNotifier get _party => ref.read(partyProvider.notifier);
+
+  @override
+  void initState() {
+    super.initState();
+    _tray = AnimationController(
+      vsync: this,
+      duration: AnalogMotion.drawerMs,
+      reverseDuration: AnalogMotion.exitMs,
+    );
+  }
 
   @override
   void dispose() {
@@ -317,8 +332,8 @@ class _WaitingFace extends StatelessWidget {
   Widget build(BuildContext context) => Tooltip(
     message: '$name wants to join',
     child: Padding(
-      padding: const EdgeInsets.only(left: 4, right: 2),
-      child: AvatarView(userId: userId, name: name, size: 24),
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: AvatarView(userId: userId, name: name, size: 36),
     ),
   );
 }
@@ -333,6 +348,11 @@ class _PopcornButton extends StatefulWidget {
   final bool live;
   final int waiting;
   final VoidCallback onTap;
+
+  /// The handle. A shade larger than the tray it opens, because it is the thing
+  /// you look for when nothing is open and the tray is the thing you look at
+  /// once it is.
+  static const double _size = 69;
 
   @override
   State<_PopcornButton> createState() => _PopcornButtonState();
@@ -352,9 +372,9 @@ class _PopcornButtonState extends State<_PopcornButton> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
-          transform: Matrix4.translationValues(0, _hover ? -2 : 0, 0),
-          width: 46,
-          height: 46,
+          transform: Matrix4.translationValues(0, _hover ? -3 : 0, 0),
+          width: _PopcornButton._size,
+          height: _PopcornButton._size,
           decoration: BoxDecoration(
             color: _hover ? const Color(0xFF2A2C31) : const Color(0xFF202126),
             shape: BoxShape.circle,
@@ -370,44 +390,44 @@ class _PopcornButtonState extends State<_PopcornButton> {
             clipBehavior: Clip.none,
             alignment: Alignment.center,
             children: [
-              Image.asset('assets/popcorn.png', width: 34, height: 34),
+              Image.asset('assets/popcorn.png', width: 51, height: 51),
               if (widget.live)
                 Positioned(
-                  right: -1,
-                  bottom: -1,
+                  right: -2,
+                  bottom: -2,
                   child: Container(
-                    width: 10,
-                    height: 10,
+                    width: 15,
+                    height: 15,
                     decoration: BoxDecoration(
                       color: kPartyLive,
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: const Color(0xFF202126),
-                        width: 2,
+                        width: 3,
                       ),
                     ),
                   ),
                 ),
               if (widget.waiting > 0)
                 Positioned(
-                  top: -4,
-                  right: -4,
+                  top: -6,
+                  right: -6,
                   child: Container(
                     constraints: const BoxConstraints(
-                      minWidth: 18,
-                      minHeight: 18,
+                      minWidth: 27,
+                      minHeight: 27,
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: kSemanticRed,
-                      borderRadius: BorderRadius.circular(9),
+                      borderRadius: BorderRadius.circular(14),
                     ),
                     child: Text(
                       '${widget.waiting}',
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 9,
+                        fontSize: 14,
                         fontWeight: FontWeight.w700,
                       ),
                     ),

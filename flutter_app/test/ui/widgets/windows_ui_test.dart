@@ -81,8 +81,11 @@ void main() {
   testWidgets('the open party tray stays inside a compact desktop viewport', (
     tester,
   ) async {
+    // Was 300x240. The control is 3x the size it was, so that viewport is now
+    // smaller than the chrome by construction and asserts nothing useful. This
+    // is the app's actual minimum desktop window.
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.binding.setSurfaceSize(const Size(300, 240));
+    await tester.binding.setSurfaceSize(const Size(640, 480));
 
     await tester.pumpWidget(
       ProviderScope(
@@ -90,7 +93,7 @@ void main() {
           theme: AppTheme.light,
           builder: (context, child) => AnalogToastHost(child: child!),
           home: const MediaQuery(
-            data: MediaQueryData(size: Size(300, 240)),
+            data: MediaQueryData(size: Size(640, 480)),
             child: Scaffold(
               body: Align(
                 alignment: Alignment.bottomRight,
@@ -104,12 +107,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // This replaced a 320px panel that had to be clamped against the viewport
-    // to fit here at all. The tray is a COLUMN of 30px buttons rising off the
-    // button, so the axis that can now overrun is the short one — 240px here.
+    // to fit here at all. The tray is a COLUMN of buttons rising off the
+    // handle, so the axis that can now overrun is the short one.
     await tester.tap(find.byType(PopcornControl));
     await tester.pumpAndSettle();
 
-    expect(tester.getSize(find.byType(PopcornControl)).height, lessThan(240));
+    expect(tester.getSize(find.byType(PopcornControl)).height, lessThan(480));
     expect(tester.takeException(), isNull);
   });
 }

@@ -29,7 +29,7 @@ class IconTray extends StatelessWidget {
     required this.animation,
     required this.children,
     this.axis = Axis.horizontal,
-    this.gap = 10,
+    this.gap = 15,
   });
 
   final Animation<double> animation;
@@ -51,7 +51,7 @@ class IconTray extends StatelessWidget {
   /// Across the tray. Matches the handle so the pill reads as one object with
   /// it: [TrayButton] is [TrayButton.size] square, plus its margin, plus the
   /// tray's own cross padding.
-  static const double thickness = 36;
+  static const double thickness = 54;
 
   bool get _horizontal => axis == Axis.horizontal;
 
@@ -85,8 +85,8 @@ class IconTray extends StatelessWidget {
           // Extra along the run of the pill, so the round caps do not crowd the
           // end buttons.
           padding: _horizontal
-              ? const EdgeInsets.symmetric(horizontal: 6, vertical: 2)
-              : const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
+              ? const EdgeInsets.symmetric(horizontal: 9, vertical: 3)
+              : const EdgeInsets.symmetric(horizontal: 3, vertical: 9),
           margin: _horizontal
               ? EdgeInsets.only(right: gap)
               : EdgeInsets.only(bottom: gap),
@@ -165,8 +165,9 @@ class _Lagged extends StatelessWidget {
   static const double _stagger = 0.4;
 
   /// How far back each child starts, along the tray's own direction — so a
-  /// vertical tray's buttons rise, they do not drift in sideways.
-  static const double _travel = 14;
+  /// vertical tray's buttons rise, they do not drift in sideways. Scaled with
+  /// the buttons: a 14px slide under a 90px glyph reads as a twitch.
+  static const double _travel = 21;
 
   @override
   Widget build(BuildContext context) {
@@ -213,7 +214,10 @@ class TrayButton extends StatefulWidget {
   });
 
   /// Square. [IconTray.thickness] is derived from it.
-  static const double size = 30;
+  static const double size = 45;
+
+  /// The glyph inside it.
+  static const double iconSize = 24;
 
   final IconData icon;
 
@@ -278,7 +282,7 @@ class _TrayButtonState extends State<TrayButton> {
             curve: AnalogMotion.chromeFadeEase,
             width: TrayButton.size,
             height: TrayButton.size,
-            margin: const EdgeInsets.all(1),
+            margin: const EdgeInsets.all(1.5),
             decoration: BoxDecoration(
               // The state layer washes the CONTAINER, composited under the
               // glyph — so a hovered button lightens without its icon shifting
@@ -292,16 +296,16 @@ class _TrayButtonState extends State<TrayButton> {
               children: [
                 Icon(
                   widget.busy ? Icons.more_horiz : widget.icon,
-                  size: 16,
+                  size: TrayButton.iconSize,
                   color: color,
                 ),
                 if (widget.badge)
                   Positioned(
-                    top: 3,
-                    right: 3,
+                    top: 4,
+                    right: 4,
                     child: Container(
-                      width: 6,
-                      height: 6,
+                      width: 9,
+                      height: 9,
                       decoration: const BoxDecoration(
                         color: kBrandRed,
                         shape: BoxShape.circle,
@@ -326,11 +330,11 @@ class TrayDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final horizontal = _TrayAxis.of(context) == Axis.horizontal;
     return Container(
-      width: horizontal ? 1 : 16,
-      height: horizontal ? 16 : 1,
+      width: horizontal ? 1 : 24,
+      height: horizontal ? 24 : 1,
       margin: horizontal
-          ? const EdgeInsets.symmetric(horizontal: 4)
-          : const EdgeInsets.symmetric(vertical: 4),
+          ? const EdgeInsets.symmetric(horizontal: 6)
+          : const EdgeInsets.symmetric(vertical: 6),
       color: context.wp.line2,
     );
   }
