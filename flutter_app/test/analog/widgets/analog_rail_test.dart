@@ -102,21 +102,41 @@ void main() {
     expect(first - _posterAt(tester, 'Title 0').dx, moreOrLessEquals(step, epsilon: 0.5));
   });
 
-  testWidgets('the cursor walks the last page once travel runs out', (
+  testWidgets('even a short rail brings the selection to the first slot', (
     tester,
   ) async {
-    // Few enough items that the row cannot scroll at all.
+    // Few enough items that the row could have shown them all at once. It
+    // still travels: "selected should always be first" has no exception for a
+    // short list, and the slots to the right simply run out.
     final selection = await _pumpRail(tester, count: 3);
-    final firstX = _posterAt(tester, 'Title 0').dx;
+    final cursorX = _posterAt(tester, 'Title 0').dx;
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
 
     expect(selection(), 1);
-    // Nothing moved — instead the cursor advanced, which is the only way to
-    // reach a title the row can't bring to slot 0.
-    expect(_posterAt(tester, 'Title 0').dx, moreOrLessEquals(firstX, epsilon: 0.5));
-    expect(_posterAt(tester, 'Title 1').dx, greaterThan(firstX));
+    expect(
+      _posterAt(tester, 'Title 1').dx,
+      moreOrLessEquals(cursorX, epsilon: 0.5),
+      reason: 'the row must scroll to put the selection first',
+    );
+  });
+
+  testWidgets('the selection is the first slot at every position, including the last', (
+    tester,
+  ) async {
+    await _pumpRail(tester, count: 8);
+    final cursorX = _posterAt(tester, 'Title 0').dx;
+
+    for (var expected = 1; expected <= 7; expected++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      expect(
+        _posterAt(tester, 'Title $expected').dx,
+        moreOrLessEquals(cursorX, epsilon: 0.5),
+        reason: 'selection $expected must sit in the first slot',
+      );
+    }
   });
 
   testWidgets('stepping clamps at both ends rather than wrapping', (

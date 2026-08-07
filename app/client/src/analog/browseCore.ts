@@ -254,6 +254,19 @@ export interface RailWindowInput {
   lookahead?: number
   /** Items before the cursor to keep warm, so scrolling back is not a stall. */
   behind?: number
+  /**
+   * Whether the cursor is *pinned* to the first slot.
+   *
+   * A shelf's cursor moves within it, so its row stops at the last full page
+   * rather than trailing empty space — that is `pinned` false, the default.
+   *
+   * The Movies/Shows rail is the other model: "selected movie/show should
+   * always be first, so when I scroll, the whole thing scrolls to put the movie
+   * on the first spot." There the row must keep travelling past the last full
+   * page, and the tail of the rail simply runs out of items to the right of the
+   * selection. Trailing space is the price of the selection never moving.
+   */
+  pinned?: boolean
 }
 
 export interface RailWindow {
@@ -272,9 +285,11 @@ export function railWindow(input: RailWindowInput): RailWindow {
   const behind = input.behind ?? RAIL_BEHIND
   if (total <= 0 || slots <= 0) return { visible: [], prefetch: [] }
 
-  // A rail scrolled to its end still fills its slots rather than trailing empty
-  // space, so the offset is clamped against the last full page.
-  const maxOffset = Math.max(0, total - slots)
+  // Pinned: the selection is always the first slot, so the only clamp is
+  // against the ends of the list. Unpinned: a shelf scrolled to its end still
+  // fills its slots rather than trailing empty space, so the offset is clamped
+  // against the last full page.
+  const maxOffset = input.pinned ? total - 1 : Math.max(0, total - slots)
   const start = Math.max(0, Math.min(input.offset, maxOffset))
   const end = Math.min(total, start + slots)
 
@@ -288,6 +303,16 @@ export function railWindow(input: RailWindowInput): RailWindow {
   return { visible, prefetch }
 }
 
-/** Clamp an offset the way `railWindow` does, for callers stepping the rail. */
+/**
+ * Clamp an offset the way `railWindow` does, for callers stepping a shelf.
+ *
+ * For a *pinned* rail use `clampPinnedOffset`: the selection is the offset, so
+ * clamping it against the last full page would stop the row short and strand
+ * the final items away from the first slot.
+ */
 export const clampRailOffset = (offset: number, total: number, slots: number): number =>
   Math.max(0, Math.min(offset, Math.max(0, total - slots)))
+
+/** Clamp an offset for a rail whose cursor is pinned to the first slot. */
+export const clampPinnedOffset = (offset: number, total: number): number =>
+  total <= 0 ? 0 : Math.max(0, Math.min(offset, total - 1))

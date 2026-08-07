@@ -33,33 +33,35 @@ test('the cursor stays in the first slot and the row moves underneath it', () =>
   }
 })
 
-test('the cursor walks the last page once the row has no travel left', () => {
-  // total 20, slots 6 -> the row stops at start 14. Selecting 15..19 has to move
-  // the cursor, because the alternative is five titles you can see and never
-  // reach.
+test('the cursor stays first even at the tail, and the row runs out instead', () => {
+  // "Selected movie/show should always be first." So at the end of a library
+  // the row keeps travelling and simply has nothing left to its right, rather
+  // than stopping at the last full page and letting the cursor walk forward.
   const tail = [15, 16, 17, 18, 19].map((selection) => railCursor({ total: 20, selection, slots: 6 }))
 
-  assert.deepEqual(tail.map((cursor) => cursor.start), [14, 14, 14, 14, 14])
-  assert.deepEqual(tail.map((cursor) => cursor.cursorSlot), [1, 2, 3, 4, 5])
+  assert.deepEqual(tail.map((cursor) => cursor.start), [15, 16, 17, 18, 19])
+  assert.deepEqual(tail.map((cursor) => cursor.cursorSlot), [0, 0, 0, 0, 0])
   for (const [offset, cursor] of tail.entries()) {
-    assert.equal(cursor.visible[cursor.cursorSlot], 15 + offset)
+    assert.equal(cursor.visible[0], 15 + offset, 'the selection must be the first slot')
   }
+  // The last selection shows only itself; the remaining slots are empty.
+  assert.deepEqual(tail.at(-1)!.visible, [19])
 })
 
-test('a rail shorter than the row never moves at all', () => {
+test('a rail shorter than the row still puts the selection first', () => {
   const cursor = railCursor({ total: 3, selection: 2, slots: 6 })
-  assert.equal(cursor.start, 0)
-  assert.equal(cursor.cursorSlot, 2)
-  assert.deepEqual(cursor.visible, [0, 1, 2])
-  assert.deepEqual(cursor.prefetch, [])
+  assert.equal(cursor.start, 2)
+  assert.equal(cursor.cursorSlot, 0)
+  assert.deepEqual(cursor.visible, [2])
+  assert.deepEqual(cursor.prefetch, [0, 1])
 })
 
 test('an out-of-range selection is clamped rather than emptying the window', () => {
   assert.deepEqual(railCursor({ total: 5, selection: 99, slots: 3 }), {
-    start: 2,
-    cursorSlot: 2,
-    visible: [2, 3, 4],
-    prefetch: [0, 1],
+    start: 4,
+    cursorSlot: 0,
+    visible: [4],
+    prefetch: [2, 3],
   })
   assert.deepEqual(railCursor({ total: 5, selection: -4, slots: 3 }).visible, [0, 1, 2])
   assert.deepEqual(railCursor({ total: 0, selection: 0, slots: 6 }), {
@@ -75,7 +77,7 @@ test('the cursor derives its window from the shared core, not a second copy', ()
   // port is no longer showing the same items.
   for (const selection of [0, 1, 7, 13, 14, 19]) {
     const cursor = railCursor({ total: 20, selection, slots: 6 })
-    const shared = railWindow({ total: 20, offset: selection, slots: 6 })
+    const shared = railWindow({ total: 20, offset: selection, slots: 6, pinned: true })
     assert.deepEqual({ visible: cursor.visible, prefetch: cursor.prefetch }, shared)
   }
 })

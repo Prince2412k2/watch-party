@@ -36,11 +36,11 @@ class RailCursor {
   /// Index sitting in the leftmost slot. What the track translates to.
   final int start;
 
-  /// Which slot the cursor occupies. Zero everywhere except the tail of the
-  /// rail: [railWindow] stops the row at the last full page rather than
-  /// trailing empty space, so once travel runs out the cursor has to walk the
-  /// final few slots itself. That is also how a console menu behaves at the
-  /// bottom of a list.
+  /// Which slot the cursor occupies. **Always zero.**
+  ///
+  /// Kept as a field rather than dropped so the widget reads its position from
+  /// the model instead of hard-coding a 0, and so a regression that moves the
+  /// cursor shows up here rather than as a layout mystery.
   final int cursorSlot;
 
   final List<int> visible;
@@ -54,8 +54,16 @@ class RailCursor {
       'prefetch $prefetch)';
 }
 
-/// In this model "which item is selected" and "how far the row has scrolled"
-/// are the same number, which is what makes the visible set — and therefore the
+/// "Selected movie/show should always be first, so when I scroll, the whole
+/// thing scrolls to put the movie on the first spot."
+///
+/// So [RailCursor.start] IS the selection, unconditionally, and
+/// [RailCursor.cursorSlot] is always 0 — including at the tail of the rail,
+/// where the row keeps travelling and simply runs out of items to the right.
+/// Trailing space is the price of a selection that never moves.
+///
+/// "Which item is selected" and "how far the row has scrolled" are therefore
+/// literally the same number, which is what makes the visible set — and so the
 /// prefetch set — trivially derivable.
 RailCursor railCursor({
   required int total,
@@ -68,21 +76,21 @@ RailCursor railCursor({
     return const RailCursor(start: 0, cursorSlot: 0, visible: [], prefetch: []);
   }
 
-  final clamped = selection.clamp(0, total - 1);
-  final start = clampRailOffset(clamped, total, slots);
+  final start = clampPinnedOffset(selection, total);
   final window = railWindow(
     RailWindowInput(
       total: total,
-      offset: clamped,
+      offset: start,
       slots: slots,
       lookahead: lookahead ?? kRailLookahead,
       behind: behind ?? kRailBehind,
+      pinned: true,
     ),
   );
 
   return RailCursor(
     start: start,
-    cursorSlot: clamped - start,
+    cursorSlot: 0,
     visible: window.visible,
     prefetch: window.prefetch,
   );

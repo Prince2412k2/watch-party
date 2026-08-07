@@ -14,7 +14,7 @@
 // Pure on purpose. The repo has no DOM tests; every suite runs on extracted
 // logic, and the rail's arithmetic is exactly the part worth pinning.
 
-import { clampRailOffset, railWindow } from './browseCore.ts'
+import { clampPinnedOffset, railWindow } from './browseCore.ts'
 import { artworkSrc, backdropSrc, resolveArtwork, type ArtworkItem } from './artwork.ts'
 import { analogTokens } from '../design/analogTokens.ts'
 import type { StageSize } from './stageLayout.ts'
@@ -39,10 +39,11 @@ export interface RailCursor {
   /** Index sitting in the leftmost slot. What the track translates to. */
   start: number
   /**
-   * Which slot the cursor occupies. Zero everywhere except the tail of the rail:
-   * `railWindow` stops the row at the last full page rather than trailing empty
-   * space, so once travel runs out the cursor has to walk the final few slots
-   * itself. That is also how a console menu behaves at the bottom of a list.
+   * Which slot the cursor occupies. **Always zero.**
+   *
+   * Kept as a field rather than dropped so the surface reads its position from
+   * the model instead of hard-coding a 0, and so a regression that moves the
+   * cursor shows up here rather than as a layout mystery.
    */
   cursorSlot: number
   visible: number[]
@@ -54,17 +55,17 @@ export function railCursor(input: RailCursorInput): RailCursor {
   const { total, slots } = input
   if (total <= 0 || slots <= 0) return { start: 0, cursorSlot: 0, visible: [], prefetch: [] }
 
-  const selection = Math.max(0, Math.min(input.selection, total - 1))
-  const start = clampRailOffset(selection, total, slots)
+  const start = clampPinnedOffset(input.selection, total)
   const { visible, prefetch } = railWindow({
     total,
-    offset: selection,
+    offset: start,
     slots,
     lookahead: input.lookahead,
     behind: input.behind,
+    pinned: true,
   })
 
-  return { start, cursorSlot: selection - start, visible, prefetch }
+  return { start, cursorSlot: 0, visible, prefetch }
 }
 
 /**
