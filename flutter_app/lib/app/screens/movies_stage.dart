@@ -326,9 +326,18 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                                   // once expanded, so it fades out as that
                                   // slides in rather than being shown twice.
                                   showPlay: t < 0.01,
+                                  // Kept in the details column rather than
+                                  // positioned absolutely: the poster's rect
+                                  // is over that corner of the stage, and an
+                                  // absolute bar simply rendered underneath it.
+                                  actionsProgress: actionsT,
                                   onPlay: selected == null
                                       ? null
                                       : () => _activate(items, _selected),
+                                  onOpen: detailed == null
+                                      ? null
+                                      : () => context.push('/detail/${detailed.id}'),
+                                  onCollapse: () => _detail.reverse(),
                                   onBack: _collection == null ? null : _back,
                                 ),
                               ),
@@ -407,22 +416,6 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                       ),
                     ),
 
-                  // Actions, sliding in from the left under the poster.
-                  if (actionsT > 0 && detailed != null)
-                    Positioned(
-                      left: gutter,
-                      bottom:
-                          bottomPad + media.size.height * 0.20 +
-                          AnalogSpace.mdPx,
-                      child: MoviesActionBar(
-                        progress: actionsT,
-                        downloadBusy: false,
-                        onPlay: () => context.push('/detail/${detailed.id}'),
-                        onDownload: () => context.push('/detail/${detailed.id}'),
-                        onBack: () => _detail.reverse(),
-                      ),
-                    ),
-
                   // The flying poster, above everything it travels across.
                   if (posterT > 0 && selected != null)
                     MoviesHeroPoster(
@@ -470,6 +463,9 @@ class _Details extends StatelessWidget {
     required this.onPlay,
     required this.onBack,
     required this.showPlay,
+    required this.actionsProgress,
+    required this.onOpen,
+    required this.onCollapse,
   });
 
   final LibraryItem? item;
@@ -482,6 +478,11 @@ class _Details extends StatelessWidget {
   /// The Play control moves into the action bar once the stage expands, so it
   /// is not drawn in two places at once during the move.
   final bool showPlay;
+
+  /// 0..1 across the actions interval.
+  final double actionsProgress;
+  final VoidCallback? onOpen;
+  final VoidCallback onCollapse;
 
   @override
   Widget build(BuildContext context) {
@@ -635,6 +636,14 @@ class _Details extends StatelessWidget {
                   : Icons.play_arrow,
               tone: AnalogButtonTone.primary,
               onPressed: onPlay,
+            ),
+          if (actionsProgress > 0)
+            MoviesActionBar(
+              progress: actionsProgress,
+              downloadBusy: false,
+              onPlay: onOpen,
+              onDownload: onOpen,
+              onBack: onCollapse,
             ),
         ],
       ],
