@@ -2030,7 +2030,9 @@ class _TrackMenu extends StatelessWidget {
       tooltip: tooltip,
       enabled: enabled,
       menuBuilder: (close) => [
-        _PlayerMenuHeader(tooltip.toUpperCase()),
+        // No word heading. The button you pressed to get here already said
+        // which menu this is, and a menu whose first row is a label you cannot
+        // select is a row spent on nothing.
         if (allowNone)
           _PlayerMenuItem(
             label: 'Off',
@@ -2083,18 +2085,6 @@ class _SubtitleControl extends StatelessWidget {
       tooltip: 'Subtitles',
       enabled: enabled,
       menuBuilder: (close) => [
-        const _PlayerMenuHeader('SUBTITLES'),
-        if (onAddFile != null)
-          _PlayerMenuItem(
-            icon: Icons.upload_file_outlined,
-            label: 'Load subtitle file',
-            detail: 'SRT, VTT, ASS or SSA',
-            onTap: () {
-              close();
-              onAddFile?.call();
-            },
-          ),
-        if (onAddFile != null) const _PlayerMenuDivider(),
         _PlayerMenuItem(
           label: 'Off',
           selected: selected == null,
@@ -2113,6 +2103,22 @@ class _SubtitleControl extends StatelessWidget {
               onChanged(t.id);
             },
           ),
+        // Side-loading a file sits UNDER the list as a glyph, matching the
+        // detail page's track dropdown. It used to lead the menu as a
+        // two-line row — a heading, a title and a subtitle of supported
+        // extensions — which is three lines of chrome above the thing you
+        // actually came to pick.
+        if (onAddFile != null) ...[
+          const _PlayerMenuDivider(),
+          _PlayerMenuItem(
+            icon: Icons.upload_file_outlined,
+            label: 'Load subtitle file',
+            onTap: () {
+              close();
+              onAddFile?.call();
+            },
+          ),
+        ],
       ],
     );
   }
@@ -2264,27 +2270,6 @@ class _AnchoredPlayerMenuState extends State<_AnchoredPlayerMenu> {
         tooltip: widget.tooltip,
         onPressed: widget.enabled ? _toggle : null,
         forceEnabled: widget.enabled,
-      ),
-    );
-  }
-}
-
-class _PlayerMenuHeader extends StatelessWidget {
-  const _PlayerMenuHeader(this.label);
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 7),
-      child: Text(
-        label,
-        style: AppTheme.mono.copyWith(
-          color: AppColors.faint,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.4,
-        ),
       ),
     );
   }
