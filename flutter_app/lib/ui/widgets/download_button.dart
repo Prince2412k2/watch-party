@@ -8,7 +8,6 @@ import '../../state/downloads_provider.dart';
 import '../../state/offline_provider.dart';
 import '../../state/providers.dart';
 import '../analog_tokens.dart';
-import 'app_button.dart';
 import 'chip.dart';
 
 /// Download affordance for a title (PLAN §4 E8.2) — this is what E3's detail
