@@ -82,6 +82,14 @@ class MockApiClient implements ApiClient {
   Future<List<LibraryItem>> items({String? parentId}) async => _catalog;
 
   @override
+  Future<List<LibraryItem>> collections({String? parentId}) async =>
+      _catalog.where((i) => i.type == 'BoxSet').toList();
+
+  @override
+  Future<List<LibraryItem>> collectionItems(String collectionId) async =>
+      _catalog.where((i) => i.parentId == collectionId).toList();
+
+  @override
   Future<List<LibraryItem>> children(String itemId) async =>
       _catalog.take(4).toList();
 

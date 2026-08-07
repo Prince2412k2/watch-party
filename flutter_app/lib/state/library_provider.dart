@@ -206,3 +206,22 @@ final catalogNamespaceProvider = Provider<String?>((ref) {
 });
 
 String? _catalogNamespace(Ref ref) => ref.watch(catalogNamespaceProvider);
+
+
+// ── Movies: Singles ⇄ Collections ──────────────────────────────────────────
+
+/// Movie collections / franchises, for the Movies stage's Collections mode.
+///
+/// Its own endpoint rather than a filter over the catalog: the library listing
+/// does not return box sets at all, so filtering `items()` by `type == 'BoxSet'`
+/// yields an empty rail no matter how many franchises the server has.
+final movieCollectionsProvider = FutureProvider<List<LibraryItem>>((ref) async {
+  return ref.watch(apiClientProvider).collections();
+});
+
+/// The parts of one collection, in release order — the show-like level you get
+/// by opening a franchise.
+final collectionItemsProvider =
+    FutureProvider.family<List<LibraryItem>, String>((ref, collectionId) async {
+  return ref.watch(apiClientProvider).collectionItems(collectionId);
+});

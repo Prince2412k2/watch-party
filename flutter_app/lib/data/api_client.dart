@@ -110,6 +110,17 @@ abstract class ApiClient {
   Future<HomeData> home();
   Future<List<LibraryItem>> items({String? parentId});
   Future<List<LibraryItem>> children(String itemId);
+
+  /// Movie collections / franchises — Jellyfin box sets.
+  ///
+  /// A separate call rather than a filter over [items] because the library
+  /// listing does not return box sets: they are a different IncludeItemTypes
+  /// query on the server, which is why Collections mode was empty when it was
+  /// first wired to a client-side type filter.
+  Future<List<LibraryItem>> collections({String? parentId});
+
+  /// The parts of a collection, in release order.
+  Future<List<LibraryItem>> collectionItems(String collectionId);
   Future<LibraryItem> item(String id);
   Future<List<LibraryItem>> latest({String? parentId});
   Future<List<LibraryItem>> search(String query);
@@ -391,6 +402,23 @@ class DioApiClient implements ApiClient {
   Future<List<LibraryItem>> children(String itemId) async {
     final res = await _dio.get('/api/library/items/$itemId/children');
     if (res.statusCode != 200) _fail(res, 'children');
+    return _items(res.data);
+  }
+
+  @override
+  Future<List<LibraryItem>> collections({String? parentId}) async {
+    final res = await _dio.get(
+      '/api/library/collections',
+      queryParameters: parentId != null ? {'parentId': parentId} : null,
+    );
+    if (res.statusCode != 200) _fail(res, 'collections');
+    return _items(res.data);
+  }
+
+  @override
+  Future<List<LibraryItem>> collectionItems(String collectionId) async {
+    final res = await _dio.get('/api/library/collections/$collectionId/items');
+    if (res.statusCode != 200) _fail(res, 'collectionItems');
     return _items(res.data);
   }
 
