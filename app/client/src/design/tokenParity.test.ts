@@ -67,24 +67,47 @@ test('the neutral ramp is warm — never pure black or pure white', () => {
   }
 })
 
-test('every easing curve is a four-point cubic with no overshoot', () => {
-  // "Use short, weighty movement and clear detents rather than elastic or
-  // playful animation." An easing control point outside 0..1 on the y axis is
-  // precisely what produces overshoot/bounce, so the shape is checked rather
-  // than trusted.
+/// Curves allowed to carry a control point above 1 on the y axis — i.e. to
+/// overshoot. Exactly one, and it is the rail's settle.
+///
+/// This test used to forbid overshoot outright, which was correct while the
+/// tokens said "no elastic overshoot anywhere". That rule was replaced: things
+/// with MASS overshoot, chrome does not. A row of posters being flung has
+/// momentum and settles past its mark; a button does not.
+///
+/// The allowlist is the point. Dropping the assertion would have been the easy
+/// way to make this pass and would have left nothing stopping a bouncy button
+/// from landing next week. Adding a curve here has to be a deliberate edit
+/// with a reason, which is what the old blanket ban was really buying.
+const OVERSHOOT_ALLOWED = new Set(['settleEase'])
+
+test('easing curves are four-point cubics, and only the settle overshoots', () => {
   const curves = Object.entries(analogTokens.motion).filter(([key]) => key.endsWith('Ease'))
   assert.ok(curves.length > 0, 'expected at least one easing curve')
 
+  let sawOvershoot = false
   for (const [name, curve] of curves) {
     assert.equal((curve as readonly number[]).length, 4, `${name} is not a cubic bezier`)
     const [x1, y1, x2, y2] = curve as readonly number[]
+    // x is time and must stay in 0..1 for EVERY curve, allowlist or not: a
+    // control point outside it reverses the clock rather than the position.
     for (const [axis, value] of [['x1', x1], ['x2', x2]] as const) {
       assert.ok(value >= 0 && value <= 1, `${name} ${axis} (${value}) must stay within 0..1`)
     }
-    for (const [axis, value] of [['y1', y1], ['y2', y2]] as const) {
-      assert.ok(value >= 0 && value <= 1, `${name} ${axis} (${value}) overshoots`)
+    const overshoots = [y1, y2].some((v) => v < 0 || v > 1)
+    if (overshoots) {
+      sawOvershoot = true
+      assert.ok(
+        OVERSHOOT_ALLOWED.has(name),
+        `${name} overshoots and is not on the allowlist — chrome does not overshoot`,
+      )
     }
   }
+
+  // Guards the allowlist against rot: if settleEase is ever flattened, this
+  // fails and the entry gets removed rather than sitting here forever granting
+  // permission nothing uses.
+  assert.ok(sawOvershoot, 'nothing overshoots — OVERSHOOT_ALLOWED is now stale')
 })
 
 test('the hairline treatment keeps a large hit target', () => {

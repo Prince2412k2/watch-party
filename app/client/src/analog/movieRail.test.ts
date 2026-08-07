@@ -45,7 +45,10 @@ test('the cursor stays first even at the tail, and the row runs out instead', ()
     assert.equal(cursor.visible[0], 15 + offset, 'the selection must be the first slot')
   }
   // The last selection shows only itself; the remaining slots are empty.
-  assert.deepEqual(tail.at(-1)!.visible, [19])
+  // Indexed rather than `.at(-1)`: the client compiles to ES2020, where
+  // Array.prototype.at does not exist. Bumping the whole target to ES2022 to
+  // spare one test a subtraction would change what ships to browsers.
+  assert.deepEqual(tail[tail.length - 1]!.visible, [19])
 })
 
 test('a rail shorter than the row still puts the selection first', () => {
