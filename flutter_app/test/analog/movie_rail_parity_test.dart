@@ -142,27 +142,17 @@ void main() {
     );
   });
 
-  test('the rail is sized smaller than the shelf it replaces, and ends on a poster edge', () {
+  test('the rail fits its width and ends on a poster edge', () {
     const usable = 1200.0;
     final rail = railMetrics(usable, StageSize.desktop);
-    final shelf = stageLayout(1280, 800, false);
 
-    expect(
-      rail.posterWidthPx,
-      lessThan(shelf.posterWidthPx),
-      reason: 'the rail is a strip under the details, not the main event',
-    );
-    // Smaller base posters put at least as many titles on screen — but only
-    // "at least". The trail lead-in and the enlarged head of the rail both
-    // consume horizontal room, so at narrow widths the count advantage the
-    // smaller posters buy is spent back on the depth effect. That trade is
-    // deliberate; asserting a strict gain here would be asserting that the
-    // trail is free, which it is not.
-    expect(
-      rail.slots,
-      greaterThanOrEqualTo(shelf.visibleCount),
-      reason: 'smaller posters must not show fewer titles than the shelf',
-    );
+    // This used to assert the rail was SMALLER than the shelf it replaced —
+    // "a strip under the details, not the main event". That intent was
+    // reversed deliberately when the posters were scaled up, so the assertion
+    // is gone rather than quietly relaxed. What still has to hold is that the
+    // row fits the width it was given.
+    expect(rail.posterWidthPx, greaterThanOrEqualTo(64));
+    expect(rail.slots, greaterThanOrEqualTo(1));
 
     // Ends on a poster edge: the base-width slots, the gaps between them, the
     // trail lead-in and the enlarged head of the rail together fit the usable

@@ -183,9 +183,9 @@ class RailMetrics {
 /// recognisable artwork at a glance, which is what the first pass at these
 /// numbers got wrong.
 const Map<StageSize, double> _railPosterPx = {
-  StageSize.phone: 80,
-  StageSize.tablet: 104,
-  StageSize.desktop: 124,
+  StageSize.phone: 120,
+  StageSize.tablet: 156,
+  StageSize.desktop: 186,
 };
 
 /// Below this a poster is an icon rather than artwork you can recognise.

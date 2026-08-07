@@ -30,6 +30,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../analog/chrome/chrome.dart';
+import '../../analog/browse_core.dart';
 import '../../analog/movie_browse.dart';
 import '../../analog/stage_layout.dart';
 import '../../analog/widgets/analog_rail.dart';
@@ -102,10 +103,10 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
     if (_collection != null) setState(() => _collection = null);
   }
 
-  /// Wheel deltas arrive in bursts; one notch is one step and the remainder is
-  /// dropped rather than accumulated into a jump on the next event.
-  static const double _wheelThreshold = 24;
-  double _wheelAccum = 0;
+  /// Shared with the web through app/shared/design/interaction.json: a
+  /// threshold, a cooldown between steps, and rejection of the momentum tail.
+  /// Hand-rolling this is what made a flick jump several titles at once.
+  final SteppedScrollState _scroll = SteppedScrollState();
 
   void _stepSelection(int direction, int total) {
     if (total <= 0) return;
@@ -122,10 +123,12 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
     final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
         ? event.scrollDelta.dx
         : event.scrollDelta.dy;
-    _wheelAccum += delta;
-    if (_wheelAccum.abs() < _wheelThreshold) return;
-    _stepSelection(_wheelAccum.sign.toInt(), total);
-    _wheelAccum = 0;
+    final step = steppedScroll(
+      _scroll,
+      delta,
+      event.timeStamp.inMicroseconds / 1000,
+    );
+    if (step != 0) _stepSelection(step, total);
   }
 
   /// Arrows work from anywhere on the stage for the same reason.
@@ -207,61 +210,73 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
           // "scrolling anywhere should work" means the whole stage, not the
           // strip of it the posters happen to occupy.
           behavior: HitTestBehavior.opaque,
-          child: Stack(
-            children: [
-              // The copy sits in exactly the rectangle the detail page puts it
-              // in — same insets, same 92/108 split, same vertical centring —
-              // so the transition between the two surfaces moves everything
-              // except the text.
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  TitleLayout.padLeft,
-                  TitleLayout.padTop,
-                  TitleLayout.padLeft,
-                  TitleLayout.padBottom,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      flex: TitleLayout.copyFlex,
-                      child: _Details(
-                        item: detailed,
-                        collection: _collection,
-                        loading: async.isLoading,
-                        error: async.hasError
-                            ? 'Could not load this library'
-                            : null,
-                        onBack: _collection == null ? null : _back,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              TitleLayout.padLeft,
+              TitleLayout.padTop,
+              TitleLayout.padLeft,
+              kBottomNavReservedPx,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // The copy takes the room the rail does not, and is centred in
+                // it. A Column rather than a Stack because the two genuinely
+                // compete for height once the posters are large: overlaying
+                // them meant the rail sat on top of the overview, and no
+                // choice of bottom reserve fixes that on a short window.
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        flex: TitleLayout.copyFlex,
+                        child: Center(
+                          child: SingleChildScrollView(
+                            // Never scrollable: the wheel belongs to the rail,
+                            // and a scroll view here would swallow it. It is
+                            // present only so a window too short for the copy
+                            // clips instead of throwing an overflow.
+                            physics: const NeverScrollableScrollPhysics(),
+                            child: _Details(
+                              item: detailed,
+                              collection: _collection,
+                              loading: async.isLoading,
+                              error: async.hasError
+                                  ? 'Could not load this library'
+                                  : null,
+                              onBack: _collection == null ? null : _back,
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: TitleLayout.columnGap),
-                    Expanded(
-                      flex: TitleLayout.asideFlex,
-                      child: _collection == null
-                          ? Align(
-                              alignment: Alignment.centerRight,
-                              child: _ModeStrip(
-                                mode: _mode,
-                                onChanged: _setMode,
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ],
+                      const SizedBox(width: TitleLayout.columnGap),
+                      Expanded(
+                        flex: TitleLayout.asideFlex,
+                        child: _collection == null
+                            ? Align(
+                                alignment: Alignment.centerRight,
+                                // Same reason as the copy: on a window short
+                                // enough that the two positions do not fit
+                                // beside the rail, this clips rather than
+                                // throwing. Not scrollable — the wheel drives
+                                // the rail.
+                                child: SingleChildScrollView(
+                                  physics:
+                                      const NeverScrollableScrollPhysics(),
+                                  child: _ModeStrip(
+                                    mode: _mode,
+                                    onChanged: _setMode,
+                                  ),
+                                ),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-
-              // The rail is laid over the foot of the stage rather than taking
-              // a share of the column. If it took a share, the space left for
-              // the copy would differ from the detail page's and the centred
-              // title would land somewhere else — which is the whole thing
-              // this layout exists to prevent.
-              Positioned(
-                left: TitleLayout.padLeft,
-                right: TitleLayout.padLeft,
-                bottom: kBottomNavReservedPx,
-                child: AnalogRail(
+                const SizedBox(height: AnalogSpace.lgPx),
+                AnalogRail(
                   maxHeightPx: railBudget,
                   items: _railItems(items, api),
                   selection: _selected.clamp(
@@ -279,8 +294,8 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
                     (false, BrowseMode.singles) => 'No movies in this library',
                   },
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
