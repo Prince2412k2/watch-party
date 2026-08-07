@@ -161,7 +161,10 @@ void main() {
     await tester.tap(find.text(_SeriesApi.second.name));
     await tester.pump();
 
-    expect(find.text('Signal'), findsOneWidget);
+    // Episodes follow the movies rule now: the cursor's episode is the subject
+    // of the copy, and the series it belongs to is the breadcrumb above it —
+    // so 'Signal' reads as the uppercase crumb rather than as the heading.
+    expect(find.text('SIGNAL'), findsOneWidget);
     expect(find.textContaining('S1 E2'), findsOneWidget);
     expect(api.secondDetail.isCompleted, isFalse);
     expect(errors, isEmpty, reason: 'layout errors: ${errors.take(2)}');
