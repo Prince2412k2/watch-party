@@ -9,7 +9,6 @@
 // its own — that is what keeps the two clients showing the same items for the
 // same selection.
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -109,12 +108,6 @@ class AnalogRail extends StatefulWidget {
 }
 
 class _AnalogRailState extends State<AnalogRail> {
-  /// Wheel deltas arrive in bursts and must not be laundered into a jump: one
-  /// notch is one step, and the remainder is dropped rather than accumulated
-  /// into a second step on the next event.
-  static const double _wheelThreshold = 24;
-  double _wheelAccum = 0;
-
   void _step(int direction) {
     final next = stepRailSelection(
       widget.selection,
@@ -158,20 +151,6 @@ class _AnalogRailState extends State<AnalogRail> {
             : KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
-  }
-
-  void _onPointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent) return;
-    // A trackpad's horizontal axis and a mouse wheel's vertical one both drive
-    // the rail: on a row, "scroll" means along it whichever axis the hardware
-    // reports.
-    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
-        ? event.scrollDelta.dx
-        : event.scrollDelta.dy;
-    _wheelAccum += delta;
-    if (_wheelAccum.abs() < _wheelThreshold) return;
-    _step(_wheelAccum.sign.toInt());
-    _wheelAccum = 0;
   }
 
   @override
@@ -218,9 +197,10 @@ class _AnalogRailState extends State<AnalogRail> {
         return Focus(
           autofocus: widget.autofocus,
           onKeyEvent: _onKey,
-          child: Listener(
-            onPointerSignal: _onPointerSignal,
-            child: SizedBox(
+          // No wheel handling here on purpose. The stage listens for pointer
+          // signals across its whole surface so scrolling works anywhere, and
+          // a Listener here as well would see the same event and step twice.
+          child: SizedBox(
               // Full width explicitly: the Stack below holds only positioned
               // children, so under loose constraints it would shrink-wrap to
               // nothing and the rail would silently vanish.
@@ -294,7 +274,6 @@ class _AnalogRailState extends State<AnalogRail> {
                 ),
               ),
             ),
-          ),
         );
       },
     );

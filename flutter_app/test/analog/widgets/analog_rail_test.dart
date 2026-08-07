@@ -106,10 +106,14 @@ void main() {
 
     // Its predecessor has moved a whole base slot to the left — base, not the
     // selected width, because the trail is drawn unscaled.
+    //
+    // The base sample is taken at distance >= 3 from the SELECTION, which is
+    // now index 1: the falloff only reaches base on the third slot, so
+    // sampling 'Title 3' here would measure a still-scaled poster.
     final passed = _posterAt(tester, 'Title 0');
     final base = tester.getSize(
       find.ancestor(
-        of: find.text('Title 3'),
+        of: find.text('Title 4'),
         matching: find.byType(AnalogPosterTile),
       ).first,
     ).width;
