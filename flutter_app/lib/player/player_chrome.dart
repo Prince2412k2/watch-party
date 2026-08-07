@@ -224,8 +224,9 @@ class _PlayerChromeState extends State<PlayerChrome>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     FocusManager.instance.addListener(_onGlobalFocusChange);
-    _autoHide = AnalogAutoHideController(playing: widget.controller.isPlayingNow)
-      ..addListener(_onAutoHide);
+    _autoHide = AnalogAutoHideController(
+      playing: widget.controller.isPlayingNow,
+    )..addListener(_onAutoHide);
     _bindController(widget.controller);
     _syncToasts(seed: true);
     _loadTrickplay();
@@ -1063,7 +1064,8 @@ class _PlayerChromeState extends State<PlayerChrome>
     // key alone and return `handled`, swallowing all of them. The one
     // deliberate exception is Ctrl/Cmd+C, which the analog player defines as
     // the chat shortcut and which `shouldToggleChat` guards.
-    final ctrlOrMeta = HardwareKeyboard.instance.isControlPressed ||
+    final ctrlOrMeta =
+        HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
 
     if (event.logicalKey == LogicalKeyboardKey.keyC &&
@@ -1818,9 +1820,7 @@ class _Timeline extends StatelessWidget {
     onHoverPreview: onHoverPreview,
     onHoverEnd: onHoverEnd,
     buffered: buffered,
-    cached: [
-      for (final span in spans) TimelineRange(span.start, span.end),
-    ],
+    cached: [for (final span in spans) TimelineRange(span.start, span.end)],
   );
 
   @override
@@ -1940,30 +1940,18 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
               Text('Subtitle settings', style: titleStyle),
               const SizedBox(height: AppSpacing.md),
               Text('Font', style: dimStyle),
-              DropdownButton<String>(
+              // The last DropdownButton in the app. It carried Material's own
+              // menu — a different surface, radius and open animation from
+              // every other picker here, inside a sheet that is otherwise all
+              // kit chrome.
+              _FontField(
                 key: const Key('subtitleFont'),
                 value: _font,
-                isExpanded: true,
-                dropdownColor: wp.surface,
-                style: bodyStyle,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'sans-serif',
-                    child: Text('Sans serif'),
-                  ),
-                  DropdownMenuItem(value: 'serif', child: Text('Serif')),
-                  DropdownMenuItem(
-                    value: 'monospace',
-                    child: Text('Monospace'),
-                  ),
-                ],
-                onChanged: !widget.enabled
-                    ? null
-                    : (font) {
-                        if (font == null) return;
-                        setState(() => _font = font);
-                        widget.onFont(font);
-                      },
+                enabled: widget.enabled,
+                onChanged: (font) {
+                  setState(() => _font = font);
+                  widget.onFont(font);
+                },
               ),
               Text('Text color', style: dimStyle),
               TextFormField(
@@ -2154,6 +2142,101 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
 /// detail page and the settings stack use. This used to be a third, private
 /// menu implementation living in this file (`_AnchoredPlayerMenu` and its
 /// rows), which is two more than the app needs.
+/// The subtitle-font picker, on the kit's dropdown.
+///
+/// A field showing the current value that opens [showAnalogSelect], rather
+/// than a DropdownButton carrying Material's menu. Three fixed options, so the
+/// list is inline — there is nothing to derive it from.
+class _FontField extends StatefulWidget {
+  const _FontField({
+    super.key,
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String value;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+
+  /// Value → label. The values are CSS font-family keywords and are what the
+  /// player actually applies, so they are not free to be prettified.
+  static const _options = <(String, String)>[
+    ('sans-serif', 'Sans serif'),
+    ('serif', 'Serif'),
+    ('monospace', 'Monospace'),
+  ];
+
+  @override
+  State<_FontField> createState() => _FontFieldState();
+}
+
+class _FontFieldState extends State<_FontField> {
+  final GlobalKey _anchor = GlobalKey();
+
+  String get _label {
+    for (final (v, label) in _FontField._options) {
+      if (v == widget.value) return label;
+    }
+    return widget.value;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return MouseRegion(
+      cursor: widget.enabled
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: !widget.enabled
+            ? null
+            : () => showAnalogSelect<String>(
+                context: context,
+                anchor: _anchor,
+                selected: widget.value,
+                groups: [
+                  AnalogChoiceGroup(
+                    icon: Icons.text_fields,
+                    choices: [
+                      for (final (v, label) in _FontField._options)
+                        AnalogChoice(value: v, label: label),
+                    ],
+                  ),
+                ],
+                onSelected: widget.onChanged,
+              ),
+        child: Container(
+          key: _anchor,
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          decoration: BoxDecoration(
+            color: wp.surface2,
+            borderRadius: BorderRadius.circular(AnalogRadius.cardPx),
+            border: Border.all(color: wp.line),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: widget.enabled ? wp.text : wp.dim,
+                    fontSize: 13.5,
+                  ),
+                ),
+              ),
+              Icon(Icons.expand_more, size: 18, color: wp.dim),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SubtitleControl extends StatelessWidget {
   const _SubtitleControl({
     super.key,
