@@ -339,19 +339,14 @@ class _CopyColumn extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 14),
               child: Text(
                 genres.join('  /  ').toUpperCase(),
-                style: AppTheme.mono.copyWith(
-                  color: wp.dim,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.3,
-                ),
+                style: TitleType.breadcrumb.copyWith(color: wp.dim),
               ),
             ),
           Text(
             hero.name,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: AppTheme.displayLarge.copyWith(color: wp.text),
+            style: TitleType.heading.copyWith(color: wp.text),
           ),
           if (isEpisode)
             Padding(
@@ -373,7 +368,7 @@ class _CopyColumn extends StatelessWidget {
                   hero.overview!,
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTheme.body.copyWith(color: wp.dim),
+                  style: TitleType.overview.copyWith(color: wp.dim),
                 ),
               ),
             ),
@@ -449,11 +444,7 @@ class _MetaLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    final style = AppTheme.mono.copyWith(
-      color: wp.dim,
-      fontSize: 10,
-      letterSpacing: 0.6,
-    );
+    final style = TitleType.meta.copyWith(color: wp.dim);
     final children = <Widget>[];
     for (var i = 0; i < parts.length; i++) {
       if (i > 0) {
