@@ -318,6 +318,25 @@ class _StageBody extends ConsumerWidget {
   }
 }
 
+/// The poster's flight from the rail: an arc, with elasticity at the end.
+///
+/// Two of the twelve principles at once. [MaterialRectArcTween] gives the
+/// *arc* — real things do not travel in straight lines between two points, and
+/// a poster sliding on a diagonal is the tell that it is a rectangle being
+/// interpolated rather than an object moving. The curve on top gives the
+/// *settle*: it overshoots the destination and comes back, so the poster
+/// arrives with weight rather than decelerating perfectly into place.
+///
+/// The overshoot works because the curve returns values above 1 and the arc
+/// tween extrapolates past its end — the same property that makes an
+/// overshooting curve illegal on an opacity is what makes it work here.
+class _SettleRectTween extends MaterialRectArcTween {
+  _SettleRectTween({super.begin, super.end});
+
+  @override
+  Rect lerp(double t) => super.lerp(AnalogMotion.settleEase.transform(t));
+}
+
 /// One part of the page arriving, on its own slice of the shared entrance.
 ///
 /// Staging, in the twelve-principles sense: the page assembles in an order
@@ -649,13 +668,22 @@ class _RightPoster extends StatelessWidget {
   Widget build(BuildContext context) {
     final wp = context.wp;
     return Align(
-      alignment: Alignment.centerRight,
+      // Nudged below centre. Dead centre put the poster's top edge above the
+      // copy's, which read as it floating away from the block it belongs to.
+      alignment: const Alignment(1, 0.18),
       child: Padding(
         padding: const EdgeInsets.only(right: 40),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 280),
           child: Hero(
             tag: 'poster-${item.id}',
+            // The poster arrives with the same elasticity the rail settles
+            // with: it carries a little past the corner and comes back,
+            // instead of gliding to a stop. Flutter takes the flight's shape
+            // from the DESTINATION hero, so this is the only place it needs
+            // to be declared — the rail's poster does not have to know.
+            createRectTween: (begin, end) =>
+                _SettleRectTween(begin: begin, end: end),
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: wp.surface,
@@ -782,6 +810,10 @@ class _CastStrip extends StatelessWidget {
   final ApiClient api;
   final List<Person> people;
 
+  /// Doubled. The strip was 44px against a stage with a large empty band above
+  /// it — faces too small to recognise, in space that was going unused.
+  static const double _face = 88;
+
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
@@ -790,21 +822,21 @@ class _CastStrip extends StatelessWidget {
     final cast = people.where((p) => p.type == 'Actor').take(14).toList();
     if (cast.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: 44,
+      height: _face,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: cast.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 34),
+        separatorBuilder: (_, _) => const SizedBox(width: 40),
         itemBuilder: (context, i) {
           final p = cast[i];
           return SizedBox(
-            width: 190,
+            width: 380,
             child: Row(
               children: [
                 ClipOval(
                   child: SizedBox(
-                    width: 44,
-                    height: 44,
+                    width: _face,
+                    height: _face,
                     child: AuthedNetworkImage(
                       api.imageUrl(p.id, type: ImageType.primary),
                       fit: BoxFit.cover,
@@ -815,7 +847,7 @@ class _CastStrip extends StatelessWidget {
                             _initials(p.name),
                             style: TextStyle(
                               color: wp.dim,
-                              fontSize: 11,
+                              fontSize: 22,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -824,7 +856,7 @@ class _CastStrip extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 18),
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -836,16 +868,20 @@ class _CastStrip extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: wp.text,
-                          fontSize: 10,
+                          fontSize: 17,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       if (p.role != null)
                         Text(
                           p.role!,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: wp.faint, fontSize: 10),
+                          style: TextStyle(
+                            color: wp.faint,
+                            fontSize: 15,
+                            height: 1.3,
+                          ),
                         ),
                     ],
                   ),

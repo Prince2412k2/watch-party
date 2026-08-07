@@ -118,9 +118,11 @@ abstract final class AnalogMotion {
   static const Cubic exitEase = Cubic(0.3, 0.0, 0.8, 0.15);
   static const Duration slotLagMs = Duration(milliseconds: 26);
   static const Duration slotLagMaxMs = Duration(milliseconds: 130);
-  static const Duration settleMs = Duration(milliseconds: 380);
-  static const Cubic settleEase = Cubic(0.22, 1.28, 0.36, 1.0);
-  static const Duration settleFastMs = Duration(milliseconds: 620);
+  static const Duration settleMs = Duration(milliseconds: 500);
+  static const Cubic settleEase = Cubic(0.2, 1.26, 0.36, 1.0);
+  static const Duration heroFlightMs = Duration(milliseconds: 900);
+  static const Duration heroReturnMs = Duration(milliseconds: 380);
+  static const Duration settleFastMs = Duration(milliseconds: 820);
   static const Duration fastStepMs = Duration(milliseconds: 220);
   static const Duration anticipationMs = Duration(milliseconds: 60);
   static const double anticipationPct = 4.0;

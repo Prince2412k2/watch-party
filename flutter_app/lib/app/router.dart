@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../state/show_source.dart';
 import '../state/state.dart';
+import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
 import 'screens/app_shell.dart';
 import 'screens/home_screen.dart';
@@ -137,6 +138,13 @@ GoRouter buildRouter(WidgetRef ref) {
         path: '${Routes.detail}/:id',
         pageBuilder: (_, state) => fadeThroughPage(
           key: state.pageKey,
+          // Long enough for the poster to arc across, carry past the corner
+          // and come back. The rest of the page is staged against the same
+          // clock, so it assembles while the poster is still travelling.
+          duration: AnalogMotion.heroFlightMs,
+          // Back to the library is much quicker: the poster is going home, not
+          // being introduced.
+          reverseDuration: AnalogMotion.heroReturnMs,
           child: _LibraryDetailRoute(itemId: state.pathParameters['id']!),
         ),
       ),
