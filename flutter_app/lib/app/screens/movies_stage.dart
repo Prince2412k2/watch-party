@@ -241,6 +241,10 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
             ),
             const SizedBox(height: AnalogSpace.lgPx),
             AnalogRail(
+              // The rail may take up to a bit under half the stage; the
+              // details above it own the rest. Without a ceiling the posters
+              // are sized from width alone and overflow a short window.
+              maxHeightPx: media.size.height * 0.40,
               items: [
                 for (final item in items)
                   AnalogRailItem(

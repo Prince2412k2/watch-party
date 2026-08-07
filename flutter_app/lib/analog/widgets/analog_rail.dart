@@ -61,6 +61,7 @@ class AnalogRail extends StatefulWidget {
     this.onCrossAxis,
     this.autofocus = false,
     this.emptyLabel = 'Nothing here yet',
+    this.maxHeightPx,
   });
 
   final List<AnalogRailItem> items;
@@ -82,6 +83,14 @@ class AnalogRail extends StatefulWidget {
 
   final bool autofocus;
   final String emptyLabel;
+
+  /// Ceiling on the row's height, including the enlarged selection.
+  ///
+  /// Posters are sized from the available *width*, which on a short window
+  /// produces a row taller than the stage has left after the details — the
+  /// overflow this exists to prevent. Given a budget, the rail shrinks its
+  /// posters to fit rather than pushing the layout past its bounds.
+  final double? maxHeightPx;
 
   @override
   State<AnalogRail> createState() => _AnalogRailState();
@@ -163,28 +172,58 @@ class _AnalogRailState extends State<AnalogRail> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final metrics = railMetrics(constraints.maxWidth, widget.size);
+        var metrics = railMetrics(constraints.maxWidth, widget.size);
+
+        // Height budget. The row's height is linear in the poster width — the
+        // artwork and the focus growth both scale with it, the caption and the
+        // focus lift do not — so the fitting width solves directly rather than
+        // needing a search.
+        final maxHeight = widget.maxHeightPx;
+        if (maxHeight != null && maxHeight > 0) {
+          final fixed =
+              AnalogPosterTile.captionHeight(
+                subtitle: widget.items.any((i) => i.subtitle != null),
+              ) +
+              AnalogSelection.focusLiftPx;
+          final tall = _rowHeight(metrics.posterWidthPx, widget.items);
+          if (tall > maxHeight && tall > fixed) {
+            var fitted =
+                metrics.posterWidthPx * (maxHeight - fixed) / (tall - fixed);
+            // The solve is exact in real numbers, but the tile rounds its
+            // caption and artwork up to whole pixels, so the result can land a
+            // fraction over. Walk it down until it genuinely fits rather than
+            // trusting the arithmetic through two ceilings.
+            fitted = fitted.floorToDouble();
+            while (fitted > 1 && _rowHeight(fitted, widget.items) > maxHeight) {
+              fitted -= 1;
+            }
+            metrics = metrics.withPosterWidth(fitted, constraints.maxWidth);
+          }
+        }
+
         final cursor = railCursor(
           total: widget.items.length,
           selection: widget.selection,
           slots: metrics.slots,
         );
         final rendered = railRendered(cursor);
-        final step = railStepPx(metrics.posterWidthPx, metrics.gapPx);
         final trail = railTrailPx(metrics.posterWidthPx, metrics.gapPx);
-        // The cursor sits one part-slot in, so the titles already passed stay
-        // partly visible behind it — the trail.
-        final translate =
-            railTranslatePx(cursor.start, metrics.posterWidthPx, metrics.gapPx) +
-            trail;
 
-        final artHeight = AnalogPosterTile.artHeightFor(metrics.posterWidthPx);
-        // Uniform slots: size for the tallest caption any item needs, so a
-        // single subtitled title does not make its own slot taller than the
-        // row around it.
+        // Sized for the *selected* poster, which is the tallest thing in the
+        // row. The rest bottom-align to it so their captions stay on one
+        // baseline while only the artwork grows upward.
         final anySubtitle = widget.items.any((i) => i.subtitle != null);
+        final captionHeight = AnalogPosterTile.captionHeight(
+          subtitle: anySubtitle,
+        );
+        // The selected tile is scaled twice: once by the rail's own falloff
+        // (its width) and again by the tile's focus growth about its centre.
+        // The row has to leave room for both or the caption is clipped.
+        final selectedWidth = metrics.posterWidthPx * kRailSelectedScale;
         final railHeight =
-            artHeight + AnalogPosterTile.captionHeight(subtitle: anySubtitle);
+            AnalogPosterTile.artHeightFor(selectedWidth) +
+            captionHeight +
+            AnalogPosterTile.focusOverflowFor(selectedWidth);
 
         return Focus(
           autofocus: widget.autofocus,
@@ -192,6 +231,10 @@ class _AnalogRailState extends State<AnalogRail> {
           child: Listener(
             onPointerSignal: _onPointerSignal,
             child: SizedBox(
+              // Full width explicitly: the Stack below holds only positioned
+              // children, so under loose constraints it would shrink-wrap to
+              // nothing and the rail would silently vanish.
+              width: double.infinity,
               height: railHeight,
               // The track is wider than the viewport by design; clipping is
               // what makes the row read as sliding under a fixed cursor
@@ -206,17 +249,35 @@ class _AnalogRailState extends State<AnalogRail> {
                     // warmed neighbours, so the poster arriving under the
                     // cursor was laid out and decoded a step ago.
                     for (final index in rendered)
-                      AnimatedPositioned(
-                        key: ValueKey(widget.items[index].id),
-                        duration: motion.focusStep,
-                        curve: AnalogMotion.focusStepEase,
-                        left: index * step + translate,
-                        top: 0,
-                        width: metrics.posterWidthPx,
-                        height: railHeight,
-                        child: _RailSlot(
+                      () {
+                        final distance = index - widget.selection;
+                        final width =
+                            metrics.posterWidthPx * railScaleAt(distance);
+                        return AnimatedPositioned(
+                          key: ValueKey(widget.items[index].id),
+                          duration: motion.focusStep,
+                          curve: AnalogMotion.focusStepEase,
+                          left:
+                              trail +
+                              railOffsetFor(
+                                index,
+                                widget.selection,
+                                metrics.posterWidthPx,
+                                metrics.gapPx,
+                              ),
+                          // Bottom-aligned: captions share a baseline and the
+                          // selected poster grows upward out of the row.
+                          bottom: 0,
+                          width: width,
+                          // Deliberately no height: the tile's column is
+                          // mainAxisSize.min and knows its own intrinsic
+                          // height, including whatever the focus treatment
+                          // adds. Forcing a computed height here means
+                          // re-deriving the tile's internals from outside it,
+                          // and being 19px wrong clips the caption.
+                          child: _RailSlot(
                           item: widget.items[index],
-                          width: metrics.posterWidthPx,
+                          width: width,
                           focused: index == widget.selection,
                           // Depth: what is ahead of the cursor is dimmed, what
                           // is behind it is dimmed harder. The selection is the
@@ -233,7 +294,8 @@ class _AnalogRailState extends State<AnalogRail> {
                               ? widget.onActivate(index)
                               : widget.onSelect(index),
                         ),
-                      ),
+                        );
+                      }(),
                   ],
                   ),
                 ),
@@ -249,6 +311,17 @@ class _AnalogRailState extends State<AnalogRail> {
 /// Opacity for titles the cursor has already passed, and for those ahead of it.
 const double _passedOpacity = 0.34;
 const double _aheadOpacity = 0.62;
+
+/// Height the row needs for [posterWidthPx], including the enlarged selection
+/// and the room its focus growth wants above the caption baseline.
+double _rowHeight(double posterWidthPx, List<AnalogRailItem> items) {
+  final selected = posterWidthPx * kRailSelectedScale;
+  return AnalogPosterTile.artHeightFor(selected) +
+      AnalogPosterTile.captionHeight(
+        subtitle: items.any((i) => i.subtitle != null),
+      ) +
+      AnalogPosterTile.focusOverflowFor(selected);
+}
 
 class _RailSlot extends StatelessWidget {
   const _RailSlot({
