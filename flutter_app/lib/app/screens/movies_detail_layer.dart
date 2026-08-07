@@ -119,14 +119,17 @@ class MoviesCastRow extends StatelessWidget {
   final String Function(String personId) imageUrlFor;
   final double height;
 
-  static const double _faceWidth = 92;
+  static const double _faceWidth = 190;
+  static const double _faceSize = 46;
 
   @override
   Widget build(BuildContext context) {
     if (people.isEmpty) return const SizedBox.shrink();
 
     return SizedBox(
-      height: height,
+      // Faces sit on one line rather than filling the band, so the row is as
+      // tall as a face and no taller.
+      height: _faceSize + AnalogSpace.smPx,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         // The stage owns the wheel — it drives the rail. A cast row that ate
@@ -139,18 +142,19 @@ class MoviesCastRow extends StatelessWidget {
           final person = people[i];
           return SizedBox(
             width: _faceWidth,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
+                // Round, unlike every other image in the app. A face is not
+                // artwork: the square-poster rule is about film, and rounding
+                // the headshots is what keeps the cast from reading as another
+                // row of titles.
+                ClipOval(
+                  child: SizedBox(
+                    width: _faceSize,
+                    height: _faceSize,
+                    child: ColoredBox(
                       color: AnalogColor.stageSurface2,
-                      border: Border.all(color: AnalogColor.line),
-                    ),
-                    child: SizedBox(
-                      width: _faceWidth,
                       child: AuthedNetworkImage(
                         imageUrlFor(person.id),
                         fit: BoxFit.cover,
@@ -160,36 +164,44 @@ class MoviesCastRow extends StatelessWidget {
                           child: Icon(
                             Icons.person,
                             color: AnalogColor.inkFaint,
-                            size: 22,
+                            size: 20,
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: AnalogSpace.xsPx),
-                Text(
-                  person.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: AnalogType.sansFamily,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AnalogColor.ink,
+                const SizedBox(width: AnalogSpace.smPx),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        person.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: AnalogType.sansFamily,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: AnalogColor.ink,
+                        ),
+                      ),
+                      if ((person.role ?? '').isNotEmpty)
+                        Text(
+                          person.role!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: AnalogType.sansFamily,
+                            fontSize: 11.5,
+                            color: AnalogColor.inkFaint,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                if ((person.role ?? '').isNotEmpty)
-                  Text(
-                    person.role!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: AnalogType.sansFamily,
-                      fontSize: 11,
-                      color: AnalogColor.inkFaint,
-                    ),
-                  ),
               ],
             ),
           );
