@@ -152,15 +152,25 @@ void main() {
       lessThan(shelf.posterWidthPx),
       reason: 'the rail is a strip under the details, not the main event',
     );
+    // Smaller base posters put at least as many titles on screen — but only
+    // "at least". The trail lead-in and the enlarged head of the rail both
+    // consume horizontal room, so at narrow widths the count advantage the
+    // smaller posters buy is spent back on the depth effect. That trade is
+    // deliberate; asserting a strict gain here would be asserting that the
+    // trail is free, which it is not.
     expect(
       rail.slots,
-      greaterThan(shelf.visibleCount),
-      reason: 'smaller posters must put more titles on screen',
+      greaterThanOrEqualTo(shelf.visibleCount),
+      reason: 'smaller posters must not show fewer titles than the shelf',
     );
 
-    // Ends on a poster edge: the slots plus the gaps between them fill the
-    // usable width, with no sliver of a next poster left over.
-    final used = rail.posterWidthPx * rail.slots + rail.gapPx * (rail.slots - 1);
+    // Ends on a poster edge: the base-width slots, the gaps between them, the
+    // trail lead-in and the enlarged head of the rail together fit the usable
+    // width, with no sliver of a next poster left over.
+    final used =
+        rail.posterWidthPx * rail.slots +
+        rail.gapPx * (rail.slots - 1) +
+        rail.reservedPx;
     expect(used, lessThanOrEqualTo(usable));
     expect(usable - used, lessThan(rail.posterWidthPx));
 
@@ -183,6 +193,62 @@ void main() {
       greaterThan(normal.framePx),
       reason: 'the frame must thicken to carry focus without motion or colour',
     );
+  });
+
+  test('scale falls off by a third of the excess and then stays flat', () {
+    // "Selected poster will be bigger, then the next 33% drop off till we
+    // reach current scale, then it stays constant."
+    expect(railScaleAt(0), kRailSelectedScale);
+
+    final excess = kRailSelectedScale - 1;
+    expect(railScaleAt(1) - 1, closeTo(excess * 2 / 3, 1e-9));
+    expect(railScaleAt(2) - 1, closeTo(excess * 1 / 3, 1e-9));
+
+    // Reaches base exactly, rather than shrinking forever by ever-smaller
+    // amounts that never quite land.
+    expect(railScaleAt(3), closeTo(1, 1e-9));
+    for (final d in [4, 5, 20]) {
+      expect(railScaleAt(d), 1, reason: 'flat past the third slot');
+    }
+
+    // The trail sits at base: growing it back up would make it compete with
+    // the selection it is supposed to sit behind.
+    for (final d in [-1, -2, -9]) {
+      expect(railScaleAt(d), 1);
+    }
+
+    // Monotonic — no slot is larger than the one nearer the cursor.
+    for (var d = 0; d < 6; d++) {
+      expect(railScaleAt(d), greaterThanOrEqualTo(railScaleAt(d + 1)));
+    }
+  });
+
+  test('scaled slots are laid out without overlapping', () {
+    const w = 120.0;
+    const gap = 14.0;
+    const selection = 5;
+
+    double rightEdge(int i) =>
+        railOffsetFor(i, selection, w, gap) + w * railScaleAt(i - selection);
+
+    for (var i = selection; i < selection + 8; i++) {
+      final nextLeft = railOffsetFor(i + 1, selection, w, gap);
+      expect(
+        nextLeft,
+        greaterThanOrEqualTo(rightEdge(i) - 1e-9),
+        reason: 'slot ${i + 1} must start after slot $i ends',
+      );
+      expect(
+        nextLeft - rightEdge(i),
+        closeTo(gap, 1e-9),
+        reason: 'and be exactly one gap along, whatever the scales',
+      );
+    }
+
+    // The selection anchors the track.
+    expect(railOffsetFor(selection, selection, w, gap), 0);
+    // The trail runs backwards at base width.
+    expect(railOffsetFor(selection - 1, selection, w, gap), -(w + gap));
   });
 
   test('the scene light lands above-left, and both clients read one angle', () {

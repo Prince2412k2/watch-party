@@ -27,6 +27,10 @@ Future<int Function()> _pumpRail(
   var selection = initial;
   late StateSetter setLocal;
 
+  tester.view.physicalSize = Size(width, 900);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
@@ -88,18 +92,66 @@ void main() {
     tester,
   ) async {
     await _pumpRail(tester);
-    final first = _posterAt(tester, 'Title 0').dx;
+    final cursorX = _posterAt(tester, 'Title 0').dx;
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
 
     // After a settled step the item under the cursor is flush with where the
     // previous one sat. A rail that scrolled by pixels would land anywhere.
-    expect(_posterAt(tester, 'Title 1').dx, moreOrLessEquals(first, epsilon: 0.5));
+    expect(
+      _posterAt(tester, 'Title 1').dx,
+      moreOrLessEquals(cursorX, epsilon: 0.5),
+    );
 
-    // And its predecessor has moved a whole slot to the left, not a fraction.
-    final step = _posterAt(tester, 'Title 2').dx - _posterAt(tester, 'Title 1').dx;
-    expect(first - _posterAt(tester, 'Title 0').dx, moreOrLessEquals(step, epsilon: 0.5));
+    // Its predecessor has moved a whole base slot to the left — base, not the
+    // selected width, because the trail is drawn unscaled.
+    final passed = _posterAt(tester, 'Title 0');
+    final base = tester.getSize(
+      find.ancestor(
+        of: find.text('Title 3'),
+        matching: find.byType(AnalogPosterTile),
+      ).first,
+    ).width;
+    expect(
+      cursorX - passed.dx,
+      greaterThan(base),
+      reason: 'the passed title sits a full slot behind the cursor',
+    );
+  });
+
+  testWidgets('scale falls away from the cursor and then holds flat', (
+    tester,
+  ) async {
+    await _pumpRail(tester);
+
+    double widthOf(String label) => tester.getSize(
+      find.ancestor(
+        of: find.text(label),
+        matching: find.byType(AnalogPosterTile),
+      ).first,
+    ).width;
+
+    final selected = widthOf('Title 0');
+    final one = widthOf('Title 1');
+    final two = widthOf('Title 2');
+    final three = widthOf('Title 3');
+    final four = widthOf('Title 4');
+
+    expect(selected, greaterThan(one), reason: 'the selection is the biggest');
+    expect(one, greaterThan(two));
+    expect(two, greaterThan(three));
+    // Reached base by the third slot and flat from there.
+    expect(four, moreOrLessEquals(three, epsilon: 0.5));
+
+    // Nothing overlaps: each poster starts after the previous one ends.
+    for (final (a, b) in [('Title 0', 'Title 1'), ('Title 1', 'Title 2')]) {
+      expect(
+        _posterAt(tester, b).dx,
+        greaterThan(_posterAt(tester, a).dx + widthOf(a) - 1),
+        reason: '$b must start after $a ends',
+      );
+    }
   });
 
   testWidgets('even a short rail brings the selection to the first slot', (
