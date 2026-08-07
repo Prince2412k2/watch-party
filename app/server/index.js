@@ -57,6 +57,7 @@ import {
 } from './session.js'
 import {
   authorizeLiveKitUpgrade, createLiveKitTokenVerifier, isLiveKitUpgradePath,
+  liveKitAccessToken,
 } from './_lk_probe.js'
 import { registerProfileRoutes } from './profile.js'
 import { registerAvatarRoutes } from './avatar.js'
@@ -225,11 +226,49 @@ const livekitProxy = createProxyMiddleware({
   ws: true,
   pathRewrite: { '^/livekit': '' },
 })
-app.use('/livekit', requireAuth, livekitProxy)
+// NOT plain requireAuth. The LiveKit SDKs make an ordinary HTTPS GET to
+// /livekit/rtc/validate before opening the socket, and a native client
+// authenticates that request the same way it authenticates the socket — with
+// the room token, not a session cookie it does not have. Cookie-only auth here
+// 401'd the pre-flight, and the SDK aborts the connection on that alone, so the
+// upgrade fix by itself would not have been enough.
+//
+// The token is verified, and its identity and room are checked against live
+// party state, by exactly the same function the upgrade uses. This is not a
+// weaker gate — it is the same gate, reachable over the other transport.
+app.use('/livekit', requireLiveKitAuth, livekitProxy)
 const livekitTokenVerifier = createLiveKitTokenVerifier(
   process.env.LIVEKIT_API_KEY,
   process.env.LIVEKIT_API_SECRET,
 )
+
+/// Accepts a session cookie (browser) OR a signed LiveKit room token (native),
+/// deferring to the same [authorizeLiveKitUpgrade] the WebSocket path uses so
+/// the two transports cannot drift apart on who is allowed in.
+async function requireLiveKitAuth(req, res, next) {
+  if (req.session?.jellyfin) return next()
+  let url
+  try {
+    url = new URL(req.url ?? '/', 'http://localhost')
+  } catch {
+    return res.status(400).json({ error: 'bad request' })
+  }
+  const ok = await authorizeLiveKitUpgrade({
+    session: req.session,
+    accessToken: liveKitAccessToken(url, req.headers),
+    tokenVerifier: livekitTokenVerifier,
+    getParty: getSession,
+    isPartyMember: isMember,
+    isServiceIdentity: (identity, party) =>
+      identity === (process.env.BROWSER_IDENTITY || 'shared-browser') &&
+      Boolean(party.browser),
+    isTokenRevoked: (party, identity, notBefore) =>
+      Number(notBefore ?? 0) <=
+      Number(party.livekitRevokedBefore?.get(identity) ?? 0),
+  })
+  if (!ok) return res.status(401).json({ error: 'not authenticated' })
+  next()
+}
 
 function rejectUpgrade(socket, statusCode, message) {
   socket.end(`HTTP/1.1 ${statusCode} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
@@ -254,7 +293,7 @@ httpServer.on('upgrade', (req, socket, head) => {
     if (error) return rejectUpgrade(socket, 401, 'Unauthorized')
     const authorized = await authorizeLiveKitUpgrade({
       session: req.session,
-      accessToken: url.searchParams.get('access_token'),
+      accessToken: liveKitAccessToken(url, req.headers),
       tokenVerifier: livekitTokenVerifier,
       getParty: getSession,
       isPartyMember: isMember,

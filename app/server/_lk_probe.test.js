@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   authorizeLiveKitUpgrade, createLiveKitTokenVerifier, isLiveKitUpgradePath,
+  liveKitAccessToken,
 } from './_lk_probe.js'
 
 test('LiveKit upgrade path matching rejects prefix confusion', () => {
@@ -46,4 +47,27 @@ test('LiveKit upgrades accept a session or verified token and reject anonymous r
   party.browser = null
   assert.equal(await authorizeLiveKitUpgrade({ session: {}, accessToken: 'browser', ...options }), false)
   assert.equal(createLiveKitTokenVerifier('', ''), null)
+})
+
+test('a LiveKit token is found in the Authorization header, not just the query', () => {
+  // The browser SDK can only use ?access_token= — a browser cannot set headers
+  // on a WebSocket handshake. The Flutter SDK uses Authorization: Bearer,
+  // because a native socket can. Reading only the query param meant every
+  // native client authenticated as "no token", fell through to the cookie
+  // check it also could not satisfy, and was rejected 401 forever.
+  const q = new URL('http://x/livekit/rtc?access_token=from-query')
+  assert.equal(liveKitAccessToken(q, {}), 'from-query')
+
+  const bare = new URL('http://x/livekit/rtc?sdk=flutter')
+  assert.equal(liveKitAccessToken(bare, { authorization: 'Bearer from-header' }), 'from-header')
+  assert.equal(liveKitAccessToken(bare, { Authorization: 'bearer lower-case' }), 'lower-case')
+
+  // The query param wins when both are present: it is what the browser sends,
+  // and a proxy that adds its own Authorization must not shadow it.
+  assert.equal(liveKitAccessToken(q, { authorization: 'Bearer other' }), 'from-query')
+
+  // Anything that is not a Bearer token is not a token.
+  assert.equal(liveKitAccessToken(bare, {}), null)
+  assert.equal(liveKitAccessToken(bare, { authorization: 'Basic abc' }), null)
+  assert.equal(liveKitAccessToken(bare, { authorization: 'Bearer' }), null)
 })
