@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 
 import '../../ui/analog_tokens.dart';
@@ -348,24 +350,58 @@ class _BusyMarkState extends State<_BusyMark>
       padding: const EdgeInsets.only(right: AnalogSpace.smPx),
       child: RotationTransition(
         turns: _spin,
+        // Painted, not a bordered box.
+        //
+        // This used to be a BoxDecoration with shape: circle and a Border
+        // whose top side was a different colour from the other three. Flutter
+        // cannot paint that — "A Border can only be drawn as a circle on
+        // borders with uniform colors" — so every busy button threw on every
+        // frame. The exception was caught by the framework and logged rather
+        // than crashing, which is why it showed up as endless console noise
+        // instead of a visible failure.
         child: const SizedBox(
           width: 13,
           height: 13,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(color: AnalogColor.inkDim, width: 2),
-                left: BorderSide(color: AnalogColor.inkFaint, width: 2),
-                right: BorderSide(color: AnalogColor.inkFaint, width: 2),
-                bottom: BorderSide(color: AnalogColor.inkFaint, width: 2),
-              ),
-              shape: BoxShape.circle,
-            ),
-          ),
+          child: CustomPaint(painter: _BusyRingPainter()),
         ),
       ),
     );
   }
+}
+
+/// The busy mark: a faint ring with one brighter quadrant, so "working" reads
+/// as a SHAPE that rotates rather than as a colour change — the same rule the
+/// rest of the kit follows, and the reason this is not just a tinted circle.
+class _BusyRingPainter extends CustomPainter {
+  const _BusyRingPainter();
+
+  static const double _stroke = 2;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final inset = rect.deflate(_stroke / 2);
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _stroke
+      ..color = AnalogColor.inkFaint;
+    canvas.drawOval(inset, ring);
+    // A quarter turn of brighter ink, starting at twelve o'clock. Rotated by
+    // the RotationTransition above, so this painter itself is static and
+    // repaints only when its size changes.
+    canvas.drawArc(
+      inset,
+      -math.pi / 2,
+      math.pi / 2,
+      false,
+      ring
+        ..color = AnalogColor.inkDim
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_BusyRingPainter oldDelegate) => false;
 }
 
 @immutable
