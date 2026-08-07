@@ -232,7 +232,9 @@ class _StageBody extends ConsumerWidget {
                 TitleLayout.padLeft,
                 TitleLayout.padTop,
                 TitleLayout.padLeft,
-                rootIsSeries ? 260 : TitleLayout.padBottom,
+                rootIsSeries
+                    ? 260
+                    : copyBottomReserve(MediaQuery.sizeOf(context)),
               ),
               child: Row(
                 crossAxisAlignment: rootIsSeries

@@ -195,7 +195,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
 
     // The rail may take up to a bit under half the stage. It is laid over the
     // foot rather than taking a share of the column — see the Stack below.
-    final railBudget = media.size.height * 0.40;
+    final railBudget = media.size.height * TitleLayout.railStageShare;
 
     return AnalogStage(
       backdropUrl: selected == null
@@ -275,7 +275,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
                     ],
                   ),
                 ),
-                const SizedBox(height: AnalogSpace.lgPx),
+                const SizedBox(height: TitleLayout.copyToBandGap),
                 AnalogRail(
                   maxHeightPx: railBudget,
                   items: _railItems(items, api),
