@@ -274,15 +274,16 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                 artHeight,
               );
 
-              // Where it lands: bigger, left of the details, sitting above the
-              // cast row.
-              final heroWidth = (media.size.width * 0.17).clamp(150.0, 260.0);
+              // Where it lands: the right of the stage, clear of the text.
+              // On the right rather than the left so the details column never
+              // has to move aside — it stays exactly where it is through the
+              // whole transition, which is the point of the 1:1 layout.
+              final heroWidth = (media.size.width * 0.15).clamp(160.0, 290.0);
               final heroHeight = AnalogPosterTile.artHeightFor(heroWidth);
               final castHeight = media.size.height * 0.20;
               final to = Rect.fromLTWH(
-                gutter,
-                media.size.height - bottomPad - castHeight - heroHeight -
-                    AnalogSpace.xlPx,
+                media.size.width - gutter - heroWidth,
+                (media.size.height - bottomPad - castHeight - heroHeight) / 2,
                 heroWidth,
                 heroHeight,
               );
@@ -305,15 +306,6 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // The details make room for the poster as it
-                              // arrives. The text itself does not change size
-                              // or weight — it is the same widget throughout,
-                              // which is the whole point of the 1:1 layout.
-                              SizedBox(
-                                width:
-                                    (posterRect.width + AnalogSpace.xlPx) *
-                                    posterT,
-                              ),
                               Expanded(
                                 child: _Details(
                                   item: detailed,
@@ -501,101 +493,65 @@ class _Details extends StatelessWidget {
     }
 
     final current = item;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        if (collection != null) ...[
-          Row(
-            children: [
-              AnalogIconButton(
-                icon: Icons.arrow_back,
-                tooltip: 'Back to collections',
-                onPressed: onBack,
-              ),
-              const SizedBox(width: AnalogSpace.smPx),
-              Text(
-                collection!.name.toUpperCase(),
-                style: const TextStyle(
-                  fontFamily: AnalogType.monoFamily,
-                  fontSize: 11,
-                  letterSpacing: 1.4,
-                  color: AnalogColor.inkDim,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AnalogSpace.mdPx),
-        ],
-        Text(
-          current?.name ?? (loading ? '' : 'Nothing here'),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontFamily: AnalogType.sansFamily,
-            fontSize: 40,
-            height: 1.05,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.8,
-            color: AnalogColor.ink,
-          ),
-        ),
-        if (current != null) ...[
-          const SizedBox(height: AnalogSpace.smPx),
-          Row(
-            children: [
-              Text(
-                _metaLine(current),
-                style: const TextStyle(
-                  fontFamily: AnalogType.monoFamily,
-                  fontSize: 12,
-                  letterSpacing: 0.6,
-                  color: AnalogColor.inkDim,
-                ),
-              ),
-              // Ratings are a different kind of fact from the meta line — an
-              // opinion rather than a property — so they read as a mark rather
-              // than as another item in the run of text.
-              if (current.communityRating != null) ...[
-                const SizedBox(width: AnalogSpace.mdPx),
-                const Icon(Icons.star, size: 13, color: AnalogColor.inkDim),
-                const SizedBox(width: 4),
-                Text(
-                  current.communityRating!.toStringAsFixed(1),
-                  style: const TextStyle(
-                    fontFamily: AnalogType.monoFamily,
-                    fontSize: 12,
-                    color: AnalogColor.ink,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          if (current.genres.isNotEmpty) ...[
-            const SizedBox(height: AnalogSpace.smPx),
-            Wrap(
-              spacing: AnalogSpace.xsPx,
-              runSpacing: AnalogSpace.xsPx,
+    return ConstrainedBox(
+      // The same measure the detail stage holds its column to, so the text
+      // block is literally the same shape before and after the transition.
+      constraints: const BoxConstraints(maxWidth: 650),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (collection != null) ...[
+            Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                for (final genre in current.genres.take(4))
-                  AnalogBadge.outline(
-                    child: Text(
-                      genre,
-                      style: const TextStyle(
-                        fontFamily: AnalogType.sansFamily,
-                        fontSize: 11,
-                        color: AnalogColor.inkDim,
-                      ),
-                    ),
-                  ),
+                AnalogIconButton(
+                  icon: Icons.arrow_back,
+                  tooltip: 'Back to collections',
+                  onPressed: onBack,
+                ),
+                const SizedBox(width: AnalogSpace.smPx),
+                Text(
+                  collection!.name.toUpperCase(),
+                  style: _breadcrumbStyle,
+                ),
               ],
             ),
-          ],
-          if ((current.taglines.isNotEmpty)) ...[
             const SizedBox(height: AnalogSpace.mdPx),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Text(
+          ],
+
+          // Genres lead, as a breadcrumb rather than chips. This is the
+          // detail stage's opening line, and putting it anywhere else means
+          // the block reorders halfway through the transition.
+          if (current != null && current.genres.isNotEmpty) ...[
+            Text(
+              current.genres.take(3).join('  /  ').toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: _breadcrumbStyle,
+            ),
+            const SizedBox(height: AnalogSpace.smPx + 4),
+          ],
+
+          Text(
+            current?.name ?? (loading ? '' : 'Nothing here'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: AnalogType.sansFamily,
+              fontSize: 40,
+              height: 1.05,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.8,
+              color: AnalogColor.ink,
+            ),
+          ),
+
+          if (current != null) ...[
+            if (current.taglines.isNotEmpty) ...[
+              const SizedBox(height: AnalogSpace.smPx + 2),
+              Text(
                 current.taglines.first,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -606,60 +562,89 @@ class _Details extends StatelessWidget {
                   color: AnalogColor.inkDim,
                 ),
               ),
-            ),
-          ],
-          if ((current.overview ?? '').isNotEmpty) ...[
-            const SizedBox(height: AnalogSpace.mdPx),
-            ConstrainedBox(
-              // Overview is prose: hold it near a readable measure rather than
-              // letting it run the full width of a desktop stage.
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Text(
-                current.overview!,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: AnalogType.sansFamily,
-                  fontSize: 14,
-                  height: 1.5,
-                  color: AnalogColor.inkDim,
+            ],
+
+            if ((current.overview ?? '').isNotEmpty) ...[
+              const SizedBox(height: AnalogSpace.lgPx),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 590),
+                child: Text(
+                  current.overview!,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: AnalogType.sansFamily,
+                    fontSize: 14,
+                    height: 1.62,
+                    color: AnalogColor.inkDim,
+                  ),
                 ),
               ),
+            ],
+
+            // Meta sits UNDER the overview, as one mono run — the rating is
+            // part of the line here rather than a separate mark, because that
+            // is how the detail stage reads it and the two must not differ.
+            const SizedBox(height: AnalogSpace.mdPx + 2),
+            Text(
+              _metaLine(current),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontFamily: AnalogType.monoFamily,
+                fontSize: 11,
+                letterSpacing: 1.1,
+                fontWeight: FontWeight.w600,
+                color: AnalogColor.inkDim,
+              ),
             ),
+
+            const SizedBox(height: AnalogSpace.lgPx),
+            if (onPlay != null && showPlay)
+              AnalogButton(
+                label: current.type == collectionType
+                    ? 'Open collection'
+                    : 'Watch now',
+                icon: current.type == collectionType
+                    ? Icons.folder_open
+                    : Icons.play_arrow,
+                tone: AnalogButtonTone.primary,
+                onPressed: onPlay,
+              ),
+            if (actionsProgress > 0)
+              MoviesActionBar(
+                progress: actionsProgress,
+                downloadBusy: false,
+                onPlay: onOpen,
+                onDownload: onOpen,
+                onBack: onCollapse,
+              ),
           ],
-          const SizedBox(height: AnalogSpace.lgPx),
-          if (onPlay != null && showPlay)
-            AnalogButton(
-              label: current.type == collectionType ? 'Open collection' : 'Play',
-              icon: current.type == collectionType
-                  ? Icons.folder_open
-                  : Icons.play_arrow,
-              tone: AnalogButtonTone.primary,
-              onPressed: onPlay,
-            ),
-          if (actionsProgress > 0)
-            MoviesActionBar(
-              progress: actionsProgress,
-              downloadBusy: false,
-              onPlay: onOpen,
-              onDownload: onOpen,
-              onBack: onCollapse,
-            ),
         ],
-      ],
+      ),
     );
   }
+
+  static const TextStyle _breadcrumbStyle = TextStyle(
+    fontFamily: AnalogType.monoFamily,
+    fontSize: 10,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 1.3,
+    color: AnalogColor.inkDim,
+  );
 
   /// Year, certificate and runtime — the facts that are the same shape for
   /// every title, so the line does not reflow as you step along the rail.
   static String _metaLine(LibraryItem item) {
     final parts = <String>[
-      if (item.productionYear != null) '${item.productionYear}',
+      if (item.communityRating != null)
+        '★ ${item.communityRating!.toStringAsFixed(1)}',
       if ((item.officialRating ?? '').isNotEmpty) item.officialRating!,
       if (item.runTimeTicks != null && item.runTimeTicks! > 0)
         _runtime(item.runTimeTicks!),
+      if (item.productionYear != null) '${item.productionYear}',
     ];
-    return parts.join('  ·  ');
+    return parts.join('  ·  ').toUpperCase();
   }
 
   static String _runtime(int ticks) {
