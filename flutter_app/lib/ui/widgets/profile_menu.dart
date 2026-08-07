@@ -37,18 +37,23 @@ class ProfileMenu extends ConsumerStatefulWidget {
 }
 
 class _ProfileMenuState extends ConsumerState<ProfileMenu>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _tray = AnimationController(
-    vsync: this,
-    duration: AnalogMotion.drawerMs,
-    reverseDuration: AnalogMotion.exitMs,
-  );
+    with TickerProviderStateMixin {
+  /// Built in [initState], not as a `late final` initializer, and vsynced by
+  /// the plural mixin — see the note on the popcorn control's controller: a
+  /// lazy field plus [SingleTickerProviderStateMixin] asserts after a hot
+  /// reload, because the field resets and the handed-out ticker does not.
+  late final AnimationController _tray;
 
   bool get _open => _tray.value > 0;
 
   @override
   void initState() {
     super.initState();
+    _tray = AnimationController(
+      vsync: this,
+      duration: AnalogMotion.drawerMs,
+      reverseDuration: AnalogMotion.exitMs,
+    );
     // This control is the app's one persistent view of "me", so it is where the
     // profile gets fetched. Deferred past the first frame because loading it
     // moves provider state.
@@ -162,6 +167,11 @@ class _Avatar extends StatelessWidget {
   final Animation<double> animation;
   final VoidCallback onTap;
 
+  /// The handle. Sized to sit level with the tray it opens — matching
+  /// [IconTray.thickness] is what makes the two read as one object rather than
+  /// a circle parked next to a pill.
+  static const double _face = IconTray.thickness;
+
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
@@ -183,9 +193,9 @@ class _Avatar extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: wp.stage,
-                  border: Border.all(color: wp.line2, width: 2 * t),
+                  border: Border.all(color: wp.line2, width: 3 * t),
                 ),
-                padding: EdgeInsets.all(2 * t),
+                padding: EdgeInsets.all(3 * t),
                 child: child,
               );
             },
@@ -193,8 +203,8 @@ class _Avatar extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 SizedBox(
-                  width: 36,
-                  height: 36,
+                  width: _face,
+                  height: _face,
                   child: userId == null
                       ? Container(
                           alignment: Alignment.center,
@@ -206,24 +216,24 @@ class _Avatar extends StatelessWidget {
                             initialsOf(name),
                             style: TextStyle(
                               fontFamily: AppFonts.sans,
-                              fontSize: 11,
+                              fontSize: 17,
                               fontWeight: FontWeight.w800,
                               color: wp.bg,
                             ),
                           ),
                         )
-                      : AvatarView(userId: userId!, name: name, size: 36),
+                      : AvatarView(userId: userId!, name: name, size: _face),
                 ),
                 Positioned(
                   top: 0,
-                  right: -2,
+                  right: -3,
                   child: Container(
-                    width: 10,
-                    height: 10,
+                    width: 15,
+                    height: 15,
                     decoration: BoxDecoration(
                       color: kBrandRed,
                       shape: BoxShape.circle,
-                      border: Border.all(color: wp.stage, width: 2),
+                      border: Border.all(color: wp.stage, width: 3),
                     ),
                   ),
                 ),
