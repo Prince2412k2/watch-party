@@ -27,7 +27,7 @@ guarantee than a registry lookup: it pins to a set already known to work togethe
 | prowlarr | 2.4.0.5397-ls152 |
 | sonarr | 4.0.19.2979-ls316 |
 | radarr | 6.2.1.10461-ls308 |
-| bazarr | v1.5.6-ls353 |
+| bazarr | v1.6.0-ls357 |
 | qbittorrent | 5.2.2_v2.0.13-ls464 |
 
 ### To upgrade one service

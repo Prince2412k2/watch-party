@@ -3,12 +3,28 @@ import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+// A real environment variable ALWAYS wins over one of these files.
+//
+// This used to assign unconditionally, so a .env sitting in the repo root
+// silently overwrote variables the process had been started with. The visible
+// damage was a test suite that lied: party-auth.integration spawns this server
+// with its own LIVEKIT_API_KEY/SECRET, the loop replaced them with whatever the
+// developer had locally, and the LiveKit upgrade then failed signature
+// verification — a red test on every machine that had ever configured the app,
+// green on a fresh checkout and in CI. The failure named neither the file nor
+// the override.
+//
+// Overriding is also the wrong precedence on its own terms: dotenv does not do
+// it, and it means the one mechanism that can be scoped to a single process
+// (the environment) loses to a file that cannot.
 for (const file of ['.env', '.env.local']) {
   try {
     const env = readFileSync(resolve(__dirname, '../../', file), 'utf8')
     for (const line of env.split('\n')) {
       const m = line.match(/^([^#=]+)=(.*)$/)
-      if (m) process.env[m[1].trim()] = m[2].trim()
+      if (!m) continue
+      const key = m[1].trim()
+      if (process.env[key] === undefined) process.env[key] = m[2].trim()
     }
   } catch {}
 }

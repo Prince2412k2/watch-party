@@ -299,8 +299,20 @@ services:
       start_period: 30s
 
   bazarr:
-    # bazarr v1.5.6-ls353
-    image: lscr.io/linuxserver/bazarr@sha256:047222423d6d8556a88581b189175bec57f286f120b52ba29c0390fe6babaa5a
+    # bazarr v1.6.0-ls357
+    #
+    # Rolled FORWARD from v1.5.6-ls353, not chosen freshly. A v1.6.0 Bazarr had
+    # already run against this config volume and migrated db/bazarr.db to
+    # Alembic revision 0124f9e278fb; pinning back to v1.5.6 left the binary
+    # unable to resolve its own database ("Can't locate revision identified by
+    # '0124f9e278fb'"), and the container sat unhealthy. Since `watchparty`
+    # declares `bazarr: condition: service_healthy`, that also meant the app
+    # would not start on the next bring-up.
+    #
+    # Pinning a container BEHIND the schema its volume already carries is a
+    # downgrade in everything but name. When bumping any of these, the data
+    # directory has to move with the image or not at all.
+    image: lscr.io/linuxserver/bazarr@sha256:e464484e7e6cff8ee189036c9ba96977ab054104ea18067ecf6171d0f3f3f8f2
     container_name: watchparty-bazarr
     restart: unless-stopped
     networks: [watchparty-net]
