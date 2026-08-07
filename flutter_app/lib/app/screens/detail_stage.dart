@@ -243,7 +243,11 @@ class _StageBody extends ConsumerWidget {
                 children: [
                   Expanded(
                     flex: TitleLayout.copyFlex,
-                    child: SingleChildScrollView(child: copy),
+                    // Centred within its column, not flush to the gutter —
+                    // matching the browse screen, where the copy sits about
+                    // 70px further in. That inset is the last visible
+                    // difference between the two surfaces.
+                    child: Center(child: SingleChildScrollView(child: copy)),
                   ),
                   const SizedBox(width: TitleLayout.columnGap),
                   Expanded(
