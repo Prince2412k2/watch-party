@@ -40,7 +40,20 @@ class AnalogPosterTile extends StatelessWidget {
     this.onTap,
     this.heroTag,
     this.progress,
+    this.aspectRatio = posterAspect,
   });
+
+  /// Poster artwork, width ÷ height. The canonical 2:3 from the tokens.
+  static const double posterAspect =
+      AnalogPoster.aspectW / AnalogPoster.aspectH;
+
+  /// Episode-still artwork, width ÷ height.
+  ///
+  /// Not a token: 16:9 is the frame the source material is already in, not a
+  /// design decision this system gets to make, and it was already written
+  /// literally into every episode card on the detail surfaces. Named once here
+  /// so the rail and the tile cannot disagree about it.
+  static const double stillAspect = 16 / 9;
 
   /// Same-origin artwork URL, or null to render the neutral placeholder.
   final String? imageUrl;
@@ -60,9 +73,15 @@ class AnalogPosterTile extends StatelessWidget {
   /// 0..1 watch progress, drawn as a hairline across the foot of the artwork.
   final double? progress;
 
-  /// Artwork box height for [width] at the canonical poster aspect.
-  static double artHeightFor(double width) =>
-      width * AnalogPoster.aspectH / AnalogPoster.aspectW;
+  /// Artwork shape, width ÷ height. [posterAspect] for a title, [stillAspect]
+  /// for an episode. The tile is otherwise identical — an episode still gets
+  /// the same frame, edge light, cast shadow and focus growth a poster gets,
+  /// because they are the same object at a different crop.
+  final double aspectRatio;
+
+  /// Artwork box height for [width] at [aspectRatio].
+  static double artHeightFor(double width, {double aspectRatio = posterAspect}) =>
+      width / aspectRatio;
 
   static const double _titlePx = 13;
   static const double _subtitlePx = 12;
@@ -86,8 +105,14 @@ class AnalogPosterTile extends StatelessWidget {
   /// Room a shelf must leave around a tile so the focused scale and lift are
   /// not clipped. Focus grows the artwork about its centre, so half the growth
   /// lands above the box and half below, and the lift adds to the top only.
-  static double focusOverflowFor(double width) {
-    final growth = artHeightFor(width) * (AnalogSelection.focusScale - 1) / 2;
+  static double focusOverflowFor(
+    double width, {
+    double aspectRatio = posterAspect,
+  }) {
+    final growth =
+        artHeightFor(width, aspectRatio: aspectRatio) *
+        (AnalogSelection.focusScale - 1) /
+        2;
     return growth + AnalogSelection.focusLiftPx;
   }
 
@@ -99,6 +124,7 @@ class AnalogPosterTile extends StatelessWidget {
       width: width,
       focused: focused,
       progress: progress,
+      aspectRatio: aspectRatio,
     );
 
     final caption = title;
@@ -139,6 +165,7 @@ class _PosterArt extends StatelessWidget {
     required this.width,
     required this.focused,
     required this.progress,
+    required this.aspectRatio,
   });
 
   final String? imageUrl;
@@ -146,10 +173,11 @@ class _PosterArt extends StatelessWidget {
   final double width;
   final bool focused;
   final double? progress;
+  final double aspectRatio;
 
-  /// Decode the source at the largest size it is ever painted: the artwork is
-  /// 2:3 inside a 2:3 box, so `cover` needs exactly the box width, times the
-  /// focus scale, times the device pixel ratio.
+  /// Decode the source at the largest size it is ever painted: the artwork
+  /// fills its box, so `cover` needs exactly the box width, times the focus
+  /// scale, times the device pixel ratio.
   int _decodeWidth(BuildContext context) =>
       (width * AnalogSelection.focusScale * MediaQuery.devicePixelRatioOf(context))
           .ceil();
@@ -234,7 +262,7 @@ class _PosterArt extends StatelessWidget {
       },
       child: SizedBox(
         width: width,
-        height: AnalogPosterTile.artHeightFor(width),
+        height: AnalogPosterTile.artHeightFor(width, aspectRatio: aspectRatio),
         child: Stack(
           fit: StackFit.expand,
           children: [
