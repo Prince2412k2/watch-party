@@ -232,9 +232,6 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
                         error: async.hasError
                             ? 'Could not load this library'
                             : null,
-                        onPlay: selected == null
-                            ? null
-                            : () => _activate(items, _selected),
                         onBack: _collection == null ? null : _back,
                       ),
                     ),
@@ -318,7 +315,6 @@ class _Details extends StatelessWidget {
     required this.collection,
     required this.loading,
     required this.error,
-    required this.onPlay,
     required this.onBack,
   });
 
@@ -326,7 +322,6 @@ class _Details extends StatelessWidget {
   final LibraryItem? collection;
   final bool loading;
   final String? error;
-  final VoidCallback? onPlay;
   final VoidCallback? onBack;
 
 
@@ -435,18 +430,6 @@ class _Details extends StatelessWidget {
               style: TitleType.meta.copyWith(color: AnalogColor.inkDim),
             ),
 
-            const SizedBox(height: 23),
-            if (onPlay != null)
-              AnalogButton(
-                label: current.type == collectionType
-                    ? 'Open collection'
-                    : 'Watch now',
-                icon: current.type == collectionType
-                    ? Icons.folder_open
-                    : Icons.play_arrow,
-                tone: AnalogButtonTone.primary,
-                onPressed: onPlay,
-              ),
           ],
         ],
       ),

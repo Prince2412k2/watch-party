@@ -47,13 +47,9 @@ void main() {
     // below. The caption is what lets you identify the titles you are
     // scrolling *towards*, so it is not redundant with the heading.
     expect(find.text('12 Angry Men'), findsWidgets);
-    // "Watch now", matching the detail stage — the browse and expanded states
-    // share one composition so nothing reflows during the transition.
-    expect(
-      find.text('Watch now'),
-      findsOneWidget,
-      reason: 'details render on top',
-    );
+    // The browse stage carries no action of its own: selecting a title is
+    // what opens it, and the detail page owns Watch now.
+    expect(find.text('Watch now'), findsNothing);
     expect(find.text('Singles'), findsOneWidget, reason: 'mode strip renders');
     expect(find.text('Collections'), findsOneWidget);
     expect(find.text('Blade Runner'), findsNothing);
