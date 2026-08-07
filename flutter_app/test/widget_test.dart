@@ -35,14 +35,21 @@ void main() {
         child: const WatchpartyApp(enableWindowFrame: false),
       ),
     );
-    // Let the mock catalog resolve and the movie shelves render.
+    // Let the mock catalog resolve and the movie stage render.
     await tester.pumpAndSettle();
 
     // The bottom nav renders the primary tabs.
     expect(find.text('Movies'), findsWidgets);
     expect(find.text('Continue watching'), findsNothing);
     expect(find.text('Library'), findsNothing);
-    expect(find.text('12 Angry Men'), findsOneWidget);
+    // The Movies stage shows the selected title twice by design: as the
+    // details heading on top, and as its own poster's caption in the rail
+    // below. The caption is what lets you identify the titles you are
+    // scrolling *towards*, so it is not redundant with the heading.
+    expect(find.text('12 Angry Men'), findsWidgets);
+    expect(find.text('Play'), findsOneWidget, reason: 'details render on top');
+    expect(find.text('Singles'), findsOneWidget, reason: 'mode strip renders');
+    expect(find.text('Collections'), findsOneWidget);
     expect(find.text('Blade Runner'), findsNothing);
 
     await tester.tap(find.text('Shows'));

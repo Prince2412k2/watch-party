@@ -10,6 +10,7 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/gallery_screen.dart';
 import 'screens/browse_screen.dart';
+import 'screens/movies_stage.dart';
 import 'screens/detail_screen.dart';
 import 'screens/download_detail_screen.dart';
 import 'screens/downloads_screen.dart';
@@ -162,7 +163,7 @@ GoRouter buildRouter(WidgetRef ref) {
               child: Consumer(
                 builder: (_, ref, _) =>
                     ref.watch(authProvider.select((s) => s.isAuthenticated))
-                    ? const BrowseScreen(type: BrowseTypeFilter.movie)
+                    ? const MoviesStage()
                     : const HomeScreen(),
               ),
             ),
