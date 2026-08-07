@@ -105,11 +105,17 @@
     "slotLagMaxMs": 130,
 
     "$settle": "The rail's settle. It carries past its mark and returns, which is what makes a flung row read as having weight rather than being teleported. The curve's third control point is above 1 - that IS the overshoot, and it is the only curve in the system allowed one.",
-    "settleMs": 380,
-    "settleEase": [0.22, 1.28, 0.36, 1.0],
+    "settleMs": 500,
+    "settleEase": [0.2, 1.26, 0.36, 1.0],
+
+    "$heroFlight": "The poster's flight from the rail to the detail page. Long, because the overshoot lives at the END of the curve and the route's own 180ms fade-through left no time for it to happen at all - the poster was arriving before the spring could start. Hero flights take their duration from the route transition, so this has to be the route's number, not the poster's.",
+    "heroFlightMs": 900,
+
+    "$heroReturn": "Going back is quicker than going in. Arriving somewhere is worth watching; leaving is not - a return that takes as long as the entrance reads as the app being slow to let go. Asymmetry here is the point, not an oversight.",
+    "heroReturnMs": 380,
 
     "$velocity": "Momentum. A slow step barely overshoots; a fast one carries further and takes longer to come back, so the row answers how hard it was pushed. Steps closer together than fastStepMs count as fast.",
-    "settleFastMs": 620,
+    "settleFastMs": 820,
     "fastStepMs": 220,
 
     "$anticipation": "A move starts by gathering against itself. Kept very small: the design forbids overshoot, and anticipation read too large becomes a bounce by another name.",

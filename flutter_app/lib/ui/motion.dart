@@ -14,11 +14,20 @@ import 'tokens.dart';
 CustomTransitionPage<T> fadeThroughPage<T>({
   required LocalKey key,
   required Widget child,
+  Duration? duration,
+  Duration? reverseDuration,
 }) {
   return CustomTransitionPage<T>(
     key: key,
-    transitionDuration: AppMotion.page,
-    reverseTransitionDuration: AppMotion.page,
+    // A Hero flight takes its duration from the route transition, not from the
+    // Hero. A route that fades through in 180ms gives a flying poster 180ms to
+    // arc, overshoot and settle — which is why the elasticity was invisible
+    // until this became overridable.
+    //
+    // The two directions are set separately because they are not the same
+    // event: arriving somewhere is worth watching, leaving is not.
+    transitionDuration: duration ?? AppMotion.page,
+    reverseTransitionDuration: reverseDuration ?? duration ?? AppMotion.page,
     child: child,
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       final curved = CurvedAnimation(

@@ -105,9 +105,11 @@
   --an-motion-exit-ease: cubic-bezier(0.3, 0, 0.8, 0.15);
   --an-motion-slot-lag-ms: 26ms;
   --an-motion-slot-lag-max-ms: 130ms;
-  --an-motion-settle-ms: 380ms;
-  --an-motion-settle-ease: cubic-bezier(0.22, 1.28, 0.36, 1);
-  --an-motion-settle-fast-ms: 620ms;
+  --an-motion-settle-ms: 500ms;
+  --an-motion-settle-ease: cubic-bezier(0.2, 1.26, 0.36, 1);
+  --an-motion-hero-flight-ms: 900ms;
+  --an-motion-hero-return-ms: 380ms;
+  --an-motion-settle-fast-ms: 820ms;
   --an-motion-fast-step-ms: 220ms;
   --an-motion-anticipation-ms: 60ms;
   --an-motion-anticipation-pct: 4%;
