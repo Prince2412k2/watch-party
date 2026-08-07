@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../analog/chrome/analog_select.dart';
 import '../analog/chrome/chrome.dart';
 import 'package:flutter/services.dart';
 
@@ -69,6 +70,7 @@ class PlayerChrome extends StatefulWidget {
     this.cachedSpans,
     this.visible,
     this.onWake,
+    this.onRequestPlaying,
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
@@ -87,6 +89,20 @@ class PlayerChrome extends StatefulWidget {
   /// playback / detail screen) keeps the built-in idle behaviour intact.
   final bool? visible;
   final VoidCallback? onWake;
+
+  /// When non-null a PARTY owns playback, and the transport's play/pause is
+  /// authored through the sync engine (`requestPlay`/`requestPause`) instead of
+  /// being poked into the controller.
+  ///
+  /// This is not a preference. Calling `controller.pause()` directly in a party
+  /// leaves the engine unaware a command was authored, so its applying-guard
+  /// never fires — and its host kick-loop, which exists so muted guests can
+  /// autoplay, sees a 'playing' schedule against a stopped player 200ms later
+  /// and starts it again. That is the "pause won't stick" bug.
+  ///
+  /// Null for solo playback, where there is no schedule and the controller IS
+  /// the authority.
+  final ValueChanged<bool>? onRequestPlaying;
 
   /// Party-only key bindings, independent of playback control: `c` toggles chat,
   /// hold-`T` is push-to-talk. Null in solo playback (the keys do nothing).
@@ -169,8 +185,20 @@ class _PlayerChromeState extends State<PlayerChrome>
 
   /// Volume to restore when unmuting (last non-zero level the user chose).
   double _preMuteVolume = 100;
+
+  /// Playback speed. Purely local: it is a per-viewer comfort setting, and a
+  /// party's shared timeline owns the rate everyone actually watches at, so
+  /// this is only offered when nobody else is being dragged along.
+  double _rate = 1;
   String? _selectedAudio;
   String? _selectedSubtitle;
+
+  /// Anchors for [showAnalogSelect]. Held here rather than built inline
+  /// because a [GlobalKey] recreated on every rebuild anchors nothing, and
+  /// the settings-stack rows are gone by the time their picker opens — so the
+  /// picker hangs off the gear that is still on screen.
+  final _subtitleAnchor = GlobalKey(debugLabel: 'subtitleControl');
+  final _settingsAnchor = GlobalKey(debugLabel: 'settingsStack');
 
   // Decode + subtitle-appearance state — only meaningful for the concrete
   // MediaKitPlayerController (seeded in initState when it's the live player).
@@ -618,7 +646,10 @@ class _PlayerChromeState extends State<PlayerChrome>
 
   Future<void> _togglePlay() async {
     if (!widget.canControl) return;
-    if (_playing) {
+    final author = widget.onRequestPlaying;
+    if (author != null) {
+      author(!_playing);
+    } else if (_playing) {
       await widget.controller.pause();
     } else {
       await widget.controller.play();
@@ -666,6 +697,12 @@ class _PlayerChromeState extends State<PlayerChrome>
     } else {
       await _setVolume(_preMuteVolume > 0 ? _preMuteVolume : 100);
     }
+  }
+
+  Future<void> _setRate(double rate) async {
+    setState(() => _rate = rate);
+    await widget.controller.setRate(rate);
+    _wake();
   }
 
   Future<void> _setHardwareDecoding(bool enabled) async {
@@ -1103,29 +1140,118 @@ class _PlayerChromeState extends State<PlayerChrome>
     return KeyEventResult.ignored;
   }
 
-  /// The settings stack's contents. Both entries are libmpv-only, so a mock or
-  /// spy controller yields an empty list and the gear is not rendered at all.
+  /// Speeds offered by the settings stack. Deliberately short: a rate picker
+  /// with eleven rows is a rate picker nobody scrolls to the end of.
+  static const List<double> _rates = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+  static String _rateLabel(double rate) =>
+      rate == rate.roundToDouble() ? '${rate.toInt()}×' : '$rate×';
+
+  /// Language / audio track, as its own picker off the settings stack.
+  Future<void> _openAudioPicker() async {
+    _hold('audioPicker');
+    await showAnalogSelect<String?>(
+      context: context,
+      anchor: _settingsAnchor,
+      selected: _selectedAudio,
+      groups: [
+        AnalogChoiceGroup<String?>(
+          icon: Icons.audiotrack,
+          choices: [
+            for (final track in _tracks.audio)
+              AnalogChoice<String?>(
+                value: track.id,
+                label: _trackName(track),
+                detail: _trackDetail(track),
+              ),
+          ],
+        ),
+      ],
+      onSelected: _setAudio,
+    );
+    _release('audioPicker');
+  }
+
+  Future<void> _openSpeedPicker() async {
+    _hold('speedPicker');
+    await showAnalogSelect<double>(
+      context: context,
+      anchor: _settingsAnchor,
+      selected: _rate,
+      width: 200,
+      groups: [
+        AnalogChoiceGroup<double>(
+          icon: Icons.speed,
+          choices: [
+            for (final rate in _rates)
+              AnalogChoice<double>(
+                value: rate,
+                label: rate == 1 ? 'Normal' : _rateLabel(rate),
+                detail: rate == 1 ? '1×' : null,
+              ),
+          ],
+        ),
+      ],
+      onSelected: _setRate,
+    );
+    _release('speedPicker');
+  }
+
+  /// The settings stack's contents, top to bottom in the order the reference
+  /// names them: subtitle settings, language/audio track, speed, then whatever
+  /// the concrete engine adds.
   ///
-  /// The direct subtitle control stays OUTSIDE this stack, as does the audio
-  /// track menu — fast track selection must not cost two taps.
+  /// Each row opens its own picker through [showAnalogSelect] — the kit's
+  /// dropdown — so the player carries no menu implementation of its own. The
+  /// direct subtitle control stays OUTSIDE this stack: Off and a track swap
+  /// must not cost two taps.
+  ///
+  /// Subtitle styling and the decoder are libmpv-only and simply absent on a
+  /// mock/spy controller; speed rides the frozen [PlayerController] contract
+  /// and is always offered.
   List<AnalogSettingsEntry> _settingsEntries() {
-    if (widget.controller is! MediaKitPlayerController) return const [];
+    final mediaKit = widget.controller is MediaKitPlayerController;
     return [
+      if (mediaKit)
+        AnalogSettingsEntry(
+          icon: Icons.tune,
+          label: 'Subtitle settings',
+          onTap: _openSubtitleSettings,
+        ),
+      if (_tracks.audio.isNotEmpty)
+        AnalogSettingsEntry(
+          icon: Icons.audiotrack,
+          label: 'Audio track',
+          detail: _audioTrackDetail,
+          // A guest may read which track the party is on but not change it.
+          enabled: widget.canManagePartyMedia,
+          onTap: _openAudioPicker,
+        ),
       AnalogSettingsEntry(
-        icon: Icons.tune,
-        label: 'Subtitle settings',
-        onTap: _openSubtitleSettings,
-      ),
-      AnalogSettingsEntry(
-        icon: Icons.memory,
-        label: 'Video decoder',
-        detail: _hwDecoding ? 'Hardware' : 'Software',
-        // Same gate the decode menu carried: a guest sees which decoder is in
-        // use but cannot switch it.
+        icon: Icons.speed,
+        label: 'Speed',
+        detail: _rate == 1 ? 'Normal' : _rateLabel(_rate),
         enabled: widget.canControl,
-        onTap: () => _setHardwareDecoding(!_hwDecoding),
+        onTap: _openSpeedPicker,
       ),
+      if (mediaKit)
+        AnalogSettingsEntry(
+          icon: Icons.memory,
+          label: 'Video decoder',
+          detail: _hwDecoding ? 'Hardware' : 'Software',
+          // Same gate the decode menu carried: a guest sees which decoder is in
+          // use but cannot switch it.
+          enabled: widget.canControl,
+          onTap: () => _setHardwareDecoding(!_hwDecoding),
+        ),
     ];
+  }
+
+  String? get _audioTrackDetail {
+    for (final track in _tracks.audio) {
+      if (track.id == _selectedAudio) return _trackName(track);
+    }
+    return null;
   }
 
   /// libmpv reports only the forward edge of its demuxer cache, so this is one
@@ -1203,13 +1329,12 @@ class _PlayerChromeState extends State<PlayerChrome>
                   playing: _playing,
                   position: _dragPosition ?? _position,
                   duration: _duration,
-                  tracks: PlayerTracks(
-                    video: _tracks.video,
-                    audio: _tracks.audio,
-                    subtitle: _visibleSubtitleTracks,
-                  ),
-                  selectedAudio: _selectedAudio,
+                  subtitleTracks: _visibleSubtitleTracks,
+                  subtitleAnchor: _subtitleAnchor,
+                  settingsAnchor: _settingsAnchor,
                   selectedSubtitle: _selectedSubtitle,
+                  muted: _volume <= 0,
+                  onToggleMute: _toggleMute,
                   isFullscreen: widget.isFullscreen,
                   // Decode + subtitle-styling are additive libmpv features:
                   // only surface them when the live MediaKitPlayerController is
@@ -1229,7 +1354,8 @@ class _PlayerChromeState extends State<PlayerChrome>
                   },
                   onScrubbingChanged: (scrubbing) =>
                       _setHold('scrub', scrubbing),
-                  onAudio: _setAudio,
+                  onSubtitleMenuChanged: (open) =>
+                      _setHold('subtitleMenu', open),
                   onSubtitle: _setSubtitle,
                   onToggleFullscreen: widget.onToggleFullscreen,
                   trickplay: _trickplay,
@@ -1246,20 +1372,21 @@ class _PlayerChromeState extends State<PlayerChrome>
                 ),
               ),
 
-              // Volume: a compact VERTICAL control near the right edge, out of
-              // the transport row. Sits above the transport bar's own height so
-              // the two never overlap, and fades with the rest of the chrome.
+              // Volume: a bare VERTICAL hairline on the right edge, centred on
+              // the stage. Its mute glyph moved into the transport row (beside
+              // subtitles and fullscreen, where the reference puts it), so what
+              // is left here is the track and its handle. Fades with the rest
+              // of the chrome.
               _AnimatedEdge(
                 visible: visible,
-                alignment: Alignment.bottomRight,
+                alignment: Alignment.centerRight,
                 child: Padding(
-                  padding: const EdgeInsets.only(
-                    right: AnalogSpace.smPx,
-                    bottom: 118,
-                  ),
+                  padding: const EdgeInsets.only(right: AnalogSpace.mdPx),
                   child: AnalogVolume(
                     volume: _volume,
                     trackKey: const Key('volumeSlider'),
+                    trackLength: 132,
+                    showMuteButton: false,
                     onChanged: _setVolume,
                     onToggleMute: _toggleMute,
                     onAdjustingChanged: (adjusting) =>
@@ -1427,9 +1554,12 @@ class _TransportBar extends StatelessWidget {
     required this.playing,
     required this.position,
     required this.duration,
-    required this.tracks,
-    required this.selectedAudio,
+    required this.subtitleTracks,
+    required this.subtitleAnchor,
+    required this.settingsAnchor,
     required this.selectedSubtitle,
+    required this.muted,
+    required this.onToggleMute,
     required this.isFullscreen,
     required this.settings,
     required this.onSettingsOpenChanged,
@@ -1438,7 +1568,7 @@ class _TransportBar extends StatelessWidget {
     required this.onSeekPreview,
     required this.onSeekCommit,
     required this.onScrubbingChanged,
-    required this.onAudio,
+    required this.onSubtitleMenuChanged,
     required this.onSubtitle,
     required this.onToggleFullscreen,
     required this.trickplay,
@@ -1456,9 +1586,18 @@ class _TransportBar extends StatelessWidget {
   final bool playing;
   final Duration position;
   final Duration duration;
-  final PlayerTracks tracks;
-  final String? selectedAudio;
+
+  /// Only the subtitle set. Audio-track selection moved into the settings
+  /// stack, where the reference groups it under language/audio.
+  final List<PlayerTrack> subtitleTracks;
+  final GlobalKey subtitleAnchor;
+  final GlobalKey settingsAnchor;
   final String? selectedSubtitle;
+
+  /// Mute lives in this row (reference: subtitle, mute, settings, fullscreen at
+  /// the lower right), NOT under the right-edge volume hairline.
+  final bool muted;
+  final VoidCallback onToggleMute;
   final bool isFullscreen;
 
   /// Rows of the upward settings stack. Empty hides the gear entirely.
@@ -1474,7 +1613,10 @@ class _TransportBar extends StatelessWidget {
   final ValueChanged<Duration> onSeekPreview;
   final ValueChanged<Duration> onSeekCommit;
   final ValueChanged<bool> onScrubbingChanged;
-  final ValueChanged<String?> onAudio;
+
+  /// Raised while the subtitle picker is on screen so the chrome is held open —
+  /// without it the menu vanishes under the cursor after three seconds.
+  final ValueChanged<bool> onSubtitleMenuChanged;
   final ValueChanged<String?> onSubtitle;
   final VoidCallback? onToggleFullscreen;
   final TrickplayManifest? trickplay;
@@ -1579,26 +1721,26 @@ class _TransportBar extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              if (tracks.audio.isNotEmpty)
-                _TrackMenu(
-                  icon: Icons.audiotrack,
-                  tooltip: 'Audio track',
-                  tracks: tracks.audio,
-                  selected: selectedAudio,
-                  enabled: canManageTracks,
-                  allowNone: false,
-                  onChanged: onAudio,
-                ),
-              if (onAddSubtitle != null || tracks.subtitle.isNotEmpty)
+              // Lower-right cluster, in the reference's order: subtitle, mute,
+              // settings, fullscreen.
+              if (onAddSubtitle != null || subtitleTracks.isNotEmpty)
                 _SubtitleControl(
-                  tracks: tracks.subtitle,
+                  key: subtitleAnchor,
+                  tracks: subtitleTracks,
                   selected: selectedSubtitle,
                   enabled: canManageTracks,
                   onChanged: onSubtitle,
                   onAddFile: onAddSubtitle,
+                  onMenuChanged: onSubtitleMenuChanged,
                 ),
+              _ChromeIconButton(
+                icon: muted ? Icons.volume_off : Icons.volume_up,
+                tooltip: muted ? 'Unmute' : 'Mute',
+                onPressed: onToggleMute,
+              ),
               if (settings.isNotEmpty)
                 AnalogSettingsStack(
+                  key: settingsAnchor,
                   entries: settings,
                   onOpenChanged: onSettingsOpenChanged,
                 ),
@@ -2004,70 +2146,23 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
   }
 }
 
-class _TrackMenu extends StatelessWidget {
-  const _TrackMenu({
-    required this.icon,
-    required this.tooltip,
-    required this.tracks,
-    required this.selected,
-    required this.enabled,
-    required this.allowNone,
-    required this.onChanged,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final List<PlayerTrack> tracks;
-  final String? selected;
-  final bool enabled;
-  final bool allowNone;
-  final ValueChanged<String?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _AnchoredPlayerMenu(
-      icon: icon,
-      tooltip: tooltip,
-      enabled: enabled,
-      menuBuilder: (close) => [
-        // No word heading. The button you pressed to get here already said
-        // which menu this is, and a menu whose first row is a label you cannot
-        // select is a row spent on nothing.
-        if (allowNone)
-          _PlayerMenuItem(
-            label: 'Off',
-            selected: selected == null,
-            onTap: () {
-              close();
-              onChanged(null);
-            },
-          ),
-        for (final t in tracks)
-          _PlayerMenuItem(
-            label: _trackName(t),
-            detail: _trackDetail(t),
-            selected: t.id == selected,
-            onTap: () {
-              close();
-              onChanged(t.id);
-            },
-          ),
-      ],
-    );
-  }
-}
-
-/// Subtitle control for the transport bar. Unlike the generic [_TrackMenu] it
-/// is shown even when the media carries no subtitle tracks — so the user can
-/// side-load a local file — and its popup offers a "Load subtitle file…"
-/// action above the Off + track list.
+/// The direct subtitle control: Off, the track list, and a side-load action,
+/// one tap from the transport row. It is shown even when the media carries no
+/// subtitle tracks, so a local file can still be loaded.
+///
+/// The picker is [showAnalogSelect] — the kit's dropdown, the same one the
+/// detail page and the settings stack use. This used to be a third, private
+/// menu implementation living in this file (`_AnchoredPlayerMenu` and its
+/// rows), which is two more than the app needs.
 class _SubtitleControl extends StatelessWidget {
   const _SubtitleControl({
+    super.key,
     required this.tracks,
     required this.selected,
     required this.enabled,
     required this.onChanged,
     required this.onAddFile,
+    required this.onMenuChanged,
   });
 
   final List<PlayerTrack> tracks;
@@ -2078,48 +2173,49 @@ class _SubtitleControl extends StatelessWidget {
   /// Picks a local subtitle file to side-load, or null if unsupported.
   final VoidCallback? onAddFile;
 
+  /// Pins the chrome open for as long as the picker is up.
+  final ValueChanged<bool> onMenuChanged;
+
+  Future<void> _open(BuildContext context, GlobalKey anchor) async {
+    onMenuChanged(true);
+    await showAnalogSelect<String?>(
+      context: context,
+      anchor: anchor,
+      selected: selected,
+      groups: [
+        AnalogChoiceGroup<String?>(
+          icon: Icons.subtitles,
+          choices: [
+            const AnalogChoice<String?>(value: null, label: 'Off'),
+            for (final track in tracks)
+              AnalogChoice<String?>(
+                value: track.id,
+                label: _trackName(track),
+                detail: _trackDetail(track),
+              ),
+          ],
+        ),
+      ],
+      // Side-loading sits UNDER the list as a glyph, matching the detail
+      // page's track dropdown.
+      footerIcon: onAddFile == null ? null : Icons.upload_file_outlined,
+      footerTooltip: 'Load subtitle file',
+      onFooter: onAddFile,
+      onSelected: onChanged,
+    );
+    onMenuChanged(false);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return _AnchoredPlayerMenu(
+    // `key` is the anchor the picker hangs off, so it has to name a render
+    // object that is still mounted when the menu opens — this button.
+    final anchor = key as GlobalKey;
+    return _ChromeIconButton(
       icon: Icons.subtitles,
       tooltip: 'Subtitles',
-      enabled: enabled,
-      menuBuilder: (close) => [
-        _PlayerMenuItem(
-          label: 'Off',
-          selected: selected == null,
-          onTap: () {
-            close();
-            onChanged(null);
-          },
-        ),
-        for (final t in tracks)
-          _PlayerMenuItem(
-            label: _trackName(t),
-            detail: _trackDetail(t),
-            selected: t.id == selected,
-            onTap: () {
-              close();
-              onChanged(t.id);
-            },
-          ),
-        // Side-loading a file sits UNDER the list as a glyph, matching the
-        // detail page's track dropdown. It used to lead the menu as a
-        // two-line row — a heading, a title and a subtitle of supported
-        // extensions — which is three lines of chrome above the thing you
-        // actually came to pick.
-        if (onAddFile != null) ...[
-          const _PlayerMenuDivider(),
-          _PlayerMenuItem(
-            icon: Icons.upload_file_outlined,
-            label: 'Load subtitle file',
-            onTap: () {
-              close();
-              onAddFile?.call();
-            },
-          ),
-        ],
-      ],
+      forceEnabled: enabled,
+      onPressed: enabled ? () => _open(context, anchor) : null,
     );
   }
 }
@@ -2157,212 +2253,6 @@ String? _trackDetail(PlayerTrack track) {
     if (track.isDefault) 'DEFAULT',
   ];
   return details.isEmpty ? null : details.join(' · ');
-}
-
-/// Places a compact player menu above its transport button. Using an overlay
-/// follower avoids Flutter's default popup behavior, which centers the selected
-/// row over the button and obscures neighboring controls.
-class _AnchoredPlayerMenu extends StatefulWidget {
-  const _AnchoredPlayerMenu({
-    required this.icon,
-    required this.tooltip,
-    required this.enabled,
-    required this.menuBuilder,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final bool enabled;
-  final List<Widget> Function(VoidCallback close) menuBuilder;
-
-  @override
-  State<_AnchoredPlayerMenu> createState() => _AnchoredPlayerMenuState();
-}
-
-class _AnchoredPlayerMenuState extends State<_AnchoredPlayerMenu> {
-  final _link = LayerLink();
-  OverlayEntry? _entry;
-
-  void _close() {
-    _entry?.remove();
-    _entry = null;
-    if (mounted) setState(() {});
-  }
-
-  void _toggle() {
-    if (!widget.enabled) return;
-    if (_entry != null) {
-      _close();
-      return;
-    }
-    final availableHeight = math.max(
-      160.0,
-      MediaQuery.sizeOf(context).height - 150,
-    );
-    _entry = OverlayEntry(
-      builder: (_) => Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _close,
-              child: const ColoredBox(color: Colors.transparent),
-            ),
-          ),
-          CompositedTransformFollower(
-            link: _link,
-            showWhenUnlinked: false,
-            targetAnchor: Alignment.topRight,
-            followerAnchor: Alignment.bottomRight,
-            offset: const Offset(0, -10),
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                width: 310,
-                constraints: BoxConstraints(
-                  maxHeight: math.min(420, availableHeight),
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFA151619),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.line2),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x7A000000),
-                      blurRadius: 28,
-                      offset: Offset(0, 12),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(13),
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: widget.menuBuilder(_close),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-    Overlay.of(context, rootOverlay: true).insert(_entry!);
-    setState(() {});
-  }
-
-  @override
-  void dispose() {
-    _entry?.remove();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return CompositedTransformTarget(
-      link: _link,
-      child: _ChromeIconButton(
-        icon: widget.icon,
-        tooltip: widget.tooltip,
-        onPressed: widget.enabled ? _toggle : null,
-        forceEnabled: widget.enabled,
-      ),
-    );
-  }
-}
-
-class _PlayerMenuDivider extends StatelessWidget {
-  const _PlayerMenuDivider();
-
-  @override
-  Widget build(BuildContext context) => const Padding(
-    padding: EdgeInsets.symmetric(vertical: 6),
-    child: Divider(height: 1, color: AppColors.line),
-  );
-}
-
-class _PlayerMenuItem extends StatelessWidget {
-  const _PlayerMenuItem({
-    required this.label,
-    required this.onTap,
-    this.detail,
-    this.icon,
-    this.selected = false,
-  });
-
-  final String label;
-  final String? detail;
-  final IconData? icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-      child: Material(
-        color: selected ? const Color(0x14FFFFFF) : Colors.transparent,
-        borderRadius: BorderRadius.circular(9),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(9),
-          hoverColor: const Color(0x12FFFFFF),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 20,
-                  child: Icon(
-                    selected ? Icons.check : icon,
-                    size: 16,
-                    color: selected ? AppColors.accent : AppColors.dim,
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.text,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          height: 1.2,
-                        ),
-                      ),
-                      if (detail != null) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          detail!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTheme.mono.copyWith(
-                            color: AppColors.faint,
-                            fontSize: 9.5,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// Normalise picked subtitle bytes to UTF-8 text for side-loading: pass valid

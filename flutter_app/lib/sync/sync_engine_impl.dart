@@ -53,6 +53,16 @@ class SyncEngineImpl implements SyncEngine {
   bool _userSeeking = false;
   Timer? _userSeekTimer;
   double _lastAppliedVersion = double.negativeInfinity;
+
+  /// A pause the local user just authored, not yet acknowledged by the server.
+  ///
+  /// Without this, a host's pause un-paused itself roughly every other press:
+  /// [_kickHostPlay] runs on the 200ms tick, sees a schedule still reading
+  /// `phase: 'playing'` (the round trip has not landed) against a stopped
+  /// player, and calls `play()` — which is exactly the state a fresh pause
+  /// leaves behind. Cleared by the next schedule from the server, whatever it
+  /// says: at that point the timeline, not this flag, is the authority.
+  bool _pausePending = false;
   int? _lastMediaGen;
   int _lastReportMs = 0;
   int _lastHardSeekAtMs = 0;
@@ -133,6 +143,7 @@ class SyncEngineImpl implements SyncEngine {
     _socket = null;
     _schedule = null;
     _lastAppliedVersion = double.negativeInfinity;
+    _pausePending = false;
     _lastMediaGen = null;
   }
 
@@ -178,6 +189,7 @@ class SyncEngineImpl implements SyncEngine {
     _schedule = s;
     _userSeeking = false;
     _userSeekTimer?.cancel();
+    _pausePending = false;
     _scheduleCtrl.add(s);
 
     _kickHostPlay();
@@ -212,6 +224,7 @@ class SyncEngineImpl implements SyncEngine {
     final p = _player;
     if (p == null) return;
     if (!(_isHost &&
+        !_pausePending &&
         _mode != 'dragging' &&
         _schedule?.phase == 'playing' &&
         !p.isPlayingNow)) {
@@ -328,16 +341,38 @@ class SyncEngineImpl implements SyncEngine {
     _socket?.emit(ClientEvent.syncPause, {'positionTicks': positionTicks});
   }
 
+  /// The transport's play, authored.
+  ///
+  /// Applies to the local player under the applying-guard AND emits, rather
+  /// than only emitting: a viewer who presses play must see the frame move
+  /// now, not after a server round trip. The guard is what keeps
+  /// [_onPlayingChanged] from emitting the same command a second time.
+  ///
+  /// No `_applying` early-return, unlike the correction loop: this is a
+  /// deliberate gesture, not an echo, and dropping it because the engine
+  /// happened to be mid-apply is how a press goes nowhere.
   @override
   Future<void> requestPlay() async {
-    if (_applying > 0 || !_canControl) return;
-    _emitPlay((_player?.positionNow.inMilliseconds ?? 0) * ticksPerMs);
+    if (!_canControl) return;
+    _pausePending = false;
+    final p = _player;
+    if (p != null && !p.isPlayingNow) {
+      _markApplying();
+      await p.play();
+    }
+    _emitPlay((p?.positionNow.inMilliseconds ?? 0) * ticksPerMs);
   }
 
   @override
   Future<void> requestPause() async {
-    if (_applying > 0 || !_canControl) return;
-    _emitPause((_player?.positionNow.inMilliseconds ?? 0) * ticksPerMs);
+    if (!_canControl) return;
+    _pausePending = true;
+    final p = _player;
+    if (p != null && p.isPlayingNow) {
+      _markApplying();
+      await p.pause();
+    }
+    _emitPause((p?.positionNow.inMilliseconds ?? 0) * ticksPerMs);
   }
 
   @override
