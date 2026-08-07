@@ -67,6 +67,7 @@ class AnalogRail extends StatefulWidget {
     this.emptyLabel = 'Nothing here yet',
     this.maxHeightPx,
     this.hideSelected = false,
+    this.velocity = 0,
   });
 
   final List<AnalogRailItem> items;
@@ -102,6 +103,13 @@ class AnalogRail extends StatefulWidget {
   /// Set while the stage is flying that poster out of the rail, so the title is
   /// not drawn twice in two places during the move.
   final bool hideSelected;
+
+  /// 0..1 — how hard the row is being pushed right now.
+  ///
+  /// Momentum: a slow step barely carries past its mark, a fast one overshoots
+  /// further and takes longer to come back, so the rail answers the gesture
+  /// instead of running the same canned move every time.
+  final double velocity;
 
   @override
   State<AnalogRail> createState() => _AnalogRailState();
@@ -225,8 +233,22 @@ class _AnalogRailState extends State<AnalogRail> {
                             metrics.posterWidthPx * railScaleAt(distance);
                         return AnimatedPositioned(
                           key: ValueKey(widget.items[index].id),
-                          duration: motion.focusStep,
-                          curve: AnalogMotion.focusStepEase,
+                          // Overlapping action: the slot under the cursor
+                          // settles first and the ones trailing it arrive
+                          // progressively later. A row whose parts all stop on
+                          // the same frame reads as a rigid sheet being
+                          // dragged; letting the tail catch up is what gives
+                          // it weight. Capped, because a lag that keeps
+                          // growing with distance stops being follow-through
+                          // and becomes a wave.
+                          duration: motion.animate
+                              ? _settleDuration(widget.velocity) +
+                                    _slotLag(distance)
+                              : Duration.zero,
+                          // The one curve in the system that overshoots. A row
+                          // of posters being flung has mass; it carries past
+                          // the stop and comes back.
+                          curve: AnalogMotion.settleEase,
                           left:
                               trail +
                               railOffsetFor(
@@ -262,6 +284,7 @@ class _AnalogRailState extends State<AnalogRail> {
                               : index < widget.selection
                               ? _passedOpacity
                               : _aheadOpacity,
+                          lag: _slotLag(distance),
                           motion: motion,
                           onTap: () => index == widget.selection
                               ? widget.onActivate(index)
@@ -278,6 +301,27 @@ class _AnalogRailState extends State<AnalogRail> {
       },
     );
   }
+}
+
+/// How long the settle takes, given how hard the row is being pushed.
+///
+/// Interpolated rather than switched, so there is no threshold where the rail
+/// suddenly changes character mid-gesture.
+Duration _settleDuration(double velocity) {
+  final t = velocity.clamp(0.0, 1.0);
+  final slow = AnalogMotion.settleMs.inMicroseconds;
+  final fast = AnalogMotion.settleFastMs.inMicroseconds;
+  return Duration(microseconds: (slow + (fast - slow) * t).round());
+}
+
+/// Follow-through delay for a slot [distance] from the cursor.
+///
+/// Symmetric in the distance: what the row has just passed drags behind for
+/// the same reason what is arriving does. Clamped to
+/// [AnalogMotion.slotLagMaxMs] so the far end of a long rail does not ripple.
+Duration _slotLag(int distance) {
+  final lag = AnalogMotion.slotLagMs * distance.abs();
+  return lag > AnalogMotion.slotLagMaxMs ? AnalogMotion.slotLagMaxMs : lag;
 }
 
 /// Opacity for titles the cursor has already passed, and for those ahead of it.
@@ -337,6 +381,7 @@ class _RailSlot extends StatelessWidget {
     required this.width,
     required this.focused,
     required this.dim,
+    required this.lag,
     required this.motion,
     required this.onTap,
     this.hidden = false,
@@ -346,6 +391,10 @@ class _RailSlot extends StatelessWidget {
   final double width;
   final bool focused;
   final double dim;
+
+  /// The same follow-through delay the slot's position uses, so a poster's
+  /// brightness and its travel are one move rather than two.
+  final Duration lag;
   final bool hidden;
   final MotionProfile motion;
   final VoidCallback onTap;
@@ -353,7 +402,7 @@ class _RailSlot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedOpacity(
-      duration: motion.focusStep,
+      duration: motion.animate ? motion.focusStep + lag : Duration.zero,
       curve: AnalogMotion.focusStepEase,
       opacity: hidden ? 0 : dim,
       child: _tile(),

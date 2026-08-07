@@ -84,7 +84,7 @@
   },
 
   "motion": {
-    "$about": "Mechanical and weighty: short travel, clear detents, restrained easing. No elastic overshoot anywhere. The curves are Material 3's easing set - standard for chrome, emphasized-decelerate for anything that travels a distance (the cursor step, drawers). M3's curves suit this design precisely because none of them overshoot; they only change how weight is distributed across the move.",
+    "$about": "Mechanical and weighty: short travel, clear detents. Chrome still uses Material 3's easing set - standard for buttons and plates, emphasized-decelerate for drawers - and none of those overshoot. The BROWSE RAIL is the deliberate exception: it settles past its mark and comes back, and the amount scales with how fast the row was moving. That was asked for directly, and it replaces an earlier blanket ban on overshoot. The distinction that keeps it coherent: things with mass overshoot, chrome does not. A row of posters being flung has momentum; a button does not.",
     "focusStepMs": 170,
     "focusStepEase": [0.05, 0.7, 0.1, 1.0],
     "backdropCrossMs": 420,
@@ -98,7 +98,40 @@
     "enterMs": 300,
     "enterEase": [0.05, 0.7, 0.1, 1.0],
     "exitMs": 200,
-    "exitEase": [0.3, 0.0, 0.8, 0.15]
+    "exitEase": [0.3, 0.0, 0.8, 0.15],
+
+    "$animation": "Overlapping action and follow-through, from the 12 principles. Parts of one object do not arrive together: the thing under the cursor settles first and what trails it lags behind and catches up. That is what gives a row weight instead of making it read as a rigid sheet sliding. The lag is per-slot and capped, because a lag that keeps growing turns into a wave.",
+    "slotLagMs": 26,
+    "slotLagMaxMs": 130,
+
+    "$settle": "The rail's settle. It carries past its mark and returns, which is what makes a flung row read as having weight rather than being teleported. The curve's third control point is above 1 - that IS the overshoot, and it is the only curve in the system allowed one.",
+    "settleMs": 380,
+    "settleEase": [0.22, 1.28, 0.36, 1.0],
+
+    "$velocity": "Momentum. A slow step barely overshoots; a fast one carries further and takes longer to come back, so the row answers how hard it was pushed. Steps closer together than fastStepMs count as fast.",
+    "settleFastMs": 620,
+    "fastStepMs": 220,
+
+    "$anticipation": "A move starts by gathering against itself. Kept very small: the design forbids overshoot, and anticipation read too large becomes a bounce by another name.",
+    "anticipationMs": 60,
+    "anticipationPct": 4,
+
+    "$secondary": "Secondary action - the copy reacting to a selection change rather than hard-swapping. Slower than the rail it follows, so it reads as a consequence of the move and not a second, competing one.",
+    "copySwapMs": 260,
+    "copyRisePx": 10,
+
+    "$copySlide": "The copy travels along the rail rather than rising: a step to the next title moves everything leftwards, so the outgoing block leaves left and the incoming arrives from the right. Fractions of the block's own width. The distance grows with speed so that on a fast scroll the text keeps up with the posters instead of drifting gently while they fly.",
+    "copySlidePct": 11,
+    "copySlideFastPct": 32,
+
+    "$copyOvershoot": "The copy settles like the rail does: it carries past its mark and comes back. Applied to the travel only, never to the fade — an overshooting curve returns values above 1, and an opacity above 1 is not a look, it is an assertion failure.",
+
+    "$typeMass": "Type has weight. A 52px heading and a 10px label arriving on the same clock read as stickers on one card; giving the heading longer travel and a later settle makes the block arrive as a set of objects with different mass. Reference is the body size - text at that size moves exactly at the base timing, larger text is heavier, smaller is lighter. The scale is by font size because on this stage size IS the hierarchy.",
+    "typeMassRefPx": 16,
+    "typeMassMaxPx": 52,
+    "typeMassSettleMinPct": 58,
+    "typeMassTravelMinPct": 55,
+    "typeMassTravelMaxPct": 145
   },
 
   "hairline": {

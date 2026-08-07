@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/api_client.dart';
 import '../../models/models.dart';
 import '../../state/state.dart';
+import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
 import 'title_layout.dart';
 
@@ -47,7 +48,26 @@ class DetailStage extends ConsumerStatefulWidget {
   ConsumerState<DetailStage> createState() => _DetailStageState();
 }
 
-class _DetailStageState extends ConsumerState<DetailStage> {
+class _DetailStageState extends ConsumerState<DetailStage>
+    with SingleTickerProviderStateMixin {
+  /// The page's arrival.
+  ///
+  /// One controller so the parts land in a deliberate order rather than all
+  /// appearing on the same frame. The poster is already handled — it flies in
+  /// on a Hero from the rail — so this is for the furniture that has nowhere
+  /// to fly from: the cast rises from beneath, the actions come in from the
+  /// side, each on its own slice of the clock.
+  late final AnimationController _enter = AnimationController(
+    vsync: this,
+    duration: AnalogMotion.enterMs + AnalogMotion.copySwapMs,
+  )..forward();
+
+  @override
+  void dispose() {
+    _enter.dispose();
+    super.dispose();
+  }
+
   late String _activeId = widget.itemId;
   LibraryItem? _activeFallback;
   int? _selAudio;
@@ -268,7 +288,15 @@ class _StageBody extends ConsumerWidget {
                 left: 64,
                 right: 40,
                 bottom: 70,
-                child: _CastStrip(api: api, people: hero.people),
+                // Rises from beneath the fold, last of everything on the page:
+                // it is the least important thing here and arriving first
+                // would pull the eye down before the title has landed.
+                child: _Enter(
+                  controller: state._enter,
+                  slice: const Interval(0.45, 1),
+                  from: const Offset(0, 0.7),
+                  child: _CastStrip(api: api, people: hero.people),
+                ),
               ),
             if (rootIsSeries)
               Positioned(
@@ -286,6 +314,50 @@ class _StageBody extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// One part of the page arriving, on its own slice of the shared entrance.
+///
+/// Staging, in the twelve-principles sense: the page assembles in an order
+/// that leads the eye — title, then actions, then cast — rather than every
+/// element appearing together, which reads as a screenshot fading up.
+///
+/// The travel overshoots and settles, matching the rail; the fade does not,
+/// because an overshooting curve returns values above 1 and an opacity above 1
+/// is an assertion failure rather than a look.
+class _Enter extends StatelessWidget {
+  const _Enter({
+    required this.controller,
+    required this.slice,
+    required this.from,
+    required this.child,
+  });
+
+  final Animation<double> controller;
+  final Interval slice;
+
+  /// Start offset as a fraction of the child's own size.
+  final Offset from;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final fade = CurvedAnimation(parent: controller, curve: slice);
+    final settle = CurvedAnimation(
+      parent: controller,
+      curve: Interval(slice.begin, slice.end, curve: AnalogMotion.settleEase),
+    );
+    return FadeTransition(
+      opacity: fade,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: from,
+          end: Offset.zero,
+        ).animate(settle),
+        child: child,
+      ),
     );
   }
 }
@@ -385,7 +457,14 @@ class _CopyColumn extends StatelessWidget {
             ),
           if (playItem != null) ...[
             const SizedBox(height: 23),
-            Wrap(
+            // The actions come in from the left, after the copy above them has
+            // settled — they are what the page is *for*, so they arrive last
+            // and land on a page that has stopped moving.
+            _Enter(
+              controller: state._enter,
+              slice: const Interval(0.35, 1),
+              from: const Offset(-0.18, 0),
+              child: Wrap(
               spacing: 10,
               runSpacing: 10,
               crossAxisAlignment: WrapCrossAlignment.center,
@@ -423,6 +502,7 @@ class _CopyColumn extends StatelessWidget {
                   ),
                 ],
               ],
+              ),
             ),
             if (state._trackMenuOpen && playback != null) ...[
               const SizedBox(height: 12),

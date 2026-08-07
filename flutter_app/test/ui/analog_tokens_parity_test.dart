@@ -106,6 +106,7 @@ void main() {
       'drawerEase': AnalogMotion.drawerEase,
       'enterEase': AnalogMotion.enterEase,
       'exitEase': AnalogMotion.exitEase,
+      'settleEase': AnalogMotion.settleEase,
     };
 
     final declared = motion.keys.where((key) => key.endsWith('Ease')).toSet();

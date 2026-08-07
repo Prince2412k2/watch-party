@@ -80,12 +80,15 @@
   --an-state-layer-disabled-content-pct: 38%;
   --an-state-layer-disabled-container-pct: 12%;
 
-  /* Mechanical and weighty: short travel, clear detents, restrained easing.
-     No elastic overshoot anywhere. The curves are Material 3's easing set -
-     standard for chrome, emphasized-decelerate for anything that travels a
-     distance (the cursor step, drawers). M3's curves suit this design
-     precisely because none of them overshoot; they only change how weight is
-     distributed across the move. */
+  /* Mechanical and weighty: short travel, clear detents. Chrome still uses
+     Material 3's easing set - standard for buttons and plates,
+     emphasized-decelerate for drawers - and none of those overshoot. The
+     BROWSE RAIL is the deliberate exception: it settles past its mark and
+     comes back, and the amount scales with how fast the row was moving. That
+     was asked for directly, and it replaces an earlier blanket ban on
+     overshoot. The distinction that keeps it coherent: things with mass
+     overshoot, chrome does not. A row of posters being flung has momentum; a
+     button does not. */
   --an-motion-focus-step-ms: 170ms;
   --an-motion-focus-step-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
   --an-motion-backdrop-cross-ms: 420ms;
@@ -100,6 +103,23 @@
   --an-motion-enter-ease: cubic-bezier(0.05, 0.7, 0.1, 1);
   --an-motion-exit-ms: 200ms;
   --an-motion-exit-ease: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --an-motion-slot-lag-ms: 26ms;
+  --an-motion-slot-lag-max-ms: 130ms;
+  --an-motion-settle-ms: 380ms;
+  --an-motion-settle-ease: cubic-bezier(0.22, 1.28, 0.36, 1);
+  --an-motion-settle-fast-ms: 620ms;
+  --an-motion-fast-step-ms: 220ms;
+  --an-motion-anticipation-ms: 60ms;
+  --an-motion-anticipation-pct: 4%;
+  --an-motion-copy-swap-ms: 260ms;
+  --an-motion-copy-rise-px: 10px;
+  --an-motion-copy-slide-pct: 11%;
+  --an-motion-copy-slide-fast-pct: 32%;
+  --an-motion-type-mass-ref-px: 16px;
+  --an-motion-type-mass-max-px: 52px;
+  --an-motion-type-mass-settle-min-pct: 58%;
+  --an-motion-type-mass-travel-min-pct: 55%;
+  --an-motion-type-mass-travel-max-pct: 145%;
 
   /* Timeline and volume are precision lines, not filled bars. The visible
      line is thin; the hit target is not. */
