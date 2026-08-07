@@ -31,7 +31,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../analog/chrome/chrome.dart';
 import '../../analog/movie_browse.dart';
+import '../../analog/movie_rail.dart';
 import '../../analog/stage_layout.dart';
+import '../../analog/widgets/analog_poster.dart';
 import '../../analog/widgets/analog_rail.dart';
 import '../../analog/widgets/analog_stage.dart';
 import '../../data/api_client.dart';
@@ -39,6 +41,7 @@ import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/bottom_nav.dart';
+import 'movies_detail_layer.dart';
 
 class MoviesStage extends ConsumerStatefulWidget {
   const MoviesStage({super.key});
@@ -47,8 +50,19 @@ class MoviesStage extends ConsumerStatefulWidget {
   ConsumerState<MoviesStage> createState() => _MoviesStageState();
 }
 
-class _MoviesStageState extends ConsumerState<MoviesStage> {
+class _MoviesStageState extends ConsumerState<MoviesStage>
+    with SingleTickerProviderStateMixin {
   BrowseMode _mode = BrowseMode.singles;
+
+  /// Browse (0) ⇄ selected (1). One controller drives every part of the move,
+  /// so nothing can drift out of step with the poster.
+  late final AnimationController _detail = AnimationController(
+    vsync: this,
+    duration: AnalogMotion.enterMs + AnalogMotion.chromeFadeMs,
+    reverseDuration: AnalogMotion.exitMs,
+  );
+
+  bool get _open => _detail.value > 0;
 
   /// The franchise we have drilled into, or null at the list level.
   LibraryItem? _collection;
@@ -65,6 +79,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
 
   void _setMode(BrowseMode mode) {
     if (mode == _mode && _collection == null) return;
+    _collapse();
     setState(() {
       _mode = mode;
       // Switching modes leaves any franchise you were inside: a franchise's
@@ -75,6 +90,19 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
 
   void _stepMode(int direction) => _setMode(stepBrowseMode(_mode, direction));
 
+  @override
+  void dispose() {
+    _detail.dispose();
+    super.dispose();
+  }
+
+  /// Leaving the surface under the selection — a different mode, a different
+  /// franchise, a step along the rail — has to close it, or the expanded state
+  /// would be describing a title that is no longer selected.
+  void _collapse() {
+    if (_detail.value != 0) _detail.reverse();
+  }
+
   void _activate(List<LibraryItem> items, int index) {
     if (index < 0 || index >= items.length) return;
     final item = items[index];
@@ -84,9 +112,13 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
     // three that have to agree.
     switch (activationFor(id: item.id, name: item.name, type: item.type)) {
       case OpenActivation():
+        _detail.value = 0;
         setState(() => _collection = item);
-      case PlayActivation(:final itemId):
-        context.push('/detail/$itemId');
+      case PlayActivation():
+        // Deliberately not a route. The expanded view is this same widget tree
+        // in another configuration, which is the only way the heading and the
+        // overview can stay put while the poster flies.
+        _detail.forward();
       case NoActivation():
         break;
     }
@@ -104,7 +136,9 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
   void _stepSelection(int direction, int total) {
     if (total <= 0) return;
     final next = (_selected + direction.sign).clamp(0, total - 1);
-    if (next != _selected) setState(() => _selected = next);
+    if (next == _selected) return;
+    _collapse();
+    setState(() => _selected = next);
   }
 
   /// Scrolling **anywhere on the stage** drives the rail, not just over it.
@@ -144,7 +178,11 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
       case LogicalKeyboardKey.backspace:
-        _back();
+        if (_open) {
+          _detail.reverse();
+        } else {
+          _back();
+        }
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -183,6 +221,25 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
     ).size;
     final motion = motionProfile(media.disableAnimations);
 
+    final gutter = size == StageSize.phone
+        ? AnalogSpace.stageGutterPhonePx
+        : AnalogSpace.stageGutterPx;
+    final bottomPad = AnalogSpace.xlPx + kBottomNavReservedPx;
+    final railBudget = media.size.height * 0.40;
+
+    // The rail's own geometry, computed here as well so the flying poster
+    // starts exactly on the slot it is leaving. Same function the rail calls.
+    final railWidth = media.size.width - gutter * 2;
+    final metrics = analogRailMetrics(
+      usableWidthPx: railWidth,
+      maxHeightPx: railBudget,
+      size: size,
+      subtitle: true,
+    );
+    final railHeight = analogRailHeight(metrics.posterWidthPx, subtitle: true);
+    final selectedWidth = metrics.posterWidthPx * kRailSelectedScale;
+    final trail = railTrailPx(metrics.posterWidthPx, metrics.gapPx);
+
     return AnalogStage(
       backdropUrl: selected == null
           ? null
@@ -196,86 +253,205 @@ class _MoviesStageState extends ConsumerState<MoviesStage> {
           // "scrolling anywhere should work" means the whole stage, not the
           // strip of it the posters happen to occupy.
           behavior: HitTestBehavior.opaque,
-          child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          size == StageSize.phone
-              ? AnalogSpace.stageGutterPhonePx
-              : AnalogSpace.stageGutterPx,
-          AnalogSpace.xlPx,
-          size == StageSize.phone
-              ? AnalogSpace.stageGutterPhonePx
-              : AnalogSpace.stageGutterPx,
-          // Hold the rail clear of the shell's floating nav, which was sitting
-          // on top of the poster captions.
-          AnalogSpace.xlPx + kBottomNavReservedPx,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          child: AnimatedBuilder(
+            animation: _detail,
+            builder: (context, _) {
+              final t = _detail.value;
+              final railT = MoviesDetailStagger.rail.transform(t);
+              final posterT = MoviesDetailStagger.poster.transform(t);
+              final actionsT = MoviesDetailStagger.actions.transform(t);
+              final castT = MoviesDetailStagger.cast.transform(t);
+
+              // Where the poster starts: its slot in the rail, artwork only.
+              final artHeight = AnalogPosterTile.artHeightFor(selectedWidth);
+              final from = Rect.fromLTWH(
+                gutter + trail,
+                media.size.height -
+                    bottomPad -
+                    AnalogPosterTile.captionHeight(subtitle: true) -
+                    artHeight,
+                selectedWidth,
+                artHeight,
+              );
+
+              // Where it lands: bigger, left of the details, sitting above the
+              // cast row.
+              final heroWidth = (media.size.width * 0.17).clamp(150.0, 260.0);
+              final heroHeight = AnalogPosterTile.artHeightFor(heroWidth);
+              final castHeight = media.size.height * 0.20;
+              final to = Rect.fromLTWH(
+                gutter,
+                media.size.height - bottomPad - castHeight - heroHeight -
+                    AnalogSpace.xlPx,
+                heroWidth,
+                heroHeight,
+              );
+
+              final posterRect = Rect.lerp(from, to, posterT)!;
+
+              return Stack(
                 children: [
-                  // Details on top — the main event now that there is no
-                  // separate movie detail page to open.
-                  Expanded(
-                    child: _Details(
-                      item: detailed,
-                      collection: _collection,
-                      loading: async.isLoading,
-                      error: async.hasError ? 'Could not load this library' : null,
-                      onPlay: selected == null
-                          ? null
-                          : () => _activate(items, _selected),
-                      onBack: _collection == null ? null : _back,
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      gutter,
+                      AnalogSpace.xlPx,
+                      gutter,
+                      bottomPad,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // The details make room for the poster as it
+                              // arrives. The text itself does not change size
+                              // or weight — it is the same widget throughout,
+                              // which is the whole point of the 1:1 layout.
+                              SizedBox(
+                                width:
+                                    (posterRect.width + AnalogSpace.xlPx) *
+                                    posterT,
+                              ),
+                              Expanded(
+                                child: _Details(
+                                  item: detailed,
+                                  collection: _collection,
+                                  loading: async.isLoading,
+                                  error: async.hasError
+                                      ? 'Could not load this library'
+                                      : null,
+                                  // The Play button belongs to the action bar
+                                  // once expanded, so it fades out as that
+                                  // slides in rather than being shown twice.
+                                  showPlay: t < 0.01,
+                                  onPlay: selected == null
+                                      ? null
+                                      : () => _activate(items, _selected),
+                                  onBack: _collection == null ? null : _back,
+                                ),
+                              ),
+                              const SizedBox(width: AnalogSpace.xlPx),
+                              if (_collection == null)
+                                Opacity(
+                                  opacity: 1 - railT,
+                                  child: _ModeStrip(
+                                    mode: _mode,
+                                    onChanged: _setMode,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: AnalogSpace.lgPx),
+                        // The rail drops away and fades. It is what the poster
+                        // is leaving, so it clears out first.
+                        SizedBox(
+                          height: railHeight,
+                          child: railT >= 1
+                              ? const SizedBox.shrink()
+                              : Transform.translate(
+                                  offset: Offset(0, railHeight * railT),
+                                  child: Opacity(
+                                    opacity: 1 - railT,
+                                    child: AnalogRail(
+                                      maxHeightPx: railBudget,
+                                      hideSelected: posterT > 0.02,
+                                      items: _railItems(items, api),
+                                      selection: _selected.clamp(
+                                        0,
+                                        items.isEmpty ? 0 : items.length - 1,
+                                      ),
+                                      size: size,
+                                      motion: motion,
+                                      onSelect: (i) {
+                                        _collapse();
+                                        setState(() => _selected = i);
+                                      },
+                                      onActivate: (i) => _activate(items, i),
+                                      emptyLabel: switch ((
+                                        async.isLoading,
+                                        _mode,
+                                      )) {
+                                        (true, _) => 'Loading…',
+                                        (false, BrowseMode.collections) =>
+                                          'No collections in this library',
+                                        (false, BrowseMode.singles) =>
+                                          'No movies in this library',
+                                      },
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: AnalogSpace.xlPx),
-                  // The mode strip sits on the side, the way seasons do on the
-                  // show screen. Hidden inside a franchise, where the only
-                  // meaningful move is back out.
-                  if (_collection == null)
-                    _ModeStrip(mode: _mode, onChanged: _setMode),
+
+                  // Cast, rising from beneath where the rail was.
+                  if (castT > 0 && detailed != null)
+                    Positioned(
+                      left: gutter,
+                      right: gutter,
+                      bottom: bottomPad,
+                      child: Opacity(
+                        opacity: castT,
+                        child: Transform.translate(
+                          offset: Offset(0, 40 * (1 - castT)),
+                          child: MoviesCastRow(
+                            people: detailed.people.take(12).toList(),
+                            height: media.size.height * 0.20,
+                            imageUrlFor: (id) => api.imageUrl(id),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Actions, sliding in from the left under the poster.
+                  if (actionsT > 0 && detailed != null)
+                    Positioned(
+                      left: gutter,
+                      bottom:
+                          bottomPad + media.size.height * 0.20 +
+                          AnalogSpace.mdPx,
+                      child: MoviesActionBar(
+                        progress: actionsT,
+                        downloadBusy: false,
+                        onPlay: () => context.push('/detail/${detailed.id}'),
+                        onDownload: () => context.push('/detail/${detailed.id}'),
+                        onBack: () => _detail.reverse(),
+                      ),
+                    ),
+
+                  // The flying poster, above everything it travels across.
+                  if (posterT > 0 && selected != null)
+                    MoviesHeroPoster(
+                      imageUrl: api.imageUrl(
+                        selected.id,
+                        tag: selected.imageTags?['Primary'],
+                      ),
+                      rect: posterRect,
+                      elevation: posterT,
+                    ),
                 ],
-              ),
-            ),
-            const SizedBox(height: AnalogSpace.lgPx),
-            AnalogRail(
-              // The rail may take up to a bit under half the stage; the
-              // details above it own the rest. Without a ceiling the posters
-              // are sized from width alone and overflow a short window.
-              maxHeightPx: media.size.height * 0.40,
-              items: [
-                for (final item in items)
-                  AnalogRailItem(
-                    id: item.id,
-                    label: item.name,
-                    subtitle: item.productionYear?.toString(),
-                    imageUrl: api.imageUrl(
-                      item.id,
-                      tag: item.imageTags?['Primary'],
-                    ),
-                    progress: _progressOf(item),
-                  ),
-              ],
-              selection: _selected.clamp(0, items.isEmpty ? 0 : items.length - 1),
-              size: size,
-              motion: motion,
-              onSelect: (i) => setState(() => _selected = i),
-              onActivate: (i) => _activate(items, i),
-              emptyLabel: switch ((async.isLoading, _mode)) {
-                (true, _) => 'Loading…',
-                (false, BrowseMode.collections) => 'No collections in this library',
-                (false, BrowseMode.singles) => 'No movies in this library',
-              },
-            ),
-          ],
-        ),
+              );
+            },
           ),
         ),
       ),
     );
   }
+
+  List<AnalogRailItem> _railItems(List<LibraryItem> items, ApiClient api) => [
+    for (final item in items)
+      AnalogRailItem(
+        id: item.id,
+        label: item.name,
+        subtitle: item.productionYear?.toString(),
+        imageUrl: api.imageUrl(item.id, tag: item.imageTags?['Primary']),
+        progress: _progressOf(item),
+      ),
+  ];
 
   static double? _progressOf(LibraryItem item) {
     final pct = item.userData?.playedPercentage;
@@ -293,6 +469,7 @@ class _Details extends StatelessWidget {
     required this.error,
     required this.onPlay,
     required this.onBack,
+    required this.showPlay,
   });
 
   final LibraryItem? item;
@@ -301,6 +478,10 @@ class _Details extends StatelessWidget {
   final String? error;
   final VoidCallback? onPlay;
   final VoidCallback? onBack;
+
+  /// The Play control moves into the action bar once the stage expands, so it
+  /// is not drawn in two places at once during the move.
+  final bool showPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -446,7 +627,7 @@ class _Details extends StatelessWidget {
             ),
           ],
           const SizedBox(height: AnalogSpace.lgPx),
-          if (onPlay != null)
+          if (onPlay != null && showPlay)
             AnalogButton(
               label: current.type == collectionType ? 'Open collection' : 'Play',
               icon: current.type == collectionType
