@@ -1,3 +1,7 @@
+import 'package:flutter/widgets.dart';
+
+import '../../ui/theme.dart';
+
 /// Placement shared by the Movies browse stage and the title detail page.
 ///
 /// The two surfaces show the same block — genre breadcrumb, title, overview,
@@ -31,4 +35,44 @@ abstract final class TitleLayout {
   /// short of a desktop stage's width.
   static const double copyMaxWidth = 650;
   static const double overviewMaxWidth = 590;
+}
+
+
+/// Type shared by the Movies browse stage and the title detail page.
+///
+/// Same argument as [TitleLayout]: the transition moves everything except the
+/// text, so the text has to be set identically on both sides. A 40px bold
+/// heading becoming a 52px light one mid-flight is the most visible break the
+/// transition can have, because the title is the biggest thing on screen.
+///
+/// These resolve to the app's own styles rather than restating them, so the
+/// browse stage follows the theme instead of carrying a private copy of it.
+abstract final class TitleType {
+  /// The title. Large and light — [AppTheme.displayLarge].
+  static const TextStyle heading = AppTheme.displayLarge;
+
+  /// Genre breadcrumb, and any other small uppercase run above the title.
+  static final TextStyle breadcrumb = AppTheme.mono.copyWith(
+    fontSize: 10,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 1.3,
+  );
+
+  /// The meta run under the overview.
+  static final TextStyle meta = AppTheme.mono.copyWith(
+    fontSize: 10,
+    letterSpacing: 0.6,
+  );
+
+  /// Overview prose.
+  static const TextStyle overview = AppTheme.body;
+
+  /// The tagline, which the detail page does not show but the browse stage
+  /// does. Sized against the body rather than invented, so it sits in the
+  /// same scale as everything around it.
+  static final TextStyle tagline = AppTheme.body.copyWith(
+    fontSize: 15,
+    height: 1.5,
+    fontStyle: FontStyle.italic,
+  );
 }

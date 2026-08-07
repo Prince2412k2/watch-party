@@ -369,7 +369,9 @@ class _Details extends StatelessWidget {
                 const SizedBox(width: AnalogSpace.smPx),
                 Text(
                   collection!.name.toUpperCase(),
-                  style: _breadcrumbStyle,
+                  style: TitleType.breadcrumb.copyWith(
+                    color: AnalogColor.inkDim,
+                  ),
                 ),
               ],
             ),
@@ -384,43 +386,31 @@ class _Details extends StatelessWidget {
               current.genres.take(3).join('  /  ').toUpperCase(),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: _breadcrumbStyle,
+              style: TitleType.breadcrumb.copyWith(color: AnalogColor.inkDim),
             ),
-            const SizedBox(height: AnalogSpace.smPx + 4),
+            const SizedBox(height: 14),
           ],
 
           Text(
             current?.name ?? (loading ? '' : 'Nothing here'),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontFamily: AnalogType.sansFamily,
-              fontSize: 40,
-              height: 1.05,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -0.8,
-              color: AnalogColor.ink,
-            ),
+            style: TitleType.heading.copyWith(color: AnalogColor.ink),
           ),
 
           if (current != null) ...[
             if (current.taglines.isNotEmpty) ...[
-              const SizedBox(height: AnalogSpace.smPx + 2),
+              const SizedBox(height: 13),
               Text(
                 current.taglines.first,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: AnalogType.sansFamily,
-                  fontSize: 14,
-                  fontStyle: FontStyle.italic,
-                  color: AnalogColor.inkDim,
-                ),
+                style: TitleType.tagline.copyWith(color: AnalogColor.inkDim),
               ),
             ],
 
             if ((current.overview ?? '').isNotEmpty) ...[
-              const SizedBox(height: AnalogSpace.lgPx),
+              const SizedBox(height: 20),
               ConstrainedBox(
                 constraints: const BoxConstraints(
                   maxWidth: TitleLayout.overviewMaxWidth,
@@ -429,12 +419,7 @@ class _Details extends StatelessWidget {
                   current.overview!,
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: AnalogType.sansFamily,
-                    fontSize: 14,
-                    height: 1.62,
-                    color: AnalogColor.inkDim,
-                  ),
+                  style: TitleType.overview.copyWith(color: AnalogColor.inkDim),
                 ),
               ),
             ],
@@ -442,21 +427,15 @@ class _Details extends StatelessWidget {
             // Meta sits UNDER the overview, as one mono run — the rating is
             // part of the line here rather than a separate mark, because that
             // is how the detail stage reads it and the two must not differ.
-            const SizedBox(height: AnalogSpace.mdPx + 2),
+            const SizedBox(height: 18),
             Text(
               _metaLine(current),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontFamily: AnalogType.monoFamily,
-                fontSize: 11,
-                letterSpacing: 1.1,
-                fontWeight: FontWeight.w600,
-                color: AnalogColor.inkDim,
-              ),
+              style: TitleType.meta.copyWith(color: AnalogColor.inkDim),
             ),
 
-            const SizedBox(height: AnalogSpace.lgPx),
+            const SizedBox(height: 23),
             if (onPlay != null)
               AnalogButton(
                 label: current.type == collectionType
@@ -473,14 +452,6 @@ class _Details extends StatelessWidget {
       ),
     );
   }
-
-  static const TextStyle _breadcrumbStyle = TextStyle(
-    fontFamily: AnalogType.monoFamily,
-    fontSize: 10,
-    fontWeight: FontWeight.w600,
-    letterSpacing: 1.3,
-    color: AnalogColor.inkDim,
-  );
 
   /// Year, certificate and runtime — the facts that are the same shape for
   /// every title, so the line does not reflow as you step along the rail.
