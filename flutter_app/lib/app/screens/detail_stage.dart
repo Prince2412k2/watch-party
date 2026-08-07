@@ -288,9 +288,10 @@ class _StageBody extends ConsumerWidget {
               Positioned(
                 left: 64,
                 right: 40,
-                // Closer to the foot than before: the strip is now tall enough
-                // that the old 70px offset pushed it into the copy.
-                bottom: 40,
+                // Lifted clear of the very bottom edge — the strip is tall
+                // enough now that sitting flush against the foot made it read
+                // as falling off the stage.
+                bottom: 88,
                 // Rises from beneath the fold, last of everything on the page:
                 // it is the least important thing here and arriving first
                 // would pull the eye down before the title has landed.
@@ -374,10 +375,7 @@ class _Enter extends StatelessWidget {
     return FadeTransition(
       opacity: fade,
       child: SlideTransition(
-        position: Tween<Offset>(
-          begin: from,
-          end: Offset.zero,
-        ).animate(settle),
+        position: Tween<Offset>(begin: from, end: Offset.zero).animate(settle),
         child: child,
       ),
     );
@@ -487,43 +485,43 @@ class _CopyColumn extends StatelessWidget {
               slice: const Interval(0.35, 1),
               from: const Offset(-0.18, 0),
               child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                AppButton(
-                  label: resumeLabel != null && playItem.id == active.id
-                      ? 'Resume $resumeLabel'
-                      : rootIsSeries && !isEpisode
-                      ? 'Play first episode'
-                      : 'Watch now',
-                  icon: Icons.play_arrow,
-                  variant: AppButtonVariant.primary,
-                  onPressed: () {
-                    final pass = playItem.id == active.id;
-                    state.widget.onWatch(
-                      playItem,
-                      DetailTrackSelection(
-                        audioStreamIndex: pass ? state._selAudio : null,
-                        subtitleStreamIndex: pass
-                            ? (state._selSubtitle ?? -1)
-                            : null,
-                      ),
-                    );
-                  },
-                ),
-                if (active.type != 'Series') ...[
-                  _TrackButton(
-                    open: state._trackMenuOpen,
-                    onTap: state._toggleTrackMenu,
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  AppButton(
+                    label: resumeLabel != null && playItem.id == active.id
+                        ? 'Resume $resumeLabel'
+                        : rootIsSeries && !isEpisode
+                        ? 'Play first episode'
+                        : 'Watch now',
+                    icon: Icons.play_arrow,
+                    variant: AppButtonVariant.primary,
+                    onPressed: () {
+                      final pass = playItem.id == active.id;
+                      state.widget.onWatch(
+                        playItem,
+                        DetailTrackSelection(
+                          audioStreamIndex: pass ? state._selAudio : null,
+                          subtitleStreamIndex: pass
+                              ? (state._selSubtitle ?? -1)
+                              : null,
+                        ),
+                      );
+                    },
                   ),
-                  DownloadButton(
-                    itemId: active.id,
-                    title: active.name,
-                    runTimeTicks: active.runTimeTicks,
-                  ),
+                  if (active.type != 'Series') ...[
+                    _TrackButton(
+                      open: state._trackMenuOpen,
+                      onTap: state._toggleTrackMenu,
+                    ),
+                    DownloadButton(
+                      itemId: active.id,
+                      title: active.name,
+                      runTimeTicks: active.runTimeTicks,
+                    ),
+                  ],
                 ],
-              ],
               ),
             ),
             if (state._trackMenuOpen && playback != null) ...[
@@ -824,8 +822,24 @@ class _CastStrip extends StatefulWidget {
   static const double _nameSize = 13;
   static const double _roleSize = 12;
 
+  /// Line heights are pinned on the styles below rather than left to the
+  /// font's natural metrics, so this sum is exact. Estimating them is what
+  /// overflowed the card by 9px: the strip is inside a fixed-height box, and a
+  /// height derived from a guess about a typeface is wrong the moment the
+  /// typeface resolves to something else.
+  static const double _lineHeight = 1.3;
+  static const double _gap = 10;
+
+  static double _lineBox(double fontSize) =>
+      (fontSize * _lineHeight).ceilToDouble();
+
   /// Face, gap, name line, role line.
-  static double get height => _face + 10 + 18 + 17;
+  static double get height =>
+      _face + _gap + _lineBox(_nameSize) + _lineBox(_roleSize);
+
+  /// The cast is supporting information, not the subject of the page. It sits
+  /// back until looked at rather than competing with the title above it.
+  static const double _restOpacity = 0.62;
 
   @override
   State<_CastStrip> createState() => _CastStripState();
@@ -833,6 +847,23 @@ class _CastStrip extends StatefulWidget {
 
 class _CastStripState extends State<_CastStrip> {
   final ScrollController _controller = ScrollController();
+
+  /// Where the strip is heading, which is not where it currently is.
+  ///
+  /// Holding a target separately from the live offset is what makes the glide
+  /// continuous: a second wheel notch arriving mid-flight extends the journey
+  /// instead of restarting it from wherever the strip happened to have reached.
+  double _target = 0;
+
+  /// How far past the raw wheel delta the strip carries. Above 1 it coasts —
+  /// this is the "low friction" part; the strip keeps going after the wheel
+  /// stops rather than halting under your finger.
+  static const double _glideGain = 2.6;
+
+  /// Long enough to read as coasting to a stop. The curve decelerates and does
+  /// NOT overshoot: carrying past where the wheel stopped is wanted, springing
+  /// back afterwards is not — that reads as the strip being yanked.
+  static const Duration _glide = Duration(milliseconds: 460);
 
   @override
   void dispose() {
@@ -849,12 +880,24 @@ class _CastStripState extends State<_CastStrip> {
     final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
         ? event.scrollDelta.dx
         : event.scrollDelta.dy;
-    final target = (_controller.offset + delta).clamp(
+
+    // Re-anchor if the strip was dragged or has settled, so the target never
+    // drifts away from reality.
+    if (!_controller.position.isScrollingNotifier.value) {
+      _target = _controller.offset;
+    }
+
+    _target = (_target + delta * _glideGain).clamp(
       0.0,
       _controller.position.maxScrollExtent,
     );
-    if (target == _controller.offset) return;
-    _controller.jumpTo(target);
+    if (_target == _controller.offset) return;
+
+    _controller.animateTo(
+      _target,
+      duration: _glide,
+      curve: Curves.easeOutCubic,
+    );
   }
 
   @override
@@ -882,65 +925,72 @@ class _CastStripState extends State<_CastStrip> {
           child: ListView.separated(
             controller: _controller,
             scrollDirection: Axis.horizontal,
+            // Bouncing rather than clamping: a drag carries its momentum and
+            // the ends give a little instead of stopping dead against a wall.
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
             itemCount: cast.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 22),
+            separatorBuilder: (_, _) => const SizedBox(width: 40),
             itemBuilder: (context, i) {
               final p = cast[i];
               return SizedBox(
                 width: _CastStrip._card,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ClipOval(
-                      child: SizedBox(
-                        width: _CastStrip._face,
-                        height: _CastStrip._face,
-                        child: AuthedNetworkImage(
-                          widget.api.imageUrl(
-                            p.id,
-                            type: ImageType.primary,
-                          ),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => ColoredBox(
-                            color: wp.surface2,
-                            child: Center(
-                              child: Text(
-                                _initials(p.name),
-                                style: TextStyle(
-                                  color: wp.dim,
-                                  fontSize: 30,
-                                  fontWeight: FontWeight.w700,
+                child: Opacity(
+                  opacity: _CastStrip._restOpacity,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ClipOval(
+                        child: SizedBox(
+                          width: _CastStrip._face,
+                          height: _CastStrip._face,
+                          child: AuthedNetworkImage(
+                            widget.api.imageUrl(p.id, type: ImageType.primary),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => ColoredBox(
+                              color: wp.surface2,
+                              child: Center(
+                                child: Text(
+                                  _initials(p.name),
+                                  style: TextStyle(
+                                    color: wp.dim,
+                                    fontSize: 30,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      p.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: wp.text,
-                        fontSize: _CastStrip._nameSize,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (p.role != null)
+                      const SizedBox(height: _CastStrip._gap),
                       Text(
-                        p.role!,
+                        p.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: wp.faint,
-                          fontSize: _CastStrip._roleSize,
+                          color: wp.text,
+                          fontSize: _CastStrip._nameSize,
+                          height: _CastStrip._lineHeight,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                  ],
+                      if (p.role != null)
+                        Text(
+                          p.role!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: wp.faint,
+                            fontSize: _CastStrip._roleSize,
+                            height: _CastStrip._lineHeight,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               );
             },
