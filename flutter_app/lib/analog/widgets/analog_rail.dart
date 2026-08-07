@@ -30,6 +30,7 @@ class AnalogRailItem {
     this.badge,
     this.progress,
     this.placeholderLabel,
+    this.heroTag,
   });
 
   final String id;
@@ -41,6 +42,10 @@ class AnalogRailItem {
   /// 0..1 watch progress.
   final double? progress;
   final String? placeholderLabel;
+
+  /// Shared-element tag. Set to the tag the destination screen uses and the
+  /// artwork flies across the route rather than cutting.
+  final String? heroTag;
 }
 
 /// A row whose cursor does not move.
@@ -382,6 +387,10 @@ class _RailSlot extends StatelessWidget {
       title: item.label,
       subtitle: item.subtitle,
       placeholderLabel: item.placeholderLabel,
+      // Only the selection is a hero: a Hero tag must be unique on screen, and
+      // more importantly the row is what gets left behind — animating a poster
+      // nobody selected would be flying the wrong artwork.
+      heroTag: focused ? item.heroTag : null,
       width: width,
       focused: focused,
       progress: item.progress,
