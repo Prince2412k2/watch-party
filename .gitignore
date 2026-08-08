@@ -36,3 +36,6 @@ secrets/
 
 # Subagent working copies — never commit
 .pi-subagents/
+
+# Generated component-library page — rebuild with docs/watchparty-design/components/build.py
+docs/watchparty-design/components/.build/
