@@ -659,9 +659,10 @@ class _WatchChrome extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final lkState = ref.watch(livekitProvider);
-    final lk = ref.read(livekitProvider.notifier);
-
+    // No LiveKit state here any more — the device controls that needed it live
+    // in [_DeviceRail] now, which watches the provider itself. This strip is
+    // navigation and chat, and watching livekitProvider from here would rebuild
+    // the whole thing on every mic/camera change for nothing.
     return SafeArea(
       child: Padding(
         // macOS puts the traffic lights in the top-left of the content area, so
