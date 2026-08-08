@@ -516,24 +516,32 @@ class _StageBody extends ConsumerWidget {
                     // matching the browse screen, where the copy sits about
                     // 70px further in. That inset is the last visible
                     // difference between the two surfaces.
-                    // Scrollable in structure, NOT in behaviour — the same
-                    // idiom the season strip below uses.
+                    // Scaled to fit, rather than scrolled or clipped.
                     //
-                    // The physics are what matters: a plain
-                    // SingleChildScrollView drew a scrollbar down the middle
-                    // of the backdrop, because the copy genuinely overflowed
-                    // (a 52px two-line title pushed Watch now off the bottom).
-                    // _headingSizeFor now steps long titles down so it fits,
-                    // but removing the scroll view outright was wrong — an
-                    // overflowing Column does not clip, it THROWS, which is
-                    // exactly what detail_screen_layout_test guards.
+                    // This block went through both wrong answers first. It
+                    // used to scroll, which drew a scrollbar down the middle
+                    // of the backdrop. Making it non-scrollable removed the
+                    // bar and started CUTTING OFF the synopsis and the
+                    // Watch/Download row on shorter windows, which is worse —
+                    // a control you cannot see is worse than one you have to
+                    // scroll to.
                     //
-                    // So: no scrollbar, no scrolling, and a window too short
-                    // for the copy clips instead of raising.
+                    // BoxFit.scaleDown is the third answer and the right one:
+                    // at a comfortable window nothing changes (it only ever
+                    // shrinks, never enlarges), and as the window gets shorter
+                    // the whole block — heading, synopsis, meta, buttons —
+                    // scales down together and stays complete. Uniform, so the
+                    // type hierarchy holds at every size, and automatic, so it
+                    // tracks any resolution instead of a list of breakpoints
+                    // somebody has to keep extending.
                     child: Center(
-                      child: _NoScrollbar(
-                        child: SingleChildScrollView(
-                          physics: const NeverScrollableScrollPhysics(),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: TitleLayout.copyMaxWidth,
+                          ),
                           child: copy,
                         ),
                       ),
