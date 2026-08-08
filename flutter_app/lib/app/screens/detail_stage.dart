@@ -531,9 +531,11 @@ class _StageBody extends ConsumerWidget {
                     // So: no scrollbar, no scrolling, and a window too short
                     // for the copy clips instead of raising.
                     child: Center(
-                      child: SingleChildScrollView(
-                        physics: const NeverScrollableScrollPhysics(),
-                        child: copy,
+                      child: _NoScrollbar(
+                        child: SingleChildScrollView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: copy,
+                        ),
                       ),
                     ),
                   ),
@@ -547,12 +549,14 @@ class _StageBody extends ConsumerWidget {
                               // Not scrollable — the wheel here steps the
                               // slider. Present only so a long-running series
                               // on a short window clips instead of throwing.
-                              child: SingleChildScrollView(
-                                physics: const NeverScrollableScrollPhysics(),
-                                child: _SeasonStrip(
-                                  state: state,
-                                  rows: seasonRows,
-                                  activeId: state._activeId,
+                              child: _NoScrollbar(
+                                child: SingleChildScrollView(
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  child: _SeasonStrip(
+                                    state: state,
+                                    rows: seasonRows,
+                                    activeId: state._activeId,
+                                  ),
                                 ),
                               ),
                             ),
@@ -1715,6 +1719,28 @@ String _trackLabel(PlaybackTrack t, String fallback) {
     if (t.isDefault && !lower.contains('default')) 'Default',
     if (t.isForced && !lower.contains('forced')) 'Forced',
   ].join(' · ');
+}
+
+/// Strips the scrollbar a desktop [ScrollBehavior] adds to every Scrollable.
+///
+/// NeverScrollableScrollPhysics stops the viewport RESPONDING to input; it
+/// does not stop the bar being painted. The bar tracks whether content exceeds
+/// the viewport, not whether you may scroll it — so a copy column that merely
+/// overflows still drew a pale line down the middle of the backdrop, on a
+/// surface whose whole premise is that the artwork is the interface.
+///
+/// The two are separate switches and both are needed: physics for behaviour,
+/// this for the chrome.
+class _NoScrollbar extends StatelessWidget {
+  const _NoScrollbar({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => ScrollConfiguration(
+    behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+    child: child,
+  );
 }
 
 /// The display size for a title of [name]'s length.
