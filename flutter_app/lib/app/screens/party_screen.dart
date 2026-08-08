@@ -2414,7 +2414,11 @@ class _RosterRow extends StatelessWidget {
             onPressed: () => notifier.transferHost(p.userId),
           ),
           AnalogIconButton(
-            icon: Icons.logout,
+            // Removing SOMEONE ELSE. It shared Icons.logout with "Sign out"
+            // and "Leave the party" — one glyph covering leaving voluntarily
+            // and being thrown out by someone else, which are not the same
+            // event for either person involved.
+            icon: Icons.person_remove,
             tooltip: 'Kick',
             color: _dangerColor(wp),
             onPressed: () => notifier.kick(p.userId),
@@ -2434,7 +2438,8 @@ class _RosterRow extends StatelessWidget {
         ),
         AnalogMenuAction(
           label: 'Kick',
-          icon: Icons.logout,
+          // Same action as the row button above, so the same glyph.
+          icon: Icons.person_remove,
           danger: true,
           onSelected: () => notifier.kick(p.userId),
         ),
