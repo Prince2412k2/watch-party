@@ -172,14 +172,27 @@ class _PosterShelfState extends State<PosterShelf> {
 
   void _onPointerSignal(PointerSignalEvent signal) {
     if (signal is! PointerScrollEvent || widget.itemCount < 2) return;
+    _wheelStep(signal.scrollDelta);
+  }
+
+  /// A trackpad two-finger swipe arrives as pan-zoom, not a scroll signal, so
+  /// this shelf answered a mouse and ignored a laptop.
+  ///
+  /// The cooldown below matters more here than on a wheel: a wheel emits
+  /// discrete notches, a trackpad emits a continuous stream of small deltas.
+  /// Without it a single swipe would walk the whole shelf.
+  void _onPanZoom(PointerPanZoomUpdateEvent event) {
+    if (widget.itemCount < 2) return;
+    _wheelStep(-event.localPanDelta);
+  }
+
+  void _wheelStep(Offset raw) {
     final now = DateTime.now();
     if (_lastWheelMove != null &&
         now.difference(_lastWheelMove!) < const Duration(milliseconds: 120)) {
       return;
     }
-    final delta = signal.scrollDelta.dx.abs() > signal.scrollDelta.dy.abs()
-        ? signal.scrollDelta.dx
-        : signal.scrollDelta.dy;
+    final delta = raw.dx.abs() > raw.dy.abs() ? raw.dx : raw.dy;
     if (delta.abs() < 2) return;
     _lastWheelMove = now;
     _select(_selectedIndex + (delta > 0 ? 1 : -1));
@@ -194,7 +207,8 @@ class _PosterShelfState extends State<PosterShelf> {
   void _onHover(PointerHoverEvent event) {
     // Flutter re-delivers hover events when content moves under a still cursor,
     // so compare positions rather than trusting the event itself.
-    final moved = _lastPointer == null || (event.position - _lastPointer!).distance > 2;
+    final moved =
+        _lastPointer == null || (event.position - _lastPointer!).distance > 2;
     _lastPointer = event.position;
     if (moved) _hoverLive = true;
 
@@ -208,6 +222,7 @@ class _PosterShelfState extends State<PosterShelf> {
       _select(_selectedIndex + direction, fromPointer: true);
       _hoverLive = true;
     }
+
     step();
     _edgeTimer = Timer.periodic(_edgeInterval, (_) => step());
   }
@@ -244,6 +259,7 @@ class _PosterShelfState extends State<PosterShelf> {
         child: Listener(
           onPointerDown: (_) => _focusNode.requestFocus(),
           onPointerSignal: _onPointerSignal,
+          onPointerPanZoomUpdate: _onPanZoom,
           child: SizedBox(
             height: _railHeight,
             child: ShaderMask(

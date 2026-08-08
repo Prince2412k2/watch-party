@@ -122,7 +122,8 @@ class _AnalogShelfState extends State<AnalogShelf> {
   Offset? _lastPointer;
 
   FocusNode get _focusNode =>
-      widget.focusNode ?? (_ownedFocusNode ??= FocusNode(debugLabel: 'AnalogShelf'));
+      widget.focusNode ??
+      (_ownedFocusNode ??= FocusNode(debugLabel: 'AnalogShelf'));
 
   double get _stride => widget.itemWidth + widget.gap;
 
@@ -134,8 +135,7 @@ class _AnalogShelfState extends State<AnalogShelf> {
       AnalogElevation.focusOffsetYPx;
 
   double _now() =>
-      widget.nowMs?.call() ??
-      DateTime.now().millisecondsSinceEpoch.toDouble();
+      widget.nowMs?.call() ?? DateTime.now().millisecondsSinceEpoch.toDouble();
 
   @override
   void didUpdateWidget(AnalogShelf oldWidget) {
@@ -223,20 +223,30 @@ class _AnalogShelfState extends State<AnalogShelf> {
     // act on it. The inner list runs NeverScrollableScrollPhysics, so it never
     // competes for registration here.
     GestureBinding.instance.pointerSignalResolver.register(event, (resolved) {
-      final scroll = resolved as PointerScrollEvent;
-      final delta = scroll.scrollDelta.dx.abs() > scroll.scrollDelta.dy.abs()
-          ? scroll.scrollDelta.dx
-          : scroll.scrollDelta.dy;
-      final step = steppedScroll(
-        _scrollState,
-        delta,
-        _now(),
-        widget.scrollConfig,
-      );
-      if (step == 0) return;
-      _focusNode.requestFocus();
-      _step(step);
+      _shelfStep((resolved as PointerScrollEvent).scrollDelta);
     });
+  }
+
+  /// The trackpad path. A two-finger swipe is pan-zoom, not a pointer signal,
+  /// so it never reached the handler above and the shelf ignored it entirely.
+  ///
+  /// Not registered with the resolver: that arbitrates pointer SIGNALS and a
+  /// pan-zoom is not one. The vertical page scroller underneath handles
+  /// trackpad panning natively, so claiming is neither possible nor needed.
+  void _onPanZoom(PointerPanZoomUpdateEvent event) =>
+      _shelfStep(-event.localPanDelta);
+
+  void _shelfStep(Offset raw) {
+    final delta = raw.dx.abs() > raw.dy.abs() ? raw.dx : raw.dy;
+    final step = steppedScroll(
+      _scrollState,
+      delta,
+      _now(),
+      widget.scrollConfig,
+    );
+    if (step == 0) return;
+    _focusNode.requestFocus();
+    _step(step);
   }
 
   void _onHover(PointerHoverEvent event) {
@@ -284,6 +294,7 @@ class _AnalogShelfState extends State<AnalogShelf> {
             child: Listener(
               onPointerDown: (_) => _focusNode.requestFocus(),
               onPointerSignal: _onPointerSignal,
+              onPointerPanZoomUpdate: _onPanZoom,
               child: SizedBox(
                 height: widget.itemHeight + _overflowTop + _overflowBottom,
                 child: ListView.separated(

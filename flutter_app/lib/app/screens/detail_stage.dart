@@ -215,13 +215,42 @@ class _DetailStageState extends ConsumerState<DetailStage>
   ) {
     if (event is! PointerScrollEvent) return;
     GestureBinding.instance.pointerSignalResolver.register(event, (resolved) {
-      final step = steppedScroll(
-        state,
+      _stepFrom(
         _wheelDelta(resolved as PointerScrollEvent),
-        resolved.timeStamp.inMicroseconds / 1000,
+        resolved.timeStamp,
+        state,
+        onStep,
       );
-      if (step != 0) onStep(step);
     });
+  }
+
+  /// The trackpad path. A two-finger swipe arrives as pan-zoom rather than a
+  /// scroll signal, so it never reached [_steppedSignal] and the rail simply
+  /// did not answer it. Not routed through the resolver: that arbitrates
+  /// pointer SIGNALS, and a pan-zoom is not one — there is also only a single
+  /// wheel region left here, so there is nothing to arbitrate against.
+  void _steppedPanZoom(
+    PointerPanZoomUpdateEvent event,
+    SteppedScrollState state,
+    void Function(int step) onStep,
+  ) {
+    final delta = -event.localPanDelta;
+    _stepFrom(
+      delta.dx.abs() > delta.dy.abs() ? delta.dx : delta.dy,
+      event.timeStamp,
+      state,
+      onStep,
+    );
+  }
+
+  void _stepFrom(
+    double delta,
+    Duration timeStamp,
+    SteppedScrollState state,
+    void Function(int step) onStep,
+  ) {
+    final step = steppedScroll(state, delta, timeStamp.inMicroseconds / 1000);
+    if (step != 0) onStep(step);
   }
 
   /// Move the season slider, landing on the new season's first episode — the
@@ -390,6 +419,11 @@ class _StageBody extends ConsumerWidget {
       onKeyEvent: (_, event) => state._onKey(event, seasonRows, episodes),
       child: Listener(
         onPointerSignal: (e) => state._steppedSignal(
+          e,
+          state._episodeScroll,
+          (step) => state._stepEpisode(step, episodes),
+        ),
+        onPointerPanZoomUpdate: (e) => state._steppedPanZoom(
           e,
           state._episodeScroll,
           (step) => state._stepEpisode(step, episodes),
@@ -1179,10 +1213,19 @@ class _CastStripState extends State<_CastStrip> {
   /// desktop. Mapping whichever axis the hardware reports onto the one axis
   /// this list has is what actually makes it scrollable with a mouse.
   void _onPointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_controller.hasClients) return;
-    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
-        ? event.scrollDelta.dx
-        : event.scrollDelta.dy;
+    if (event is! PointerScrollEvent) return;
+    _glideBy(event.scrollDelta);
+  }
+
+  /// The trackpad path: a two-finger swipe is pan-zoom, not a scroll signal.
+  /// Without this the cast strip was scrollable with a mouse and inert under
+  /// the gesture most people actually use on a laptop.
+  void _onPanZoom(PointerPanZoomUpdateEvent event) =>
+      _glideBy(-event.localPanDelta);
+
+  void _glideBy(Offset raw) {
+    if (!_controller.hasClients) return;
+    final delta = raw.dx.abs() > raw.dy.abs() ? raw.dx : raw.dy;
 
     // Re-anchor if the strip was dragged or has settled, so the target never
     // drifts away from reality.
@@ -1214,6 +1257,7 @@ class _CastStripState extends State<_CastStrip> {
       height: _CastStrip.height,
       child: Listener(
         onPointerSignal: _onPointerSignal,
+        onPointerPanZoomUpdate: _onPanZoom,
         child: ScrollConfiguration(
           // Let a mouse drag the strip too, not just touch. Desktop users
           // reach for the wheel first but the drag costs nothing to allow.

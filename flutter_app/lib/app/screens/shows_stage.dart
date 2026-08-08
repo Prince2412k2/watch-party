@@ -113,13 +113,22 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
   /// landing on the backdrop meaning nothing was a dead zone, not a feature.
   void _onPointerSignal(PointerSignalEvent event, int total) {
     if (event is! PointerScrollEvent) return;
-    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
-        ? event.scrollDelta.dx
-        : event.scrollDelta.dy;
+    _applyScroll(event.scrollDelta, event.timeStamp, total);
+  }
+
+  /// A trackpad two-finger swipe is pan-zoom, not a scroll event, and this
+  /// stage only listened for the latter — so the gesture every laptop user
+  /// reaches for first did nothing. Same arithmetic; the delta points the
+  /// other way, hence the negation.
+  void _onPanZoom(PointerPanZoomUpdateEvent event, int total) =>
+      _applyScroll(-event.localPanDelta, event.timeStamp, total);
+
+  void _applyScroll(Offset delta, Duration timeStamp, int total) {
+    final primary = delta.dx.abs() > delta.dy.abs() ? delta.dx : delta.dy;
     final step = steppedScroll(
       _scroll,
-      delta,
-      event.timeStamp.inMicroseconds / 1000,
+      primary,
+      timeStamp.inMicroseconds / 1000,
     );
     if (step != 0) _stepSelection(step, total);
   }
@@ -182,6 +191,7 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
         onKeyEvent: (_, event) => _onKey(event, items),
         child: Listener(
           onPointerSignal: (e) => _onPointerSignal(e, items.length),
+          onPointerPanZoomUpdate: (e) => _onPanZoom(e, items.length),
           // Opaque so a wheel event over the bare backdrop still reaches us:
           // "scrolling anywhere should work" means the whole stage, not the
           // strip of it the posters happen to occupy.
@@ -441,4 +451,3 @@ class _Details extends StatelessWidget {
     return parts.join('  ·  ').toUpperCase();
   }
 }
-
