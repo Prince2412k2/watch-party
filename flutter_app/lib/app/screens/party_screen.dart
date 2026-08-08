@@ -2530,8 +2530,70 @@ class _DeviceRail extends ConsumerWidget {
               tooltip: dock ? 'Float cameras' : 'Dock cameras',
               onTap: onToggleLayout,
             ),
+          // Last, and separated: a repair, not a device control.
+          const _AvDivider(),
+          const _ReconnectAvButton(),
         ],
       ),
+    );
+  }
+}
+
+/// Rebuilds this client's A/V room without disturbing the party.
+///
+/// Sits with the mic and camera because that is where the fault shows up: a
+/// screen share that will not start, or a camera that will not come back, with
+/// chat and playback working fine. Before this, the only way out was ending the
+/// party — one person's wedged track costing everyone their seat.
+class _ReconnectAvButton extends ConsumerStatefulWidget {
+  const _ReconnectAvButton();
+
+  @override
+  ConsumerState<_ReconnectAvButton> createState() => _ReconnectAvButtonState();
+}
+
+class _ReconnectAvButtonState extends ConsumerState<_ReconnectAvButton> {
+  bool _busy = false;
+
+  Future<void> _run() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final error = await ref.read(partyProvider.notifier).reconnectAv();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    // Says something either way. A repair button that goes quiet on success is
+    // indistinguishable from one that did nothing.
+    showAnalogToast(
+      context,
+      error == null ? 'Video reconnected' : 'Could not reconnect video',
+      tone: error == null ? AnalogToastTone.success : AnalogToastTone.danger,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _AvIconButton(
+      // A static glyph while busy, never a spinner: this rail is persistent
+      // chrome, and an indeterminate progress indicator in persistent chrome
+      // never settles — it hangs pumpAndSettle and every widget test with it.
+      icon: _busy ? Icons.hourglass_empty : Icons.refresh,
+      tooltip: _busy ? 'Reconnecting…' : 'Reconnect video and audio',
+      onTap: _busy ? null : _run,
+    );
+  }
+}
+
+/// A hairline between the device toggles and the repair below them.
+class _AvDivider extends StatelessWidget {
+  const _AvDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 18,
+      height: 1,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      color: AppColors.line2,
     );
   }
 }

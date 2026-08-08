@@ -565,6 +565,66 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _syncRoleToEngine();
   }
 
+  /// Guards against a second reconnect starting while one is in flight —
+  /// pressing the button twice would otherwise race two joins into the same
+  /// room and leave a ghost participant behind.
+  bool _reconnectingAv = false;
+
+  /// Tear down and re-establish the A/V room ALONE, on a fresh token.
+  ///
+  /// The failure this exists for: a participant whose publish path is wedged —
+  /// screen share that never starts, a camera that will not come back — while
+  /// everything else about the party is fine. The only remedy used to be
+  /// ending the party and starting over, which punishes the whole room for one
+  /// person's broken track.
+  ///
+  /// Deliberately narrow. The socket, the party session, the sync engine and
+  /// playback are all untouched, so nobody else sees anything: no rejoin, no
+  /// resync, no interruption to the movie. Only this client's LiveKit room is
+  /// rebuilt.
+  ///
+  /// The token is re-fetched rather than reused. A stale token is one of the
+  /// ways the room gets into this state to begin with, and re-issuing costs one
+  /// request.
+  ///
+  /// Mic and camera are restored to what they were, because a reconnect is a
+  /// repair and not a settings change — coming back with the mic live after the
+  /// user had muted would be the worst possible surprise.
+  ///
+  /// Returns null on success, or a message describing the failure.
+  Future<String?> reconnectAv() async {
+    final partyId = state?.id;
+    if (partyId == null || partyId.isEmpty) {
+      return 'You are not in a party.';
+    }
+    if (_reconnectingAv) return null;
+    _reconnectingAv = true;
+
+    final livekit = _ref.read(livekitProvider.notifier);
+    final before = _ref.read(livekitProvider);
+    try {
+      // Leave first, and do not let a failure here stop the rejoin: the room
+      // being unusable is the whole reason we are here, so a disconnect that
+      // throws is expected rather than exceptional.
+      try {
+        await livekit.leave();
+      } catch (_) {}
+
+      final token = await _ref.read(apiClientProvider).livekitToken(partyId);
+      await livekit.connect(token.url, token.token);
+      await livekit.setMic(before.micEnabled);
+      await livekit.setCamera(before.cameraEnabled);
+      return null;
+    } catch (e) {
+      // Same reasoning as _postJoinSetup: surfaced on the LiveKit state so the
+      // reason appears where the A/V controls are, never thrown at the caller.
+      livekit.reportConnectFailure(e);
+      return '$e';
+    } finally {
+      _reconnectingAv = false;
+    }
+  }
+
   /// Pushes the derived `isHost`/`canControl` — and the room's server-owned sync
   /// mode — onto the live engine without a re-attach. Called after every
   /// roster/host-transfer/collaborative change and every session snapshot.
