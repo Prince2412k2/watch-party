@@ -1,3 +1,4 @@
+import 'dart:ui' show ImageFilter;
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:math' as math;
@@ -286,6 +287,21 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   /// Camera layout: false = floating PiP tiles, true = docked left column.
   bool _dock = false;
 
+  /// Whether the camera tiles are docked into the left column rather than
+  /// floating over the picture.
+  ///
+  /// Opening chat forces it. Floating tiles are positioned against the stage's
+  /// right edge, and the drawer takes that edge — so a tile that was fine a
+  /// moment ago ends up under the drawer, or straddling its border. Docking
+  /// them moves the whole set somewhere the drawer will never be, which is
+  /// what the design sketch shows: chat open, cameras in a column, picture
+  /// between the two.
+  ///
+  /// The explicit toggle still wins when chat is closed, so a user who docked
+  /// them deliberately keeps that; what this adds is that closing chat returns
+  /// them to floating ONLY if they were floating before.
+  bool _camerasDocked(bool watching) => watching && (_dock || _chatOpen);
+
   /// Single-open guard for the right-click / long-press Watch Party menu.
   bool _menuOpen = false;
 
@@ -496,7 +512,8 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             chatToasts: [
               for (final message in ref.watch(chatProvider))
                 ToastMessage(
-                  id: '${message.userId}:${message.timestamp}:'
+                  id:
+                      '${message.userId}:${message.timestamp}:'
                       '${message.text.hashCode}',
                   sender: message.name,
                   preview: message.text,
@@ -528,7 +545,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeOutCubic,
-                left: (watching && _dock) ? 210.0 : 0.0,
+                left: _camerasDocked(watching) ? 210.0 : 0.0,
                 top: 0,
                 right: _chatOpen ? 360.0 : 0.0,
                 bottom: 0,
@@ -537,7 +554,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
 
               // 1 — cameras: floating PiP layer, or the docked left column.
               // Exactly one child so the stage above keeps a stable Stack slot.
-              if (watching && _dock)
+              if (_camerasDocked(watching))
                 const Positioned(
                   left: 0,
                   top: 0,
@@ -560,11 +577,34 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                     duration: const Duration(milliseconds: 200),
                     child: _WatchChrome(
                       watching: watching,
-                      dock: _dock,
+                      dock: _camerasDocked(watching),
                       chatOpen: _chatOpen,
                       onBack: _minimize,
                       onToggleChat: () => _setChatOpen(!_chatOpen),
                       onToggleLayout: () => setState(() => _dock = !_dock),
+                    ),
+                  ),
+                ),
+              ),
+
+              // 2b — the device rail, on the left edge of the STAGE so it can
+              // centre against the full height. Fades and stops taking input
+              // with the rest of the chrome.
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  ignoring: !chromeShown,
+                  child: AnimatedOpacity(
+                    opacity: chromeShown ? 1 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Center(
+                      child: _DeviceRail(
+                        watching: watching,
+                        dock: _camerasDocked(watching),
+                        onToggleLayout: () => setState(() => _dock = !_dock),
+                      ),
                     ),
                   ),
                 ),
@@ -635,6 +675,15 @@ class _WatchChrome extends ConsumerWidget {
           top: 10 + (Platform.isMacOS ? integratedDesktopChromeHeight : 0),
           bottom: 10,
         ),
+        // Back on the left, chat on the right. Everything that controls
+        // YOUR devices lives in a vertical rail down the left edge of the
+        // STAGE ([_DeviceRail]) rather than here — this strip is only as tall
+        // as a button, so it is the wrong place to centre anything against,
+        // and the sketch puts the devices on the edge regardless.
+        //
+        // No shared-browser control in either: this chrome sits over the
+        // player, and starting a browser is a "what shall we watch" decision
+        // that lives in the popcorn ([PopcornControl]).
         child: Row(
           children: [
             _AvIconButton(
@@ -647,47 +696,12 @@ class _WatchChrome extends ConsumerWidget {
               onTap: onBack,
             ),
             const Spacer(),
-            // No shared-browser control here. This chrome sits over the player,
-            // and starting a browser is a "what shall we watch" decision — it
-            // lives in the popcorn ([PopcornControl]) instead.
             _AvIconButton(
               icon: Icons.chat_bubble_outline,
               tooltip: 'Chat',
               active: chatOpen,
               onTap: onToggleChat,
             ),
-            _AvPendingToggle(
-              iconOn: Icons.mic,
-              iconOff: Icons.mic_off,
-              on: lkState.micEnabled,
-              tooltip: lkState.micEnabled
-                  ? 'Mute microphone'
-                  : 'Unmute microphone',
-              onToggle: () => lk.setMic(!lkState.micEnabled),
-            ),
-            _AvPendingToggle(
-              iconOn: Icons.videocam,
-              iconOff: Icons.videocam_off,
-              on: lkState.cameraEnabled,
-              tooltip: lkState.cameraEnabled
-                  ? 'Turn camera off'
-                  : 'Turn camera on',
-              onToggle: () => lk.setCamera(!lkState.cameraEnabled),
-            ),
-            _AvIconButton(
-              icon: lkState.hideSelf ? Icons.visibility_off : Icons.visibility,
-              tooltip: lkState.hideSelf ? 'Show my tile' : 'Hide my tile',
-              active: lkState.hideSelf,
-              onTap: () => lk.setHideSelf(!lkState.hideSelf),
-            ),
-            if (watching)
-              _AvIconButton(
-                icon: dock
-                    ? Icons.view_sidebar_outlined
-                    : Icons.picture_in_picture_alt_outlined,
-                tooltip: dock ? 'Float cameras' : 'Dock cameras',
-                onTap: onToggleLayout,
-              ),
           ],
         ),
       ),
@@ -997,7 +1011,10 @@ class _LobbyStage extends ConsumerWidget {
 /// surface has no hover, no right click and no keyboard, so the mapping that
 /// makes a click land where you aimed does not exist there.
 class _SharedBrowserStage extends ConsumerStatefulWidget {
-  const _SharedBrowserStage({required this.onToggleFullscreen, required this.isFullscreen});
+  const _SharedBrowserStage({
+    required this.onToggleFullscreen,
+    required this.isFullscreen,
+  });
 
   final VoidCallback onToggleFullscreen;
   final bool isFullscreen;
@@ -1071,7 +1088,8 @@ class _SharedBrowserStageState extends ConsumerState<_SharedBrowserStage> {
     // Deliberately NOT gated on the server having sent a screen size: an older
     // server made that null, which silently disabled driving with nothing on
     // screen to explain it. The geometry falls back to the container default.
-    final driving = _canDrive &&
+    final driving =
+        _canDrive &&
         myUserId != null &&
         browser != null &&
         browser.active &&
@@ -1103,9 +1121,7 @@ class _SharedBrowserStageState extends ConsumerState<_SharedBrowserStage> {
             canRequestFocus: driving,
             onKeyEvent: driving ? _onKey : null,
             child: MouseRegion(
-              cursor: driving
-                  ? SystemMouseCursors.precise
-                  : MouseCursor.defer,
+              cursor: driving ? SystemMouseCursors.precise : MouseCursor.defer,
               child: Listener(
                 onPointerDown: driving
                     ? (event) {
@@ -1115,13 +1131,19 @@ class _SharedBrowserStageState extends ConsumerState<_SharedBrowserStage> {
                           kMiddleMouseButton => 2,
                           _ => 1,
                         };
-                        _send(event.localPosition, 'down',
-                            button: _activeButton);
+                        _send(
+                          event.localPosition,
+                          'down',
+                          button: _activeButton,
+                        );
                       }
                     : null,
                 onPointerUp: driving
-                    ? (event) =>
-                        _send(event.localPosition, 'up', button: _activeButton)
+                    ? (event) => _send(
+                        event.localPosition,
+                        'up',
+                        button: _activeButton,
+                      )
                     : null,
                 onPointerMove: driving
                     ? (event) => _move(event.localPosition)
@@ -1154,12 +1176,12 @@ class _SharedBrowserStageState extends ConsumerState<_SharedBrowserStage> {
               left: 0,
               right: 0,
               child: Center(
-              child: _BrowserToolbar(
-                url: _url,
-                onKey: _key,
-                onSubmitted: _focus.requestFocus,
+                child: _BrowserToolbar(
+                  url: _url,
+                  onKey: _key,
+                  onSubmitted: _focus.requestFocus,
+                ),
               ),
-            ),
             ),
 
           Positioned(
@@ -1196,7 +1218,10 @@ class _SharedBrowserStageState extends ConsumerState<_SharedBrowserStage> {
     if (box is! RenderBox || !box.hasSize) return null;
     final size = box.size;
     if (size.isEmpty) return null;
-    final scale = math.min(size.width / remoteWidth, size.height / remoteHeight);
+    final scale = math.min(
+      size.width / remoteWidth,
+      size.height / remoteHeight,
+    );
     return (
       scale: scale,
       origin: Offset(
@@ -1233,9 +1258,10 @@ class _SharedBrowserStageState extends ConsumerState<_SharedBrowserStage> {
     _send(local, 'move');
   }
 
-  void _key(String combo) => ref
-      .read(partyProvider.notifier)
-      .sendBrowserInput({'type': 'key', 'key': combo});
+  void _key(String combo) => ref.read(partyProvider.notifier).sendBrowserInput({
+    'type': 'key',
+    'key': combo,
+  });
 
   /// Keys xdotool names differently from Flutter. Anything with a character and
   /// no modifier is sent as text instead, so layouts and dead keys behave.
@@ -1277,20 +1303,17 @@ class _SharedBrowserStageState extends ConsumerState<_SharedBrowserStage> {
     final character = event.character;
 
     if (named != null) {
-      _key([
-        ...modifiers,
-        if (keys.isShiftPressed) 'shift',
-        named,
-      ].join('+'));
+      _key([...modifiers, if (keys.isShiftPressed) 'shift', named].join('+'));
       return KeyEventResult.handled;
     }
     if (character != null && character.length == 1) {
       if (modifiers.isEmpty) {
         // Plain typing: send the character, not a keysym, so shifted and
         // non-US-layout characters arrive as themselves.
-        ref
-            .read(partyProvider.notifier)
-            .sendBrowserInput({'type': 'text', 'text': character});
+        ref.read(partyProvider.notifier).sendBrowserInput({
+          'type': 'text',
+          'text': character,
+        });
       } else {
         _key([...modifiers, character.toLowerCase()].join('+'));
       }
@@ -1418,7 +1441,8 @@ class _BrowserControlBar extends ConsumerWidget {
     final driverId = browser?.driverUserId;
     var driverName = driverId == null ? 'Nobody' : 'Someone';
     if (driverId != null) {
-      for (final participant in session?.participants ?? const <Participant>[]) {
+      for (final participant
+          in session?.participants ?? const <Participant>[]) {
         if (participant.userId == driverId) {
           driverName = participant.name;
           break;
@@ -1913,11 +1937,21 @@ class _ChatSlideOver extends StatelessWidget {
       width: 360,
       child: SafeArea(
         left: false,
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            color: Color(0xFF111214),
-            border: Border(left: BorderSide(color: AppColors.line2)),
-            boxShadow: [
+        child: _Translucent(
+          decoration: BoxDecoration(
+            // Translucent over the video, not an opaque wall. The stage still
+            // narrows by this drawer's width, so the picture is never actually
+            // COVERED — the transparency is so the room reads as one space
+            // rather than two panes bolted together.
+            color: MediaQuery.of(context).highContrast
+                // Reduced transparency: an opaque surface of equivalent
+                // contrast, per the player reference. Blur is a decoration;
+                // legibility is not, and a user who asked the platform for
+                // less transparency has said which one they want.
+                ? const Color(0xFF111214)
+                : const Color(0xCC111214),
+            border: const Border(left: BorderSide(color: AppColors.line2)),
+            boxShadow: const [
               BoxShadow(
                 color: Color(0x66000000),
                 blurRadius: 24,
@@ -2346,4 +2380,102 @@ class _SyncModeToggle extends StatelessWidget {
 /// Shows a transient notice on the app-wide [AnalogToastHost].
 void _showPartyToast(BuildContext context, String message) {
   showAnalogToast(context, message, tone: AnalogToastTone.success);
+}
+
+/// A translucent panel that blurs what is behind it.
+///
+/// Not [AnalogPanel] with `translucent: true`: that one owns its radius, its
+/// padding and its lift, and this drawer is a full-height edge surface with a
+/// single hairline on one side. Sharing the blur without inheriting a card's
+/// geometry is the whole reason this is separate.
+///
+/// The blur is skipped entirely under reduced transparency — the caller has
+/// already substituted an opaque fill, and a BackdropFilter behind an opaque
+/// colour is pure cost for no pixels.
+class _Translucent extends StatelessWidget {
+  const _Translucent({required this.decoration, required this.child});
+
+  final BoxDecoration decoration;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final opaque = MediaQuery.of(context).highContrast;
+    final surface = DecoratedBox(decoration: decoration, child: child);
+    if (opaque) return surface;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: surface,
+      ),
+    );
+  }
+}
+
+/// Mic, camera and hide-self, as a vertical rail on the left edge of the
+/// stage.
+///
+/// Separate from [_WatchChrome] because it belongs to a different box. That
+/// chrome is a top strip one button tall; this needs the FULL stage height to
+/// centre against, and cramming both into one row was what put five controls
+/// into the same horizontal strip as the title and the window buttons.
+///
+/// Fades with the rest of the chrome, and stops taking input while hidden —
+/// an invisible mute button is worse than no mute button.
+class _DeviceRail extends ConsumerWidget {
+  const _DeviceRail({
+    required this.watching,
+    required this.dock,
+    required this.onToggleLayout,
+  });
+
+  final bool watching;
+  final bool dock;
+  final VoidCallback onToggleLayout;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lkState = ref.watch(livekitProvider);
+    final lk = ref.read(livekitProvider.notifier);
+    return Padding(
+      padding: const EdgeInsets.only(left: 14),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _AvPendingToggle(
+            iconOn: Icons.mic,
+            iconOff: Icons.mic_off,
+            on: lkState.micEnabled,
+            tooltip: lkState.micEnabled
+                ? 'Mute microphone'
+                : 'Unmute microphone',
+            onToggle: () => lk.setMic(!lkState.micEnabled),
+          ),
+          _AvPendingToggle(
+            iconOn: Icons.videocam,
+            iconOff: Icons.videocam_off,
+            on: lkState.cameraEnabled,
+            tooltip: lkState.cameraEnabled
+                ? 'Turn camera off'
+                : 'Turn camera on',
+            onToggle: () => lk.setCamera(!lkState.cameraEnabled),
+          ),
+          _AvIconButton(
+            icon: lkState.hideSelf ? Icons.visibility_off : Icons.visibility,
+            tooltip: lkState.hideSelf ? 'Show my tile' : 'Hide my tile',
+            active: lkState.hideSelf,
+            onTap: () => lk.setHideSelf(!lkState.hideSelf),
+          ),
+          if (watching)
+            _AvIconButton(
+              icon: dock
+                  ? Icons.view_sidebar_outlined
+                  : Icons.picture_in_picture_alt_outlined,
+              tooltip: dock ? 'Float cameras' : 'Dock cameras',
+              onTap: onToggleLayout,
+            ),
+        ],
+      ),
+    );
+  }
 }
