@@ -2042,7 +2042,6 @@ class _ChatSlideOverState extends State<_ChatSlideOver> {
             bottomLeft: Radius.circular(AnalogRadius.cardPx + 6),
           ),
           blur: 24,
-          rimPx: 26,
           shadow: const [
             BoxShadow(
               color: Color(0x66000000),
