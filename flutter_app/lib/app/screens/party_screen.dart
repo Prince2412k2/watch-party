@@ -2012,7 +2012,13 @@ class _ChatSlideOverState extends State<_ChatSlideOver> {
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
-      top: 0,
+      // Clear of the window-chrome band, exactly as _WatchChrome is. Running to
+      // the top edge put the drawer's own header inside the strip macOS uses
+      // for dragging the window, so the top-right of the title bar stopped
+      // responding whenever chat was open — and the panel's heading sat level
+      // with the traffic lights, reading as part of the title bar rather than
+      // as content.
+      top: Platform.isMacOS ? integratedDesktopChromeHeight : 0,
       bottom: 0,
       right: open ? 0 : -(widget.width + 12),
       width: widget.width,
