@@ -155,7 +155,7 @@ export const analogTokens = {
    *  numbers. */
   timing: {
     chromeAutoHideMs: 3000,
-    toastLifetimeMs: 4000,
+    toastLifetimeMs: 3000,
     toastMaxStack: 3,
   },
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../ui/analog_tokens.dart';
+import 'liquid_glass.dart';
 
 /// What a transient notice is about. The tone picks a glyph *and* a colour —
 /// never a colour on its own, so the difference between "joined" and "kicked"
@@ -22,6 +23,13 @@ extension on AnalogToastTone {
     AnalogToastTone.success => AnalogColor.statusSuccess,
     AnalogToastTone.warning => AnalogColor.statusDanger,
     AnalogToastTone.danger => AnalogColor.statusDanger,
+  };
+
+  /// The accent bar's colour. Info uses full ink rather than [ink]'s dimmed
+  /// value: the bar is a 3px sliver and a 64%-alpha sliver reads as disabled.
+  Color get edge => switch (this) {
+    AnalogToastTone.info => AnalogColor.ink,
+    _ => ink,
   };
 }
 
@@ -46,18 +54,24 @@ class AnalogToastSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: margin,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AnalogSpace.mdPx,
-        vertical: AnalogSpace.smPx,
+    return Padding(
+      padding: margin,
+      child: LiquidGlass(
+        opaque: opaque,
+        borderRadius: BorderRadius.circular(AnalogRadius.cardPx),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AnalogSpace.mdPx,
+          vertical: AnalogSpace.smPx + 2,
+        ),
+        shadow: const [
+          BoxShadow(
+            color: AnalogColor.shadowCastStrong,
+            blurRadius: AnalogElevation.focusBlurPx,
+            offset: Offset(0, AnalogElevation.restOffsetYPx),
+          ),
+        ],
+        child: child,
       ),
-      decoration: BoxDecoration(
-        color: opaque ? AnalogColor.stageSurface2 : AnalogColor.backdropScrim,
-        borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-        border: Border.all(color: AnalogColor.line),
-      ),
-      child: child,
     );
   }
 }
@@ -106,30 +120,53 @@ class AnalogToastHost extends StatefulWidget {
 class AnalogToastHostState extends State<AnalogToastHost> {
   final List<AnalogToast> _live = [];
   final Map<int, Timer> _timers = {};
+
+  /// Toasts playing their exit. They are still in [_live] — and still laid
+  /// out — until the animation ends, which is the whole point: removing the
+  /// row on the same frame the timer fires makes the ones below it jump.
+  final Set<int> _leaving = {};
+
   int _nextId = 0;
 
   void show(String message, {AnalogToastTone tone = AnalogToastTone.info}) {
     final id = _nextId++;
     setState(() {
       _live.add(AnalogToast(id: id, message: message, tone: tone));
-      while (_live.length > AnalogTiming.toastMaxStack) {
-        _expire(_live.first.id, rebuild: false);
+      // Count only the toasts that are not already on their way out, or a
+      // stack sitting at its limit would re-expire the same leaving toast
+      // forever — the list length does not drop until the exit finishes.
+      while (_live.where((t) => !_leaving.contains(t.id)).length >
+          AnalogTiming.toastMaxStack) {
+        _expire(_live.firstWhere((t) => !_leaving.contains(t.id)).id);
       }
     });
     _timers[id] = Timer(AnalogTiming.toastLifetimeMs, () => _expire(id));
   }
 
-  void _expire(int id, {bool rebuild = true}) {
+  void _expire(int id) {
+    if (_leaving.contains(id)) return;
+    if (_live.indexWhere((t) => t.id == id) < 0) return;
     _timers.remove(id)?.cancel();
-    final removed = _live.indexWhere((t) => t.id == id) >= 0;
-    if (!removed) return;
-    if (rebuild) {
-      if (!mounted) return;
-      setState(() => _live.removeWhere((t) => t.id == id));
-    } else {
-      _live.removeWhere((t) => t.id == id);
-    }
+    _leaving.add(id);
+    _timers[id] = Timer(_exitMs, () => _remove(id));
+    // show() already holds a setState; a nested one is a no-op but harmless,
+    // and calling it here is what makes a plain timer expiry repaint.
+    if (mounted) setState(() {});
   }
+
+  void _remove(int id) {
+    _timers.remove(id)?.cancel();
+    _leaving.remove(id);
+    if (!mounted) {
+      _live.removeWhere((t) => t.id == id);
+      return;
+    }
+    setState(() => _live.removeWhere((t) => t.id == id));
+  }
+
+  /// The exit is deliberately quicker than the entry: arriving should be
+  /// noticed, leaving should not.
+  static const Duration _exitMs = AnalogMotion.chromeFadeMs;
 
   @override
   void dispose() {
@@ -148,18 +185,28 @@ class AnalogToastHostState extends State<AnalogToastHost> {
         if (_live.isNotEmpty)
           Positioned(
             top: 0,
-            left: 0,
             right: 0,
             child: SafeArea(
               child: IgnorePointer(
                 child: Padding(
-                  padding: const EdgeInsets.only(top: AnalogSpace.lgPx),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (final toast in _live)
-                        _ToastRow(key: ValueKey(toast.id), toast: toast),
-                    ],
+                  padding: const EdgeInsets.only(
+                    top: AnalogSpace.lgPx,
+                    right: AnalogSpace.lgPx,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        for (final toast in _live)
+                          _ToastRow(
+                            key: ValueKey(toast.id),
+                            toast: toast,
+                            leaving: _leaving.contains(toast.id),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -182,39 +229,108 @@ void showAnalogToast(
   AnalogToastHost.maybeOf(context)?.show(message, tone: tone);
 }
 
-class _ToastRow extends StatelessWidget {
-  const _ToastRow({super.key, required this.toast});
+/// One notice, with its arrival and departure.
+///
+/// The row enters by sliding in from the right edge it is anchored to, fading
+/// up and unrolling to its height so the toasts already on screen slide down to
+/// make room rather than being shoved. It leaves the same way, faster, and the
+/// host keeps it mounted until that finishes.
+class _ToastRow extends StatefulWidget {
+  const _ToastRow({super.key, required this.toast, required this.leaving});
 
   final AnalogToast toast;
+  final bool leaving;
+
+  @override
+  State<_ToastRow> createState() => _ToastRowState();
+}
+
+class _ToastRowState extends State<_ToastRow> {
+  /// False for exactly one frame, so the implicit animations have a starting
+  /// value to travel FROM. Built open on the first frame, they would simply
+  /// appear.
+  bool _shown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _shown = true);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
-    return Semantics(
+    final open = _shown && !widget.leaving;
+    final tone = widget.toast.tone;
+
+    final surface = Semantics(
       liveRegion: true,
-      label: toast.message,
+      label: widget.toast.message,
       excludeSemantics: true,
       child: AnalogToastSurface(
         opaque: media.highContrast,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(toast.tone.glyph, size: 15, color: toast.tone.ink),
-            const SizedBox(width: AnalogSpace.smPx),
+            // The tone reads three ways — bar, glyph, and the glyph's tint —
+            // so it survives a greyscale display and a colour-blind viewer.
+            Container(
+              width: 3,
+              height: 22,
+              margin: const EdgeInsets.only(right: AnalogSpace.mdPx - 2),
+              decoration: BoxDecoration(
+                color: tone.edge,
+                borderRadius: BorderRadius.circular(AnalogRadius.pillPx),
+              ),
+            ),
+            Icon(tone.glyph, size: 17, color: tone.ink),
+            const SizedBox(width: AnalogSpace.smPx + 2),
             Flexible(
               child: Text(
-                toast.message,
+                widget.toast.message,
                 style: const TextStyle(
                   fontFamily: AnalogType.sansFamily,
                   color: AnalogColor.ink,
                   fontSize: 13.5,
                   fontWeight: FontWeight.w600,
+                  height: 1.3,
                 ),
               ),
             ),
           ],
         ),
       ),
+    );
+
+    // A viewer who asked for less motion gets the toast, not the entrance.
+    if (media.disableAnimations) {
+      return widget.leaving ? const SizedBox.shrink() : surface;
+    }
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: open ? 1 : 0),
+      duration: widget.leaving
+          ? AnalogMotion.chromeFadeMs
+          : AnalogMotion.fastStepMs,
+      curve: AnalogMotion.chromeFadeEase,
+      builder: (context, t, child) => ClipRect(
+        child: Align(
+          alignment: Alignment.topRight,
+          heightFactor: t,
+          child: Opacity(
+            opacity: t,
+            // A fraction of the child's own width — AnimatedSlide and
+            // FractionalTranslation both measure in child sizes, not pixels.
+            child: FractionalTranslation(
+              translation: Offset(0.28 * (1 - t), 0),
+              child: child,
+            ),
+          ),
+        ),
+      ),
+      child: surface,
     );
   }
 }

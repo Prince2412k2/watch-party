@@ -158,7 +158,7 @@
   "timing": {
     "$about": "Behavioural constants fixed by the design references; the interaction cores in app/shared/design/interaction.json are driven by these same numbers.",
     "chromeAutoHideMs": 3000,
-    "toastLifetimeMs": 4000,
+    "toastLifetimeMs": 3000,
     "toastMaxStack": 3
   },
 

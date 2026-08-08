@@ -6,6 +6,7 @@ import { mirror } from '../mirror.ts'
 import type { BrowseEntry, BrowserInputEvent, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types.ts'
 import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards.ts'
 import { browseTabRoute, partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority.ts'
+import { analogTokens } from '../design/analogTokens.ts'
 
 const PartyContext = createContext<PartyContextValue | null>(null)
 
@@ -118,7 +119,12 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   function pushToast(msg: string, level = 'info') {
     const id = Date.now()
     dispatch({ type: 'ADD_TOAST', toast: { id, msg, level } })
-    setTimeout(() => dispatch({ type: 'REMOVE_TOAST', id }), 4000)
+    // The lifetime is a token, not a number typed twice — this used to be a
+    // literal 4000 that silently disagreed with the native client.
+    setTimeout(
+      () => dispatch({ type: 'REMOVE_TOAST', id }),
+      analogTokens.timing.toastLifetimeMs,
+    )
   }
 
   function applySession(sess: PartySession, role: PartyContextValue['role']) {

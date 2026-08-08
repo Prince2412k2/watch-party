@@ -156,7 +156,7 @@ abstract final class AnalogHairline {
 /// numbers.
 abstract final class AnalogTiming {
   static const Duration chromeAutoHideMs = Duration(milliseconds: 3000);
-  static const Duration toastLifetimeMs = Duration(milliseconds: 4000);
+  static const Duration toastLifetimeMs = Duration(milliseconds: 3000);
   static const int toastMaxStack = 3;
 }
 
