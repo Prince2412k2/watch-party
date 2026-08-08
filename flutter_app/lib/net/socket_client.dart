@@ -65,7 +65,7 @@ class IoSocketClient implements SocketClient {
   @override
   Future<void> connect() async {
     final cookie = cookieHeader ?? await cookieHeaderProvider?.call();
-    final socket = io.io(_url, socketOptionsFor(_url, cookie));
+    final socket = io.io(socketUrlFor(_url), socketOptionsFor(_url, cookie));
     _socket = socket;
     final completer = Completer<void>();
     socket.onConnect((_) {
@@ -118,6 +118,34 @@ class IoSocketClient implements SocketClient {
 
   @override
   Stream<bool> get connectionState => _connCtrl.stream;
+}
+
+/// The URL to hand socket_io_client, with the port made EXPLICIT.
+///
+/// socket_io_client parses a multi-label HTTPS host — `watch.example.com`,
+/// as opposed to `localhost` — as port 0, then builds its handshake URL from
+/// what it parsed. The result is a request to
+/// `https://host:0/socket.io/?EIO=4&transport=websocket`, which fails with
+/// "was not upgraded to websocket" and names neither the port nor the cause.
+///
+/// [socketOptionsFor] already sets `port` in the options map, and that is not
+/// enough on its own: the library builds the URL from the URL, so the options
+/// never get a chance to correct it. Writing the port into the URL is what
+/// actually reaches the parser.
+///
+/// A URL that already carries a port is returned untouched, so `localhost:3005`
+/// and any tailnet address keep working exactly as before.
+String socketUrlFor(String url) {
+  final uri = Uri.parse(url);
+  if (uri.hasPort) return url;
+  final port = const {'https', 'wss'}.contains(uri.scheme) ? 443 : 80;
+  // Built by hand rather than with `uri.replace(port: port)`. Dart NORMALISES
+  // a default port out of a URI's string form, so replace(port: 443) on an
+  // https URI round-trips back to the original with no port at all — the
+  // first version of this fix compiled, read correctly, and did nothing. The
+  // test below is what caught it.
+  final path = uri.path.isEmpty ? '' : uri.path;
+  return '${uri.scheme}://${uri.host}:$port$path';
 }
 
 Map<String, dynamic> socketOptionsFor(String url, String? cookie) {

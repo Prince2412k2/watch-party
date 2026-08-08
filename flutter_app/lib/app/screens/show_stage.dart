@@ -64,8 +64,10 @@ class _ShowStageState extends ConsumerState<ShowStage> {
   // Debounced the same way `poster_shelf.dart`'s `_onPointerSignal` is: a
   // 120ms floor between steps so one trackpad flick moves one season/episode,
   // not four (FR-016/SC-006).
-  void _handleSeasonWheel(PointerSignalEvent signal, List<int> seasons) {
-    final delta = _wheelStep(signal);
+  /// Takes an already-read step rather than the event, so the wheel and the
+  /// trackpad share one debounce and one set of bounds checks. They differ only in
+  /// how the delta is extracted.
+  void _handleSeasonWheel(int? delta, List<int> seasons) {
     if (delta == null || seasons.length < 2) return;
     final now = DateTime.now();
     if (_lastSeasonWheel != null &&
@@ -80,18 +82,20 @@ class _ShowStageState extends ConsumerState<ShowStage> {
     _pickSeason(seasons[next]);
   }
 
-  void _handleEpisodeWheel(PointerSignalEvent signal, List<ShowEpisode> episodes) {
-    final delta = _wheelStep(signal);
+  void _handleEpisodeWheel(int? delta, List<ShowEpisode> episodes) {
     if (delta == null || episodes.isEmpty) return;
     final now = DateTime.now();
     if (_lastEpisodeWheel != null &&
-        now.difference(_lastEpisodeWheel!) < const Duration(milliseconds: 120)) {
+        now.difference(_lastEpisodeWheel!) <
+            const Duration(milliseconds: 120)) {
       return;
     }
     _lastEpisodeWheel = now;
     final currentIdx = _episode == null
         ? -1
-        : episodes.indexWhere((e) => e.episodeNumber == _episode!.episodeNumber);
+        : episodes.indexWhere(
+            (e) => e.episodeNumber == _episode!.episodeNumber,
+          );
     final next = currentIdx < 0
         ? (delta > 0 ? 0 : episodes.length - 1)
         : (currentIdx + delta).clamp(0, episodes.length - 1);
@@ -106,8 +110,9 @@ class _ShowStageState extends ConsumerState<ShowStage> {
       _allOutcomes = null;
     });
     try {
-      final outcomes =
-          await ref.read(showDownloadProvider.notifier).autoAllSeasons(info);
+      final outcomes = await ref
+          .read(showDownloadProvider.notifier)
+          .autoAllSeasons(info);
       if (!mounted) return;
       setState(() {
         _allBusy = false;
@@ -117,7 +122,8 @@ class _ShowStageState extends ConsumerState<ShowStage> {
       if (!mounted) return;
       setState(() {
         _allBusy = false;
-        _allError = "Couldn't download all seasons right now. Please try again.";
+        _allError =
+            "Couldn't download all seasons right now. Please try again.";
       });
     }
   }
@@ -187,7 +193,9 @@ class _ShowStageState extends ConsumerState<ShowStage> {
   void _refreshAfterGrab(int season) {
     ref.invalidate(showInfoProvider(widget.show));
     ref.invalidate(
-      showEpisodesProvider(ShowEpisodesRef(show: widget.show, seasonNumber: season)),
+      showEpisodesProvider(
+        ShowEpisodesRef(show: widget.show, seasonNumber: season),
+      ),
     );
   }
 
@@ -211,7 +219,9 @@ class _ShowStageState extends ConsumerState<ShowStage> {
         ),
         Positioned(
           top: 25,
-          left: desktopLeadingControlInset > 0 ? desktopLeadingControlInset : 40,
+          left: desktopLeadingControlInset > 0
+              ? desktopLeadingControlInset
+              : 40,
           child: _GlassBackButton(onTap: widget.onBack),
         ),
       ],
@@ -223,9 +233,16 @@ class _ShowStageState extends ConsumerState<ShowStage> {
 /// whichever axis moved further — mirrors `poster_shelf.dart`'s `_onPointerSignal`.
 int? _wheelStep(PointerSignalEvent signal) {
   if (signal is! PointerScrollEvent) return null;
-  final delta = signal.scrollDelta.dx.abs() > signal.scrollDelta.dy.abs()
-      ? signal.scrollDelta.dx
-      : signal.scrollDelta.dy;
+  return _stepFromDelta(signal.scrollDelta);
+}
+
+/// The same reading of a trackpad two-finger swipe, which arrives as pan-zoom
+/// rather than a scroll signal and so never reached [_wheelStep] at all.
+int? _panStep(PointerPanZoomUpdateEvent event) =>
+    _stepFromDelta(-event.localPanDelta);
+
+int? _stepFromDelta(Offset raw) {
+  final delta = raw.dx.abs() > raw.dy.abs() ? raw.dx : raw.dy;
   if (delta.abs() < 2) return null;
   return delta > 0 ? 1 : -1;
 }
@@ -239,20 +256,30 @@ class _StageBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final seasons = info.seasonNumbers;
-    final activeSeason = state._season ?? (seasons.isNotEmpty ? seasons.first : null);
+    final activeSeason =
+        state._season ?? (seasons.isNotEmpty ? seasons.first : null);
     final episodesAsync = activeSeason == null
         ? const AsyncValue<List<ShowEpisode>>.data(<ShowEpisode>[])
         : ref.watch(
             showEpisodesProvider(
-              ShowEpisodesRef(show: state.widget.show, seasonNumber: activeSeason),
+              ShowEpisodesRef(
+                show: state.widget.show,
+                seasonNumber: activeSeason,
+              ),
             ),
           );
     final episodes = episodesAsync.valueOrNull ?? const <ShowEpisode>[];
-    final seasonArt = activeSeason == null ? null : _seasonArtUrl(info, activeSeason);
+    final seasonArt = activeSeason == null
+        ? null
+        : _seasonArtUrl(info, activeSeason);
     final heroArt = seasonArt ?? info.backdropUrl ?? info.posterUrl;
 
     final backdrop = _Backdrop(url: heroArt);
-    final copy = _CopyColumn(state: state, info: info, activeSeason: activeSeason);
+    final copy = _CopyColumn(
+      state: state,
+      info: info,
+      activeSeason: activeSeason,
+    );
     final seasonSelector = _SeasonSelector(
       state: state,
       info: info,
@@ -282,17 +309,26 @@ class _StageBody extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Listener(
-                      onPointerSignal: (s) => state._handleSeasonWheel(s, seasons),
+                      onPointerSignal: (s) =>
+                          state._handleSeasonWheel(_wheelStep(s), seasons),
+                      onPointerPanZoomUpdate: (e) =>
+                          state._handleSeasonWheel(_panStep(e), seasons),
                       child: copy,
                     ),
                     const SizedBox(height: 28),
                     Listener(
-                      onPointerSignal: (s) => state._handleSeasonWheel(s, seasons),
+                      onPointerSignal: (s) =>
+                          state._handleSeasonWheel(_wheelStep(s), seasons),
+                      onPointerPanZoomUpdate: (e) =>
+                          state._handleSeasonWheel(_panStep(e), seasons),
                       child: seasonSelector,
                     ),
                     const SizedBox(height: 20),
                     Listener(
-                      onPointerSignal: (s) => state._handleEpisodeWheel(s, episodes),
+                      onPointerSignal: (s) =>
+                          state._handleEpisodeWheel(_wheelStep(s), episodes),
+                      onPointerPanZoomUpdate: (e) =>
+                          state._handleEpisodeWheel(_panStep(e), episodes),
                       child: episodeSection,
                     ),
                   ],
@@ -306,7 +342,10 @@ class _StageBody extends ConsumerWidget {
           fit: StackFit.expand,
           children: [
             Listener(
-              onPointerSignal: (s) => state._handleSeasonWheel(s, seasons),
+              onPointerSignal: (s) =>
+                  state._handleSeasonWheel(_wheelStep(s), seasons),
+              onPointerPanZoomUpdate: (e) =>
+                  state._handleSeasonWheel(_panStep(e), seasons),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -317,7 +356,10 @@ class _StageBody extends ConsumerWidget {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(flex: 92, child: SingleChildScrollView(child: copy)),
+                        Expanded(
+                          flex: 92,
+                          child: SingleChildScrollView(child: copy),
+                        ),
                         const SizedBox(width: 80),
                         Expanded(flex: 108, child: seasonSelector),
                       ],
@@ -331,7 +373,10 @@ class _StageBody extends ConsumerWidget {
               right: 64,
               bottom: 74,
               child: Listener(
-                onPointerSignal: (s) => state._handleEpisodeWheel(s, episodes),
+                onPointerSignal: (s) =>
+                    state._handleEpisodeWheel(_wheelStep(s), episodes),
+                onPointerPanZoomUpdate: (e) =>
+                    state._handleEpisodeWheel(_panStep(e), episodes),
                 child: episodeSection,
               ),
             ),
@@ -343,7 +388,11 @@ class _StageBody extends ConsumerWidget {
 }
 
 class _CopyColumn extends StatelessWidget {
-  const _CopyColumn({required this.state, required this.info, required this.activeSeason});
+  const _CopyColumn({
+    required this.state,
+    required this.info,
+    required this.activeSeason,
+  });
 
   final _ShowStageState state;
   final ShowStageInfo info;
@@ -356,7 +405,9 @@ class _CopyColumn extends StatelessWidget {
     final genres = info.genres.take(3).toList();
     final runtimeLabel = fmtRuntimeFromMinutes(info.runtime);
 
-    final epRuntimeLabel = ep == null ? null : fmtRuntimeFromMinutes(ep.runtime);
+    final epRuntimeLabel = ep == null
+        ? null
+        : fmtRuntimeFromMinutes(ep.runtime);
     final meta = ep != null
         ? <String>[
             if (ep.rating != null) '★ ${ep.rating!.toStringAsFixed(1)}',
@@ -448,7 +499,9 @@ class _CopyColumn extends StatelessWidget {
             const SizedBox(height: 23),
             _HeroActions(state: state, info: info, activeSeason: activeSeason!),
           ],
-          if (state._allBusy || state._allOutcomes != null || state._allError != null) ...[
+          if (state._allBusy ||
+              state._allOutcomes != null ||
+              state._allError != null) ...[
             const SizedBox(height: 18),
             _AllSeasonsPanel(
               busy: state._allBusy,
@@ -465,7 +518,11 @@ class _CopyColumn extends StatelessWidget {
 }
 
 class _HeroActions extends StatelessWidget {
-  const _HeroActions({required this.state, required this.info, required this.activeSeason});
+  const _HeroActions({
+    required this.state,
+    required this.info,
+    required this.activeSeason,
+  });
 
   final _ShowStageState state;
   final ShowStageInfo info;
@@ -499,13 +556,17 @@ class _HeroActions extends StatelessWidget {
             variant: showWatch
                 ? AppButtonVariant.secondary
                 : AppButtonVariant.primary,
-            onPressed: () => state._openSeasonPicker(context, info, activeSeason),
+            onPressed: () =>
+                state._openSeasonPicker(context, info, activeSeason),
           )
         else
           // No Sonarr identity — say why instead of offering a dead button.
           Text(
             'Downloading needs this series matched in Sonarr.',
-            style: AppTheme.mono.copyWith(color: context.wp.faint, fontSize: 11),
+            style: AppTheme.mono.copyWith(
+              color: context.wp.faint,
+              fontSize: 11,
+            ),
           ),
       ],
     );
@@ -533,7 +594,10 @@ class _WholeSeriesButton extends StatelessWidget {
             child: busy
                 ? Padding(
                     padding: const EdgeInsets.all(13),
-                    child: CircularProgressIndicator(strokeWidth: 2, color: wp.text),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: wp.text,
+                    ),
                   )
                 : Icon(Icons.playlist_add_check, size: 20, color: wp.text),
           ),
@@ -615,9 +679,19 @@ class _AllSeasonsPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(error!, style: const TextStyle(color: AppColors.red, fontSize: 12.5)),
+                  Text(
+                    error!,
+                    style: const TextStyle(
+                      color: AppColors.red,
+                      fontSize: 12.5,
+                    ),
+                  ),
                   const SizedBox(height: 8),
-                  AppButton(label: 'Try again', icon: Icons.refresh, onPressed: onRetry),
+                  AppButton(
+                    label: 'Try again',
+                    icon: Icons.refresh,
+                    onPressed: onRetry,
+                  ),
                 ],
               )
             else
@@ -631,7 +705,9 @@ class _AllSeasonsPanel extends StatelessWidget {
                             ? Icons.remove_circle_outline
                             : Icons.check_circle,
                         size: 14,
-                        color: o.route == SeasonRoute.none ? wp.faint : AppColors.green,
+                        color: o.route == SeasonRoute.none
+                            ? wp.faint
+                            : AppColors.green,
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -681,7 +757,11 @@ class _MetaLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    final style = AppTheme.mono.copyWith(color: wp.dim, fontSize: 10, letterSpacing: 0.6);
+    final style = AppTheme.mono.copyWith(
+      color: wp.dim,
+      fontSize: 10,
+      letterSpacing: 0.6,
+    );
     final children = <Widget>[];
     for (var i = 0; i < parts.length; i++) {
       if (i > 0) {
@@ -698,7 +778,10 @@ class _MetaLine extends StatelessWidget {
       }
       children.add(Text(parts[i].toUpperCase(), style: style));
     }
-    return Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: children);
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: children,
+    );
   }
 }
 
@@ -872,7 +955,11 @@ class _EpisodeSection extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 10),
           child: Text(
             activeSeason == 0 ? 'Specials' : 'Season $activeSeason',
-            style: TextStyle(color: wp.text, fontSize: 14, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: wp.text,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
         episodesAsync.when(
@@ -896,7 +983,10 @@ class _EpisodeSection extends StatelessWidget {
             message: '$e',
             onRetry: () => state.ref.invalidate(
               showEpisodesProvider(
-                ShowEpisodesRef(show: state.widget.show, seasonNumber: activeSeason!),
+                ShowEpisodesRef(
+                  show: state.widget.show,
+                  seasonNumber: activeSeason!,
+                ),
               ),
             ),
           ),
@@ -916,7 +1006,8 @@ class _EpisodeSection extends StatelessWidget {
                       final ep = episodes[i];
                       return _EpisodeCard(
                         episode: ep,
-                        selected: state._episode?.episodeNumber == ep.episodeNumber &&
+                        selected:
+                            state._episode?.episodeNumber == ep.episodeNumber &&
                             state._episode?.seasonNumber == ep.seasonNumber,
                         onTap: () => state._pickEpisode(ep),
                         onDownload: _ShowStageState._downloadable(info)
@@ -950,6 +1041,7 @@ class _EpisodeCard extends StatelessWidget {
   final ShowEpisode episode;
   final bool selected;
   final VoidCallback onTap;
+
   /// Null when there is no download path for this series at all.
   final VoidCallback? onDownload;
   final void Function(Offset globalPosition) onSecondaryTap;
@@ -987,21 +1079,28 @@ class _EpisodeCard extends StatelessWidget {
                             ? AuthedNetworkImage(
                                 episode.still!,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => ColoredBox(color: wp.surface2),
+                                errorBuilder: (_, _, _) =>
+                                    ColoredBox(color: wp.surface2),
                               )
                             : ColoredBox(color: wp.surface2),
                         Positioned(
                           left: 11,
                           bottom: 9,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.68),
                               borderRadius: BorderRadius.circular(5),
                             ),
                             child: Text(
                               'E${episode.episodeNumber}',
-                              style: AppTheme.mono.copyWith(color: Colors.white, fontSize: 11),
+                              style: AppTheme.mono.copyWith(
+                                color: Colors.white,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
                         ),
@@ -1017,7 +1116,11 @@ class _EpisodeCard extends StatelessWidget {
                                 onTap: onDownload,
                                 child: const SizedBox.square(
                                   dimension: 30,
-                                  child: Icon(Icons.download, size: 16, color: Colors.white),
+                                  child: Icon(
+                                    Icons.download,
+                                    size: 16,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               ),
                             ),
@@ -1033,7 +1136,10 @@ class _EpisodeCard extends StatelessWidget {
                 children: [
                   Text(
                     '${episode.episodeNumber}',
-                    style: AppTheme.mono.copyWith(color: wp.faint, fontSize: 11.5),
+                    style: AppTheme.mono.copyWith(
+                      color: wp.faint,
+                      fontSize: 11.5,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -1043,7 +1149,11 @@ class _EpisodeCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       // FR-015/SC-007: noticeably larger than the library
                       // stage's previous 11px episode-name text.
-                      style: TextStyle(color: wp.text, fontSize: 14, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        color: wp.text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
@@ -1227,8 +1337,18 @@ String _formatDate(String iso) {
   final d = DateTime.tryParse(iso);
   if (d == null) return iso;
   const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   return '${months[d.month - 1]} ${d.day}, ${d.year}';
 }
