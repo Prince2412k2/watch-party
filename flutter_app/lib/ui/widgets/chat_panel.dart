@@ -10,7 +10,11 @@ import '../tokens.dart';
 /// with a rate-limit hint, matching the web app's chat behavior
 /// (`chat:message`, 5 messages / 3s server-side).
 class ChatPanel extends ConsumerStatefulWidget {
-  const ChatPanel({super.key});
+  const ChatPanel({super.key, this.composerFocus});
+
+  /// Owned by the caller, so whoever opens the panel can put the cursor in the
+  /// composer without reaching into this widget's state.
+  final FocusNode? composerFocus;
 
   @override
   ConsumerState<ChatPanel> createState() => _ChatPanelState();
@@ -46,6 +50,9 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (error == null) {
       _controller.clear();
       _scrollToEnd();
+      // Submitting a single-line field drops focus. Nobody sends one message,
+      // so put the cursor straight back rather than making them click again.
+      widget.composerFocus?.requestFocus();
     }
   }
 
@@ -125,6 +132,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
         ),
         _ChatInput(
           controller: _controller,
+          focusNode: widget.composerFocus,
           hint: _hint,
           busy: _sending,
           onSend: _send,
@@ -207,12 +215,14 @@ class _ChatBubble extends StatelessWidget {
 class _ChatInput extends StatelessWidget {
   const _ChatInput({
     required this.controller,
+    required this.focusNode,
     required this.hint,
     required this.busy,
     required this.onSend,
   });
 
   final TextEditingController controller;
+  final FocusNode? focusNode;
   final String? hint;
   final bool busy;
   final VoidCallback onSend;
@@ -238,6 +248,7 @@ class _ChatInput extends StatelessWidget {
                 child: TextField(
                   key: const Key('chatInput'),
                   controller: controller,
+                  focusNode: focusNode,
                   enabled: !busy,
                   onSubmitted: (_) => onSend(),
                   style: const TextStyle(color: AppColors.text, fontSize: 13.5),

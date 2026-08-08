@@ -139,7 +139,7 @@
      cores in app/shared/design/interaction.json are driven by these same
      numbers. */
   --an-timing-chrome-auto-hide-ms: 3000ms;
-  --an-timing-toast-lifetime-ms: 4000ms;
+  --an-timing-toast-lifetime-ms: 3000ms;
   --an-timing-toast-max-stack: 3;
 
   --an-space-xs-px: 4px;

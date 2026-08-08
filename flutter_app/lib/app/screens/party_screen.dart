@@ -1,4 +1,3 @@
-import 'dart:ui' show ImageFilter;
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:math' as math;
@@ -17,6 +16,7 @@ import '../../analog/player_core.dart';
 import '../../models/models.dart';
 import '../../player/player_view.dart';
 import '../../state/state.dart';
+import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/floating_camera_tile.dart';
 import '../../ui/widgets/party_qr.dart';
@@ -290,17 +290,21 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   /// Whether the camera tiles are docked into the left column rather than
   /// floating over the picture.
   ///
-  /// Opening chat forces it. Floating tiles are positioned against the stage's
-  /// right edge, and the drawer takes that edge — so a tile that was fine a
-  /// moment ago ends up under the drawer, or straddling its border. Docking
-  /// them moves the whole set somewhere the drawer will never be, which is
-  /// what the design sketch shows: chat open, cameras in a column, picture
-  /// between the two.
+  /// Opening chat SUPPRESSES the dock. Chat used to force it, on the reasoning
+  /// that floating tiles anchored to the stage's right edge would end up under
+  /// the drawer — but forcing a left column at the same moment a right drawer
+  /// slides in rearranges the entire screen around a message, which is exactly
+  /// the distraction the drawer is meant to avoid. The tiles keep clear of the
+  /// drawer by insetting their layer instead (see [_kChatWidth]), which moves
+  /// nothing but them.
   ///
-  /// The explicit toggle still wins when chat is closed, so a user who docked
-  /// them deliberately keeps that; what this adds is that closing chat returns
-  /// them to floating ONLY if they were floating before.
-  bool _camerasDocked(bool watching) => watching && (_dock || _chatOpen);
+  /// The explicit toggle is remembered across a chat session: dock, open chat,
+  /// close it, and the cameras are docked again.
+  bool _camerasDocked(bool watching) => watching && _dock && !_chatOpen;
+
+  /// The chat drawer's width. It overlays the stage rather than narrowing it,
+  /// so this is only ever an inset for things that must stay clear of it.
+  static const double _kChatWidth = 360;
 
   /// Single-open guard for the right-click / long-press Watch Party menu.
   bool _menuOpen = false;
@@ -541,19 +545,25 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             children: [
               // 0 — the stage. Shrinks (animated left margin) when cameras dock,
               // WITHOUT re-keying/remounting PlayerView or its media_kit
-              // VideoView — only the surrounding box narrows.
+              // VideoView — only the surrounding box narrows. Chat does NOT
+              // appear here: it is an overlay, so the picture keeps its size
+              // and its aspect when the drawer opens.
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeOutCubic,
                 left: _camerasDocked(watching) ? 210.0 : 0.0,
                 top: 0,
-                right: _chatOpen ? 360.0 : 0.0,
+                right: 0,
                 bottom: 0,
                 child: stage,
               ),
 
               // 1 — cameras: floating PiP layer, or the docked left column.
               // Exactly one child so the stage above keeps a stable Stack slot.
+              //
+              // The floating layer is the one thing the drawer does move: its
+              // right edge insets by the drawer's width so a tile can neither
+              // hide under chat nor straddle its border.
               if (_camerasDocked(watching))
                 const Positioned(
                   left: 0,
@@ -563,7 +573,15 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                   child: _CameraDock(),
                 )
               else
-                const Positioned.fill(child: FloatingCameraLayer()),
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  right: _chatOpen ? _kChatWidth : 0.0,
+                  child: const FloatingCameraLayer(),
+                ),
 
               // 2 — auto-hiding chrome: top-left Back + top-right A/V cluster.
               Positioned(
@@ -621,10 +639,12 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                 child: _LiveKitErrorBanner(),
               ),
 
-              // 5 — opaque chat rail. The stage narrows while this is open, so
-              // chat never covers or blurs the movie.
+              // 5 — the chat drawer: a glass overlay ON the picture. It takes
+              // no layout from anything else, so opening it never resizes the
+              // video.
               _ChatSlideOver(
                 open: _chatOpen,
+                width: _kChatWidth,
                 onClose: () => _setChatOpen(false),
               ),
             ],
@@ -1922,44 +1942,108 @@ class _JoinRequests extends ConsumerWidget {
 
 /// Right-side chat rail. It is deliberately opaque and blur-free; the movie
 /// stage narrows by the same width while open instead of sitting behind it.
-class _ChatSlideOver extends StatelessWidget {
-  const _ChatSlideOver({required this.open, required this.onClose});
+/// The room chat, as a glass panel over the picture.
+///
+/// It is an overlay in the strict sense: nothing else in the party Stack reads
+/// its width, so opening it changes no other widget's constraints and the
+/// video neither resizes nor reflows. What used to happen — the stage
+/// narrowing by 360px — reframed the entire movie every time someone wanted to
+/// type.
+///
+/// Opening it moves keyboard focus into the composer, and closing it hands
+/// focus back so the player's keymap (space, arrows, F) works again without a
+/// click. A drawer you have to click into before typing is a drawer that
+/// costs two actions instead of one.
+class _ChatSlideOver extends StatefulWidget {
+  const _ChatSlideOver({
+    required this.open,
+    required this.width,
+    required this.onClose,
+  });
+
   final bool open;
+  final double width;
   final VoidCallback onClose;
 
   @override
+  State<_ChatSlideOver> createState() => _ChatSlideOverState();
+}
+
+class _ChatSlideOverState extends State<_ChatSlideOver> {
+  final FocusNode _composer = FocusNode(debugLabel: 'chatComposer');
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.open) _grabFocus();
+  }
+
+  @override
+  void didUpdateWidget(_ChatSlideOver old) {
+    super.didUpdateWidget(old);
+    if (widget.open == old.open) return;
+    if (widget.open) {
+      _grabFocus();
+    } else {
+      // Give focus back to whatever the player put it on. unfocus() alone
+      // would leave the tree with no primary focus and swallow the next key.
+      _composer.unfocus();
+    }
+  }
+
+  /// Focus after the frame that opens the drawer. Requesting it during build
+  /// targets a node that is still parked off-screen, and the request is
+  /// dropped.
+  void _grabFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.open) _composer.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _composer.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final open = widget.open;
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
       top: 0,
       bottom: 0,
-      right: open ? 0 : -372,
-      width: 360,
+      right: open ? 0 : -(widget.width + 12),
+      width: widget.width,
       child: SafeArea(
         left: false,
-        child: _Translucent(
-          decoration: BoxDecoration(
-            // Translucent over the video, not an opaque wall. The stage still
-            // narrows by this drawer's width, so the picture is never actually
-            // COVERED — the transparency is so the room reads as one space
-            // rather than two panes bolted together.
-            color: MediaQuery.of(context).highContrast
-                // Reduced transparency: an opaque surface of equivalent
-                // contrast, per the player reference. Blur is a decoration;
-                // legibility is not, and a user who asked the platform for
-                // less transparency has said which one they want.
-                ? const Color(0xFF111214)
-                : const Color(0xCC111214),
-            border: const Border(left: BorderSide(color: AppColors.line2)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x66000000),
-                blurRadius: 24,
-                offset: Offset(-10, 0),
-              ),
-            ],
+        // Escape closes. With the cursor parked in the composer the player's
+        // own keymap no longer sees anything typed here, so without this the
+        // drawer would be a place you can get into from the keyboard and only
+        // out of with the mouse.
+        child: CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
+          },
+          child: LiquidGlass(
+          opaque: MediaQuery.of(context).highContrast,
+          // Square against the right edge, rounded on the side that faces the
+          // picture — the panel reads as something laid ON the stage rather
+          // than a slot cut out of it.
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(AnalogRadius.cardPx + 6),
+            bottomLeft: Radius.circular(AnalogRadius.cardPx + 6),
           ),
+          blur: 24,
+          rimPx: 26,
+          shadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 34,
+              offset: Offset(-10, 0),
+            ),
+          ],
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 16, 14, 14),
             child: Column(
@@ -1996,14 +2080,15 @@ class _ChatSlideOver extends StatelessWidget {
                     AnalogIconButton(
                       icon: Icons.close,
                       tooltip: 'Close chat',
-                      onPressed: onClose,
+                      onPressed: widget.onClose,
                     ),
                   ],
                 ),
                 const SizedBox(height: 18),
-                const Expanded(child: ChatPanel()),
+                Expanded(child: ChatPanel(composerFocus: _composer)),
               ],
             ),
+          ),
           ),
         ),
       ),
@@ -2381,36 +2466,6 @@ class _SyncModeToggle extends StatelessWidget {
 /// Shows a transient notice on the app-wide [AnalogToastHost].
 void _showPartyToast(BuildContext context, String message) {
   showAnalogToast(context, message, tone: AnalogToastTone.success);
-}
-
-/// A translucent panel that blurs what is behind it.
-///
-/// Not [AnalogPanel] with `translucent: true`: that one owns its radius, its
-/// padding and its lift, and this drawer is a full-height edge surface with a
-/// single hairline on one side. Sharing the blur without inheriting a card's
-/// geometry is the whole reason this is separate.
-///
-/// The blur is skipped entirely under reduced transparency — the caller has
-/// already substituted an opaque fill, and a BackdropFilter behind an opaque
-/// colour is pure cost for no pixels.
-class _Translucent extends StatelessWidget {
-  const _Translucent({required this.decoration, required this.child});
-
-  final BoxDecoration decoration;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final opaque = MediaQuery.of(context).highContrast;
-    final surface = DecoratedBox(decoration: decoration, child: child);
-    if (opaque) return surface;
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: surface,
-      ),
-    );
-  }
 }
 
 /// Mic, camera and hide-self, as a vertical rail on the left edge of the
