@@ -85,7 +85,7 @@ const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
 const DEFAULT_SUBTITLE_PREFERENCES: SubtitlePreferences = {
   delayMs: 0,
   fontScalePercent: 100,
-  verticalPosition: 'bottom',
+  verticalOffsetPercent: 0,
   fontFamily: 'sans',
   textColor: '#FFFFFF',
   backgroundOpacityPercent: 65,
@@ -109,16 +109,19 @@ function applyCuePreferences(track: TextTrack, preferences: SubtitlePreferences)
       cue.startTime = Math.max(0, original.startTime + offset)
       cue.endTime = Math.max(cue.startTime + 0.05, original.endTime + offset)
       if (cue instanceof VTTCue) {
-        if (preferences.verticalPosition === 'top') {
-          cue.snapToLines = true
-          cue.line = 2
-        } else if (preferences.verticalPosition === 'middle') {
-          cue.snapToLines = false
-          cue.line = 50
-        } else {
-          cue.snapToLines = true
-          cue.line = -3
-        }
+        // A percentage down from the top, which is what VTTCue.line means when
+        // snapToLines is false. The preference counts UP from the bottom, so
+        // the two are complements. This replaced three hardcoded line
+        // positions; the setting could only say top, middle or bottom, and
+        // subtitles have to clear things that are not at any of those heights.
+        //
+        // Clamped to 92 rather than 100: a cue placed flush with the bottom
+        // edge is cut off by the frame, and the old 'bottom' case leaned on
+        // snapToLines with line = -3 to avoid exactly that.
+        const offset = Math.min(100, Math.max(0, preferences.verticalOffsetPercent))
+        cue.snapToLines = false
+        cue.line = 92 - (offset * 0.92)
+        cue.align = 'center'
       }
     }
   }
@@ -2110,10 +2113,10 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
                 <select disabled={!canManageMedia} aria-label="Subtitle text color" value={subtitlePreferences.textColor.toLowerCase()} onChange={e => onUpdateSubtitlePreferences?.({ textColor: e.target.value.toUpperCase() })} style={selectStyle}>
                   <option value="#ffffff">White</option><option value="#ffe66d">Yellow</option><option value="#7fdbff">Cyan</option><option value="#a8ffb0">Green</option>
                 </select>)}
-              {settingRow('Position', '',
-                <select disabled={!canManageMedia} aria-label="Subtitle position" value={subtitlePreferences.verticalPosition} onChange={e => onUpdateSubtitlePreferences?.({ verticalPosition: e.target.value as SubtitlePreferences['verticalPosition'] })} style={selectStyle}>
-                  <option value="bottom">Bottom</option><option value="middle">Middle</option><option value="top">Top</option>
-                </select>)}
+              {settingRow('Height', subtitlePreferences.verticalOffsetPercent === 0 ? 'Bottom' : `${subtitlePreferences.verticalOffsetPercent}%`,
+                <input type="range" disabled={!canManageMedia} aria-label="Subtitle height above the bottom" min={0} max={100} step={5}
+                  value={subtitlePreferences.verticalOffsetPercent}
+                  onChange={e => onUpdateSubtitlePreferences?.({ verticalOffsetPercent: Number(e.target.value) })} style={{ width: '100%' }} />)}
               <div style={{ padding: S.footPad }}>
                 <button disabled={!canManageMedia} onClick={onResetSubtitlePreferences} style={{ width: '100%', padding: S.btnPad, borderRadius: S.btnRadius, border: '1px solid rgba(255,255,255,.1)', background: 'transparent', color: 'rgba(244,244,245,.62)', cursor: 'pointer', fontSize: S.btnFont }}>Reset subtitle settings</button>
               </div>

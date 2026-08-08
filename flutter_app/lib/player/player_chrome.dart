@@ -740,14 +740,20 @@ class _PlayerChromeState extends State<PlayerChrome>
     _wake();
   }
 
+  /// mpv's `sub-pos` and the shared preference run in OPPOSITE directions:
+  /// sub-pos 100 is the bottom of the frame, and the preference counts upward
+  /// from the bottom because that is how the setting reads to a person. One
+  /// conversion, in one place, rather than the arithmetic appearing at each
+  /// call site and eventually disagreeing with itself.
+  static int _offsetFromSubPos(int subPos) => 100 - subPos.clamp(0, 100);
+  static int _subPosFromOffset(int offset) => 100 - offset.clamp(0, 100);
+
   Future<void> _setSubtitlePosition(int v) async {
     final c = widget.controller;
     if (c is! MediaKitPlayerController) return;
     setState(() => _subPos = v);
     await c.setSubtitlePosition(v);
-    _emitSubtitlePreferences(
-      verticalPosition: v <= 25 ? 'top' : (v <= 75 ? 'middle' : 'bottom'),
-    );
+    _emitSubtitlePreferences(verticalOffsetPercent: _offsetFromSubPos(v));
     _wake();
   }
 
@@ -792,7 +798,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   void _emitSubtitlePreferences({
     int? delayMs,
     int? fontScalePercent,
-    String? verticalPosition,
+    int? verticalOffsetPercent,
     String? fontFamily,
     String? textColor,
     int? backgroundOpacityPercent,
@@ -802,9 +808,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     final local = SubtitlePreferences(
       delayMs: (_subDelay * 1000).round(),
       fontScalePercent: (_subScale * 100).round(),
-      verticalPosition: _subPos <= 25
-          ? 'top'
-          : (_subPos <= 75 ? 'middle' : 'bottom'),
+      verticalOffsetPercent: _offsetFromSubPos(_subPos),
       fontFamily: _subFont == 'monospace'
           ? 'mono'
           : (_subFont == 'serif' ? 'serif' : 'sans'),
@@ -815,7 +819,7 @@ class _PlayerChromeState extends State<PlayerChrome>
       local.copyWith(
         delayMs: delayMs,
         fontScalePercent: fontScalePercent,
-        verticalPosition: verticalPosition,
+        verticalOffsetPercent: verticalOffsetPercent,
         fontFamily: fontFamily,
         textColor: textColor,
         backgroundOpacityPercent: backgroundOpacityPercent,
@@ -826,11 +830,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   Future<void> _applyCanonicalSubtitlePreferences() async {
     final preferences = widget.subtitlePreferences;
     if (preferences == null) return;
-    final position = switch (preferences.verticalPosition) {
-      'top' => 10,
-      'middle' => 50,
-      _ => 100,
-    };
+    final position = _subPosFromOffset(preferences.verticalOffsetPercent);
     final font = switch (preferences.fontFamily) {
       'serif' => 'serif',
       'mono' => 'monospace',
@@ -2003,22 +2003,35 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
                         widget.onScale(v);
                       },
               ),
+              // Height above the bottom, continuously.
+              //
+              // This was three detents — Top, Middle, Bottom — snapping to
+              // 10/50/100, which is not a position control so much as a choice
+              // of three places to be. Subtitles need to clear a hardcoded
+              // burned-in caption, a chat drawer, a black bar; none of those is
+              // a third of the way up.
+              //
+              // The axis reads upward from the bottom because that is the
+              // default and the thing being adjusted is how far to LIFT them
+              // off it. 20 divisions gives 5% steps: fine enough to clear an
+              // obstacle, coarse enough to land on a round number and to be
+              // driven from a keyboard.
               _slider(
                 palette: wp,
-                label: 'Position',
-                value: _position.toDouble(),
-                min: 10,
+                label: 'Height',
+                value: (100 - _position).toDouble(),
+                min: 0,
                 max: 100,
-                divisions: 2,
-                display: _position <= 25
-                    ? 'Top'
-                    : (_position <= 75 ? 'Middle' : 'Bottom'),
+                divisions: 20,
+                display: _position >= 100
+                    ? 'Bottom'
+                    : (_position <= 0 ? 'Top' : '${100 - _position}%'),
                 onChanged: !widget.enabled
                     ? null
                     : (v) {
-                        final position = v < 33 ? 10 : (v < 78 ? 50 : 100);
+                        final position = 100 - v.round();
                         setState(() => _position = position);
-                        widget.onPosition(_position);
+                        widget.onPosition(position);
                       },
               ),
               _slider(

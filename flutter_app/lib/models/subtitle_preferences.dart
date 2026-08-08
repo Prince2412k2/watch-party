@@ -5,7 +5,7 @@ class SubtitlePreferences {
   const SubtitlePreferences({
     required this.delayMs,
     required this.fontScalePercent,
-    required this.verticalPosition,
+    required this.verticalOffsetPercent,
     required this.fontFamily,
     required this.textColor,
     required this.backgroundOpacityPercent,
@@ -14,35 +14,65 @@ class SubtitlePreferences {
   static const defaults = SubtitlePreferences(
     delayMs: 0,
     fontScalePercent: 100,
-    verticalPosition: 'bottom',
+    verticalOffsetPercent: 0,
     fontFamily: 'sans',
     textColor: '#FFFFFF',
     backgroundOpacityPercent: 65,
   );
 
+  /// Legacy three-value positions, and where each lands on the new scale.
+  ///
+  /// Sessions persisted before this field existed still carry
+  /// `verticalPosition`, and a stored party must not fail validation because
+  /// the schema moved under it.
+  static const legacyPositions = {'bottom': 0, 'middle': 50, 'top': 100};
+
   final int delayMs;
   final int fontScalePercent;
-  final String verticalPosition;
+
+  /// How far the subtitles sit ABOVE the bottom edge, 0–100.
+  ///
+  /// 0 is the bottom, where subtitles belong and where they stay unless
+  /// somebody moves them. 100 is the top.
+  ///
+  /// This replaced a three-value `verticalPosition` (top / middle / bottom).
+  /// The player already tracked a continuous position — mpv takes any value and
+  /// the Flutter overlay aligns on any value — but the shared preference could
+  /// only carry three, so in a party every adjustment was rounded to the
+  /// nearest third and echoed back, dragging the slider to 0, 50 or 100 under
+  /// the user's hand.
+  ///
+  /// Note the inversion against mpv's `sub-pos`, where 100 means the bottom.
+  /// This axis is expressed the way the setting reads to a person — "lift them
+  /// up off the bottom" — and converted at the player boundary.
+  final int verticalOffsetPercent;
   final String fontFamily;
   final String textColor;
   final int backgroundOpacityPercent;
 
   factory SubtitlePreferences.fromJson(Map<String, dynamic> json) {
+    // Either spelling of the position key is accepted; everything else is
+    // required exactly. A peer or a stored session written before the change
+    // sends verticalPosition, and refusing it would drop the whole preference
+    // set over one field.
     const keys = {
       'delayMs',
       'fontScalePercent',
-      'verticalPosition',
       'fontFamily',
       'textColor',
       'backgroundOpacityPercent',
     };
     final delay = json['delayMs'];
     final scale = json['fontScalePercent'];
-    final position = json['verticalPosition'];
     final family = json['fontFamily'];
     final color = json['textColor'];
     final background = json['backgroundOpacityPercent'];
-    if (json.keys.toSet().difference(keys).isNotEmpty ||
+    final offset = json['verticalOffsetPercent'] ??
+        legacyPositions[json['verticalPosition']];
+    final extra = json.keys.toSet()
+      ..removeAll(keys)
+      ..removeAll(const {'verticalOffsetPercent', 'verticalPosition'});
+    if (extra.isNotEmpty ||
         keys.difference(json.keys.toSet()).isNotEmpty ||
         delay is! int ||
         delay < -10000 ||
@@ -50,7 +80,9 @@ class SubtitlePreferences {
         scale is! int ||
         scale < 60 ||
         scale > 200 ||
-        !const {'top', 'middle', 'bottom'}.contains(position) ||
+        offset is! int ||
+        offset < 0 ||
+        offset > 100 ||
         !const {'sans', 'serif', 'mono'}.contains(family) ||
         color is! String ||
         !RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(color) ||
@@ -62,7 +94,7 @@ class SubtitlePreferences {
     return SubtitlePreferences(
       delayMs: delay,
       fontScalePercent: scale,
-      verticalPosition: position as String,
+      verticalOffsetPercent: offset,
       fontFamily: family as String,
       textColor: color.toUpperCase(),
       backgroundOpacityPercent: background,
@@ -72,7 +104,7 @@ class SubtitlePreferences {
   Map<String, dynamic> toJson() => {
     'delayMs': delayMs,
     'fontScalePercent': fontScalePercent,
-    'verticalPosition': verticalPosition,
+    'verticalOffsetPercent': verticalOffsetPercent,
     'fontFamily': fontFamily,
     'textColor': textColor,
     'backgroundOpacityPercent': backgroundOpacityPercent,
@@ -81,14 +113,14 @@ class SubtitlePreferences {
   SubtitlePreferences copyWith({
     int? delayMs,
     int? fontScalePercent,
-    String? verticalPosition,
+    int? verticalOffsetPercent,
     String? fontFamily,
     String? textColor,
     int? backgroundOpacityPercent,
   }) => SubtitlePreferences(
     delayMs: delayMs ?? this.delayMs,
     fontScalePercent: fontScalePercent ?? this.fontScalePercent,
-    verticalPosition: verticalPosition ?? this.verticalPosition,
+    verticalOffsetPercent: verticalOffsetPercent ?? this.verticalOffsetPercent,
     fontFamily: fontFamily ?? this.fontFamily,
     textColor: (textColor ?? this.textColor).toUpperCase(),
     backgroundOpacityPercent:
@@ -100,7 +132,7 @@ class SubtitlePreferences {
       other is SubtitlePreferences &&
       delayMs == other.delayMs &&
       fontScalePercent == other.fontScalePercent &&
-      verticalPosition == other.verticalPosition &&
+      verticalOffsetPercent == other.verticalOffsetPercent &&
       fontFamily == other.fontFamily &&
       textColor == other.textColor &&
       backgroundOpacityPercent == other.backgroundOpacityPercent;
@@ -109,7 +141,7 @@ class SubtitlePreferences {
   int get hashCode => Object.hash(
     delayMs,
     fontScalePercent,
-    verticalPosition,
+    verticalOffsetPercent,
     fontFamily,
     textColor,
     backgroundOpacityPercent,

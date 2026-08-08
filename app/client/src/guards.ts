@@ -70,7 +70,8 @@ function isPlayback(value: unknown): boolean {
 
 function isSubtitlePreferences(value: unknown): value is SubtitlePreferences {
   return isObject(value) && Number.isInteger(value.delayMs) && Number.isInteger(value.fontScalePercent) &&
-    ['top', 'middle', 'bottom'].includes(String(value.verticalPosition)) &&
+    Number.isInteger(value.verticalOffsetPercent) &&
+    (value.verticalOffsetPercent as number) >= 0 && (value.verticalOffsetPercent as number) <= 100 &&
     ['sans', 'serif', 'mono'].includes(String(value.fontFamily)) &&
     typeof value.textColor === 'string' && Number.isInteger(value.backgroundOpacityPercent)
 }

@@ -8,19 +8,32 @@ const sessions = new Map() // partyId → Session
 export const DEFAULT_SUBTITLE_PREFERENCES = Object.freeze({
   delayMs: 0,
   fontScalePercent: 100,
-  verticalPosition: 'bottom',
+  verticalOffsetPercent: 0,
   fontFamily: 'sans',
   textColor: '#FFFFFF',
   backgroundOpacityPercent: 65,
 })
 
+// Where the three legacy positions land on the continuous scale. A party
+// persisted before verticalOffsetPercent existed still carries the old key, and
+// must not fail validation because the schema moved under it.
+const LEGACY_POSITIONS = { bottom: 0, middle: 50, top: 100 }
+
 export function validateSubtitlePreferences(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { error: 'invalid subtitlePreferences' }
+  // Normalised before the shape check so an old client's payload is measured
+  // against the current schema, not rejected for spelling one key differently.
+  if (!('verticalOffsetPercent' in value) && typeof value?.verticalPosition === 'string') {
+    const mapped = LEGACY_POSITIONS[value.verticalPosition]
+    if (mapped === undefined) return { error: 'invalid verticalPosition' }
+    const { verticalPosition, ...rest } = value
+    value = { ...rest, verticalOffsetPercent: mapped }
+  }
   const keys = Object.keys(DEFAULT_SUBTITLE_PREFERENCES)
   if (Object.keys(value).length !== keys.length || keys.some(key => !(key in value))) return { error: 'invalid subtitlePreferences' }
   if (!Number.isInteger(value.delayMs) || value.delayMs < -10_000 || value.delayMs > 10_000) return { error: 'invalid delayMs' }
   if (!Number.isInteger(value.fontScalePercent) || value.fontScalePercent < 60 || value.fontScalePercent > 200) return { error: 'invalid fontScalePercent' }
-  if (!['top', 'middle', 'bottom'].includes(value.verticalPosition)) return { error: 'invalid verticalPosition' }
+  if (!Number.isInteger(value.verticalOffsetPercent) || value.verticalOffsetPercent < 0 || value.verticalOffsetPercent > 100) return { error: 'invalid verticalOffsetPercent' }
   if (!['sans', 'serif', 'mono'].includes(value.fontFamily)) return { error: 'invalid fontFamily' }
   if (typeof value.textColor !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(value.textColor)) return { error: 'invalid textColor' }
   if (!Number.isInteger(value.backgroundOpacityPercent) || value.backgroundOpacityPercent < 0 || value.backgroundOpacityPercent > 100) return { error: 'invalid backgroundOpacityPercent' }
