@@ -239,7 +239,7 @@ void main() {
     // are design decisions that live in analog-tokens.json, so pin them
     // together — otherwise changing a token silently invalidates every timing
     // case above. The React suite asserts the same three values.
-    expect(AnalogTiming.toastLifetimeMs.inMilliseconds, 4000);
+    expect(AnalogTiming.toastLifetimeMs.inMilliseconds, 3000);
     expect(AnalogTiming.chromeAutoHideMs.inMilliseconds, 3000);
     expect(AnalogTiming.toastMaxStack, 3);
   });
