@@ -133,21 +133,21 @@ class _DetailStageState extends ConsumerState<DetailStage>
   // wheel event landing on the backdrop meaning nothing is a dead zone rather
   // than a feature — and that is just as true here.
   //
-  // The one exception is the seasons column, which needs the wheel for itself.
-  // So there are two nested regions with two separate accumulators: the outer
-  // one covers the stage and steps episodes, the inner one covers the seasons
-  // and steps seasons.
+  // There is exactly ONE wheel region, covering the stage, and it steps
+  // episodes. The seasons column deliberately does not take the wheel.
   //
-  // Nested listeners are exactly the shape that shipped a double-step, and the
-  // fix is not to un-nest them — it is [PointerSignalResolver], which awards
-  // one event to exactly one listener, the innermost that registered. Both
-  // regions go through it. Calling `onPointerSignal` directly in two nested
-  // listeners is what made every notch move two items, and hand-rolling the
-  // accumulator on top of that is what made a flick move four. Neither is done
-  // here: the arithmetic is [steppedScroll], shared with the web and pinned by
-  // the parity suite.
+  // It used to, as a nested inner region, and nesting wheel regions is the
+  // shape that shipped a double-step — every notch moving two items, a flick
+  // moving four. That was arbitrated with [PointerSignalResolver], which does
+  // work, but the ambiguity it arbitrated was never wanted: a scroll aimed at
+  // the episode rail would step a SEASON the moment the pointer drifted over
+  // the column. Seasons change by click and by up/down, both unambiguous, so
+  // the region is gone rather than refereed.
+  //
+  // The arithmetic is [steppedScroll], shared with the web and pinned by the
+  // parity suite — never a hand-rolled accumulator, which is what turned a
+  // flick into four steps the first time.
 
-  final SteppedScrollState _seasonScroll = SteppedScrollState();
   final SteppedScrollState _episodeScroll = SteppedScrollState();
 
   /// Arrows, from anywhere on the stage — the same map the Movies stage uses.
@@ -215,13 +215,42 @@ class _DetailStageState extends ConsumerState<DetailStage>
   ) {
     if (event is! PointerScrollEvent) return;
     GestureBinding.instance.pointerSignalResolver.register(event, (resolved) {
-      final step = steppedScroll(
-        state,
+      _stepFrom(
         _wheelDelta(resolved as PointerScrollEvent),
-        resolved.timeStamp.inMicroseconds / 1000,
+        resolved.timeStamp,
+        state,
+        onStep,
       );
-      if (step != 0) onStep(step);
     });
+  }
+
+  /// The trackpad path. A two-finger swipe arrives as pan-zoom rather than a
+  /// scroll signal, so it never reached [_steppedSignal] and the rail simply
+  /// did not answer it. Not routed through the resolver: that arbitrates
+  /// pointer SIGNALS, and a pan-zoom is not one — there is also only a single
+  /// wheel region left here, so there is nothing to arbitrate against.
+  void _steppedPanZoom(
+    PointerPanZoomUpdateEvent event,
+    SteppedScrollState state,
+    void Function(int step) onStep,
+  ) {
+    final delta = -event.localPanDelta;
+    _stepFrom(
+      delta.dx.abs() > delta.dy.abs() ? delta.dx : delta.dy,
+      event.timeStamp,
+      state,
+      onStep,
+    );
+  }
+
+  void _stepFrom(
+    double delta,
+    Duration timeStamp,
+    SteppedScrollState state,
+    void Function(int step) onStep,
+  ) {
+    final step = steppedScroll(state, delta, timeStamp.inMicroseconds / 1000);
+    if (step != 0) onStep(step);
   }
 
   /// Move the season slider, landing on the new season's first episode — the
@@ -372,21 +401,14 @@ class _StageBody extends ConsumerWidget {
         _activeSeason(seasonRows, state._activeId)?.episodes ??
         const <LibraryItem>[];
 
-    // The inner of the two wheel regions: the seasons column, which claims the
-    // event from the stage-wide one below. Both register through the resolver,
-    // which is what makes a nest safe — the innermost registrant wins and the
-    // outer one never sees it.
-    Widget seasonWheel(Widget child) => Listener(
-      onPointerSignal: (e) => state._steppedSignal(
-        e,
-        state._seasonScroll,
-        (step) => state._stepSeason(step, seasonRows),
-      ),
-      // The whole seasons column answers the wheel, not just the pixels the
-      // labels happen to cover.
-      behavior: HitTestBehavior.opaque,
-      child: child,
-    );
+    // The seasons column does NOT answer the wheel. It used to, as the inner
+    // of two nested wheel regions, and that was a mistake twice over: a
+    // scroll aimed at the episodes would step a season the moment the pointer
+    // drifted over the column, and the nest needed PointerSignalResolver to
+    // stop one gesture counting twice. Seasons change by CLICK and by
+    // up/down, which are both unambiguous. Removing the region deletes the
+    // ambiguity rather than arbitrating it.
+    Widget seasonWheel(Widget child) => child;
 
     /// The Movies stage's input model, over the whole surface: arrows and the
     /// wheel work wherever the pointer is, because the episode rail is the
@@ -397,6 +419,11 @@ class _StageBody extends ConsumerWidget {
       onKeyEvent: (_, event) => state._onKey(event, seasonRows, episodes),
       child: Listener(
         onPointerSignal: (e) => state._steppedSignal(
+          e,
+          state._episodeScroll,
+          (step) => state._stepEpisode(step, episodes),
+        ),
+        onPointerPanZoomUpdate: (e) => state._steppedPanZoom(
           e,
           state._episodeScroll,
           (step) => state._stepEpisode(step, episodes),
@@ -489,7 +516,36 @@ class _StageBody extends ConsumerWidget {
                     // matching the browse screen, where the copy sits about
                     // 70px further in. That inset is the last visible
                     // difference between the two surfaces.
-                    child: Center(child: SingleChildScrollView(child: copy)),
+                    // Scaled to fit, rather than scrolled or clipped.
+                    //
+                    // This block went through both wrong answers first. It
+                    // used to scroll, which drew a scrollbar down the middle
+                    // of the backdrop. Making it non-scrollable removed the
+                    // bar and started CUTTING OFF the synopsis and the
+                    // Watch/Download row on shorter windows, which is worse —
+                    // a control you cannot see is worse than one you have to
+                    // scroll to.
+                    //
+                    // BoxFit.scaleDown is the third answer and the right one:
+                    // at a comfortable window nothing changes (it only ever
+                    // shrinks, never enlarges), and as the window gets shorter
+                    // the whole block — heading, synopsis, meta, buttons —
+                    // scales down together and stays complete. Uniform, so the
+                    // type hierarchy holds at every size, and automatic, so it
+                    // tracks any resolution instead of a list of breakpoints
+                    // somebody has to keep extending.
+                    child: Center(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: TitleLayout.copyMaxWidth,
+                          ),
+                          child: copy,
+                        ),
+                      ),
+                    ),
                   ),
                   const SizedBox(width: TitleLayout.columnGap),
                   Expanded(
@@ -501,13 +557,14 @@ class _StageBody extends ConsumerWidget {
                               // Not scrollable — the wheel here steps the
                               // slider. Present only so a long-running series
                               // on a short window clips instead of throwing.
-                              child: SingleChildScrollView(
-                                physics:
-                                    const NeverScrollableScrollPhysics(),
-                                child: _SeasonStrip(
-                                  state: state,
-                                  rows: seasonRows,
-                                  activeId: state._activeId,
+                              child: _NoScrollbar(
+                                child: SingleChildScrollView(
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  child: _SeasonStrip(
+                                    state: state,
+                                    rows: seasonRows,
+                                    activeId: state._activeId,
+                                  ),
                                 ),
                               ),
                             ),
@@ -671,9 +728,7 @@ class _CopyColumn extends StatelessWidget {
         .take(3)
         .toList();
 
-    final seriesCrumb = rootIsSeries && isEpisode
-        ? detailSeries!.name
-        : null;
+    final seriesCrumb = rootIsSeries && isEpisode ? detailSeries!.name : null;
 
     // Play target: series root → first episode; otherwise the active title.
     final firstEpisode =
@@ -743,11 +798,26 @@ class _CopyColumn extends StatelessWidget {
             ),
           line(
             TitleType.heading.fontSize ?? 52,
+            // Long titles step down rather than wrapping to two 52px lines.
+            //
+            // Episode names here are often two segment titles joined by a
+            // slash ("The Snowman Cometh / The Precious, Wonderful, ..."), and
+            // at full display size those wrapped, ellipsised, AND pushed Watch
+            // now off the bottom of the column — which is what put the copy in
+            // a scroll view and a scrollbar down the middle of the stage.
+            //
+            // Shrinking the type is the fix rather than scrolling, because the
+            // block is meant to be read at a glance from across a room: a
+            // control you have to scroll to reach is worse than a heading two
+            // sizes smaller.
             Text(
               subject.name,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TitleType.heading.copyWith(color: wp.text),
+              style: TitleType.heading.copyWith(
+                color: wp.text,
+                fontSize: _headingSizeFor(subject.name),
+              ),
             ),
           ),
           // An episode without its own synopsis falls back to the series', so
@@ -1105,7 +1175,9 @@ class _SeasonButton extends StatelessWidget {
               AnimatedContainer(
                 duration: AnalogMotion.detentMs,
                 curve: AnalogMotion.detentEase,
-                height: active ? AnalogHairline.activePx : AnalogHairline.idlePx,
+                height: active
+                    ? AnalogHairline.activePx
+                    : AnalogHairline.idlePx,
                 width: active ? 34 : 14,
                 color: active ? AnalogColor.ink : AnalogColor.line,
               ),
@@ -1187,10 +1259,19 @@ class _CastStripState extends State<_CastStrip> {
   /// desktop. Mapping whichever axis the hardware reports onto the one axis
   /// this list has is what actually makes it scrollable with a mouse.
   void _onPointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_controller.hasClients) return;
-    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
-        ? event.scrollDelta.dx
-        : event.scrollDelta.dy;
+    if (event is! PointerScrollEvent) return;
+    _glideBy(event.scrollDelta);
+  }
+
+  /// The trackpad path: a two-finger swipe is pan-zoom, not a scroll signal.
+  /// Without this the cast strip was scrollable with a mouse and inert under
+  /// the gesture most people actually use on a laptop.
+  void _onPanZoom(PointerPanZoomUpdateEvent event) =>
+      _glideBy(-event.localPanDelta);
+
+  void _glideBy(Offset raw) {
+    if (!_controller.hasClients) return;
+    final delta = raw.dx.abs() > raw.dy.abs() ? raw.dx : raw.dy;
 
     // Re-anchor if the strip was dragged or has settled, so the target never
     // drifts away from reality.
@@ -1222,6 +1303,7 @@ class _CastStripState extends State<_CastStrip> {
       height: _CastStrip.height,
       child: Listener(
         onPointerSignal: _onPointerSignal,
+        onPointerPanZoomUpdate: _onPanZoom,
         child: ScrollConfiguration(
           // Let a mouse drag the strip too, not just touch. Desktop users
           // reach for the wheel first but the drag costs nothing to allow.
@@ -1359,7 +1441,7 @@ class _EpisodeRail extends StatelessWidget {
             // episode is not reliably one. Behind the session either way, so
             // it goes through AuthedNetworkImage inside the tile — a plain
             // Image.network here 401s.
-            imageUrl: api.imageUrl(ep.id, type: ImageType.thumb),
+            imageUrl: api.imageUrl(ep.id, type: ImageType.primary),
             placeholderLabel: 'E${ep.indexNumber ?? '–'}',
             progress: _progressOf(ep),
           ),
@@ -1645,6 +1727,42 @@ String _trackLabel(PlaybackTrack t, String fallback) {
     if (t.isDefault && !lower.contains('default')) 'Default',
     if (t.isForced && !lower.contains('forced')) 'Forced',
   ].join(' · ');
+}
+
+/// Strips the scrollbar a desktop [ScrollBehavior] adds to every Scrollable.
+///
+/// NeverScrollableScrollPhysics stops the viewport RESPONDING to input; it
+/// does not stop the bar being painted. The bar tracks whether content exceeds
+/// the viewport, not whether you may scroll it — so a copy column that merely
+/// overflows still drew a pale line down the middle of the backdrop, on a
+/// surface whose whole premise is that the artwork is the interface.
+///
+/// The two are separate switches and both are needed: physics for behaviour,
+/// this for the chrome.
+class _NoScrollbar extends StatelessWidget {
+  const _NoScrollbar({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => ScrollConfiguration(
+    behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+    child: child,
+  );
+}
+
+/// The display size for a title of [name]'s length.
+///
+/// Three steps, not a continuous scale: a heading that is a slightly different
+/// size on every title reads as sloppy, while three deliberate sizes read as a
+/// type ramp. The thresholds are character counts because the constraint is
+/// how many lines it takes, and at this width that tracks length closely
+/// enough to beat measuring and re-laying out.
+double _headingSizeFor(String name) {
+  final full = TitleType.heading.fontSize ?? 52;
+  if (name.length <= 28) return full;
+  if (name.length <= 48) return full * 0.72;
+  return full * 0.56;
 }
 
 /// Runtime + premiere + resolution/HDR/size line (web Details.infoLine).

@@ -192,17 +192,24 @@ void main() {
     expect(find.textContaining('S1 E4'), findsOneWidget);
   });
 
-  testWidgets('one wheel notch over the seasons steps exactly one season', (
+  testWidgets('the wheel over the seasons does NOT change the season', (
     tester,
   ) async {
     await _pump(tester);
     // Opens on season 1 — the show's own copy is up until an episode is picked.
     expect(find.text('S1E1 Title'), findsWidgets);
 
-    // The regression this guards: two Listeners on one subtree both handling
-    // the signal, so every notch moved two. With only two seasons a double
-    // step would run off the end and land back on season 2 — so the assertion
-    // is on the episodes actually rendered, which say which season is live.
+    // This asserted the opposite until the seasons column stopped taking the
+    // wheel. It was a nested inner region, and nesting wheel regions is the
+    // shape that shipped a double-step — every notch moving two seasons. That
+    // was arbitrated with PointerSignalResolver, but the ambiguity it
+    // refereed was never wanted: a scroll aimed at the episode rail stepped a
+    // SEASON as soon as the pointer drifted over the column. Seasons change by
+    // click and by up/down, both unambiguous.
+    //
+    // Kept rather than deleted, inverted, because "a wheel here does nothing"
+    // is now a decision worth defending — the obvious future change is to add
+    // the region back.
     await _wheel(
       tester,
       _seasonsRegion(tester),
@@ -211,20 +218,11 @@ void main() {
     );
 
     expect(
-      find.text('S2E1 Title'),
+      find.text('S1E1 Title'),
       findsWidgets,
-      reason: 'one notch moves to season 2',
+      reason: 'the season must not move',
     );
-    expect(find.text('S1E1 Title'), findsNothing);
-
-    // And it stops there rather than wrapping.
-    await _wheel(
-      tester,
-      _seasonsRegion(tester),
-      60,
-      at: const Duration(milliseconds: 1500),
-    );
-    expect(find.text('S2E1 Title'), findsWidgets);
+    expect(find.text('S2E1 Title'), findsNothing);
   });
 
   testWidgets('the wheel away from the seasons drives the episode rail', (

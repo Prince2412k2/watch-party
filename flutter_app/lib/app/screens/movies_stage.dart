@@ -77,8 +77,9 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
   /// franchise returns to the title you left rather than to index 0.
   final Map<String, int> _selection = {};
 
-  String get _surfaceKey =>
-      _collection == null ? 'movies:${_mode.wireName}' : 'collection:${_collection!.id}';
+  String get _surfaceKey => _collection == null
+      ? 'movies:${_mode.wireName}'
+      : 'collection:${_collection!.id}';
 
   int get _selected => _selection[_surfaceKey] ?? 0;
   set _selected(int value) => _selection[_surfaceKey] = value;
@@ -94,7 +95,6 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
   }
 
   void _stepMode(int direction) => _setMode(stepBrowseMode(_mode, direction));
-
 
   void _activate(List<LibraryItem> items, int index) {
     if (index < 0 || index >= items.length) return;
@@ -159,13 +159,25 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
   /// landing on the backdrop meaning nothing was a dead zone, not a feature.
   void _onPointerSignal(PointerSignalEvent event, int total) {
     if (event is! PointerScrollEvent) return;
-    final delta = event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
-        ? event.scrollDelta.dx
-        : event.scrollDelta.dy;
+    _applyScroll(event.scrollDelta, event.timeStamp, total);
+  }
+
+  /// A trackpad two-finger swipe is NOT a scroll event.
+  ///
+  /// Flutter reports a mouse wheel as [PointerScrollEvent] and a trackpad
+  /// gesture as pan-zoom, and this stage only ever listened for the first —
+  /// so the gesture every laptop user reaches for first did nothing at all.
+  /// Same arithmetic either way; only the event that carries the delta
+  /// differs.
+  void _onPanZoom(PointerPanZoomUpdateEvent event, int total) =>
+      _applyScroll(-event.localPanDelta, event.timeStamp, total);
+
+  void _applyScroll(Offset delta, Duration timeStamp, int total) {
+    final primary = delta.dx.abs() > delta.dy.abs() ? delta.dx : delta.dy;
     final step = steppedScroll(
       _scroll,
-      delta,
-      event.timeStamp.inMicroseconds / 1000,
+      primary,
+      timeStamp.inMicroseconds / 1000,
     );
     if (step != 0) _stepSelection(step, total);
   }
@@ -225,11 +237,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
         : ref.watch(itemDetailProvider(selected.id)).valueOrNull ?? selected;
 
     final media = MediaQuery.of(context);
-    final size = stageLayout(
-      media.size.width,
-      media.size.height,
-      false,
-    ).size;
+    final size = stageLayout(media.size.width, media.size.height, false).size;
     final motion = motionProfile(media.disableAnimations);
 
     // The rail may take up to a bit under half the stage. It is laid over the
@@ -245,6 +253,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
         onKeyEvent: (_, event) => _onKey(event, items),
         child: Listener(
           onPointerSignal: (e) => _onPointerSignal(e, items.length),
+          onPointerPanZoomUpdate: (e) => _onPanZoom(e, items.length),
           // Opaque so a wheel event over the bare backdrop still reaches us:
           // "scrolling anywhere should work" means the whole stage, not the
           // strip of it the posters happen to occupy.
@@ -291,7 +300,8 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                               entry: _copyEntry,
                               direction: _stepDirection,
                               velocity: _velocity,
-                            ),                          ),
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: TitleLayout.columnGap),
@@ -306,8 +316,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                                 // throwing. Not scrollable — the wheel drives
                                 // the rail.
                                 child: SingleChildScrollView(
-                                  physics:
-                                      const NeverScrollableScrollPhysics(),
+                                  physics: const NeverScrollableScrollPhysics(),
                                   child: _ModeStrip(
                                     mode: _mode,
                                     onChanged: _setMode,
@@ -401,8 +410,6 @@ class _Details extends StatelessWidget {
   /// 0..1 — how hard the row is being pushed, which sets how far the copy
   /// travels. A fast scroll throws the text as far as the posters.
   final double velocity;
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -539,7 +546,6 @@ class _Details extends StatelessWidget {
                 style: TitleType.meta.copyWith(color: AnalogColor.inkDim),
               ),
             ),
-
           ],
         ],
       ),
@@ -644,7 +650,9 @@ class _ModeButton extends StatelessWidget {
               AnimatedContainer(
                 duration: AnalogMotion.detentMs,
                 curve: AnalogMotion.detentEase,
-                height: active ? AnalogHairline.activePx : AnalogHairline.idlePx,
+                height: active
+                    ? AnalogHairline.activePx
+                    : AnalogHairline.idlePx,
                 width: active ? 34 : 14,
                 color: active ? AnalogColor.ink : AnalogColor.line,
               ),
@@ -655,5 +663,3 @@ class _ModeButton extends StatelessWidget {
     );
   }
 }
-
-
