@@ -44,39 +44,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _configureServer() async {
     final current = ref.read(serverConfigProvider) ?? '';
-    final controller = TextEditingController(text: current);
-    // The design-system dialog with AppButton actions, on an ordinary modal
-    // route. The builder context (`ctx`) owns that route, so popping it closes
-    // the dialog.
-    final saved = await showAnalogDialog<bool>(
+    // The dialog owns its controller and returns the TEXT, rather than the
+    // caller owning a controller and reading it back after the await.
+    //
+    // That older shape crashed: showAnalogDialog resolves the instant pop() is
+    // called, but the route is still animating out and its TextField keeps
+    // rebuilding for the length of that transition. Disposing the controller
+    // on the line after the await meant the next frame rebuilt a TextField
+    // around a dead one — "A TextEditingController was used after being
+    // disposed", thrown from deep inside the framework's own animation update
+    // with nothing in the trace pointing back here.
+    final url = await showAnalogDialog<String>(
       context: context,
-      builder: (ctx) => AppDialog(
-        title: 'Server URL',
-        body: 'Where your Watchparty backend lives. https:// is assumed.',
-        actions: [
-          AppButton(
-            label: 'Cancel',
-            variant: AppButtonVariant.ghost,
-            onPressed: () => Navigator.of(ctx).pop(false),
-          ),
-          AppButton(
-            label: 'Save',
-            variant: AppButtonVariant.primary,
-            onPressed: () => Navigator.of(ctx).pop(true),
-          ),
-        ],
-        child: AppTextField(
-          controller: controller,
-          hint: 'e.g. dsk-4161.tail0a3558.ts.net',
-          autofocus: true,
-          onSubmitted: (_) => Navigator.of(ctx).pop(true),
-        ),
-      ),
+      builder: (_) => _ServerUrlDialog(initial: current),
     );
-    final text = controller.text;
-    controller.dispose();
-    if (saved == true && text.trim().isNotEmpty) {
-      await ref.read(serverConfigProvider.notifier).setUrl(text);
+    if (url != null && url.trim().isNotEmpty) {
+      await ref.read(serverConfigProvider.notifier).setUrl(url);
     }
   }
 
@@ -270,6 +253,63 @@ class _ServerConfigButton extends StatelessWidget {
       tone: AnalogButtonTone.ghost,
       dense: true,
       onPressed: onTap,
+    );
+  }
+}
+
+/// The server-URL prompt, owning its own text controller.
+///
+/// Stateful purely so the controller's lifetime is tied to the ROUTE rather
+/// than to the caller's `await`. A dialog outlives its own `pop()` by the
+/// length of the exit transition, and anything the caller disposes in that
+/// window is still being rebuilt.
+class _ServerUrlDialog extends StatefulWidget {
+  const _ServerUrlDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_ServerUrlDialog> createState() => _ServerUrlDialogState();
+}
+
+class _ServerUrlDialogState extends State<_ServerUrlDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return AppDialog(
+      title: 'Server URL',
+      body: 'Where your Watchparty backend lives. https:// is assumed.',
+      actions: [
+        AppButton(
+          label: 'Cancel',
+          variant: AppButtonVariant.ghost,
+          // Null rather than the current text: the caller distinguishes
+          // "cancelled" from "saved an empty box" on this alone.
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        AppButton(
+          label: 'Save',
+          variant: AppButtonVariant.primary,
+          onPressed: _save,
+        ),
+      ],
+      child: AppTextField(
+        controller: _controller,
+        hint: 'e.g. dsk-4161.tail0a3558.ts.net',
+        autofocus: true,
+        onSubmitted: (_) => _save(),
+      ),
     );
   }
 }
