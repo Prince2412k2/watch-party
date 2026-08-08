@@ -89,6 +89,12 @@ class ArtworkCache {
         _remember(url, fresh);
         yield fresh;
       }
+    } on ArtworkMissing {
+      // Nothing to show and nothing wrong. Ending the stream lets the widget
+      // fall back to its placeholder; rethrowing here is what produced the
+      // "Unhandled Exception: Artwork request failed: HTTP 404" floods, since
+      // by the time a 404 lands the card that asked has often scrolled away
+      // and there is no subscription left to receive the error.
     } catch (_) {
       if (cached == null) rethrow;
     } finally {
@@ -117,10 +123,27 @@ class ArtworkCache {
     if (!isSameOrigin(url)) {
       throw StateError('Refusing to fetch cross-origin artwork: $url');
     }
-    final response = await _dio.get<List<int>>(
-      url,
-      options: Options(responseType: ResponseType.bytes),
-    );
+    // 404 is not a failure. It is the server's normal answer for "this item
+    // has no artwork" — an episode with no still, a title with no backdrop —
+    // and treating it as an error meant a series of stillless episodes threw
+    // once per card. Distinguished so [load] can end the stream quietly and
+    // let the widget show its placeholder, while a 500 or a timeout still
+    // propagates as something worth knowing about.
+    //
+    // Caught from BOTH shapes on purpose: dio raises a DioException for a
+    // non-2xx by default, so a status check on the response alone would never
+    // see the 404 that actually happens.
+    final Response<List<int>> response;
+    try {
+      response = await _dio.get<List<int>>(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) throw const ArtworkMissing();
+      rethrow;
+    }
+    if (response.statusCode == 404) throw const ArtworkMissing();
     if (response.statusCode != 200 || response.data == null) {
       throw StateError('Artwork request failed: HTTP ${response.statusCode}');
     }
@@ -166,4 +189,18 @@ String _hash(String value) {
     hash = (hash * 0x100000001b3) & 0x7fffffffffffffff;
   }
   return hash.toRadixString(16).padLeft(16, '0');
+}
+
+/// The server has no artwork for this item.
+///
+/// Deliberately its own type rather than a status code checked at the call
+/// site: "no still for this episode" and "the image server fell over" are
+/// different events, and collapsing them meant every missing thumbnail was
+/// reported as a failure — which in practice trained everyone to ignore the
+/// artwork errors that DID matter.
+class ArtworkMissing implements Exception {
+  const ArtworkMissing();
+
+  @override
+  String toString() => 'ArtworkMissing';
 }
