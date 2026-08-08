@@ -64,6 +64,11 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
         // a notice on) and outside the router (a per-screen listener would miss
         // exactly the messages that arrive while you are on another screen).
         final content = AnalogToastHost(
+          // Clear of the caption strip, which is the one layer that outranks
+          // the rail (DesktopWindowChrome wraps it).
+          topInsetPx: widget.enableWindowFrame
+              ? integratedDesktopChromeHeight
+              : 0,
           child: ChatNotifications(
             child: Material(
               type: MaterialType.transparency,

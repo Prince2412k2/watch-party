@@ -45,11 +45,22 @@ class AnalogToastSurface extends StatelessWidget {
     super.key,
     required this.child,
     this.opaque = false,
+    this.prominent = false,
     this.margin = const EdgeInsets.only(top: AnalogSpace.smPx),
   });
 
   final Widget child;
   final bool opaque;
+
+  /// Sized to be caught out of the corner of your eye.
+  ///
+  /// The app-wide rail sets this; the player's chat stack does not. They are
+  /// answering different questions. A chat toast sits over a film you are
+  /// watching and must stay out of the way — it is a courtesy copy of
+  /// something already in the drawer. A rail notice is the ONLY place its
+  /// message appears, and a notice nobody notices is not a notice.
+  final bool prominent;
+
   final EdgeInsetsGeometry margin;
 
   @override
@@ -58,16 +69,23 @@ class AnalogToastSurface extends StatelessWidget {
       padding: margin,
       child: LiquidGlass(
         opaque: opaque,
-        borderRadius: BorderRadius.circular(AnalogRadius.cardPx),
-        padding: const EdgeInsets.symmetric(
-          horizontal: AnalogSpace.mdPx,
-          vertical: AnalogSpace.smPx + 2,
+        borderRadius: BorderRadius.circular(
+          prominent ? AnalogRadius.cardPx + 4 : AnalogRadius.cardPx,
         ),
-        shadow: const [
+        padding: prominent
+            ? const EdgeInsets.symmetric(
+                horizontal: AnalogSpace.lgPx,
+                vertical: AnalogSpace.mdPx + 2,
+              )
+            : const EdgeInsets.symmetric(
+                horizontal: AnalogSpace.mdPx,
+                vertical: AnalogSpace.smPx + 2,
+              ),
+        shadow: [
           BoxShadow(
             color: AnalogColor.shadowCastStrong,
-            blurRadius: AnalogElevation.focusBlurPx,
-            offset: Offset(0, AnalogElevation.restOffsetYPx),
+            blurRadius: prominent ? 44 : AnalogElevation.focusBlurPx,
+            offset: Offset(0, prominent ? 16 : AnalogElevation.restOffsetYPx),
           ),
         ],
         child: child,
@@ -104,9 +122,18 @@ class AnalogToast {
 /// them, and they expire on their own clock rather than waiting to be
 /// dismissed.
 class AnalogToastHost extends StatefulWidget {
-  const AnalogToastHost({super.key, required this.child});
+  const AnalogToastHost({super.key, required this.child, this.topInsetPx = 0});
 
   final Widget child;
+
+  /// Clearance for a desktop window's caption strip.
+  ///
+  /// The rail is above the router — above dialogs, menus and the control panel
+  /// — but the window chrome wraps the whole app and so paints above IT. Passed
+  /// in rather than read here: this kit does not import the desktop shell, and
+  /// a notice tucked under the caption buttons would be the one thing on screen
+  /// the rail cannot outrank.
+  final double topInsetPx;
 
   /// The nearest host, or null when none is mounted — a widget test that pumps
   /// a screen in isolation should not crash because it left the rail out.
@@ -189,12 +216,12 @@ class AnalogToastHostState extends State<AnalogToastHost> {
             child: SafeArea(
               child: IgnorePointer(
                 child: Padding(
-                  padding: const EdgeInsets.only(
-                    top: AnalogSpace.lgPx,
+                  padding: EdgeInsets.only(
+                    top: AnalogSpace.lgPx + widget.topInsetPx,
                     right: AnalogSpace.lgPx,
                   ),
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
+                    constraints: const BoxConstraints(maxWidth: 420),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -271,29 +298,40 @@ class _ToastRowState extends State<_ToastRow> {
       excludeSemantics: true,
       child: AnalogToastSurface(
         opaque: media.highContrast,
+        prominent: true,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             // The tone reads three ways — bar, glyph, and the glyph's tint —
             // so it survives a greyscale display and a colour-blind viewer.
             Container(
-              width: 3,
-              height: 22,
-              margin: const EdgeInsets.only(right: AnalogSpace.mdPx - 2),
+              width: 4,
+              height: 34,
+              margin: const EdgeInsets.only(right: AnalogSpace.mdPx),
               decoration: BoxDecoration(
                 color: tone.edge,
                 borderRadius: BorderRadius.circular(AnalogRadius.pillPx),
               ),
             ),
-            Icon(tone.glyph, size: 17, color: tone.ink),
-            const SizedBox(width: AnalogSpace.smPx + 2),
+            // The glyph on its own tinted disc rather than loose in the row:
+            // at this size a bare icon beside 16px text reads as punctuation.
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: tone.ink.withValues(alpha: 0.16),
+              ),
+              child: Icon(tone.glyph, size: 19, color: tone.ink),
+            ),
+            const SizedBox(width: AnalogSpace.mdPx),
             Flexible(
               child: Text(
                 widget.toast.message,
                 style: const TextStyle(
                   fontFamily: AnalogType.sansFamily,
                   color: AnalogColor.ink,
-                  fontSize: 13.5,
+                  fontSize: 16,
                   fontWeight: FontWeight.w600,
                   height: 1.3,
                 ),
@@ -321,11 +359,20 @@ class _ToastRowState extends State<_ToastRow> {
           heightFactor: t,
           child: Opacity(
             opacity: t,
-            // A fraction of the child's own width — AnimatedSlide and
-            // FractionalTranslation both measure in child sizes, not pixels.
-            child: FractionalTranslation(
-              translation: Offset(0.28 * (1 - t), 0),
-              child: child,
+            // Arrives slightly under size and settles to full — the eye catches
+            // a change of scale faster than a change of position. It grows INTO
+            // place and stops: chrome does not overshoot, so there is no bounce
+            // at the end of it (AnalogMotion.settleEase is the only curve
+            // allowed to, and it belongs to things with mass).
+            child: Transform.scale(
+              scale: 0.94 + 0.06 * t,
+              alignment: Alignment.centerRight,
+              // A fraction of the child's own width — AnimatedSlide and
+              // FractionalTranslation both measure in child sizes, not pixels.
+              child: FractionalTranslation(
+                translation: Offset(0.28 * (1 - t), 0),
+                child: child,
+              ),
             ),
           ),
         ),
