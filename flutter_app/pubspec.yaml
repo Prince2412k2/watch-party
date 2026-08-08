@@ -22,6 +22,11 @@ dependencies:
 
   # Sync signaling (same socket.io contract as the web app).
   socket_io_client: ^3.1.6
+  # Imported directly, not just pulled in by socket_io_client: the custom
+  # webSocketConnector in net/socket_client.dart returns a ws.WebSocket. A
+  # transitive dependency you import is one `flutter pub upgrade` away from
+  # vanishing.
+  web_socket: ^1.0.1
 
   # HTTP + session-cookie persistence.
   dio: ^5.10.0

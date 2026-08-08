@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io' as io_net;
 
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'package:web_socket/io_web_socket.dart' show IOWebSocket;
+import 'package:web_socket/web_socket.dart' as ws;
 
 import '../app/config.dart';
 
@@ -151,18 +154,69 @@ class IoSocketClient implements SocketClient {
   Stream<bool> get connectionState => _connCtrl.stream;
 }
 
+/// Dial a WebSocket with the port written into the URL.
+///
+/// THIS is the fix for the `:0` handshake failure. The cause is a defect in
+/// socket_io_client 3.1.6 that nothing on our side of the URL could reach:
+///
+/// 1. `Transport._port()` omits the port whenever it equals the scheme's
+///    default, so the transport builds `wss://host/socket.io/?...` with no
+///    port — correct-looking, and correct for a browser.
+/// 2. `dart:io`'s `WebSocket.connect` re-parses that string and rebuilds it as
+///    an HTTPS request, copying `uri.port` across. But Dart only knows default
+///    ports for `http` and `https`; for `wss` it has none, so `uri.port`
+///    returns **0**.
+/// 3. The request therefore goes to `https://host:0/socket.io/?...`, which
+///    cannot connect, and the exception quotes that URL — including the empty
+///    trailing `#` that a `Uri` with an empty fragment prints.
+///
+/// The port is dropped INSIDE the library, after our URL has been consumed, so
+/// passing an explicit `:443` up front cannot prevent it — which is exactly
+/// what we observed: the client logged `:443` and the failure still said `:0`.
+///
+/// `webSocketConnector` is the package's own hook for supplying the dial, and
+/// [Manager] forwards it into the websocket transport's options. Restoring the
+/// port here is the last point before `dart:io` parses the string.
+///
+/// [headers] carries `setExtraHeaders`, i.e. the session cookie, and must be
+/// forwarded — the package's default connector does the same, and dropping it
+/// would trade a connection failure for an authentication one.
+Future<ws.WebSocket> connectSocketWebSocket(
+  Uri uri, {
+  Iterable<String>? protocols,
+  Map<String, String>? headers,
+}) async {
+  // `Uri.replace(port:)` normalises a DEFAULT port back out of the string —
+  // the trap that made an earlier attempt at this a silent no-op. It is safe
+  // here only because Dart has no default port for ws/wss, which is the very
+  // gap being worked around: 443 is not the default for `wss`, so it stays.
+  final target = uri.hasPort
+      ? uri
+      : uri.replace(port: uri.isScheme('wss') ? 443 : 80);
+  final io_net.WebSocket socket;
+  try {
+    socket = await io_net.WebSocket.connect(
+      target.toString(),
+      protocols: protocols,
+      headers: headers,
+    );
+  } on io_net.WebSocketException catch (e) {
+    // The package's contract: transports expect ws.WebSocketException.
+    throw ws.WebSocketException('${e.message} (dialling $target)');
+  }
+  return IOWebSocket.fromWebSocket(socket);
+}
+
 /// The URL to hand socket_io_client, with the port made EXPLICIT.
 ///
-/// socket_io_client parses a multi-label HTTPS host — `watch.example.com`,
-/// as opposed to `localhost` — as port 0, then builds its handshake URL from
-/// what it parsed. The result is a request to
-/// `https://host:0/socket.io/?EIO=4&transport=websocket`, which fails with
-/// "was not upgraded to websocket" and names neither the port nor the cause.
+/// Belt and braces alongside [connectSocketWebSocket], which is what actually
+/// fixes the `:0` failure. This only settles what the engine records as the
+/// origin; it does NOT survive into the transport's URL, because
+/// `Transport._port()` strips a default port again on the way out.
 ///
-/// [socketOptionsFor] already sets `port` in the options map, and that is not
-/// enough on its own: the library builds the URL from the URL, so the options
-/// never get a chance to correct it. Writing the port into the URL is what
-/// actually reaches the parser.
+/// Kept because it costs nothing, it makes the intended port visible in the
+/// connect log, and it guards the separate case of an engine that cannot infer
+/// a port at all.
 ///
 /// A URL that already carries a port is returned untouched, so `localhost:3005`
 /// and any tailnet address keep working exactly as before.
@@ -190,6 +244,9 @@ Map<String, dynamic> socketOptionsFor(String url, String? cookie) {
       .enableForceNew();
   if (cookie != null) builder.setExtraHeaders({'Cookie': cookie});
   final options = Map<String, dynamic>.from(builder.build());
+  // The dial itself, so the port survives into dart:io. See
+  // [connectSocketWebSocket] for why nothing earlier in the chain can do this.
+  options['webSocketConnector'] = connectSocketWebSocket;
   // socket_io_client <=3.1.3 parsed multi-label HTTPS hosts as port 0. Keep an
   // explicit default in our own options so persisted origins remain safe even
   // if dependency resolution or an older packaged binary regresses.
