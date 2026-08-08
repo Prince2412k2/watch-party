@@ -1,8 +1,27 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../app/config.dart';
+
+/// A socket handshake that never completed, with the URL it was attempted
+/// against.
+///
+/// The underlying error already names a URL, but it is the one the LIBRARY
+/// built — and the whole class of bug this wraps is the library building a
+/// different URL from the one we handed it. Reporting both is what tells the
+/// two apart.
+class SocketConnectFailure implements Exception {
+  const SocketConnectFailure(this.target, this.cause);
+
+  /// The URL passed to socket_io_client, after [socketUrlFor].
+  final String target;
+  final Object cause;
+
+  @override
+  String toString() => 'Could not reach $target — $cause';
+}
 
 /// FROZEN CONTRACT (PLAN §3.5). A thin, typed wrapper over socket_io_client that
 /// speaks the backend's event vocabulary (see `events.dart`). E5/E7 build the
@@ -65,7 +84,13 @@ class IoSocketClient implements SocketClient {
   @override
   Future<void> connect() async {
     final cookie = cookieHeader ?? await cookieHeaderProvider?.call();
-    final socket = io.io(socketUrlFor(_url), socketOptionsFor(_url, cookie));
+    final target = socketUrlFor(_url);
+    // Logged on every connect so a failure report identifies the build that
+    // produced it. A ":0" in the thrown message with NO such line above it
+    // means the binary predates socketUrlFor — the same symptom as a broken
+    // fix, and previously indistinguishable from one.
+    debugPrint('socket.io connecting to $target (from $_url)');
+    final socket = io.io(target, socketOptionsFor(_url, cookie));
     _socket = socket;
     final completer = Completer<void>();
     socket.onConnect((_) {
@@ -74,7 +99,13 @@ class IoSocketClient implements SocketClient {
     });
     socket.onDisconnect((_) => _connCtrl.add(false));
     socket.onConnectError((e) {
-      if (!completer.isCompleted) completer.completeError(e);
+      if (!completer.isCompleted) {
+        // Carry the resolved target into the error. socket_io_client's own
+        // message quotes the URL it built, which is the one piece of evidence
+        // that says whether the port fix ran — but only if the two are shown
+        // together.
+        completer.completeError(SocketConnectFailure(target, e));
+      }
     });
     socket.connect();
     return completer.future;

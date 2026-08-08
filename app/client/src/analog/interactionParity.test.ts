@@ -165,7 +165,7 @@ test('the toast and auto-hide timings come from the design tokens', () => {
   // The fixture hard-codes 4000ms / 3000ms / a stack of three. Those numbers are
   // design decisions that live in analog-tokens.json, so pin them together —
   // otherwise changing a token silently invalidates every timing case above.
-  assert.equal(analogTokens.timing.toastLifetimeMs, 4000, 'toast lifetime')
+  assert.equal(analogTokens.timing.toastLifetimeMs, 3000, 'toast lifetime')
   assert.equal(analogTokens.timing.chromeAutoHideMs, 3000, 'chrome auto-hide')
   assert.equal(analogTokens.timing.toastMaxStack, 3, 'toast stack depth')
 })

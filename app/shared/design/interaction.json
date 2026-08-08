@@ -603,7 +603,7 @@
         ]
       },
       {
-        "name": "a toast lives for exactly four seconds",
+        "name": "a toast lives for exactly three seconds",
         "ops": [
           {
             "op": "push",
@@ -614,7 +614,7 @@
           },
           {
             "op": "expire",
-            "atMs": 3999
+            "atMs": 2999
           },
           {
             "op": "view",
@@ -625,7 +625,7 @@
           },
           {
             "op": "expire",
-            "atMs": 4000
+            "atMs": 3000
           },
           {
             "op": "view",
