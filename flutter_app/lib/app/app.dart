@@ -60,10 +60,15 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
         // AnalogToastHost sits *above* the router, which is the whole point:
         // the party socket's handlers outlive every screen and have nothing but
         // the root navigator's context to raise a notice from.
+        // ChatNotifications sits INSIDE the host (it needs an ancestor to raise
+        // a notice on) and outside the router (a per-screen listener would miss
+        // exactly the messages that arrive while you are on another screen).
         final content = AnalogToastHost(
-          child: Material(
-            type: MaterialType.transparency,
-            child: child ?? const SizedBox.shrink(),
+          child: ChatNotifications(
+            child: Material(
+              type: MaterialType.transparency,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
         );
         return widget.enableWindowFrame
