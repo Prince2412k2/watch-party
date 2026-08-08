@@ -102,6 +102,42 @@ class _EmptyGrid extends StatelessWidget {
   }
 }
 
+/// Marks the tile of whoever is talking.
+///
+/// A hairline ring, not a glow. The glow it replaces was a 12px blurred red
+/// cast that bloomed outward over the picture next to it and pulsed on every
+/// syllable — loud out of proportion to what it says, and the only thing on the
+/// stage that behaved that way. This is the same signal at the weight the rest
+/// of the chrome is drawn at.
+///
+/// Painted as an overlay rather than a `border` on the tile's own decoration:
+/// a border is laid out INSIDE the box, so the video would shuffle by the ring's
+/// width every time someone started and stopped talking.
+class SpeakingRing extends StatelessWidget {
+  const SpeakingRing({super.key, required this.speaking, required this.radius});
+
+  final bool speaking;
+  final BorderRadius radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: AnimatedOpacity(
+          opacity: speaking ? 1 : 0,
+          duration: AppMotion.hover,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              border: Border.all(color: AppColors.live, width: 1.5),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CameraTile extends StatelessWidget {
   const _CameraTile({required this.track});
 
@@ -111,19 +147,7 @@ class _CameraTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(AppSpacing.radiusLg);
     return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: radius,
-        boxShadow: track.isSpeaking
-            ? [
-                BoxShadow(
-                  color: AppColors.live.withValues(alpha: 0.55),
-                  blurRadius: 12,
-                  spreadRadius: 1,
-                ),
-              ]
-            : null,
-      ),
+      decoration: BoxDecoration(color: AppColors.surface, borderRadius: radius),
       child: ClipRRect(
         borderRadius: radius,
         child: Stack(
@@ -148,6 +172,8 @@ class _CameraTile extends StatelessWidget {
                   ),
                 ),
               ),
+            // Last, so the ring sits over the video rather than under it.
+            SpeakingRing(speaking: track.isSpeaking, radius: radius),
           ],
         ),
       ),
