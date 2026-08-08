@@ -4,14 +4,12 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:watchparty/analog/player_core.dart';
 import 'package:watchparty/player/player_chrome.dart';
 import 'package:watchparty/player/player_controller.dart';
 import 'package:watchparty/player/party_track_mapping.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/playback_info.dart';
 import 'package:watchparty/models/trickplay_manifest.dart';
-import 'package:watchparty/ui/analog_tokens.dart';
 import 'package:watchparty/ui/ui.dart';
 
 /// Records every write the chrome makes to the controller so the tests can
@@ -649,106 +647,17 @@ void main() {
     expect(c.seeks, isEmpty);
   });
 
-  testWidgets('chat messages toast over the player and expire on their own '
-      'four second clock', (tester) async {
-    final c = _SpyController();
-    Widget chrome({
-      required bool chatOpen,
-      required List<ToastMessage> toasts,
-    }) => MaterialApp(
-      theme: AppTheme.dark,
-      home: Scaffold(
-        body: PlayerChrome(
-          controller: c,
-          chatOpen: chatOpen,
-          chatToasts: toasts,
-          onToggleChat: () {},
-        ),
-      ),
-    );
-
-    const first = ToastMessage(
-      id: 'a',
-      sender: 'Ada',
-      preview: 'this bit is the best',
-      receivedAtMs: 0,
-    );
-    await tester.pumpWidget(chrome(chatOpen: false, toasts: const []));
-    await tester.pump();
-    await tester.pumpWidget(chrome(chatOpen: false, toasts: const [first]));
-    await tester.pumpAndSettle();
-    expect(find.text('Ada'), findsOneWidget);
-    expect(find.text('this bit is the best'), findsOneWidget);
-
-    // Four seconds on its own clock, no dismissal required.
-    await tester.pump(AnalogTiming.toastLifetimeMs);
-    await tester.pumpAndSettle();
-    expect(find.text('this bit is the best'), findsNothing);
-
-    // A message that arrives while the drawer is open is never queued, so it
-    // cannot toast the moment chat closes.
-    const second = ToastMessage(
-      id: 'b',
-      sender: 'Grace',
-      preview: 'wait, rewind',
-      receivedAtMs: 0,
-    );
-    await tester.pumpWidget(
-      chrome(chatOpen: true, toasts: const [first, second]),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('wait, rewind'), findsNothing);
-    await tester.pumpWidget(
-      chrome(chatOpen: false, toasts: const [first, second]),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('wait, rewind'), findsNothing);
-  });
-
-  testWidgets('opening chat dismisses the toasts on screen', (tester) async {
-    final c = _SpyController();
-    const message = ToastMessage(
-      id: 'a',
-      sender: 'Ada',
-      preview: 'over here',
-      receivedAtMs: 0,
-    );
-    Widget chrome(bool chatOpen, List<ToastMessage> toasts) => MaterialApp(
-      theme: AppTheme.dark,
-      home: Scaffold(
-        body: PlayerChrome(
-          controller: c,
-          chatOpen: chatOpen,
-          chatToasts: toasts,
-          onToggleChat: () {},
-        ),
-      ),
-    );
-    // Joining a party mid-session must not fire the backlog at the viewer, so
-    // the log present at mount is seeded as already-seen.
-    await tester.pumpWidget(chrome(false, const [message]));
-    await tester.pumpAndSettle();
-    expect(find.text('over here'), findsNothing);
-
-    const arriving = ToastMessage(
-      id: 'b',
-      sender: 'Ada',
-      preview: 'over here',
-      receivedAtMs: 0,
-    );
-    await tester.pumpWidget(chrome(false, const [message, arriving]));
-    await tester.pumpAndSettle();
-    expect(find.text('over here'), findsOneWidget);
-
-    await tester.pumpWidget(chrome(true, const [message, arriving]));
-    await tester.pumpAndSettle();
-    expect(find.text('over here'), findsNothing);
-
-    // Closing chat does not resurrect it.
-    await tester.pumpWidget(chrome(false, const [message, arriving]));
-    await tester.pumpAndSettle();
-    expect(find.text('over here'), findsNothing);
-  });
+  // The player no longer renders chat toasts. It drew them at the top left,
+  // INSIDE the party screen's stage — underneath the floating camera tiles —
+  // so a message could arrive behind a participant's face. There is one
+  // notification path now, the app-wide rail above the router, and its
+  // behaviour is covered by test/chat_notifications_test.dart: the notice
+  // itself, the drawer-open suppression that used to live here, own-message
+  // filtering, and the backlog-at-mount rule.
+  //
+  // player_core's toast queue (three deep, own clock, collapsed count) is
+  // still shared byte-for-byte with React and still covered by the
+  // interaction-parity cases; only this widget's rendering of it is gone.
 
   // Solo playback used to run its own idle Timer here while the party screen
   // ran a second one; both now drive AnalogAutoHideController, which is

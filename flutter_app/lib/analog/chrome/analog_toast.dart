@@ -101,11 +101,24 @@ class AnalogToast {
     required this.id,
     required this.message,
     required this.tone,
+    this.title,
+    this.leading,
   });
 
   final int id;
   final String message;
   final AnalogToastTone tone;
+
+  /// A quieter line above [message] — who it is from, when that is a person
+  /// rather than the app. Separate from the message so the two can be weighted
+  /// differently; folding the name into the text made every notice a wall of
+  /// one size.
+  final String? title;
+
+  /// Shown in place of the tone glyph — a face, for a notice that is about a
+  /// person. Supplied by the caller as a widget rather than an id, so this kit
+  /// keeps knowing nothing about avatars, accounts or providers.
+  final Widget? leading;
 }
 
 /// The app-wide transient-notice rail.
@@ -155,10 +168,23 @@ class AnalogToastHostState extends State<AnalogToastHost> {
 
   int _nextId = 0;
 
-  void show(String message, {AnalogToastTone tone = AnalogToastTone.info}) {
+  void show(
+    String message, {
+    AnalogToastTone tone = AnalogToastTone.info,
+    String? title,
+    Widget? leading,
+  }) {
     final id = _nextId++;
     setState(() {
-      _live.add(AnalogToast(id: id, message: message, tone: tone));
+      _live.add(
+        AnalogToast(
+          id: id,
+          message: message,
+          tone: tone,
+          title: title,
+          leading: leading,
+        ),
+      );
       // Count only the toasts that are not already on their way out, or a
       // stack sitting at its limit would re-expire the same leaving toast
       // forever — the list length does not drop until the exit finishes.
@@ -252,8 +278,12 @@ void showAnalogToast(
   BuildContext context,
   String message, {
   AnalogToastTone tone = AnalogToastTone.info,
+  String? title,
+  Widget? leading,
 }) {
-  AnalogToastHost.maybeOf(context)?.show(message, tone: tone);
+  AnalogToastHost.maybeOf(
+    context,
+  )?.show(message, tone: tone, title: title, leading: leading);
 }
 
 /// One notice, with its arrival and departure.
@@ -313,28 +343,54 @@ class _ToastRowState extends State<_ToastRow> {
                 borderRadius: BorderRadius.circular(AnalogRadius.pillPx),
               ),
             ),
-            // The glyph on its own tinted disc rather than loose in the row:
-            // at this size a bare icon beside 16px text reads as punctuation.
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: tone.ink.withValues(alpha: 0.16),
-              ),
-              child: Icon(tone.glyph, size: 19, color: tone.ink),
+            // A face when the notice is about a person, the tone glyph
+            // otherwise. Either way it occupies the same 34px disc, so a stack
+            // mixing "Ada: hurry up" with "Video reconnected" still reads as
+            // one column rather than two ragged ones.
+            SizedBox.square(
+              dimension: 34,
+              child: widget.toast.leading == null
+                  ? DecoratedBox(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: tone.ink.withValues(alpha: 0.16),
+                      ),
+                      child: Icon(tone.glyph, size: 19, color: tone.ink),
+                    )
+                  : ClipOval(child: widget.toast.leading),
             ),
             const SizedBox(width: AnalogSpace.mdPx),
             Flexible(
-              child: Text(
-                widget.toast.message,
-                style: const TextStyle(
-                  fontFamily: AnalogType.sansFamily,
-                  color: AnalogColor.ink,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  height: 1.3,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.toast.title != null)
+                    Text(
+                      widget.toast.title!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: AnalogType.sansFamily,
+                        color: AnalogColor.inkDim,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  Text(
+                    widget.toast.message,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: AnalogType.sansFamily,
+                      color: AnalogColor.ink,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
