@@ -111,7 +111,11 @@ services:
     image: livekit/livekit-server@sha256:50409575b8a4c4d4e5496793ba698701a230bc5d0f33e54dbe6877ba6e325a9f
     container_name: watchparty-livekit
     restart: unless-stopped
-    networks: [watchparty-net]
+    # browser-media-net is how the shared browser publishes its screen. It is
+    # an internal network, so this adds no external reachability — it only lets
+    # the browser container resolve and reach livekit, which it otherwise
+    # cannot, being deliberately off watchparty-net.
+    networks: [watchparty-net, browser-media-net]
     ports:
       # Media only. 7880 (HTTP/WS) is deliberately NOT published — the app
       # reaches it as ws://livekit:7880 over watchparty-net. Publishing it would
@@ -158,7 +162,10 @@ services:
     build: ./app
     container_name: watchparty-app
     restart: unless-stopped
-    networks: [watchparty-net]
+    # browser-control-net carries app -> control gateway ONLY. The app is
+    # deliberately not on browser-sandbox-net: it must never be reachable from
+    # the untrusted target container.
+    networks: [watchparty-net, browser-control-net]
     ports:
       # Caddy reaches this over the internal docker network by container
       # name, not via this port — this is only for direct/admin access
@@ -194,6 +201,19 @@ services:
       - SESSION_COOKIE_DOMAIN=${SESSION_COOKIE_DOMAIN:-}
       # If the same app is served on both subdomains, allow both browser origins.
       - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-}
+      # ── Shared browser ─────────────────────────────────────────────────────
+      # The flag, the tokens and the deny list come from secrets/.env via
+      # env_file. These two are the INTERNAL addresses, declared here for the
+      # same reason as the service URLs above: a container name must never be
+      # overridable by the env file, and the default in browser/config.js
+      # (watchparty-browser:8080) points at the publisher directly, bypassing
+      # the control gateway that is the app's only sanctioned entry point.
+      - BROWSER_AGENT_URL=http://browser-control-gateway:8080
+      - BROWSER_LIVEKIT_URL=ws://livekit:7880
+      # Read by BOTH the server and the browser container, so a click's
+      # coordinate translation cannot disagree with the screen it maps onto.
+      - BROWSER_SCREEN_W=${BROWSER_SCREEN_W:-1280}
+      - BROWSER_SCREEN_H=${BROWSER_SCREEN_H:-720}
       - SERVE_CLIENT=1
       - PORT=3000
     healthcheck:
@@ -362,11 +382,193 @@ services:
       - "${QBITTORRENT_BT_PORT:-6881}:6881"
       - "${QBITTORRENT_BT_PORT:-6881}:6881/udp"
 
+  # ── Shared browser (opt-in) ────────────────────────────────────────────────
+  #
+  # Ported from docker-compose.yml, where this stack has always lived. It was
+  # never in THIS file, which is the only one deploy/up-prod.sh uses — so on
+  # production BROWSER_ENABLED=1 and COMPOSE_PROFILES=browser were both set,
+  # both tokens were present, and the feature still could not work: a profile
+  # selects services from the file being used, and there were none. The app
+  # resolved BROWSER_AGENT_URL to a container that did not exist and failed
+  # with EAI_AGAIN.
+  #
+  # Two switches, answering different questions:
+  #   BROWSER_ENABLED=1          does the app offer the feature?
+  #   COMPOSE_PROFILES=browser   do these containers exist at all?
+  # Either alone is safe: the app reads an unreachable agent as "unavailable".
+  #
+  # Topology: app -> control gateway -> publisher; publisher -> LiveKit;
+  # target -> filtered egress proxy -> Internet. The untrusted target has no
+  # route to the app, LiveKit, the core services, or unfiltered egress.
+  browser:
+    build: ./browser
+    container_name: watchparty-browser
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    cap_drop: [ALL]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./browser/chromium-seccomp.json
+    pids_limit: 512
+    networks: [browser-media-net, browser-sandbox-net]
+    # No `ports:` on purpose. The control API accepts input injection and must
+    # be reachable only from app/server over browser-control-net; publishing it
+    # would put a remote-keyboard endpoint on the host's interfaces — which on
+    # this host means the public internet, since everything else here binds
+    # 0.0.0.0.
+    shm_size: "1gb"
+    tmpfs:
+      # Chromium profiles on tmpfs so a wipe that fails, or a container killed
+      # outright, still cannot leak a signed-in session into the next party.
+      - /profiles:size=512m,mode=0700,uid=10001,gid=10001
+      - /tmp:size=64m,mode=1777,uid=10001,gid=10001
+    volumes:
+      - browser-x11:/tmp/.X11-unix
+      - browser-target-xauth:/target-xauth
+      - browser-pulse:/pulse
+      - ./browser/extra-ca:/opt/browser/extra-ca:ro
+    environment:
+      # `:-` not `:?` — a `:?` guard here would fail every compose command in
+      # the repo, including ones that never select this profile.
+      # entrypoint.sh refuses to start without a token instead.
+      - BROWSER_AGENT_TOKEN=${BROWSER_AGENT_TOKEN:-}
+      - BROWSER_TARGET_TOKEN=${BROWSER_TARGET_TOKEN:-}
+      - BROWSER_NETWORK_MODE=isolated-sidecars-v1
+      - TARGET_AGENT_URL=http://browser-target:8081
+      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
+      - SCREEN_W=${BROWSER_SCREEN_W:-1280}
+      - SCREEN_H=${BROWSER_SCREEN_H:-720}
+      - SCREEN_FPS=${BROWSER_FPS:-30}
+      - MAX_BITRATE_KBPS=${BROWSER_MAX_BITRATE_KBPS:-2500}
+    cpus: "2.0"
+    mem_limit: 1536m
+    depends_on:
+      # livekit has a real health probe in this file, so wait for readiness
+      # rather than mere existence (the dev file can only do service_started).
+      livekit:
+        condition: service_healthy
+      browser-target:
+        condition: service_started
+      browser-egress-proxy:
+        condition: service_started
+
+  browser-target:
+    build: ./browser
+    container_name: watchparty-browser-target
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    entrypoint: ["python3", "/opt/browser/target_agent.py"]
+    cap_drop: [ALL]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./browser/chromium-seccomp.json
+    pids_limit: 512
+    networks: [browser-sandbox-net]
+    shm_size: "1gb"
+    tmpfs:
+      - /target-state:size=512m,mode=0700,uid=10001,gid=10001
+      - /tmp:size=64m,mode=1777,uid=10001,gid=10001
+    volumes:
+      - browser-x11:/tmp/.X11-unix
+      - browser-target-xauth:/xauth:ro
+      - browser-pulse:/pulse:ro
+      - ./browser/extra-ca:/opt/browser/extra-ca:ro
+    environment:
+      - BROWSER_TARGET_TOKEN=${BROWSER_TARGET_TOKEN:-}
+      - BROWSER_NETWORK_MODE=isolated-sidecars-v1
+      - TARGET_PROXY_URL=http://browser-egress-proxy:8888
+      - XAUTHORITY=/xauth/authority
+      - PULSE_SERVER=unix:/pulse/native
+      - PULSE_COOKIE=/pulse/cookie
+      - SCREEN_W=${BROWSER_SCREEN_W:-1280}
+      - SCREEN_H=${BROWSER_SCREEN_H:-720}
+    cpus: "2.0"
+    mem_limit: 1536m
+    depends_on:
+      browser-egress-proxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  browser-egress-proxy:
+    build: ./browser
+    container_name: watchparty-browser-egress
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    entrypoint: ["python3", "/opt/browser/network.py", "proxy", "--port", "8888"]
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 96
+    networks: [browser-sandbox-net, browser-egress-net]
+    environment:
+      # network.py merges these two and additionally denies every non-global
+      # address, so loopback, RFC1918 and the tailnet are refused without being
+      # listed. BROWSER_DENY_ADDRESSES is for the REST of this host's routable
+      # addresses — notably its global IPv6, which VPS_PUBLIC_IP does not cover.
+      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
+      - VPS_PUBLIC_IP=${VPS_PUBLIC_IP:-}
+      # Refuses to start if the merged list is empty — a deploy that would have
+      # left the filter open fails loudly instead of serving.
+      - REQUIRE_DENY_ADDRESSES=1
+      - PROXY_MAX_CONNECTIONS=${BROWSER_PROXY_MAX_CONNECTIONS:-64}
+      - PROXY_IDLE_TIMEOUT_SECONDS=${BROWSER_PROXY_IDLE_TIMEOUT_SECONDS:-30}
+      - PROXY_MAX_TUNNEL_SECONDS=${BROWSER_PROXY_MAX_TUNNEL_SECONDS:-600}
+    cpus: "0.25"
+    mem_limit: 128m
+    healthcheck:
+      disable: true
+
+  browser-control-gateway:
+    build: ./browser
+    container_name: watchparty-browser-gateway
+    restart: unless-stopped
+    profiles: [browser]
+    init: true
+    entrypoint: ["python3", "/opt/browser/network.py", "gateway", "8080:browser:8080"]
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    cpus: "0.10"
+    mem_limit: 64m
+    networks: [browser-control-net, browser-sandbox-net]
+    depends_on:
+      browser:
+        condition: service_started
+    healthcheck:
+      disable: true
+
 networks:
   watchparty-net:
     name: watchparty-net
     driver: bridge
+  # The browser's three isolation networks. `internal: true` means no route to
+  # the host or the internet — only browser-egress-net is routable, and only
+  # the filtering proxy sits on it.
+  browser-control-net:
+    driver: bridge
+    internal: true
+  browser-media-net:
+    driver: bridge
+    internal: true
+  browser-egress-net:
+    driver: bridge
+  browser-sandbox-net:
+    driver: bridge
+    internal: true
 
 volumes:
   caddy_data:
   caddy_config:
+  browser-x11:
+  browser-target-xauth:
+  browser-pulse:

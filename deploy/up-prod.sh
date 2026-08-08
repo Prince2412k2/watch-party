@@ -74,6 +74,29 @@ if [ -z "$RESOLVED_IP" ] || [ "$RESOLVED_IP" = "YOUR_VPS_PUBLIC_IP" ]; then
 fi
 echo "  resolves to $RESOLVED_IP"
 
+# ...and that it is an address THIS HOST actually holds.
+#
+# Everything below only ever checked that the two copies of the value agreed
+# with each other. They did — at 203.0.113.10, which was not this machine's
+# address at all, most likely a leftover from a previous host. So the placeholder
+# fix earlier in this file's life swapped a placeholder for a wrong value and
+# passed every check, while coturn kept advertising a relay candidate pointing
+# somewhere the client could never reach.
+#
+# LiveKit survived it by luck: secrets/livekit.yaml sets use_external_ip: true,
+# which discovers the address by STUN and overwrites NODE_IP. coturn has no
+# such fallback — -X is taken literally.
+if ! ip -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -qx "$RESOLVED_IP"; then
+  echo "  VPS_PUBLIC_IP ($RESOLVED_IP) is not assigned to any interface on this host."
+  echo "  Addresses actually present:"
+  ip -o addr show scope global 2>/dev/null | awk '{printf "    %s  %s\n", $2, $4}'
+  echo "  TURN would advertise a relay candidate this machine does not own."
+  echo "  Set VPS_PUBLIC_IP= in secrets/.env (and external-ip= in"
+  echo "  secrets/coturn.conf) to this host's public address."
+  exit 1
+fi
+echo "  and is assigned to a local interface"
+
 # coturn does NOT read the environment — it reads secrets/coturn.conf, which
 # compose bind-mounts verbatim. So the check above proves nothing about it, and
 # for a long time nothing else did either: external-ip sat at the literal
