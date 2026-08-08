@@ -336,18 +336,23 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
         duration: AppMotion.hover,
         decoration: BoxDecoration(
           borderRadius: radius,
-          // Subtle glow ring when speaking (no heavy border/plate).
-          boxShadow: speaking
-              ? [
-                  BoxShadow(
-                    color: AppColors.live.withValues(alpha: 0.55),
-                    blurRadius: 12,
-                    spreadRadius: 1,
-                  ),
-                ]
-              : AppElevation.high,
+          // Speaking no longer swaps the elevation out for a red bloom. A
+          // floating tile is a physical thing sitting over the picture, and it
+          // kept its cast shadow whether or not anyone was talking; trading
+          // that for a glow made the tile look like it was lifting off every
+          // time its owner spoke. The ring goes over the video instead.
+          boxShadow: AppElevation.high,
         ),
-        child: ClipRRect(borderRadius: radius, child: body),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              body,
+              SpeakingRing(speaking: speaking, radius: radius),
+            ],
+          ),
+        ),
       ),
     );
 
