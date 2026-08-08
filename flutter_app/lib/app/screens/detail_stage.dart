@@ -516,7 +516,26 @@ class _StageBody extends ConsumerWidget {
                     // matching the browse screen, where the copy sits about
                     // 70px further in. That inset is the last visible
                     // difference between the two surfaces.
-                    child: Center(child: SingleChildScrollView(child: copy)),
+                    // Scrollable in structure, NOT in behaviour — the same
+                    // idiom the season strip below uses.
+                    //
+                    // The physics are what matters: a plain
+                    // SingleChildScrollView drew a scrollbar down the middle
+                    // of the backdrop, because the copy genuinely overflowed
+                    // (a 52px two-line title pushed Watch now off the bottom).
+                    // _headingSizeFor now steps long titles down so it fits,
+                    // but removing the scroll view outright was wrong — an
+                    // overflowing Column does not clip, it THROWS, which is
+                    // exactly what detail_screen_layout_test guards.
+                    //
+                    // So: no scrollbar, no scrolling, and a window too short
+                    // for the copy clips instead of raising.
+                    child: Center(
+                      child: SingleChildScrollView(
+                        physics: const NeverScrollableScrollPhysics(),
+                        child: copy,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: TitleLayout.columnGap),
                   Expanded(
@@ -767,11 +786,26 @@ class _CopyColumn extends StatelessWidget {
             ),
           line(
             TitleType.heading.fontSize ?? 52,
+            // Long titles step down rather than wrapping to two 52px lines.
+            //
+            // Episode names here are often two segment titles joined by a
+            // slash ("The Snowman Cometh / The Precious, Wonderful, ..."), and
+            // at full display size those wrapped, ellipsised, AND pushed Watch
+            // now off the bottom of the column — which is what put the copy in
+            // a scroll view and a scrollbar down the middle of the stage.
+            //
+            // Shrinking the type is the fix rather than scrolling, because the
+            // block is meant to be read at a glance from across a room: a
+            // control you have to scroll to reach is worse than a heading two
+            // sizes smaller.
             Text(
               subject.name,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TitleType.heading.copyWith(color: wp.text),
+              style: TitleType.heading.copyWith(
+                color: wp.text,
+                fontSize: _headingSizeFor(subject.name),
+              ),
             ),
           ),
           // An episode without its own synopsis falls back to the series', so
@@ -1681,6 +1715,20 @@ String _trackLabel(PlaybackTrack t, String fallback) {
     if (t.isDefault && !lower.contains('default')) 'Default',
     if (t.isForced && !lower.contains('forced')) 'Forced',
   ].join(' · ');
+}
+
+/// The display size for a title of [name]'s length.
+///
+/// Three steps, not a continuous scale: a heading that is a slightly different
+/// size on every title reads as sloppy, while three deliberate sizes read as a
+/// type ramp. The thresholds are character counts because the constraint is
+/// how many lines it takes, and at this width that tracks length closely
+/// enough to beat measuring and re-laying out.
+double _headingSizeFor(String name) {
+  final full = TitleType.heading.fontSize ?? 52;
+  if (name.length <= 28) return full;
+  if (name.length <= 48) return full * 0.72;
+  return full * 0.56;
 }
 
 /// Runtime + premiere + resolution/HDR/size line (web Details.infoLine).
