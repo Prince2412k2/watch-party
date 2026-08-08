@@ -240,8 +240,10 @@ Future<ShowStageInfo> _libraryShowInfo(
   final seasonNumbers = _orderSeasons(
     seasons.map((s) => s.indexNumber).whereType<int>(),
   );
-  final (sonarrSeriesId, sonarrSeriesRaw) =
-      await _librarySonarrIdentity(api, item.providerIds);
+  final (sonarrSeriesId, sonarrSeriesRaw) = await _librarySonarrIdentity(
+    api,
+    item.providerIds,
+  );
   return ShowStageInfo(
     title: item.name,
     genres: item.genres,
@@ -265,7 +267,11 @@ Future<ShowStageInfo> _libraryShowInfo(
 Future<ShowStageInfo> _discoverShowInfo(ApiClient api, String tvdbIdStr) async {
   final tvdbId = int.tryParse(tvdbIdStr);
   if (tvdbId == null) {
-    throw ApiException('showInfo', 400, 'invalid Discover show id "$tvdbIdStr"');
+    throw ApiException(
+      'showInfo',
+      400,
+      'invalid Discover show id "$tvdbIdStr"',
+    );
   }
   final raw = await _sonarrLookupByTvdb(api, tvdbId);
   if (raw == null) {
@@ -291,8 +297,10 @@ Future<ShowStageInfo> _discoverShowInfo(ApiClient api, String tvdbIdStr) async {
   );
 }
 
-final showInfoProvider =
-    FutureProvider.family<ShowStageInfo, ShowRef>((ref, show) async {
+final showInfoProvider = FutureProvider.family<ShowStageInfo, ShowRef>((
+  ref,
+  show,
+) async {
   final api = ref.watch(apiClientProvider);
   return show.kind == ShowSourceKind.library
       ? _libraryShowInfo(ref, api, show.id)
@@ -336,7 +344,13 @@ Future<List<ShowEpisode>> _libraryEpisodes(
           episodeNumber: e.indexNumber ?? 0,
           name: e.name.isEmpty ? null : e.name,
           overview: e.overview,
-          still: api.imageUrl(e.id, type: ImageType.thumb),
+          // Primary, not Thumb. Jellyfin puts an episode's still on its
+          // PRIMARY image; Thumb is a series/season-level artwork type that
+          // episodes generally do not carry. Asking for Thumb 404'd on every
+          // episode — no stills in the app at all, and a flood of "Artwork
+          // request failed: HTTP 404" behind it. The web client has always
+          // asked for Primary, which is why its stills appear.
+          still: api.imageUrl(e.id, type: ImageType.primary),
           airDate: e.premiereDate,
           runtime: _runtimeMinutes(e.runTimeTicks),
           rating: e.communityRating,
@@ -368,8 +382,8 @@ Future<List<ShowEpisode>> _discoverEpisodes(
     }
   }
   final data = await api.servarrGet('sonarr/episodes', query: query) as Map;
-  final episodes =
-      (data['episodes'] as List? ?? const []).cast<Map<String, dynamic>>();
+  final episodes = (data['episodes'] as List? ?? const [])
+      .cast<Map<String, dynamic>>();
   return episodes
       .map(
         (e) => ShowEpisode(
@@ -390,11 +404,11 @@ Future<List<ShowEpisode>> _discoverEpisodes(
 
 final showEpisodesProvider =
     FutureProvider.family<List<ShowEpisode>, ShowEpisodesRef>((ref, key) async {
-  final api = ref.watch(apiClientProvider);
-  return key.show.kind == ShowSourceKind.library
-      ? _libraryEpisodes(ref, api, key)
-      : _discoverEpisodes(ref, api, key);
-});
+      final api = ref.watch(apiClientProvider);
+      return key.show.kind == ShowSourceKind.library
+          ? _libraryEpisodes(ref, api, key)
+          : _discoverEpisodes(ref, api, key);
+    });
 
 // ── Whole-show / per-season download ────────────────────────────────────
 
@@ -419,7 +433,9 @@ class ShowDownloadProgress {
     List<SeasonOutcome>? outcomes,
   }) => ShowDownloadProgress(
     running: running ?? this.running,
-    inFlightSeason: clearInFlight ? null : (inFlightSeason ?? this.inFlightSeason),
+    inFlightSeason: clearInFlight
+        ? null
+        : (inFlightSeason ?? this.inFlightSeason),
     outcomes: outcomes ?? this.outcomes,
   );
 }
@@ -537,5 +553,5 @@ class ShowDownloadNotifier extends StateNotifier<ShowDownloadProgress> {
 
 final showDownloadProvider =
     StateNotifierProvider<ShowDownloadNotifier, ShowDownloadProgress>(
-  (ref) => ShowDownloadNotifier(ref),
-);
+      (ref) => ShowDownloadNotifier(ref),
+    );

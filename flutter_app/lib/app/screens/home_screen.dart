@@ -44,7 +44,11 @@ class HomeScreen extends ConsumerWidget {
     return home.when(
       loading: () => const _HomeSkeleton(),
       error: (e, _) => latestItems.isNotEmpty
-          ? _CatalogFallback(items: latestItems, api: api, onAmbient: setAmbient)
+          ? _CatalogFallback(
+              items: latestItems,
+              api: api,
+              onAmbient: setAmbient,
+            )
           : ErrorState(
               title: 'Failed to load home',
               message: '$e',
@@ -84,7 +88,7 @@ class HomeScreen extends ConsumerWidget {
                         ? it.name
                         : (it.seriesName ?? it.name),
                     subtitle: _stillSubtitle(it),
-                    imageUrl: imageUrl(it, ImageType.thumb),
+                    imageUrl: imageUrl(it, ImageType.primary),
                     progress: _progress(it),
                     onHover: () => setAmbient(it.id),
                     onTap: () => context.go('/detail/${it.id}'),
@@ -130,7 +134,7 @@ class HomeScreen extends ConsumerWidget {
                   StillCard(
                     title: it.name,
                     subtitle: _stillSubtitle(it),
-                    imageUrl: imageUrl(it, ImageType.thumb),
+                    imageUrl: imageUrl(it, ImageType.primary),
                     onHover: () => setAmbient(it.id),
                     onTap: () => context.go('/detail/${it.id}'),
                   ),
@@ -409,9 +413,7 @@ class _CatalogFallback extends ConsumerWidget {
           for (var i = 0; i < items.length; i++)
             _NewPoster(
               item: items[i],
-              imageUrl: api is MockApiClient
-                  ? null
-                  : api.imageUrl(items[i].id),
+              imageUrl: api is MockApiClient ? null : api.imageUrl(items[i].id),
               heroTag: i == 0 ? 'poster-${items[i].id}' : null,
               onHover: () => onAmbient(items[i].id),
               onTap: () => context.go('/detail/${items[i].id}'),

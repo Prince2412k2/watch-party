@@ -1429,7 +1429,7 @@ class _EpisodeRail extends StatelessWidget {
             // episode is not reliably one. Behind the session either way, so
             // it goes through AuthedNetworkImage inside the tile — a plain
             // Image.network here 401s.
-            imageUrl: api.imageUrl(ep.id, type: ImageType.thumb),
+            imageUrl: api.imageUrl(ep.id, type: ImageType.primary),
             placeholderLabel: 'E${ep.indexNumber ?? '–'}',
             progress: _progressOf(ep),
           ),
