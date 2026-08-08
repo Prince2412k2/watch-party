@@ -381,6 +381,9 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
 
   void _setChatOpen(bool open) {
     setState(() => _chatOpen = open);
+    // Published so the app-wide notification rail can stay quiet while the
+    // drawer is up — it sits above the router and cannot see this state.
+    ref.read(chatDrawerOpenProvider.notifier).state = open;
     if (open) {
       _autoHide.hold(_kChatHold);
     } else {
@@ -2229,34 +2232,7 @@ class _HostControlsDialogState extends ConsumerState<_HostControlsDialog> {
                     onTap: () => _copyInvite(joinUrl),
                   ),
                   if (isHost) ...[
-                    _AvIconButton(
-                      icon: party.collaborativeControl
-                          ? Icons.lock_open
-                          : Icons.lock_outline,
-                      tooltip: party.collaborativeControl
-                          ? 'Everyone can play, pause and seek'
-                          : 'Only you can play, pause and seek',
-                      active: party.collaborativeControl,
-                      onTap: () =>
-                          notifier.setCollaborative(!party.collaborativeControl),
-                    ),
                     if (watching) ...[
-                      const _AvDivider.vertical(),
-                      _AvIconButton(
-                        icon: Icons.link,
-                        tooltip:
-                            'Tethered — everyone waits for the slowest viewer',
-                        active: party.syncMode == 'dragging',
-                        onTap: () => notifier.setSyncMode('dragging'),
-                      ),
-                      _AvIconButton(
-                        icon: Icons.bolt,
-                        tooltip:
-                            'Free-running — you never wait; others catch up',
-                        active: party.syncMode != 'dragging',
-                        onTap: () => notifier.setSyncMode('hopping'),
-                      ),
-                      const _AvDivider.vertical(),
                       _AvIconButton(
                         icon: Icons.swap_horiz,
                         tooltip: 'Switch to another title',
@@ -2286,6 +2262,36 @@ class _HostControlsDialogState extends ConsumerState<_HostControlsDialog> {
                   ],
                 ],
               ),
+
+              // The two SETTINGS, as switches.
+              //
+              // These stayed labelled on purpose. A glyph works for a verb —
+              // press it, something happens, and if you guessed wrong you press
+              // it again. It does not work for a persistent mode: a lock icon
+              // cannot say whether it means "locked now" or "press to lock",
+              // and getting sync mode wrong is not something a viewer can even
+              // see, let alone undo. A switch shows its state without being
+              // interpreted, and one word says which state that is.
+              if (isHost) ...[
+                const SizedBox(height: AppSpacing.md),
+                Divider(height: 1, color: wp.line),
+                _SettingRow(
+                  label: 'Everyone can control',
+                  hint: 'Guests may play, pause and seek',
+                  value: party.collaborativeControl,
+                  onChanged: notifier.setCollaborative,
+                ),
+                if (watching)
+                  _SettingRow(
+                    label: 'Wait for everyone',
+                    hint: party.syncMode == 'dragging'
+                        ? 'Playback holds for the slowest viewer'
+                        : 'You never wait; others catch up',
+                    value: party.syncMode == 'dragging',
+                    onChanged: (on) =>
+                        notifier.setSyncMode(on ? 'dragging' : 'hopping'),
+                  ),
+              ],
 
               const SizedBox(height: AppSpacing.md),
               // The code: data, not a label, so it keeps its own line and its
@@ -2325,6 +2331,63 @@ class _HostControlsDialogState extends ConsumerState<_HostControlsDialog> {
     if (!ok) return;
     await notifier.end();
     router.go('/home');
+  }
+}
+
+/// A named switch: a mode you set and leave, as opposed to a button you press.
+///
+/// The hint is one line and it changes with the state, so it reports what is
+/// true rather than explaining the feature.
+class _SettingRow extends StatelessWidget {
+  const _SettingRow({
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String hint;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: wp.text,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  hint,
+                  style: TextStyle(color: wp.faint, fontSize: 11.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          AnalogSwitch(
+            value: value,
+            onChanged: onChanged,
+            semanticLabel: label,
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -2486,60 +2549,16 @@ class _DeviceRail extends ConsumerWidget {
               tooltip: dock ? 'Float cameras' : 'Dock cameras',
               onTap: onToggleLayout,
             ),
-          // Last, and separated: a repair, not a device control.
-          const _AvDivider(),
-          const _ReconnectAvButton(),
+          // Reconnect is NOT here. It moved to the watch-party control panel:
+          // the rail is the four things you reach for mid-film, and a repair
+          // you need once a month does not earn a permanent seat among them.
         ],
       ),
     );
   }
 }
 
-/// Rebuilds this client's A/V room without disturbing the party.
-///
-/// Sits with the mic and camera because that is where the fault shows up: a
-/// screen share that will not start, or a camera that will not come back, with
-/// chat and playback working fine. Before this, the only way out was ending the
-/// party — one person's wedged track costing everyone their seat.
-class _ReconnectAvButton extends ConsumerStatefulWidget {
-  const _ReconnectAvButton();
-
-  @override
-  ConsumerState<_ReconnectAvButton> createState() => _ReconnectAvButtonState();
-}
-
-class _ReconnectAvButtonState extends ConsumerState<_ReconnectAvButton> {
-  bool _busy = false;
-
-  Future<void> _run() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    final error = await ref.read(partyProvider.notifier).reconnectAv();
-    if (!mounted) return;
-    setState(() => _busy = false);
-    // Says something either way. A repair button that goes quiet on success is
-    // indistinguishable from one that did nothing.
-    showAnalogToast(
-      context,
-      error == null ? 'Video reconnected' : 'Could not reconnect video',
-      tone: error == null ? AnalogToastTone.success : AnalogToastTone.danger,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _AvIconButton(
-      // A static glyph while busy, never a spinner: this rail is persistent
-      // chrome, and an indeterminate progress indicator in persistent chrome
-      // never settles — it hangs pumpAndSettle and every widget test with it.
-      icon: _busy ? Icons.hourglass_empty : Icons.refresh,
-      tooltip: _busy ? 'Reconnecting…' : 'Reconnect video and audio',
-      onTap: _busy ? null : _run,
-    );
-  }
-}
-
-/// A hairline between the device toggles and the repair below them.
+/// A hairline separating groups of controls.
 class _AvDivider extends StatelessWidget {
   const _AvDivider() : vertical = false;
 

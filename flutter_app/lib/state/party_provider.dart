@@ -999,6 +999,13 @@ class PartyMinimizedNotifier extends StateNotifier<String?> {
   void restore() => state = null;
 }
 
+/// Whether the chat drawer is on screen.
+///
+/// The notification rail reads it: a message you are already looking at does
+/// not need announcing. It lives here rather than in the party screen's own
+/// state because the rail sits above the router and cannot see into a route.
+final chatDrawerOpenProvider = StateProvider<bool>((ref) => false);
+
 final partyMinimizedProvider =
     StateNotifierProvider<PartyMinimizedNotifier, String?>(
       (ref) => PartyMinimizedNotifier(),

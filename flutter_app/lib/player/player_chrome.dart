@@ -13,7 +13,6 @@ import 'package:flutter/services.dart';
 
 import '../analog/player/analog_settings_stack.dart';
 import '../analog/player/analog_timeline.dart';
-import '../analog/player/analog_toast_stack.dart';
 import '../analog/player/analog_volume.dart';
 import '../analog/player/auto_hide_controller.dart';
 import '../analog/player_core.dart';
@@ -483,10 +482,28 @@ class _PlayerChromeState extends State<PlayerChrome>
     ];
   }
 
+  /// Identity for de-duplication: title and language, NOT codec.
+  ///
+  /// Codec used to be part of this, and it is exactly the field that disagrees
+  /// across the two descriptions of one subtitle. Jellyfin describes an
+  /// external track one way; once selected, mpv loads it and reports the same
+  /// subtitle back through the player's own track list with a different (often
+  /// absent) codec. The two signatures then differed, nothing filtered either
+  /// out, and the picker grew a second "English" the moment you chose the
+  /// first — which is what made re-opening the menu show the entry twice.
+  ///
+  /// [_loadedExternalSubtitleTrackIds] is meant to catch this by native id, but
+  /// only records one when `currentSubtitleTrackId` is already populated, and
+  /// mpv updates its track list asynchronously after the add. So the id map is
+  /// the fast path and this is the one that has to hold.
+  ///
+  /// The cost is that two tracks with the same title AND language in different
+  /// formats collapse into one entry. That is rare, and a picker showing one of
+  /// them is a much smaller problem than a picker that grows an entry every
+  /// time it is used.
   static String _subtitleTrackSignature(PlayerTrack track) => [
     track.title,
     track.language,
-    track.codec,
   ].map((value) => value?.trim().toLowerCase() ?? '').join('|');
 
   Future<String> _contentForExternal(PlaybackTrack track) {
@@ -1397,14 +1414,15 @@ class _PlayerChromeState extends State<PlayerChrome>
                 ),
               ),
 
-              // Chat toasts: TOP-LEFT, clear of the subtitles and transport at
-              // the bottom, the chat toggle at the top right, and the floating
-              // participant tiles that cascade up from the bottom right.
-              Positioned(
-                left: AnalogSpace.lgPx,
-                top: 72,
-                child: AnalogToastStack(view: toastView(_toasts)),
-              ),
+              // Chat notices are NOT drawn here any more. They were, at the top
+              // left, and this widget is the party screen's Stack index 0 —
+              // underneath the floating camera tiles. A message arriving while
+              // someone's tile happened to sit there appeared BEHIND their
+              // face, which is the one place a notice cannot be seen.
+              //
+              // There is one notification path now: the app-wide rail
+              // (ChatNotifications -> AnalogToastHost), mounted above the
+              // router, so nothing the player or the party draws can cover it.
 
               if (activeCues.isNotEmpty)
                 _SubtitleOverlay(
