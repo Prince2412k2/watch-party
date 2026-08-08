@@ -263,7 +263,13 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
         _browserButton(null),
         const TrayDivider(),
         TrayButton(
-          icon: Icons.login,
+          // A keypad, because the action is "type the code someone sent you".
+          // This was Icons.login — the arrow-into-a-door sign-in glyph — which
+          // in an app that HAS an account to sign into read as exactly that,
+          // and sat a few pixels from the profile tray's Icons.logout meaning
+          // the real thing. A text-free tray only works if each glyph names its
+          // own action; this one named a different feature entirely.
+          icon: Icons.dialpad,
           tooltip: 'Join with a code',
           onTap: _join,
         ),
