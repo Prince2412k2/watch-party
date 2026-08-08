@@ -299,7 +299,11 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
 
     return [
       TrayButton(
-        icon: Icons.logout,
+        // Leaving a room is not signing out, and this used the same door-arrow
+        // as the profile tray's Sign out — sitting in the opposite corner of
+        // the same screen, at the same size, with no text on either. Pressing
+        // the wrong one ends your session in the middle of a film.
+        icon: Icons.group_remove,
         tooltip: 'Leave the party',
         tint: kSemanticRed,
         busy: _busy,
