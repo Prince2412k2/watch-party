@@ -112,10 +112,20 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu>
                 badge:
                     update.status == UpdateStatus.available ||
                     update.status == UpdateStatus.readyToInstall,
+                // `loading` is deliberately NOT busy. It is the INITIAL state
+                // — the app reading its own bundled version at boot — so
+                // treating it as work in flight put a permanent "busy" mark on
+                // the tray from launch, on a control nobody had touched. Now
+                // that busy animates, it also meant an animation that never
+                // stopped, which hung `pumpAndSettle` in every test that only
+                // wanted to boot the app.
+                //
+                // Busy means a request the user started. Checking and
+                // downloading qualify; noticing what version you already have
+                // does not, and the button stays pressable throughout.
                 busy:
                     update.status == UpdateStatus.checking ||
-                    update.status == UpdateStatus.downloading ||
-                    update.status == UpdateStatus.loading,
+                    update.status == UpdateStatus.downloading,
                 // A download knows how far along it is, so it says so in place
                 // of the glyph rather than making you hover for the tooltip.
                 progress: update.status == UpdateStatus.downloading
