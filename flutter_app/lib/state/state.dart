@@ -7,6 +7,7 @@ export 'downloads_provider.dart';
 export 'library_provider.dart';
 export 'livekit_provider.dart';
 export 'party_provider.dart';
+export 'now_playing_provider.dart';
 export 'player_provider.dart';
 export 'profile_provider.dart';
 export 'providers.dart';

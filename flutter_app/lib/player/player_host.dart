@@ -19,8 +19,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../state/now_playing_provider.dart';
 import '../state/providers.dart';
 import '../state/player_provider.dart';
-import '../ui/tokens.dart';
+import '../data/api_client.dart';
+import '../ui/ui.dart';
 import '../ui/widgets/floating_camera_tile.dart';
+import 'open_title.dart';
 import 'player_view.dart';
 
 /// Movies are 16:9, unlike the 4:3 camera tiles the geometry was written for.
@@ -49,6 +51,64 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   /// reparents the existing element instead, which is what keeps playback
   /// running across the transition.
   final GlobalKey _playerKey = GlobalKey(debugLabel: 'app-player');
+
+  /// The title this host has opened, so a rebuild does not re-open it. Party
+  /// titles are never recorded here: PartyNotifier owns those opens.
+  String? _openedItemId;
+  bool _ready = false;
+  Object? _error;
+  bool _usesCacheProxy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // A title can already be set before the first build (a resumed party, a
+    // deep link), so react on mount as well as on change.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _syncOpen(ref.read(nowPlayingProvider)),
+    );
+  }
+
+  /// Open a SOLO title when one appears. Party media is opened by
+  /// [PartyNotifier], behind its own generation-guarded queue — opening it here
+  /// too would be the double-open that queue exists to prevent.
+  Future<void> _syncOpen(NowPlaying now) async {
+    if (!now.isOpen || now.fromParty) {
+      _openedItemId = null;
+      return;
+    }
+    if (now.itemId == _openedItemId) return;
+    final itemId = now.itemId!;
+    _openedItemId = itemId;
+    setState(() {
+      _ready = false;
+      _error = null;
+    });
+
+    final result = await openTitleIntoPlayer(
+      ref,
+      ref.read(playerControllerProvider),
+      itemId: itemId,
+      mediaSourceId: now.mediaSourceId,
+      audioStreamIndex: now.audioStreamIndex,
+      subtitleStreamIndex: now.subtitleStreamIndex,
+      // Stale the moment something else claims the player, so an open that
+      // lands late does not start a title nobody is watching.
+      isStale: () =>
+          !mounted || ref.read(nowPlayingProvider).itemId != itemId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _ready = result.ok;
+      _error = result.error;
+      _usesCacheProxy = result.usesCacheProxy;
+    });
+  }
+
+  void _retry() {
+    _openedItemId = null;
+    _syncOpen(ref.read(nowPlayingProvider));
+  }
 
   /// Top-left of the floating tile, in stage coordinates. Null until the first
   /// layout, which is when a cascade anchor can actually be computed.
@@ -111,6 +171,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   Widget build(BuildContext context) {
     final now = ref.watch(nowPlayingProvider);
     final notifier = ref.read(nowPlayingProvider.notifier);
+    ref.listen<NowPlaying>(nowPlayingProvider, (_, next) => _syncOpen(next));
 
     return Stack(
       children: [
@@ -154,6 +215,13 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                             _drag(details, stage, rect.size),
                         onDragEnd: () => _dragEnd(stage, rect.size),
                         onResize: (details) => _resize(details, stage),
+                        // Solo playback reports its own load/failure here,
+                        // because the route that used to show them is gone.
+                        // Party playback has no such state: the sync engine
+                        // reports through the party chrome instead.
+                        error: now.fromParty ? null : _error,
+                        loading: !now.fromParty && !_ready && _error == null,
+                        onRetry: _retry,
                         child: PlayerView(
                           key: _playerKey,
                           controller: ref.watch(playerControllerProvider),
@@ -163,6 +231,11 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                           apiClient: ref.watch(apiClientProvider),
                           preferredSubtitleStreamIndex:
                               now.subtitleStreamIndex,
+                          cachedSpans: _usesCacheProxy && now.itemId != null
+                              ? ref
+                                    .watch(mediaCacheProxyProvider)
+                                    .cachedSpansFor(now.itemId!)
+                              : null,
                           onBack: notifier.minimise,
                           // No transport bar in a 300px tile: the chrome is
                           // laid out for a full window and overflows one.
@@ -187,6 +260,9 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 class _PlayerFrame extends StatelessWidget {
   const _PlayerFrame({
     required this.expanded,
+    this.error,
+    this.loading = false,
+    required this.onRetry,
     required this.onMinimise,
     required this.onExpand,
     required this.onClose,
@@ -197,6 +273,9 @@ class _PlayerFrame extends StatelessWidget {
   });
 
   final bool expanded;
+  final Object? error;
+  final bool loading;
+  final VoidCallback onRetry;
   final VoidCallback onMinimise;
   final VoidCallback onExpand;
   final VoidCallback onClose;
@@ -204,6 +283,35 @@ class _PlayerFrame extends StatelessWidget {
   final VoidCallback onDragEnd;
   final ValueChanged<DragUpdateDetails> onResize;
   final Widget child;
+
+  /// The video, or the reason there isn't one. Kept in ONE place so the
+  /// expanded and floating branches below cannot disagree about it.
+  Widget _body() {
+    if (error != null) {
+      return Center(
+        child: ErrorState(
+          title: 'Playback failed',
+          message: error is ApiException
+              ? (error! as ApiException).message
+              : 'Could not open this title. Check your connection and try again.',
+          onRetry: onRetry,
+        ),
+      );
+    }
+    if (loading) {
+      return const Center(
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.text,
+          ),
+        ),
+      );
+    }
+    return child;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -215,7 +323,7 @@ class _PlayerFrame extends StatelessWidget {
         bindings: {
           const SingleActivator(LogicalKeyboardKey.escape): onMinimise,
         },
-        child: Focus(autofocus: true, child: child),
+        child: Focus(autofocus: true, child: _body()),
       );
     }
 
@@ -257,7 +365,7 @@ class _PlayerFrame extends StatelessWidget {
                 Positioned.fill(
                   child: GestureDetector(
                     onTap: onExpand,
-                    child: AbsorbPointer(child: child),
+                    child: AbsorbPointer(child: _body()),
                   ),
                 ),
                 // Bottom-right resize, matching the camera tiles' handle.
