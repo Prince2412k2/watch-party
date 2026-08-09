@@ -114,6 +114,11 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu>
                     update.status == UpdateStatus.checking ||
                     update.status == UpdateStatus.downloading ||
                     update.status == UpdateStatus.loading,
+                // A download knows how far along it is, so it says so in place
+                // of the glyph rather than making you hover for the tooltip.
+                progress: update.status == UpdateStatus.downloading
+                    ? update.progress
+                    : null,
                 onTap: _updateAction(ref, update),
               ),
               TrayButton(

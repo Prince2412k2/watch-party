@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../cache/media_cache_proxy.dart';
+import '../data/api_client.dart';
 import '../download/offline_manifest_store.dart';
 import '../models/models.dart';
 import 'providers.dart';
@@ -104,6 +105,39 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
       ...state.where((r) => r.itemId != record.itemId),
       record,
     ];
+  }
+
+  /// Drop downloads whose title no longer exists on the server.
+  ///
+  /// A film deleted from the library leaves its bytes on every device that had
+  /// downloaded it — invisible, unplayable, and occupying gigabytes nobody can
+  /// account for. This reclaims that.
+  ///
+  /// The dangerous version of this feature reconciles against a LISTING: fetch
+  /// the library, remove anything not in it. That deletes every download you
+  /// own the first time the request comes back empty, truncated, paged, or
+  /// scoped to a different view — a transient server fault becomes permanent
+  /// local data loss, and the user never asked for anything.
+  ///
+  /// So this only ever acts on a POSITIVE confirmation, per item: a 404 or 410
+  /// for that specific id. Any other outcome — a network failure, a 500, a 401,
+  /// a timeout — leaves the download exactly where it is. Being wrong in this
+  /// direction costs disk space; being wrong in the other costs someone the
+  /// film they downloaded for a flight.
+  Future<void> reconcileWithLibrary(ApiClient api) async {
+    final ids = state.map((r) => r.itemId).toList();
+    for (final itemId in ids) {
+      bool gone = false;
+      try {
+        await api.item(itemId);
+      } on ApiException catch (e) {
+        gone = e.statusCode == 404 || e.statusCode == 410;
+      } catch (_) {
+        // Not an answer. Say nothing, change nothing.
+        continue;
+      }
+      if (gone) await remove(itemId);
+    }
   }
 
   Future<void> remove(String itemId) => _serialize(() async {
