@@ -88,26 +88,12 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          width: 36,
-                          child: Divider(color: AppColors.faint, height: 1),
-                        ),
-                        SizedBox(height: 14),
                         Text(
-                          'The room is quiet',
-                          style: TextStyle(
-                            color: AppColors.text,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'Messages from everyone watching will appear here.',
+                          'No messages yet',
                           style: TextStyle(
                             color: AppColors.faint,
-                            fontSize: 12.5,
-                            height: 1.45,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],

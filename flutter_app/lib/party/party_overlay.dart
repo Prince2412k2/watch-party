@@ -22,6 +22,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 
 import '../analog/chrome/chrome.dart';
 import '../models/models.dart';
@@ -269,18 +270,28 @@ class _JoinRequestRow extends ConsumerWidget {
   }
 }
 
-/// The room chat, as a glass panel over everything.
+/// The room chat: a pane of liquid glass that forms out of the window's right
+/// edge rather than a rectangle that slides in.
 ///
-/// It is an overlay in the strict sense: nothing else reads its width, so
-/// opening it changes no other widget's constraints and neither the video nor
-/// the app underneath resizes or reflows. What used to happen — the stage
-/// narrowing by 360px — reframed the entire movie every time someone wanted to
-/// type.
+/// The old drawer was a `LiquidGlass` box inside an `AnimatedPositioned` — the
+/// panel existed at full size the whole time and was simply parked off-screen,
+/// so opening it was a translation and nothing about it read as material. This
+/// one is driven by [LiquidGlassJelly] around a [LiquidGlassLens]: the surface
+/// starts as a small rounded blob against the edge, stretches leftwards under a
+/// spring, and settles. The corner radius travels with it, so the shape is a
+/// pill while it is small and a panel once it is wide.
 ///
-/// Opening it moves keyboard focus into the composer, and closing it hands
-/// focus back so the player's keymap (space, arrows, F) works again without a
-/// click. A drawer you have to click into before typing is a drawer that costs
-/// two actions instead of one.
+/// The refraction is live for every frame of that, because the lens is real
+/// glass rather than a picture of it — the film underneath keeps bending
+/// through the surface as it grows.
+///
+/// RENDERING: full refraction on Skia needs an ancestor `LiquidGlassView` to
+/// capture the backdrop; without one the lens degrades to frosted glass and
+/// stays perfectly usable. We deliberately do NOT wrap the app in one: the
+/// backdrop here is playing video, so it would need `realTimeCapture`, and a
+/// full-window realtime capture under a film is exactly the cost the package's
+/// own guidance says to avoid. On Impeller (the Flutter desktop default) the
+/// lens refracts what is already rendered behind it and no view is needed.
 class ChatSlideOver extends StatefulWidget {
   const ChatSlideOver({
     super.key,
@@ -297,13 +308,56 @@ class ChatSlideOver extends StatefulWidget {
   State<ChatSlideOver> createState() => _ChatSlideOverState();
 }
 
-class _ChatSlideOverState extends State<ChatSlideOver> {
+class _ChatSlideOverState extends State<ChatSlideOver>
+    with SingleTickerProviderStateMixin {
   final FocusNode _composer = FocusNode(debugLabel: 'chatComposer');
+
+  /// Rest size of the blob the panel grows out of, and the radius it wears
+  /// while it is that small. A pill, so the thing leaving the edge reads as a
+  /// droplet of the same material rather than a tiny window.
+  static const double _blobWidth = 54;
+  static const double _blobRadius = 27;
+  static const double _panelRadius = 26;
+
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 460),
+    reverseDuration: const Duration(milliseconds: 320),
+  );
+
+  /// Restrained overshoot. `easeOutBack` at its default overshoot reads as a
+  /// cartoon bounce at this size; the jelly spring is already supplying most of
+  /// the life, so this only needs to lean past the target and come back.
+  late final Animation<double> _extend = CurvedAnimation(
+    parent: _c,
+    curve: const Cubic(0.16, 1.02, 0.24, 1.0),
+    reverseCurve: Curves.easeInCubic,
+  );
+
+  /// Content arrives after the surface has substantially formed. Fading text in
+  /// during the stretch smears it, and reading a message that is still being
+  /// squashed is worse than waiting 150ms for it.
+  late final Animation<double> _contents = CurvedAnimation(
+    parent: _c,
+    curve: const Interval(0.55, 1, curve: Curves.easeOut),
+    reverseCurve: const Interval(0.7, 1, curve: Curves.easeIn),
+  );
 
   @override
   void initState() {
     super.initState();
-    if (widget.open) _grabFocus();
+    // The composer is where the caret belongs for as long as the drawer is up:
+    // a drawer you have to click into before typing costs two actions instead
+    // of one. Re-asserted when the open animation settles, because focus can be
+    // taken during it (the close button, a rebuild) and there is no other
+    // moment that would put it back.
+    _c.addStatusListener((status) {
+      if (status == AnimationStatus.completed && widget.open) _grabFocus();
+    });
+    if (widget.open) {
+      _c.value = 1;
+      _grabFocus();
+    }
   }
 
   @override
@@ -311,8 +365,10 @@ class _ChatSlideOverState extends State<ChatSlideOver> {
     super.didUpdateWidget(old);
     if (widget.open == old.open) return;
     if (widget.open) {
+      _c.forward();
       _grabFocus();
     } else {
+      _c.reverse();
       // Give focus back to whatever the player put it on. unfocus() alone
       // would leave the tree with no primary focus and swallow the next key.
       _composer.unfocus();
@@ -330,99 +386,172 @@ class _ChatSlideOverState extends State<ChatSlideOver> {
 
   @override
   void dispose() {
+    _c.dispose();
     _composer.dispose();
     super.dispose();
   }
 
+  /// Whether the caret is in a text field, and whether it has a selection.
+  (bool editable, bool hasSelection) get _editableFocus {
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused == null) return (false, false);
+    final editor = focused.findAncestorStateOfType<EditableTextState>();
+    if (editor == null) return (false, false);
+    final selection = editor.textEditingValue.selection;
+    return (true, selection.isValid && !selection.isCollapsed);
+  }
+
+  /// Ctrl/Cmd+C closes the drawer — including from inside the composer, which
+  /// is where the caret always is when the drawer is open.
+  ///
+  /// The player's own handler cannot do this: once the composer has focus, the
+  /// key event is delivered to the text field and never reaches the player's
+  /// focus node, so the shortcut that OPENED chat could not close it. And the
+  /// shared `shouldToggleChat` rule deliberately refuses while a text field has
+  /// focus, to protect copy — correct for the player, wrong here, and not a
+  /// rule to change underneath the web client.
+  ///
+  /// So the drawer answers for itself, with the copy guarantee intact: if there
+  /// is a selection, Ctrl+C copies and the drawer stays. With nothing selected
+  /// there is nothing to copy, and the keystroke means what the user meant.
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.keyC) {
+      return KeyEventResult.ignored;
+    }
+    final ctrlOrMeta = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    if (!ctrlOrMeta) return KeyEventResult.ignored;
+    final (_, hasSelection) = _editableFocus;
+    if (hasSelection) return KeyEventResult.ignored; // copy wins
+    widget.onClose();
+    return KeyEventResult.handled;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final open = widget.open;
-    return AnimatedPositioned(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      // Clear of the window-chrome band. Running to the top edge put the
-      // drawer's own header inside the strip macOS uses for dragging the
-      // window, so the top-right of the title bar stopped responding whenever
-      // chat was open — and the panel's heading sat level with the traffic
-      // lights, reading as part of the title bar rather than as content.
-      top: Platform.isMacOS ? integratedDesktopChromeHeight : 0,
-      bottom: 0,
-      right: open ? 0 : -(widget.width + 12),
-      width: widget.width,
-      child: SafeArea(
-        left: false,
-        // Escape closes. With the cursor parked in the composer the player's
-        // own keymap no longer sees anything typed here, so without this the
-        // drawer would be a place you can get into from the keyboard and only
-        // out of with the mouse.
-        child: CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
-          },
-          child: LiquidGlass(
-            opaque: MediaQuery.of(context).highContrast,
-            // Square against the right edge, rounded on the side that faces the
-            // picture — the panel reads as something laid ON the stage rather
-            // than a slot cut out of it.
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(AnalogRadius.cardPx + 6),
-              bottomLeft: Radius.circular(AnalogRadius.cardPx + 6),
-            ),
-            blur: 24,
-            shadow: const [
-              BoxShadow(
-                color: Color(0x66000000),
-                blurRadius: 34,
-                offset: Offset(-10, 0),
-              ),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 16, 14, 14),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'ROOM CHAT',
-                              style: TextStyle(
-                                fontFamily: AppFonts.mono,
-                                color: AppColors.faint,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1.5,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Conversation',
-                              style: TextStyle(
-                                color: AppColors.text,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: -0.3,
-                              ),
-                            ),
-                          ],
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) {
+        final t = _extend.value.clamp(0.0, 1.0);
+        if (t <= 0.001) return const SizedBox.shrink();
+
+        final width = _blobWidth + (widget.width - _blobWidth) * t;
+        final radius = _blobRadius + (_panelRadius - _blobRadius) * t;
+
+        return Positioned(
+          // Clear of the window-chrome band. Running to the top edge put the
+          // drawer's own header inside the strip macOS uses for dragging the
+          // window, so the top-right of the title bar stopped responding
+          // whenever chat was open.
+          top: Platform.isMacOS ? integratedDesktopChromeHeight : 0,
+          bottom: 0,
+          right: 0,
+          width: width,
+          child: SafeArea(
+            left: false,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final height = constraints.maxHeight;
+                // The jelly's `value` is the driving signal: it reads the
+                // velocity and direction of the extension and deforms along
+                // the horizontal, squashing the cross axis to conserve volume.
+                // This is what makes the surface behave like gel leaving the
+                // edge rather than a box changing width.
+                return LiquidGlassJelly(
+                  value: t,
+                  width: width,
+                  height: height,
+                  axis: Axis.horizontal,
+                  config: const LiquidGlassJellyConfig(
+                    // Softer and better damped than the default: this is a
+                    // 340px panel of chrome, not a toy. It should lean past
+                    // the mark once and settle, not wobble.
+                    stiffness: 260,
+                    damping: 26,
+                    stretchWidth: 18,
+                    squashHeight: 6,
+                    // Anchored at the right, because that edge is where the
+                    // material is attached and does not move.
+                    anchorBias: 1,
+                  ),
+                  child: LiquidGlassLens(
+                    style: LiquidGlassStyle(
+                      shape: LiquidGlassShape.continuousRoundedRectangle(
+                        cornerRadius: radius,
+                      ),
+                      appearance: const LiquidGlassAppearance(
+                        color: Color(0x1FFFFFFF),
+                        saturation: 1.06,
+                        blur: LiquidGlassBlur(sigmaX: 18, sigmaY: 18),
+                      ),
+                      refraction: const LiquidGlassRefraction(
+                        // High at the rim, per the brief: the edge is where
+                        // the glass is thickest and where the picture behind
+                        // visibly bends.
+                        distortion: 0.22,
+                        distortionWidth: 42,
+                        magnification: 1.03,
+                        chromaticAberration: 0.004,
+                      ),
+                    ),
+                    child: Opacity(
+                      opacity: _contents.value.clamp(0.0, 1.0),
+                      child: Focus(
+                        onKeyEvent: _onKey,
+                        // Escape closes too. With the caret parked in the
+                        // composer the player's keymap sees nothing typed
+                        // here, so without these the drawer would be a place
+                        // you can reach from the keyboard and only leave with
+                        // the mouse.
+                        child: CallbackShortcuts(
+                          bindings: {
+                            const SingleActivator(LogicalKeyboardKey.escape):
+                                widget.onClose,
+                          },
+                          child: _ChatBody(
+                            composer: _composer,
+                            onClose: widget.onClose,
+                          ),
                         ),
                       ),
-                      AnalogIconButton(
-                        icon: Icons.close,
-                        tooltip: 'Close chat',
-                        onPressed: widget.onClose,
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 18),
-                  Expanded(child: ChatPanel(composerFocus: _composer)),
-                ],
-              ),
+                );
+              },
             ),
           ),
-        ),
+        );
+      },
+    );
+  }
+}
+
+/// The drawer's contents. No heading: the panel is chat, the messages say so,
+/// and "ROOM CHAT / Conversation" was two labels naming the same obvious thing
+/// while eating the top of a 340px column.
+class _ChatBody extends StatelessWidget {
+  const _ChatBody({required this.composer, required this.onClose});
+
+  final FocusNode composer;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 14),
+      child: Column(
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: AnalogIconButton(
+              icon: Icons.close,
+              tooltip: 'Close chat',
+              onPressed: onClose,
+            ),
+          ),
+          Expanded(child: ChatPanel(composerFocus: composer)),
+        ],
       ),
     );
   }

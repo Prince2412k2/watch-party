@@ -267,6 +267,22 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                         // behind, so the correction loop never runs and the
                         // badge would be permanently dead weight.
                         showCatchUp: inParty,
+                        // No close button on the room's film.
+                        //
+                        // Closing it locally paused the controller and unmounted
+                        // the surface — and then the sync engine, which is still
+                        // attached and still following the room's schedule,
+                        // pressed play again on the next tick. The result was a
+                        // film you could hear but not see, with no way to stop
+                        // it except leaving the party from outside the player.
+                        //
+                        // The room's film is the room's. You can push it down to
+                        // a tile, and you can leave or end the room from the
+                        // popcorn — which now sits above the player, so it is
+                        // reachable without going anywhere. What you cannot do
+                        // is silently desync yourself from the thing everybody
+                        // else is watching.
+                        canClose: !inParty,
                         onMinimise: notifier.minimise,
                         onExpand: notifier.expand,
                         onClose: () => notifier.close(),
@@ -378,6 +394,7 @@ class _PlayerFrame extends StatelessWidget {
   const _PlayerFrame({
     required this.expanded,
     this.showCatchUp = false,
+    this.canClose = true,
     this.error,
     this.loading = false,
     required this.onRetry,
@@ -392,6 +409,7 @@ class _PlayerFrame extends StatelessWidget {
 
   final bool expanded;
   final bool showCatchUp;
+  final bool canClose;
   final Object? error;
   final bool loading;
   final VoidCallback onRetry;
@@ -485,11 +503,12 @@ class _PlayerFrame extends StatelessWidget {
                     tooltip: 'Back to full screen',
                     onPressed: onExpand,
                   ),
-                  _FrameButton(
-                    icon: Icons.close,
-                    tooltip: 'Stop watching',
-                    onPressed: onClose,
-                  ),
+                  if (canClose)
+                    _FrameButton(
+                      icon: Icons.close,
+                      tooltip: 'Stop watching',
+                      onPressed: onClose,
+                    ),
                 ],
               ),
             ),
