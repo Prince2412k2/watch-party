@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../models/models.dart';
+import '../../party/party_controls.dart';
 import '../../state/state.dart';
 import '../analog_tokens.dart';
 import '../palette.dart';
@@ -230,23 +230,44 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   /// The listed actions, in the order they were asked for: left to right, with
   /// the destructive one furthest from the handle in every state.
   List<Widget> _actions(PartyState? session, bool isHost) {
-    // The party surface's Back MINIMISES — the room keeps running without a
-    // window on it — so there has to be a non-destructive way back, or
-    // minimising strands the user next to a live session.
-    final onImmersiveStage =
+    // Back on the film MINIMISES it to a tile — the room keeps running — so
+    // there has to be a non-destructive way back to full screen, or minimising
+    // strands the user next to a live session. It used to navigate to
+    // `/party/:id`; now it just expands the player that is already playing.
+    final minimised =
         session != null &&
-        session.stage == 'watching';
-    final returnAction = onImmersiveStage
+        session.stage == 'watching' &&
+        ref.watch(nowPlayingProvider).isFloating;
+    final returnAction = minimised
         ? [
             const TrayDivider(),
             TrayButton(
               key: const Key('returnToPartyButton'),
               icon: Icons.open_in_full,
-              tooltip: 'Return to the party',
-              onTap: () => context.go('/party/${session.id}'),
+              tooltip: 'Back to full screen',
+              onTap: ref.read(nowPlayingProvider.notifier).expand,
             ),
           ]
         : const <Widget>[];
+
+    // The Watch Party panel — roster, transfer, kick, sync mode, switch movie.
+    // It used to open on a right-click over the party route's stage, which
+    // means it went unreachable the moment that route did. It belongs here
+    // anyway: the popcorn is on every screen, and this is the room's menu.
+    final panelAction = session == null
+        ? const <Widget>[]
+        : [
+            TrayButton(
+              key: const Key('partyControlsButton'),
+              icon: Icons.tune,
+              tooltip: 'Watch party controls',
+              onTap: () => showDialog<void>(
+                context: context,
+                barrierColor: const Color(0xB8000000),
+                builder: (_) => const HostControlsDialog(),
+              ),
+            ),
+          ];
 
     if (session == null) {
       return [
@@ -288,6 +309,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
             '${ref.read(apiClientProvider).baseUrl}/party/${session.id}',
           ),
         ),
+        ...panelAction,
         ...returnAction,
       ];
     }
@@ -304,6 +326,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
         busy: _busy,
         onTap: _leave,
       ),
+      ...panelAction,
       ...returnAction,
     ];
   }
