@@ -16,6 +16,12 @@ enum UpdateStatus {
   upToDate,
   available,
   downloading,
+
+  /// Downloaded and verified, sitting on disk, waiting for the user to say
+  /// when. Applying an update QUITS AND RELAUNCHES the app, so it is never
+  /// something that happens because a background download finished.
+  readyToInstall,
+
   manualInstall,
   error,
 }
@@ -112,6 +118,7 @@ class UpdateState {
     this.release,
     this.progress = 0,
     this.message,
+    this.stagedPath,
   });
 
   final UpdateStatus status;
@@ -121,6 +128,9 @@ class UpdateState {
   final double progress;
   final String? message;
 
+  /// The verified artifact waiting to be applied, if there is one.
+  final String? stagedPath;
+
   UpdateState copyWith({
     UpdateStatus? status,
     String? installedVersion,
@@ -128,6 +138,7 @@ class UpdateState {
     DesktopRelease? release,
     double? progress,
     String? message,
+    String? stagedPath,
   }) => UpdateState(
     status: status ?? this.status,
     installedVersion: installedVersion ?? this.installedVersion,
@@ -135,6 +146,7 @@ class UpdateState {
     release: release ?? this.release,
     progress: progress ?? this.progress,
     message: message,
+    stagedPath: stagedPath ?? this.stagedPath,
   );
 }
 
@@ -379,12 +391,15 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
             ? 'Version ${release.version} is available.'
             : 'Watchparty is up to date.',
       );
-      // Pressing "check for updates" IS the consent. Finding one and then
-      // waiting to be asked a second time made every update a two-step
-      // errand — and the second step was a button that had silently changed
-      // meaning under the cursor. Download starts now; installing still
-      // happens on relaunch, which is the only part that interrupts anyone.
-      if (available) await install();
+      // Pressing "check for updates" IS the consent to FETCH one. Finding an
+      // update and then waiting to be asked again before even starting the
+      // download made every update a two-step errand.
+      //
+      // Installing is a different question and keeps its own answer, because
+      // applying an update quits and relaunches the app — mid-film, mid-party,
+      // mid-anything. Nothing should do that off the back of a download
+      // finishing. So: fetch now, verify now, then wait.
+      if (available) await download();
     } catch (error) {
       state = state.copyWith(
         status: UpdateStatus.error,
@@ -393,7 +408,12 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
     }
   }
 
-  Future<void> install() async {
+  /// Fetch and verify the artifact, and STOP. Never applies it.
+  ///
+  /// Ends at [UpdateStatus.readyToInstall] with the verified file's path in
+  /// [UpdateState.stagedPath], so [install] can apply it later without
+  /// downloading anything a second time.
+  Future<void> download() async {
     final release = state.release;
     final platform = _platform;
     if (release == null || platform == null) return;
@@ -432,13 +452,50 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
         await file.delete();
         throw const FormatException('download size or SHA-256 did not match');
       }
-      await _applyVerified(file);
+      if (!mounted) return;
+      state = state.copyWith(
+        status: UpdateStatus.readyToInstall,
+        progress: 1,
+        stagedPath: file.path,
+        message: 'Version ${release.version} is ready. Install and restart?',
+      );
     } catch (error) {
       // The half-downloaded artifact is worthless, but failing to remove it
       // must not swallow the report of what actually went wrong.
       try {
         if (file != null && await file.exists()) await file.delete();
       } catch (_) {}
+      state = state.copyWith(
+        status: UpdateStatus.error,
+        message: 'Update failed: $error',
+      );
+    }
+  }
+
+  /// Apply an update. QUITS AND RELAUNCHES the app, so it is only ever called
+  /// because someone asked for it.
+  ///
+  /// Downloads first if nothing is staged — a direct caller (and the older call
+  /// shape) still gets the whole job done.
+  Future<void> install() async {
+    final staged = state.stagedPath;
+    if (staged == null) {
+      await download();
+      if (state.status != UpdateStatus.readyToInstall) return;
+      return install();
+    }
+    final file = File(staged);
+    if (!await file.exists()) {
+      // Staged file went away (a cleaner, a reboot, a manual delete). Fetch it
+      // again rather than failing at the last step.
+      state = state.copyWith(stagedPath: null);
+      await download();
+      if (state.status != UpdateStatus.readyToInstall) return;
+      return install();
+    }
+    try {
+      await _applyVerified(file);
+    } catch (error) {
       state = state.copyWith(
         status: UpdateStatus.error,
         message: 'Update failed: $error',
