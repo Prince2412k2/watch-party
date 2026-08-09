@@ -12,12 +12,17 @@
 // the same place `AnalogToastHost` and `ChatNotifications` already live, and for
 // the same reason. A route cannot own something that has to outlive routing.
 
+import 'dart:async';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analog/player/auto_hide_controller.dart';
 import '../analog/player_core.dart';
+import '../party/party_controls.dart';
 import '../state/state.dart';
 import '../data/api_client.dart';
 import '../ui/ui.dart';
@@ -34,9 +39,7 @@ const double _playerAspect = 16 / 9;
 const double _defaultFloatingWidth = 300;
 
 class PlayerHost extends ConsumerStatefulWidget {
-  const PlayerHost({super.key, required this.child});
-
-  final Widget child;
+  const PlayerHost({super.key});
 
   @override
   ConsumerState<PlayerHost> createState() => _PlayerHostState();
@@ -58,6 +61,38 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   late final AnalogAutoHideController _autoHide;
   static const String _kFloatingHold = 'floating';
   bool _pttHolding = false;
+
+  /// OS-level window fullscreen for the film. Carried over from the deleted
+  /// party route, which owned it — dropping it here is why the fullscreen
+  /// button vanished: the transport bar only draws it when a handler exists.
+  bool _isFullscreen = false;
+
+  Future<void> _toggleFullscreen() async {
+    final next = !_isFullscreen;
+    await windowManager.setFullScreen(next);
+    if (mounted) setState(() => _isFullscreen = next);
+  }
+
+  /// The Watch Party menu, on right-click or long-press over the picture.
+  ///
+  /// Also lost with the route. It is the only way to reach transfer-host,
+  /// remove-someone and the sync modes from the film itself; the popcorn tray
+  /// button is the other door, not a replacement for this one.
+  bool _menuOpen = false;
+
+  Future<void> _openPartyMenu() async {
+    if (_menuOpen) return;
+    _menuOpen = true;
+    await showDialog<void>(
+      // The chrome's own Navigator, directly above. This briefly went through
+      // rootNavigatorKey and silently did NOTHING whenever the key had no
+      // context — a right-click that opened no menu and reported no error.
+      context: context,
+      barrierColor: const Color(0xB8000000),
+      builder: (_) => const HostControlsDialog(),
+    );
+    if (mounted) _menuOpen = false;
+  }
 
   /// The title this host has opened, so a rebuild does not re-open it. Party
   /// titles are never recorded here: PartyNotifier owns those opens.
@@ -154,6 +189,8 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
     _autoHide
       ..removeListener(_onAutoHide)
       ..dispose();
+    // Never leave the OS window stuck in fullscreen after the film goes away.
+    if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
     super.dispose();
   }
 
@@ -235,7 +272,6 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 
     return Stack(
       children: [
-        Positioned.fill(child: widget.child),
         if (now.isOpen)
           Positioned.fill(
             child: LayoutBuilder(
@@ -257,6 +293,11 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                           child: ColoredBox(color: Colors.black),
                         ),
                       ),
+                    // Right-click / long-press over the picture opens the
+                    // Watch Party menu, exactly as it did on the route. Shift
+                    // is left alone so any native context menu survives.
+                    // Wrapped OUTSIDE the frame so the whole picture answers,
+                    // not just the chrome.
                     AnimatedPositioned(
                       // The same snap the camera tiles use: a movie tile and
                       // a person tile should move alike.
@@ -266,7 +307,10 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                       top: rect.top,
                       width: rect.width,
                       height: rect.height,
-                      child: _PlayerFrame(
+                      child: _PartyMenuGesture(
+                        enabled: party != null,
+                        onOpen: _openPartyMenu,
+                        child: _PlayerFrame(
                         expanded: now.isExpanded,
                         // Only in a room: solo playback has no timeline to be
                         // behind, so the correction loop never runs and the
@@ -321,6 +365,8 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                                     .cachedSpansFor(now.itemId!)
                               : null,
                           onBack: notifier.minimise,
+                          onToggleFullscreen: _toggleFullscreen,
+                          isFullscreen: _isFullscreen,
                           // ── party ─────────────────────────────────────────
                           // A guest may watch without driving. Outside a room
                           // you always drive yourself.
@@ -350,7 +396,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                           onPushToTalkStart: inParty ? _pttStart : null,
                           onPushToTalkStop: inParty ? _pttStop : null,
                           chatOpen: ref.watch(chatDrawerOpenProvider),
-                          chatToasts: inParty
+                          chatToasts: party != null
                               ? [
                                   for (final message in ref.watch(chatProvider))
                                     ToastMessage(
@@ -366,7 +412,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                                     ),
                                 ]
                               : const [],
-                          onToggleChat: inParty
+                          onToggleChat: party != null
                               ? () =>
                                     ref
                                             .read(
@@ -380,6 +426,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                           visible: now.isExpanded ? _autoHide.visible : false,
                           onWake: () =>
                               _autoHide.noteInput(PlayerInputKind.pointer),
+                        ),
                         ),
                       ),
                     ),
@@ -582,4 +629,40 @@ class _FrameButton extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Right-click / long-press over the picture opens the Watch Party menu.
+///
+/// Only while a room exists — outside one there is no menu to open, and a
+/// right-click that swallows itself and does nothing is worse than one that
+/// falls through.
+class _PartyMenuGesture extends StatelessWidget {
+  const _PartyMenuGesture({
+    required this.enabled,
+    required this.onOpen,
+    required this.child,
+  });
+
+  final bool enabled;
+  final VoidCallback onOpen;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    return Listener(
+      onPointerDown: (event) {
+        if (event.buttons != kSecondaryButton) return;
+        // Shift+right-click is left alone so any native context menu survives.
+        if (HardwareKeyboard.instance.isShiftPressed) return;
+        onOpen();
+      },
+      child: GestureDetector(
+        // Trackpad / touch fallback for the same menu.
+        behavior: HitTestBehavior.deferToChild,
+        onLongPress: onOpen,
+        child: child,
+      ),
+    );
+  }
 }

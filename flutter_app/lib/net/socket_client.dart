@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' as io_net;
+import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:web_socket/io_web_socket.dart' show IOWebSocket;
@@ -193,23 +196,50 @@ Future<ws.WebSocket> connectSocketWebSocket(
   final target = uri.hasPort
       ? uri
       : uri.replace(port: uri.isScheme('wss') ? 443 : 80);
-  final io_net.WebSocket socket;
-  try {
-    socket = await io_net.WebSocket.connect(
-      target.toString(),
-      protocols: protocols,
-      headers: headers,
-    );
-  } on io_net.WebSocketException catch (e) {
-    // dart:io throws "was not upgraded to websocket" for ANY non-101 response
-    // and throws the response away, so the one fact worth having — what the
-    // server actually said — is lost exactly when it is needed. Ask again, in
-    // plain HTTP, purely to report it.
-    final detail = await _describeFailedUpgrade(target, headers);
-    // The package's contract: transports expect ws.WebSocketException.
-    throw ws.WebSocketException('${e.message} (dialling $target)$detail');
+  // Retried, because a refused upgrade here is very often not a refusal.
+  //
+  // Diagnosing a report of this showed the handshake failing and an identical
+  // request issued a second later succeeding: 101, correct Sec-WebSocket-Accept,
+  // correct Connection/Upgrade headers, session cookie present — every check
+  // dart:io makes would have passed on the retry. The endpoint is behind a CDN
+  // and some edges intermittently answer an upgrade badly.
+  //
+  // One failed dial used to be fatal, and that is harsher here than almost
+  // anywhere else in the app: `setTransports(['websocket'])` means there is no
+  // polling fallback (socket_io_client's native Dart transport cannot complete
+  // an Engine.IO session over polling), so a single bad response was the whole
+  // connection. Three attempts across roughly a second cost nothing when the
+  // first works, which is the overwhelmingly common case.
+  //
+  // Deliberately NOT a general-purpose retry loop: only the "was not upgraded"
+  // family is retried, and only a fixed few times. A server that is genuinely
+  // down, refusing auth, or unreachable still fails fast, with the diagnostic
+  // from the LAST attempt attached.
+  const attempts = 3;
+  const backoff = [Duration(milliseconds: 250), Duration(milliseconds: 750)];
+  io_net.WebSocketException? lastError;
+  for (var attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) await Future<void>.delayed(backoff[attempt - 1]);
+    try {
+      final socket = await io_net.WebSocket.connect(
+        target.toString(),
+        protocols: protocols,
+        headers: headers,
+      );
+      return IOWebSocket.fromWebSocket(socket);
+    } on io_net.WebSocketException catch (e) {
+      lastError = e;
+    }
   }
-  return IOWebSocket.fromWebSocket(socket);
+  // dart:io throws "was not upgraded to websocket" for ANY non-101 response and
+  // throws the response away, so the one fact worth having — what the server
+  // actually said — is lost exactly when it is needed. Ask again, in plain
+  // HTTP, purely to report it.
+  final detail = await _describeFailedUpgrade(target, headers);
+  // The package's contract: transports expect ws.WebSocketException.
+  throw ws.WebSocketException(
+    '${lastError!.message} (dialling $target, $attempts attempts)$detail',
+  );
 }
 
 /// Re-run the handshake as a plain HTTP request and describe the response.
@@ -244,11 +274,20 @@ Future<String> _describeFailedUpgrade(
     final probe = target.replace(
       scheme: target.isScheme('wss') ? 'https' : 'http',
     );
+    // A RANDOM key, exactly as the real client sends. A fixed one cannot
+    // detect the failure that matters here: dart:io does not only check for a
+    // 101, it also verifies that Sec-WebSocket-Accept is the SHA-1 of the key
+    // it sent. A proxy or CDN replaying a handshake computed for a different
+    // key returns a perfectly good-looking 101 that dart:io still refuses —
+    // which is precisely the case where the status line alone misleads.
+    final key = base64.encode(
+      List<int>.generate(16, (_) => math.Random.secure().nextInt(256)),
+    );
     final request = await http.getUrl(probe);
     request.headers.set('Connection', 'Upgrade');
     request.headers.set('Upgrade', 'websocket');
     request.headers.set('Sec-WebSocket-Version', '13');
-    request.headers.set('Sec-WebSocket-Key', 'dGhlIHNhbXBsZSBub25jZQ==');
+    request.headers.set('Sec-WebSocket-Key', key);
     headers?.forEach(request.headers.set);
     final response = await request.close();
     final reported = <String>[];
@@ -257,11 +296,25 @@ Future<String> _describeFailedUpgrade(
         reported.add('$name: ${values.join(', ')}');
       }
     });
+    // RFC 6455's fixed GUID: accept = base64(sha1(key + GUID)).
+    const wsGuid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+    final expected = base64.encode(sha1.convert(utf8.encode(key + wsGuid)).bytes);
+    final actual = response.headers.value('sec-websocket-accept');
+    final handshake = response.statusCode != 101
+        ? 'not a 101, so the accept was never checked'
+        : actual == null
+        ? 'MISSING Sec-WebSocket-Accept — a 101 with no handshake to verify'
+        : actual == expected
+        ? 'accept matches the key we sent'
+        : 'ACCEPT MISMATCH — got $actual, expected $expected for this '
+              'request\'s key. A 101 computed for somebody else\'s handshake '
+              'is what dart:io rejects.';
     await response.drain<void>();
     final cookieLength = headers?['Cookie']?.length ?? 0;
     return '\n  → server replied ${response.statusCode} '
         '${response.reasonPhrase}'
         '\n  → ${reported.isEmpty ? '(no reportable headers)' : reported.join('; ')}'
+        '\n  → $handshake'
         '\n  → sent ${headers?.length ?? 0} extra header(s), '
         'cookie ${cookieLength == 0 ? 'ABSENT' : '$cookieLength chars'}';
   } catch (e) {

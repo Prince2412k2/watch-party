@@ -56,6 +56,8 @@ class PopcornControl extends ConsumerStatefulWidget {
 
 class _PopcornControlState extends ConsumerState<PopcornControl>
     with TickerProviderStateMixin {
+  /// Dialogs open on the ordinary context: the chrome sits inside its own
+  /// Navigator now (see app.dart), so there is one directly above this.
   /// Built in [initState], not as a `late final` initializer, and vsynced by
   /// the plural mixin.
   ///

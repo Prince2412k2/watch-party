@@ -42,7 +42,15 @@ void main() {
         container: container,
         child: MaterialApp(
           theme: AppTheme.dark,
-          home: const PlayerHost(child: Center(child: Text('library'))),
+          home: const Material(
+            type: MaterialType.transparency,
+            child: Stack(
+              children: [
+                Positioned.fill(child: Center(child: Text('library'))),
+                PlayerHost(),
+              ],
+            ),
+          ),
         ),
       ),
     );

@@ -75,45 +75,36 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
           child: ChatNotifications(
             child: Material(
               type: MaterialType.transparency,
-              // ONE Overlay wrapping the lot.
+              // The router underneath; every piece of root-mounted chrome
+              // above it, inside a Navigator of its own.
               //
               // `MaterialApp.builder` wraps the Navigator rather than living
-              // inside it, so nothing mounted here has an Overlay above it —
-              // and Tooltip, dialogs, menus and text selection all require one.
-              // Every root-mounted piece of chrome needs it, not just the
-              // popcorn: the player's own transport bar is full of tooltips,
-              // and without this it threw "No Overlay widget found" on the
-              // first frame a film appeared and again on every rebuild after.
+              // inside it, so nothing mounted here inherits one. Tooltip needs
+              // an Overlay; showDialog, showMenu and every PopupRoute need a
+              // Navigator. Chrome up here had neither, which produced the same
+              // bug four times over — first as "No Overlay widget found", then
+              // as "Navigator operation requested with a context that does not
+              // include a Navigator", and finally, once each call site was
+              // handed the ROUTER's navigator, as menus that opened correctly
+              // but rendered BELOW the player: the subtitle dropdown drew
+              // behind a full-window film and only appeared once it minimised.
               //
-              // Fixed here, once, rather than per-widget. The popcorn used to
-              // carry a private Overlay of its own, which papered over the
-              // symptom for exactly the one widget I had tested and left
-              // everything else to fail at runtime.
-              child: Overlay(
-                initialEntries: [
-                  OverlayEntry(
-                    builder: (_) => Stack(
-                      children: [
-                        // PlayerHost owns the app's single PlayerView, above
-                        // the router, because playback has to outlive
-                        // navigation. PartyOverlay wraps it rather than the
-                        // other way round: a room's cameras and chat render ON
-                        // TOP of the film, including full-window.
-                        Positioned.fill(
-                          child: PartyOverlay(
-                            child: PlayerHost(
-                              child: child ?? const SizedBox.shrink(),
-                            ),
-                          ),
-                        ),
-                        // The popcorn is above both, and mounted exactly once.
-                        // It used to be mounted per-screen, so it blinked out
-                        // on any screen that had forgotten it and vanished
-                        // entirely behind a full-window film — the one moment
-                        // the room's controls must not disappear.
-                        const _PopcornLayer(),
-                      ],
-                    ),
+              // The base route is an OverlayRoute, NOT a ModalRoute, and that
+              // is the whole trick. Every ModalRoute inserts a ModalBarrier,
+              // which absorbs pointer events across the entire screen — a
+              // Navigator built the ordinary way over an interactive app eats
+              // every tap meant for it (tapping "Shows" in the nav did
+              // nothing). An OverlayRoute has no barrier, so this layer only
+              // takes the hits its own widgets ask for.
+              //
+              // Chrome is a SIBLING of the router, not a wrapper around it: a
+              // wrapper would capture the router's widget inside a route built
+              // once, where it would go stale on every rebuild.
+              child: Stack(
+                children: [
+                  Positioned.fill(child: child ?? const SizedBox.shrink()),
+                  Positioned.fill(
+                    child: Navigator(onGenerateRoute: (_) => _ChromeRoute()),
                   ),
                 ],
               ),
@@ -126,6 +117,47 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
       },
     );
   }
+}
+
+/// The chrome's base route: one overlay entry, and nothing else.
+///
+/// Extends [OverlayRoute] rather than a PageRoute deliberately — see the note
+/// in the builder. No barrier (so taps fall through to the app underneath), no
+/// transition, and it is never popped. Menus and dialogs pushed on this
+/// Navigator land ABOVE the chrome, which is the point.
+class _ChromeRoute extends OverlayRoute<void> {
+  @override
+  Iterable<OverlayEntry> createOverlayEntries() sync* {
+    yield OverlayEntry(
+      builder: (_) => const _RootChrome(),
+      opaque: false,
+      maintainState: true,
+    );
+  }
+}
+
+/// Everything the app draws above its own routes.
+///
+/// `const`, and that is what makes building it once safe: nothing here takes
+/// props from the builder, so there is nothing to go stale. Each piece rebuilds
+/// from providers on its own.
+class _RootChrome extends StatelessWidget {
+  const _RootChrome();
+
+  @override
+  Widget build(BuildContext context) => const Stack(
+    children: [
+      // PlayerHost owns the app's single PlayerView, above the router because
+      // playback has to outlive navigation — it used to be mounted inside two
+      // routes' Scaffolds, so Back destroyed it instead of minimising it.
+      //
+      // PartyOverlay draws over it: a room's cameras and chat belong on top of
+      // the film, full-window included. The popcorn is above both.
+      PlayerHost(),
+      PartyOverlay(),
+      _PopcornLayer(),
+    ],
+  );
 }
 
 /// Where the popcorn sits, and whether it is currently on screen.

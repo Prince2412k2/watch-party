@@ -888,6 +888,10 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (widget.controller is! MediaKitPlayerController) return;
     _hold('subtitleSettings'); // keep the chrome awake while the dialog is open
     await showDialog<void>(
+      // Plain `context`: the chrome sits inside its own Navigator now, so a
+      // dialog opened from here lands above the player rather than behind it.
+      // (The comment above used to say the chrome lives under a Scaffold; that
+      // stopped being true when the player moved above the router.)
       context: context,
       barrierColor: Colors.black54,
       builder: (_) => _SubtitleSettingsDialog(

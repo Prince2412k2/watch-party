@@ -65,6 +65,7 @@ class AnalogChoiceGroup<T> {
 /// choices and a tick against the current one.
 Future<void> showAnalogSelect<T>({
   required BuildContext context,
+
   required GlobalKey anchor,
   required List<AnalogChoiceGroup<T>> groups,
   required T? selected,
