@@ -105,59 +105,50 @@ Removes the local `_isFullscreen`/`_stopPlayback`/`_exit` machinery.
 
 **Verify:** navigate away mid-playback → position keeps advancing.
 
-### T6 — Delete `/party/:id`, re-home its chrome (FR-010, FR-013) — IN PROGRESS
+### T6 — Delete `/party/:id`, re-home its chrome (FR-010, FR-013) — DONE
 
-**Done:** the keystone. `PlayerHost` now carries every party prop the party's
-own `PlayerView` carried (canControl, canManagePartyMedia, partyPlayback,
-subtitle preferences, track selection, PTT, chat toasts, sync-authored seeks),
-plus the auto-hide controller. There is no longer a second player to delete.
+Landed in two commits, in the order the risk demanded.
 
-**Remaining, in this order — each step must land before the next:**
+**First**, `PartyOverlay` (`lib/party/party_overlay.dart`), mounted at the root
+beside `PlayerHost` and wrapping it, so a room's cameras and chat render on top
+of the film including while it is full-window. It carries the floating camera
+layer, the join-request notification, the LiveKit error banner and the chat
+drawer, and renders nothing at all without a party — which is what makes it safe
+to wrap every screen in the app. Chat's open state moved to
+`chatDrawerOpenProvider` outright, since the drawer and the screen no longer
+share a tree. This had to land BEFORE the route went, or a room would have spent
+a commit with no cameras and no chat.
 
-1. Extract `_JoinRequestsLayer`, `_ChatSlideOver` and the camera layer out of
-   `party_screen.dart` into a `PartyOverlay` widget, mounted at the root beside
-   `PlayerHost`. **Do this BEFORE removing the route**: today they render only
-   inside `PartyScreen`, so removing the route first would leave a room with no
-   cameras and no chat.
-2. Remove `_openParty` / `partyPlayerRoute` forced navigation from
-   `app_shell.dart` (it drags the user onto `/party/:id` whenever a room starts
-   watching) and `partyMinimizedProvider`, which only exists to fight it.
-3. Remove the `/party/:id` route from `router.dart` and delete
-   `party_screen.dart`.
-4. `_HostControlsDialog` and `_DeviceRail` move to the popcorn (folds into T7).
-5. `party_minimize_test.dart` tests the navigation latch being removed and will
-   need rewriting against the new model.
+**Then** the route and the 1,921-line screen. `partyPlayerRoute` became
+`partyWatchingItemId`: it names a title instead of a route, and `AppShell` opens
+it into `nowPlayingProvider` over whatever screen you are on. `partyMinimizedProvider`
+is gone — minimising is a property of the player now, so "minimized away from the
+party surface" is not a state that can exist. The guard that remains ignores the
+room repeating its current title on every heartbeat while letting a genuinely new
+title take the screen.
 
-`_LobbyStage`, `_WaitingRoom`, `_PartyEntry` and `_Connecting` are deleted
-outright: a room with no title selected shows nothing but its tiles.
+Survivors moved to `lib/party/party_controls.dart`: `HostControlsDialog`, the
+media picker + `pickAndSwitchPartyMedia`, `DeviceRail`. The panel opened on a
+right-click over the party stage and would have gone unreachable with it, so it
+hangs off the popcorn now. Ending a party no longer navigates to `/home` — there
+is nowhere to leave, so the film stops and you stay where you were.
 
+Deleted outright: `_LobbyStage`, `_WaitingRoom`, `_PartyEntry`, `_Connecting`,
+the docked camera column, `_RoomCodePill`, and the icon scrim that existed for a
+Back button on a screen that is gone. `party_minimize_test.dart` tested the
+navigation latch and had nothing left to assert; its subject — Back must not end
+the room — is structural now.
 
-`PartyScreen` is ~2,500 lines. Its parts, and where each goes:
+### T7 — Popcorn mounted once (FR-020..FR-023) — DONE
 
-| Part | New home |
-|---|---|
-| `PlayerView` mount | gone — T4 owns it |
-| `FloatingCameraLayer` | root layer, beside `PlayerHost` |
-| `_ChatSlideOver` | root layer |
-| `_HostControlsDialog` | opened from the popcorn |
-| `_JoinRequestsLayer` | root layer (already an overlay) |
-| `_DeviceRail` | popcorn |
-| `_WatchChrome`, `_autoHide` | into `PlayerHost` — it is player chrome |
-| `_LobbyStage`, `_WaitingRoom`, `_PartyEntry`, `_Connecting` | deleted; a room with no title shows nothing but its tiles |
-| `_MediaPickerSheet`, `pickAndSwitchPartyMedia` | keep, called from the popcorn |
+Mounted in `app.dart`'s builder above both `PartyOverlay` and `PlayerHost`, and
+deleted from `app_shell.dart` and `detail_screen.dart`. It carries its own
+`Overlay`: `MaterialApp.builder` wraps the Navigator rather than living inside
+it, so nothing above that point has one, and the tray's tooltips and dialogs
+need it. The Watch Party panel is wired in as a tray button.
 
-Also removes `createFromCurrentPlayback`'s `context.go('/party/$id')` and the
-forced-navigation path in `party_provider`.
-
-**Verify:** create, join, pick a title, chat, A/V — all without navigating.
-
-### T7 — Popcorn mounted once (FR-020..FR-023)
-
-Currently three mounts (`app_shell.dart:207`, `detail_screen.dart:80`, party
-screen). Move to the root layer; delete the others. Add the control panel,
-device rail and sync-mode entries.
-
-**Verify:** SC-006 — no route renders it twice or zero times.
+**Verified:** SC-006 asserted in `widget_test.dart` — exactly one `PopcornControl`
+on boot and after navigating.
 
 ## Ordering rationale
 
