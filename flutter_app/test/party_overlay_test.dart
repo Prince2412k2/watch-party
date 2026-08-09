@@ -76,7 +76,12 @@ void main() {
           // composer needs without painting a background.
           home: const Material(
             type: MaterialType.transparency,
-            child: PartyOverlay(child: Center(child: Text('library'))),
+            child: Stack(
+              children: [
+                Positioned.fill(child: Center(child: Text('library'))),
+                PartyOverlay(),
+              ],
+            ),
           ),
         ),
       ),
