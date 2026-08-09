@@ -13,6 +13,7 @@ media/
 dist/
 .DS_Store
 
+3rd-party/
 # servarr deploy (contains no real secrets, but ignored for hygiene)
 .env.servarr
 servarr-config/
