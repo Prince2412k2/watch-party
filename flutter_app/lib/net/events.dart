@@ -30,10 +30,7 @@
 ///   sync:seek           { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error }
 ///   sync:report         { position, drift, rate }   (telemetry, no ack)
 ///   sync:stall          { ...stallReport }          (drives dragging mode)
-///   browse:navigate     { stack: [{id,name,type}, …≤8] }  (driver; relayed)
-///   browse:view         { tab?, screen?, mediaId?, seasonId?, episodeId? }  (driver; shared-screen tab/detail patch)
 ///                                                    (server whitelists tab∈movies|series|discover|downloads, screen∈grid|detail)
-///   browse:pointer      { scroll, x, y }            (driver; ephemeral relay)
 ///   chat:message        { text }                    ack: { ok } | { error: 'rate limited' }
 ///   camera:remove       { userId }                  ack: { ok } | { error }        (host only)
 ///
@@ -50,8 +47,6 @@
 ///   host:changed        { hostId }                   host migrated / transferred
 ///   user:joined         { userId, name }
 ///   user:left           { userId, name }
-///   browse:state        { stack: [...] }             mirrored shared-screen drill
-///   browse:pointer      { scroll, x, y }             mirrored cursor
 ///   chat:message        { userId, name, text, timestamp }
 ///   chat:history        [ { userId, name, text, timestamp }, … ]  full backlog on resume/join/approve
 ///   camera:removed      { userId }
@@ -86,20 +81,8 @@ abstract final class ClientEvent {
   static const syncSeek = 'sync:seek';
   static const syncReport = 'sync:report';
   static const syncStall = 'sync:stall';
-  static const browseNavigate = 'browse:navigate';
-  static const browseView = 'browse:view';
-  static const browsePointer = 'browse:pointer';
   static const chatMessage = 'chat:message';
   static const cameraRemove = 'camera:remove';
-  // Shared browser: start/stop, drive it, and hand control around.
-  static const browserStart = 'browser:start';
-  static const browserStop = 'browser:stop';
-  static const browserNavigate = 'browser:navigate';
-  static const browserInput = 'browser:input';
-  static const browserRequestControl = 'browser:requestControl';
-  static const browserGrantControl = 'browser:grantControl';
-  static const browserDenyControl = 'browser:denyControl';
-  static const browserReclaimControl = 'browser:reclaimControl';
 }
 
 /// Server → client event names.
@@ -116,19 +99,9 @@ abstract final class ServerEvent {
   static const hostChanged = 'host:changed';
   static const userJoined = 'user:joined';
   static const userLeft = 'user:left';
-  static const browseState = 'browse:state';
-  static const browsePointer = 'browse:pointer';
   static const chatMessage = 'chat:message';
   static const chatHistory = 'chat:history';
   static const cameraRemoved = 'camera:removed';
-  /// The shared browser failed. Advisory only — the party is unaffected.
-  static const browserError = 'browser:error';
-
-  /// A guest asked the host for control of the shared browser.
-  static const browserControlRequested = 'browser:controlRequested';
-
-  /// The host declined this client's request for control.
-  static const browserControlDenied = 'browser:controlDenied';
 }
 
 /// Jellyfin tick conversions (1 tick = 100ns).

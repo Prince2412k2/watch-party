@@ -290,7 +290,6 @@ void main() {
       expect(player.seeks, contains(Duration.zero));
       expect(container.read(chatProvider), isEmpty);
       expect(container.read(profileProvider).profile, isNull);
-      expect(container.read(sharedBrowserProvider).browser, isNull);
       expect(container.read(serverConfigProvider), isNull);
       // Cached avatar drawings are keyed by this revision.
       expect(container.read(avatarRevisionProvider), 1);

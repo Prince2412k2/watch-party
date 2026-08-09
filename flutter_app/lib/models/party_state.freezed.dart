@@ -346,166 +346,6 @@ abstract class _SyncSchedule implements SyncSchedule {
       throw _privateConstructorUsedError;
 }
 
-BrowseState _$BrowseStateFromJson(Map<String, dynamic> json) {
-  return _BrowseState.fromJson(json);
-}
-
-/// @nodoc
-mixin _$BrowseState {
-  List<Map<String, dynamic>> get stack => throw _privateConstructorUsedError;
-
-  /// Serializes this BrowseState to a JSON map.
-  Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
-
-  /// Create a copy of BrowseState
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  $BrowseStateCopyWith<BrowseState> get copyWith =>
-      throw _privateConstructorUsedError;
-}
-
-/// @nodoc
-abstract class $BrowseStateCopyWith<$Res> {
-  factory $BrowseStateCopyWith(
-    BrowseState value,
-    $Res Function(BrowseState) then,
-  ) = _$BrowseStateCopyWithImpl<$Res, BrowseState>;
-  @useResult
-  $Res call({List<Map<String, dynamic>> stack});
-}
-
-/// @nodoc
-class _$BrowseStateCopyWithImpl<$Res, $Val extends BrowseState>
-    implements $BrowseStateCopyWith<$Res> {
-  _$BrowseStateCopyWithImpl(this._value, this._then);
-
-  // ignore: unused_field
-  final $Val _value;
-  // ignore: unused_field
-  final $Res Function($Val) _then;
-
-  /// Create a copy of BrowseState
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  @override
-  $Res call({Object? stack = null}) {
-    return _then(
-      _value.copyWith(
-            stack: null == stack
-                ? _value.stack
-                : stack // ignore: cast_nullable_to_non_nullable
-                      as List<Map<String, dynamic>>,
-          )
-          as $Val,
-    );
-  }
-}
-
-/// @nodoc
-abstract class _$$BrowseStateImplCopyWith<$Res>
-    implements $BrowseStateCopyWith<$Res> {
-  factory _$$BrowseStateImplCopyWith(
-    _$BrowseStateImpl value,
-    $Res Function(_$BrowseStateImpl) then,
-  ) = __$$BrowseStateImplCopyWithImpl<$Res>;
-  @override
-  @useResult
-  $Res call({List<Map<String, dynamic>> stack});
-}
-
-/// @nodoc
-class __$$BrowseStateImplCopyWithImpl<$Res>
-    extends _$BrowseStateCopyWithImpl<$Res, _$BrowseStateImpl>
-    implements _$$BrowseStateImplCopyWith<$Res> {
-  __$$BrowseStateImplCopyWithImpl(
-    _$BrowseStateImpl _value,
-    $Res Function(_$BrowseStateImpl) _then,
-  ) : super(_value, _then);
-
-  /// Create a copy of BrowseState
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  @override
-  $Res call({Object? stack = null}) {
-    return _then(
-      _$BrowseStateImpl(
-        stack: null == stack
-            ? _value._stack
-            : stack // ignore: cast_nullable_to_non_nullable
-                  as List<Map<String, dynamic>>,
-      ),
-    );
-  }
-}
-
-/// @nodoc
-@JsonSerializable()
-class _$BrowseStateImpl implements _BrowseState {
-  const _$BrowseStateImpl({final List<Map<String, dynamic>> stack = const []})
-    : _stack = stack;
-
-  factory _$BrowseStateImpl.fromJson(Map<String, dynamic> json) =>
-      _$$BrowseStateImplFromJson(json);
-
-  final List<Map<String, dynamic>> _stack;
-  @override
-  @JsonKey()
-  List<Map<String, dynamic>> get stack {
-    if (_stack is EqualUnmodifiableListView) return _stack;
-    // ignore: implicit_dynamic_type
-    return EqualUnmodifiableListView(_stack);
-  }
-
-  @override
-  String toString() {
-    return 'BrowseState(stack: $stack)';
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is _$BrowseStateImpl &&
-            const DeepCollectionEquality().equals(other._stack, _stack));
-  }
-
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @override
-  int get hashCode =>
-      Object.hash(runtimeType, const DeepCollectionEquality().hash(_stack));
-
-  /// Create a copy of BrowseState
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @override
-  @pragma('vm:prefer-inline')
-  _$$BrowseStateImplCopyWith<_$BrowseStateImpl> get copyWith =>
-      __$$BrowseStateImplCopyWithImpl<_$BrowseStateImpl>(this, _$identity);
-
-  @override
-  Map<String, dynamic> toJson() {
-    return _$$BrowseStateImplToJson(this);
-  }
-}
-
-abstract class _BrowseState implements BrowseState {
-  const factory _BrowseState({final List<Map<String, dynamic>> stack}) =
-      _$BrowseStateImpl;
-
-  factory _BrowseState.fromJson(Map<String, dynamic> json) =
-      _$BrowseStateImpl.fromJson;
-
-  @override
-  List<Map<String, dynamic>> get stack;
-
-  /// Create a copy of BrowseState
-  /// with the given fields replaced by the non-null parameter values.
-  @override
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  _$$BrowseStateImplCopyWith<_$BrowseStateImpl> get copyWith =>
-      throw _privateConstructorUsedError;
-}
-
 PartyState _$PartyStateFromJson(Map<String, dynamic> json) {
   return _PartyState.fromJson(json);
 }
@@ -526,7 +366,6 @@ mixin _$PartyState {
   String get syncMode => throw _privateConstructorUsedError;
   List<Participant> get participants => throw _privateConstructorUsedError;
   SyncSchedule get schedule => throw _privateConstructorUsedError;
-  BrowseState get browse => throw _privateConstructorUsedError;
 
   /// Serializes this PartyState to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -556,11 +395,9 @@ abstract class $PartyStateCopyWith<$Res> {
     String syncMode,
     List<Participant> participants,
     SyncSchedule schedule,
-    BrowseState browse,
   });
 
   $SyncScheduleCopyWith<$Res> get schedule;
-  $BrowseStateCopyWith<$Res> get browse;
 }
 
 /// @nodoc
@@ -588,7 +425,6 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
     Object? syncMode = null,
     Object? participants = null,
     Object? schedule = null,
-    Object? browse = null,
   }) {
     return _then(
       _value.copyWith(
@@ -632,10 +468,6 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
                 ? _value.schedule
                 : schedule // ignore: cast_nullable_to_non_nullable
                       as SyncSchedule,
-            browse: null == browse
-                ? _value.browse
-                : browse // ignore: cast_nullable_to_non_nullable
-                      as BrowseState,
           )
           as $Val,
     );
@@ -648,16 +480,6 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
   $SyncScheduleCopyWith<$Res> get schedule {
     return $SyncScheduleCopyWith<$Res>(_value.schedule, (value) {
       return _then(_value.copyWith(schedule: value) as $Val);
-    });
-  }
-
-  /// Create a copy of PartyState
-  /// with the given fields replaced by the non-null parameter values.
-  @override
-  @pragma('vm:prefer-inline')
-  $BrowseStateCopyWith<$Res> get browse {
-    return $BrowseStateCopyWith<$Res>(_value.browse, (value) {
-      return _then(_value.copyWith(browse: value) as $Val);
     });
   }
 }
@@ -682,13 +504,10 @@ abstract class _$$PartyStateImplCopyWith<$Res>
     String syncMode,
     List<Participant> participants,
     SyncSchedule schedule,
-    BrowseState browse,
   });
 
   @override
   $SyncScheduleCopyWith<$Res> get schedule;
-  @override
-  $BrowseStateCopyWith<$Res> get browse;
 }
 
 /// @nodoc
@@ -715,7 +534,6 @@ class __$$PartyStateImplCopyWithImpl<$Res>
     Object? syncMode = null,
     Object? participants = null,
     Object? schedule = null,
-    Object? browse = null,
   }) {
     return _then(
       _$PartyStateImpl(
@@ -759,10 +577,6 @@ class __$$PartyStateImplCopyWithImpl<$Res>
             ? _value.schedule
             : schedule // ignore: cast_nullable_to_non_nullable
                   as SyncSchedule,
-        browse: null == browse
-            ? _value.browse
-            : browse // ignore: cast_nullable_to_non_nullable
-                  as BrowseState,
       ),
     );
   }
@@ -782,7 +596,6 @@ class _$PartyStateImpl implements _PartyState {
     this.syncMode = 'hopping',
     final List<Participant> participants = const <Participant>[],
     this.schedule = const SyncSchedule(),
-    this.browse = const BrowseState(),
   }) : _participants = participants;
 
   factory _$PartyStateImpl.fromJson(Map<String, dynamic> json) =>
@@ -823,13 +636,10 @@ class _$PartyStateImpl implements _PartyState {
   @override
   @JsonKey()
   final SyncSchedule schedule;
-  @override
-  @JsonKey()
-  final BrowseState browse;
 
   @override
   String toString() {
-    return 'PartyState(id: $id, hostId: $hostId, hostName: $hostName, stage: $stage, mediaItemId: $mediaItemId, mediaSourceId: $mediaSourceId, collaborativeControl: $collaborativeControl, syncMode: $syncMode, participants: $participants, schedule: $schedule, browse: $browse)';
+    return 'PartyState(id: $id, hostId: $hostId, hostName: $hostName, stage: $stage, mediaItemId: $mediaItemId, mediaSourceId: $mediaSourceId, collaborativeControl: $collaborativeControl, syncMode: $syncMode, participants: $participants, schedule: $schedule)';
   }
 
   @override
@@ -855,8 +665,7 @@ class _$PartyStateImpl implements _PartyState {
               _participants,
             ) &&
             (identical(other.schedule, schedule) ||
-                other.schedule == schedule) &&
-            (identical(other.browse, browse) || other.browse == browse));
+                other.schedule == schedule));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
@@ -873,7 +682,6 @@ class _$PartyStateImpl implements _PartyState {
     syncMode,
     const DeepCollectionEquality().hash(_participants),
     schedule,
-    browse,
   );
 
   /// Create a copy of PartyState
@@ -902,7 +710,6 @@ abstract class _PartyState implements PartyState {
     final String syncMode,
     final List<Participant> participants,
     final SyncSchedule schedule,
-    final BrowseState browse,
   }) = _$PartyStateImpl;
 
   factory _PartyState.fromJson(Map<String, dynamic> json) =
@@ -932,8 +739,6 @@ abstract class _PartyState implements PartyState {
   List<Participant> get participants;
   @override
   SyncSchedule get schedule;
-  @override
-  BrowseState get browse;
 
   /// Create a copy of PartyState
   /// with the given fields replaced by the non-null parameter values.

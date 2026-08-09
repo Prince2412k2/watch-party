@@ -57,6 +57,7 @@ dependencies:
   window_manager: ^0.5.2
   flutter_skill: ^0.9.36
   lottie: ^3.5.1
+  liquid_glass_easy: ^3.5.0
 
 dev_dependencies:
   flutter_test:

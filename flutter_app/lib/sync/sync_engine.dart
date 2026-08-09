@@ -44,6 +44,39 @@ abstract class SyncEngine {
 
   /// Current measured drift between local playback and the shared timeline.
   Stream<Duration> get drift;
+
+  /// How the correction loop is nudging local playback right now.
+  ///
+  /// Exposed so the player can SAY what it is doing. Silently altering the
+  /// speed of someone's film is the kind of thing that reads as a fault when it
+  /// is noticed and not understood — and now that the catch-up band is wide
+  /// enough to ride out a real buffering stumble, it will be noticed. A viewer
+  /// told "catching up" waits; a viewer not told wonders what is wrong with the
+  /// app.
+  Stream<CatchUp> get catchUp;
+}
+
+/// The correction loop's current nudge, as something the UI can render.
+class CatchUp {
+  const CatchUp({this.rate = 1.0, this.drift = Duration.zero});
+
+  /// The playback rate the correction loop has applied. 1.0 means it is not
+  /// correcting at all.
+  final double rate;
+
+  /// Signed distance from the room's timeline: positive means behind it.
+  final Duration drift;
+
+  /// Deliberately not `rate != 1.0`: the nudge is a float computed from a gain,
+  /// so it lands on values like 1.0000000002 and would otherwise flicker the
+  /// badge on and off around the release threshold.
+  bool get active => (rate - 1.0).abs() > 0.005;
+
+  /// Behind the room and being sped up, as opposed to ahead and being held
+  /// back. Both are corrections; only one of them is "catching up".
+  bool get behind => rate > 1.0;
+
+  static const idle = CatchUp();
 }
 
 /// No-op mock: reflects schedules it receives via [applySchedule] and echoes
@@ -58,6 +91,7 @@ class MockSyncEngine implements SyncEngine {
 
   final _scheduleCtrl = StreamController<SyncSchedule>.broadcast();
   final _driftCtrl = StreamController<Duration>.broadcast();
+  final _catchUpCtrl = StreamController<CatchUp>.broadcast();
   SyncSchedule _schedule = const SyncSchedule();
 
   @override
@@ -128,4 +162,8 @@ class MockSyncEngine implements SyncEngine {
 
   @override
   Stream<Duration> get drift => _driftCtrl.stream;
+
+  /// The mock never corrects, so it never announces a correction.
+  @override
+  Stream<CatchUp> get catchUp => _catchUpCtrl.stream;
 }

@@ -17,7 +17,6 @@ import 'screens/downloads_screen.dart';
 import 'screens/offline_screen.dart';
 import 'screens/servarr_screen.dart';
 import 'screens/servarr_queue_screen.dart';
-import 'screens/party_screen.dart';
 import 'screens/profile_screen.dart';
 
 /// The root Navigator's key. Exposed because some app-wide affordances resolve a
@@ -49,7 +48,6 @@ abstract final class Routes {
 
   /// Top-level immersive routes.
   static const detail = '/detail'; // /detail/:id
-  static const party = '/party'; // /party/:id
 
   /// Deprecated 6-destination paths, aliased in [buildRouter]'s redirect.
   static const home = '/home';
@@ -117,16 +115,6 @@ GoRouter buildRouter(WidgetRef ref) {
       GoRoute(path: Routes.login, builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/gallery', builder: (_, _) => const GalleryScreen()),
       GoRoute(path: Routes.profile, builder: (_, _) => const ProfileScreen()),
-
-      // Immersive party screen — full-window, outside the nav shell. A
-      // top-level PUSH route gets the ~180ms fade-through from motion.dart.
-      GoRoute(
-        path: '${Routes.party}/:id',
-        pageBuilder: (_, state) => fadeThroughPage(
-          key: state.pageKey,
-          child: PartyScreen(partyId: state.pathParameters['id']),
-        ),
-      ),
 
       // Title detail is full-window too (leads into the player) — same
       // fade-through. Every library title, of every type, renders

@@ -4,6 +4,7 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 
 import '../../analog/chrome/analog_button.dart';
 import '../../livekit/livekit_room.dart';
+import 'wave_dots.dart';
 import '../../state/livekit_provider.dart';
 import '../tokens.dart';
 import 'avatar_view.dart';
@@ -87,14 +88,27 @@ class _EmptyGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = error != null
-        ? 'A/V error: $error'
-        : connecting
-        ? 'Connecting…'
-        : 'Not connected';
+    // Connecting is the one state here that is going somewhere, so it is the
+    // one state that moves. An ellipsis is a static three dots: it looks the
+    // same three seconds in as it does after the connection has quietly died.
+    if (error == null && connecting) {
+      return const Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Connecting',
+              style: TextStyle(color: AppColors.faint, fontSize: 12),
+            ),
+            SizedBox(width: 7),
+            WaveDots(color: AppColors.faint),
+          ],
+        ),
+      );
+    }
     return Center(
       child: Text(
-        label,
+        error != null ? 'A/V error: $error' : 'Not connected',
         style: const TextStyle(color: AppColors.faint, fontSize: 12),
         textAlign: TextAlign.center,
       ),

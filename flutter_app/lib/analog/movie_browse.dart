@@ -8,10 +8,9 @@
 // for that collection."
 //
 // The mode lives on the browse STACK rather than in widget state, because the
-// stack is what a party host publishes (`session.browse.stack`). A follower who
-// only received a drill-in level would otherwise sit in Singles looking at a
-// franchise's parts. A browse entry is explicitly open-ended on the wire and
-// other surfaces already carry extra keys on it.
+// stack is what back/restore reads: a level restored on its own would otherwise
+// sit in Singles looking at a franchise's parts. A browse entry is explicitly
+// open-ended and other surfaces already carry extra keys on it.
 //
 // Pure: no widgets, no fetching. The screen is the only thing that knows a URL.
 // This is the Dart half of app/client/src/analog/movieBrowse.ts and is held to

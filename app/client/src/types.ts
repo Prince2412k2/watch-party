@@ -52,51 +52,17 @@ export interface SubtitlePreferences {
   backgroundOpacityPercent: number
 }
 
-export interface BrowseEntry {
-  id?: string
-  name?: string
-  type?: string
-  // Browse stack entries carry Jellyfin navigation metadata beyond the shared keys.
-  [key: string]: unknown
-}
-
-export interface PartyBrowse {
-  stack?: BrowseEntry[]
-  tab?: 'movies' | 'series' | 'discover' | 'downloads'
-  screen?: 'grid' | 'detail'
-  mediaId?: string | null
-  seasonId?: string | null
-  episodeId?: string | null
-  revision?: number
-}
-
-/** The shared browser, as the server describes it. Null unless this party holds it. */
-export interface PartyBrowserState {
-  /** starting = container accepted the request, no frames yet. */
-  state: 'starting' | 'active' | 'error'
-  url: string | null
-  /** The one participant whose input reaches the remote browser. */
-  driverUserId: string | null
-  /** Guests waiting on the host to hand over control. */
-  requests: PartyUser[]
-  error: string | null
-}
-
 export interface PartySession {
   id: string
   hostId: string
   hostName?: string
   hostAvatar?: AvatarConfig | null
-  /** 'lobby' | 'watching' | 'browser' — exactly one current activity. */
+  /** 'lobby' | 'watching' — exactly one current activity. */
   stage?: string
-  /** Whether this deployment has the shared browser at all. Server-authoritative. */
-  browserAvailable?: boolean
-  browser?: PartyBrowserState | null
   guests?: PartyUser[]
   waiting?: PartyUser[]
   collaborativeControl?: boolean
   syncMode?: 'hopping' | 'dragging'
-  browse?: PartyBrowse
   playback?: PartyPlayback | null
   mediaItemId?: string | null
   mediaSourceId?: string | null
@@ -139,20 +105,8 @@ export interface PartyContextValue {
    * previous room's session/role/messages can't bleed into the new one.
    */
   leaveParty: () => void
-  navigateBrowse: (stack: BrowseEntry[]) => void
-  shareView: (patch: Partial<PartyBrowse>) => void
-  sendPointer: (point: MirrorPoint) => void
   selectMedia: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   backToLobby: () => void
-  /** Shared browser. Every one of these resolves to an error string, never throws. */
-  startSharedBrowser: (url?: string) => Promise<string | null>
-  stopSharedBrowser: () => void
-  navigateSharedBrowser: (url: string) => Promise<string | null>
-  sendBrowserInput: (event: BrowserInputEvent) => void
-  requestBrowserControl: () => void
-  grantBrowserControl: (userId: string) => void
-  denyBrowserControl: (userId: string) => void
-  reclaimBrowserControl: () => void
   approveUser: (userId: string) => void
   rejectUser: (userId: string) => void
   kickUser: (userId: string) => void
@@ -175,20 +129,3 @@ export interface PartyContextValue {
   setAlertMode: (mode: 'focus' | 'on' | 'mute') => void
 }
 
-/**
- * One input event for the shared browser, in REMOTE SCREEN coordinates.
- *
- * The client does the letterbox correction before sending, because only it knows
- * how the video is laid out in its own window.
- */
-export type BrowserInputEvent =
-  | { type: 'move' | 'down' | 'up' | 'click'; x: number; y: number; button?: number }
-  | { type: 'scroll'; dy: number }
-  | { type: 'key'; key: string }
-  | { type: 'text'; text: string }
-
-export interface MirrorPoint {
-  scroll?: number
-  x?: number
-  y?: number
-}

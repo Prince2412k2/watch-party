@@ -51,7 +51,6 @@ export async function authorizeLiveKitUpgrade({
   tokenVerifier,
   getParty,
   isPartyMember,
-  isServiceIdentity = () => false,
   isTokenRevoked = () => false,
 }) {
   if (!accessToken) return Boolean(session?.jellyfin)
@@ -68,7 +67,9 @@ export async function authorizeLiveKitUpgrade({
     if (isPartyMember(party, identity)) {
       return !session?.jellyfin || session.jellyfin.userId === identity
     }
-    return isServiceIdentity(identity, party)
+    // Every LiveKit participant is a party member. There is no service identity
+    // any more: the shared browser was the only one, and it is gone.
+    return false
   } catch {
     return false
   }

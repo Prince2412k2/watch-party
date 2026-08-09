@@ -33,8 +33,6 @@ export type WidgetIcon =
   | 'link'
   | 'check'
   | 'x'
-  | 'globe'
-  | 'globeOff'
   | 'lock'
   | 'unlock'
   | 'star'
@@ -412,15 +410,6 @@ export function partyWidgetView({
         pressed: collaborative,
       }),
     )
-  }
-
-  // The shared browser is the host's, only where the server says the feature
-  // exists, and only while something else is not already on the stage.
-  if (isHost && session.browserAvailable === true && session.stage !== 'browser') {
-    controls.push(hostOnly({ id: 'browserStart', icon: 'globe', label: 'Start the shared browser' }))
-  }
-  if (isHost && session.stage === 'browser') {
-    controls.push(hostOnly({ id: 'browserStop', icon: 'globeOff', label: 'Close the shared browser' }))
   }
 
   controls.push(

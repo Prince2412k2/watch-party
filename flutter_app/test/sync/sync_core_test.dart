@@ -54,7 +54,9 @@ void main() {
     )!;
     expect(intent.hardSeek, false);
     expect(intent.seekToSec, isNull);
-    expect(intent.rate, closeTo(1.08, 1e-9)); // clamped to +MAX_RATE_ADJ
+    // Clamped to +maxRateAdj, which is 0.10 now: the catch-up is announced to
+    // the viewer, so it no longer has to stay under the threshold of notice.
+    expect(intent.rate, closeTo(1.1, 1e-9));
   });
 
   test('hopping host is exempt (native playback)', () {
