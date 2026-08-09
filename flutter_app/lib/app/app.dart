@@ -153,8 +153,13 @@ class _RootChrome extends StatelessWidget {
       //
       // PartyOverlay draws over it: a room's cameras and chat belong on top of
       // the film, full-window included. The popcorn is above both.
-      PlayerHost(),
-      PartyOverlay(),
+      // Positioned.fill, not bare children. Both are Stacks whose children are
+      // ALL positioned, and a Stack like that shrink-wraps to nothing under
+      // loose constraints — which silently collapsed the camera tiles, the
+      // device rail and the chat drawer to zero size the moment these stopped
+      // wrapping the app and started sitting beside it.
+      Positioned.fill(child: PlayerHost()),
+      Positioned.fill(child: PartyOverlay()),
       _PopcornLayer(),
     ],
   );
