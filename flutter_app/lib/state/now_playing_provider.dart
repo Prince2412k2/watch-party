@@ -152,6 +152,14 @@ class NowPlayingNotifier extends StateNotifier<NowPlaying> {
   }
 }
 
+/// Whether the expanded player's chrome is currently on screen.
+///
+/// Published by the player so that OTHER root-mounted chrome can hide with it.
+/// The popcorn is the reason this exists: it sits above the player, so during a
+/// film it was the one thing that never faded — a tray button parked on top of
+/// the transport bar while everything around it dimmed away.
+final playerChromeVisibleProvider = StateProvider<bool>((ref) => true);
+
 final nowPlayingProvider =
     StateNotifierProvider<NowPlayingNotifier, NowPlaying>(
       NowPlayingNotifier.new,

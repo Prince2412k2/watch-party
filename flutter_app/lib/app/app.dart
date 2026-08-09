@@ -111,11 +111,7 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
                         // on any screen that had forgotten it and vanished
                         // entirely behind a full-window film — the one moment
                         // the room's controls must not disappear.
-                        const Positioned(
-                          right: 22,
-                          bottom: 10,
-                          child: _AuthedPopcorn(),
-                        ),
+                        const _PopcornLayer(),
                       ],
                     ),
                   ),
@@ -128,6 +124,53 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
             ? DesktopWindowChrome(child: content)
             : content;
       },
+    );
+  }
+}
+
+/// Where the popcorn sits, and whether it is currently on screen.
+///
+/// Over the library it is simply always there, in the bottom-right corner.
+/// Over a full-window film it has to behave like everything else painted on the
+/// picture: it lifts clear of the transport bar instead of sitting on top of
+/// the volume and settings controls, and it fades out with the rest of the
+/// chrome when the film goes idle.
+///
+/// It was doing neither. Mounting it at the root put it above the player, which
+/// is right for reachability and wrong for everything else — it overlapped the
+/// bottom-right controls and was the one thing left lit on an otherwise
+/// cleared screen.
+class _PopcornLayer extends ConsumerWidget {
+  const _PopcornLayer();
+
+  /// Clear of the transport bar. The bar owns the bottom strip of an expanded
+  /// player, and the popcorn is a circle 69px across, so this lifts it a full
+  /// bar-height rather than nudging it.
+  static const double _overFilmBottom = 104;
+  static const double _restingBottom = 10;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final expanded = ref.watch(
+      nowPlayingProvider.select((n) => n.isExpanded),
+    );
+    // Only the expanded player hides its chrome; a floating tile has none, and
+    // over the library there is nothing to hide with.
+    final shown = !expanded || ref.watch(playerChromeVisibleProvider);
+
+    return AnimatedPositioned(
+      duration: AppMotion.snap,
+      curve: AppMotion.emphasized,
+      right: 22,
+      bottom: expanded ? _overFilmBottom : _restingBottom,
+      child: IgnorePointer(
+        ignoring: !shown,
+        child: AnimatedOpacity(
+          opacity: shown ? 1 : 0,
+          duration: const Duration(milliseconds: 200),
+          child: const _AuthedPopcorn(),
+        ),
+      ),
     );
   }
 }
