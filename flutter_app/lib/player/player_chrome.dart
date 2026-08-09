@@ -1178,6 +1178,9 @@ class _PlayerChromeState extends State<PlayerChrome>
     _hold('audioPicker');
     await showAnalogSelect<String?>(
       context: context,
+      // The player is mounted above the router, so this context has no
+      // Navigator; the menu route needs one.
+      routeContext: rootNavigatorKey.currentContext,
       anchor: _settingsAnchor,
       selected: _selectedAudio,
       groups: [
@@ -1202,6 +1205,9 @@ class _PlayerChromeState extends State<PlayerChrome>
     _hold('speedPicker');
     await showAnalogSelect<double>(
       context: context,
+      // The player is mounted above the router, so this context has no
+      // Navigator; the menu route needs one.
+      routeContext: rootNavigatorKey.currentContext,
       anchor: _settingsAnchor,
       selected: _rate,
       width: 200,
@@ -2231,6 +2237,9 @@ class _FontFieldState extends State<_FontField> {
             ? null
             : () => showAnalogSelect<String>(
                 context: context,
+                // The player is mounted above the router, so this context has no
+                // Navigator; the menu route needs one.
+                routeContext: rootNavigatorKey.currentContext,
                 anchor: _anchor,
                 selected: widget.value,
                 groups: [
@@ -2301,6 +2310,9 @@ class _SubtitleControl extends StatelessWidget {
     onMenuChanged(true);
     await showAnalogSelect<String?>(
       context: context,
+      // The player is mounted above the router, so this context has no
+      // Navigator; the menu route needs one.
+      routeContext: rootNavigatorKey.currentContext,
       anchor: anchor,
       selected: selected,
       groups: [
