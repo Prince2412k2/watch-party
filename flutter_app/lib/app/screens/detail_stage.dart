@@ -340,7 +340,13 @@ class _DetailStageState extends ConsumerState<DetailStage>
             data: (_) => const SizedBox.shrink(),
           ),
         Positioned(
-          top: 25,
+          // macOS keeps its traffic lights in the top-left of the CONTENT area,
+          // in a band `integratedDesktopChromeHeight` tall. Insetting from the
+          // left cleared the lights themselves but left the button's top edge
+          // inside that band — visually cramped against them, and sitting in
+          // the strip the window uses for dragging. Dropping BELOW the band is
+          // what the chat drawer does, for the same reason.
+          top: Platform.isMacOS ? integratedDesktopChromeHeight + 8 : 25,
           left: desktopLeadingControlInset > 0
               ? desktopLeadingControlInset
               : 40,

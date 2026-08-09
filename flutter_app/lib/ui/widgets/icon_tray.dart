@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../analog_tokens.dart';
 import '../palette.dart';
+import 'wave_dots.dart';
 
 /// A pill of icon-only actions that unrolls out from beside a round handle —
 /// leftwards from the profile avatar in the top-right, upwards from the popcorn
@@ -307,9 +308,26 @@ class _TrayButtonState extends State<TrayButton> {
               children: [
                 if (widget.progress != null)
                   _Percent(value: widget.progress!, color: color)
+                else if (widget.busy)
+                  // Work of unknown length, in flight. This was
+                  // `Icons.more_horiz` — a motionless three dots, which is the
+                  // same picture whether the request left a second ago or the
+                  // server stopped answering, so the button said "wait" without
+                  // ever saying "still going".
+                  //
+                  // Still not a CircularProgressIndicator. That is what the
+                  // ellipsis replaced: an indeterminate spinner pinned the
+                  // compositor and hung `pumpAndSettle` in three tests that
+                  // only wanted to boot the app, because this control is
+                  // mounted on every shelled screen. WaveDots has the same
+                  // never-settling property, so the bound that matters is
+                  // unchanged and worth restating: it is mounted ONLY while
+                  // busy, and busy is only ever true across an in-flight
+                  // request.
+                  WaveDots(color: color, dotSize: 4.5, amplitude: 2.5)
                 else
                   Icon(
-                    widget.busy ? Icons.more_horiz : widget.icon,
+                    widget.icon,
                     size: TrayButton.iconSize,
                     color: color,
                   ),
