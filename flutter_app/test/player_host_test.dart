@@ -10,6 +10,12 @@ import 'package:watchparty/state/player_provider.dart';
 import 'package:watchparty/state/providers.dart';
 import 'package:watchparty/ui/ui.dart';
 
+/// `fromParty: true` throughout: these tests are about PRESENTATION — where the
+/// player is mounted and how it moves — not about opening media. A solo title
+/// makes the host run the real open pipeline and show an indeterminate spinner
+/// while it waits, which never settles and leaves a pending timer at teardown.
+/// Party media is opened by PartyNotifier, so the host just renders it.
+///
 /// The host exists so there is exactly ONE PlayerView for the life of the
 /// session, with expanded/floating being a rect it animates between rather than
 /// two different mounts. The identity assertions below are the whole point: if
@@ -55,7 +61,7 @@ void main() {
     // The screen you were on is not replaced — that is the difference between a
     // player that floats over your app and a player that IS a route.
     await pumpHost(tester);
-    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1', fromParty: true);
     await tester.pump();
 
     expect(find.byType(PlayerView), findsOneWidget);
@@ -68,7 +74,7 @@ void main() {
     await pumpHost(tester);
     final notifier = container.read(nowPlayingProvider.notifier);
 
-    notifier.open(itemId: 'movie-1');
+    notifier.open(itemId: 'movie-1', fromParty: true);
     await tester.pump();
     final expanded = tester.element(find.byType(PlayerView));
 
@@ -95,7 +101,7 @@ void main() {
     await pumpHost(tester);
     final notifier = container.read(nowPlayingProvider.notifier);
 
-    notifier.open(itemId: 'movie-1');
+    notifier.open(itemId: 'movie-1', fromParty: true);
     await tester.pumpAndSettle();
     final expandedSize = tester.getSize(find.byType(PlayerView));
 
@@ -116,7 +122,7 @@ void main() {
     await pumpHost(tester);
     final notifier = container.read(nowPlayingProvider.notifier);
 
-    notifier.open(itemId: 'movie-1');
+    notifier.open(itemId: 'movie-1', fromParty: true);
     await tester.pump();
     await notifier.close();
     await tester.pump();

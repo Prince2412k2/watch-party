@@ -3,13 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../../analog/chrome/analog_button.dart';
-import '../../data/api_client.dart';
 import '../../models/models.dart';
-import '../../player/offline_playback.dart';
-import '../../player/player_view.dart';
 import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
@@ -128,9 +124,9 @@ class _GuestOfflineDetailBody extends StatelessWidget {
             tone: AnalogIconButtonTone.primary,
             size: 56,
             iconSize: 28,
-            onPressed: () => Navigator.of(
-              context,
-            ).push(_playerRouteFor(itemId: record.itemId)),
+            onPressed: () => ProviderScope.containerOf(context)
+                .read(nowPlayingProvider.notifier)
+                .open(itemId: record.itemId),
           ),
         ],
       ),
@@ -138,11 +134,15 @@ class _GuestOfflineDetailBody extends StatelessWidget {
   }
 }
 
-/// Start playing a library item the way the detail screen does: into the party
-/// when one is active and this client may drive it, otherwise the solo player
-/// pushed onto the current navigator — so back returns to wherever playback
-/// started rather than a route default. Public because the show stage launches
-/// playback too and must not re-derive the party check.
+/// Start playing a library item.
+///
+/// Into the party when one is active and this client may drive it; otherwise
+/// into the app's own player. Either way this only sets STATE — [PlayerHost],
+/// mounted above the router, is what renders it. Nothing navigates, which is
+/// the point: the player is no longer a place you go.
+///
+/// Public because the show stage launches playback too and must not re-derive
+/// the party check.
 Future<void> startPlayback(
   BuildContext context,
   WidgetRef ref, {
@@ -151,327 +151,29 @@ Future<void> startPlayback(
   int? subtitleStreamIndex,
 }) async {
   final party = ref.read(partyProvider);
+  final nowPlaying = ref.read(nowPlayingProvider.notifier);
   if (party != null) {
     final notifier = ref.read(partyProvider.notifier);
-    if (notifier.canControl) {
-      await notifier.selectMedia(
-        itemId,
-        audioStreamIndex: audioStreamIndex,
-        subtitleStreamIndex: subtitleStreamIndex,
-      );
-    }
-    if (context.mounted) context.go('/party/${party.id}');
+    if (!notifier.canControl) return;
+    await notifier.selectMedia(
+      itemId,
+      audioStreamIndex: audioStreamIndex,
+      subtitleStreamIndex: subtitleStreamIndex,
+    );
+    // The room's own `party:state` will confirm this; opening optimistically
+    // means the person who pressed play sees the player immediately rather
+    // than after a round trip.
+    nowPlaying.open(
+      itemId: itemId,
+      audioStreamIndex: audioStreamIndex,
+      subtitleStreamIndex: subtitleStreamIndex,
+      fromParty: true,
+    );
     return;
   }
-  await Navigator.of(context).push(
-    _playerRouteFor(
-      itemId: itemId,
-      audioStreamIndex: audioStreamIndex,
-      subtitleStreamIndex: subtitleStreamIndex,
-    ),
+  nowPlaying.open(
+    itemId: itemId,
+    audioStreamIndex: audioStreamIndex,
+    subtitleStreamIndex: subtitleStreamIndex,
   );
-}
-
-/// Fade transition into the solo player (per the redesign's motion system).
-/// [audioStreamIndex]/[subtitleStreamIndex] carry the detail-stage track
-/// selection through to playback (web `onWatch(item, tracks)`).
-Route<void> _playerRouteFor({
-  required String itemId,
-  int? audioStreamIndex,
-  int? subtitleStreamIndex,
-}) {
-  return PageRouteBuilder<void>(
-    transitionDuration: AppMotion.page,
-    reverseTransitionDuration: AppMotion.page,
-    pageBuilder: (context, animation, secondaryAnimation) => _SoloPlayer(
-      itemId: itemId,
-      audioStreamIndex: audioStreamIndex,
-      subtitleStreamIndex: subtitleStreamIndex,
-    ),
-    transitionsBuilder: (context, animation, secondaryAnimation, child) =>
-        FadeTransition(
-          opacity: CurvedAnimation(
-            parent: animation,
-            curve: AppMotion.emphasized,
-          ),
-          child: child,
-        ),
-  );
-}
-
-/// Solo playback launcher for the detail screen. Opens the shared
-/// [playerControllerProvider] preferring a locally-downloaded copy over the
-/// network stream (E8.3 `openPreferringOffline`), then mounts the real E4.2
-/// [PlayerView] chrome.
-class _SoloPlayer extends ConsumerStatefulWidget {
-  const _SoloPlayer({
-    required this.itemId,
-    this.audioStreamIndex,
-    this.subtitleStreamIndex,
-  });
-  final String itemId;
-  final int? audioStreamIndex;
-  final int? subtitleStreamIndex;
-
-  @override
-  ConsumerState<_SoloPlayer> createState() => _SoloPlayerState();
-}
-
-class _SoloPlayerState extends ConsumerState<_SoloPlayer> {
-  Object? _error;
-  bool _ready = false;
-  bool _isFullscreen = false;
-  bool _exiting = false;
-  bool _popping = false;
-  bool _handoffToParty = false;
-  Future<void>? _openFuture;
-
-  bool _usesCacheProxy = false;
-
-  // Capture the shared, provider-owned controller once so dispose() can pause
-  // it WITHOUT touching `ref`.
-  late final _controller = ref.read(playerControllerProvider);
-
-  @override
-  void initState() {
-    super.initState();
-    _controller; // force initialization here, where ref.read is valid
-    _openFuture = _open();
-  }
-
-  @override
-  void dispose() {
-    unawaited(_stopPlayback());
-    if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
-    super.dispose();
-  }
-
-  Future<void> _stopPlayback() async {
-    if (_handoffToParty) return;
-    _exiting = true;
-    try {
-      await _openFuture;
-    } catch (_) {}
-    await _controller.pause();
-    await _controller.seek(Duration.zero);
-    if (_isFullscreen) await windowManager.setFullScreen(false);
-  }
-
-  void _exit() {
-    if (_popping) return;
-    _popping = true;
-    _exiting = true;
-    Navigator.of(context).pop();
-  }
-
-  void _retry() {
-    _exiting = false;
-    _popping = false;
-    _openFuture = _open();
-  }
-
-  Future<void> _toggleFullscreen() async {
-    final next = !_isFullscreen;
-    await windowManager.setFullScreen(next);
-    if (mounted) setState(() => _isFullscreen = next);
-  }
-
-  Future<void> _open() async {
-    setState(() {
-      _error = null;
-      _ready = false;
-    });
-    try {
-      final isAuthenticated = ref.read(
-        authProvider.select((s) => s.isAuthenticated),
-      );
-      // Pre-select the audio/subtitle tracks the detail stage picked, so the
-      // stream the cache proxy mints delivers them (web `onWatch(tracks)` →
-      // playback-info selection). Best-effort: a failure here must not block
-      // playback, so swallow it and open with the server defaults.
-      if (isAuthenticated &&
-          (widget.audioStreamIndex != null ||
-              widget.subtitleStreamIndex != null)) {
-        try {
-          await ref
-              .read(apiClientProvider)
-              .playbackInfo(
-                widget.itemId,
-                audioStreamIndex: widget.audioStreamIndex,
-                subtitleStreamIndex: widget.subtitleStreamIndex,
-              );
-        } catch (_) {}
-      }
-      // Routed through the on-device caching proxy instead of a direct signed
-      // URL — it mints/re-mints one itself on demand.
-      final streamUrl = isAuthenticated
-          ? ref.read(mediaCacheProxyProvider).urlFor(widget.itemId)
-          : '';
-      _usesCacheProxy = isAuthenticated;
-      await openPreferringOffline(
-        ref,
-        _controller,
-        itemId: widget.itemId,
-        streamUrl: streamUrl,
-        autoplay: false,
-      );
-      if (_exiting || !mounted) {
-        await _controller.pause();
-        return;
-      }
-      await _controller.play();
-      if (_exiting || !mounted) {
-        await _controller.pause();
-        return;
-      }
-      setState(() => _ready = true);
-    } catch (e) {
-      if (mounted) setState(() => _error = e);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return PopScope<void>(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _exit();
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: _error != null
-            ? Center(
-                child: ErrorState(
-                  title: 'Playback failed',
-                  message: _error is ApiException
-                      ? (_error as ApiException).message
-                      : 'Could not open this title. Check your connection and try again.',
-                  onRetry: _retry,
-                ),
-              )
-            : !_ready
-            ? const Center(
-                child: SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.text,
-                  ),
-                ),
-              )
-            : Stack(
-                children: [
-                  PlayerView(
-                    controller: ref.watch(playerControllerProvider),
-                    itemId: widget.itemId,
-                    apiClient: ref.watch(apiClientProvider),
-                    preferredSubtitleStreamIndex: widget.subtitleStreamIndex,
-                    onToggleFullscreen: _toggleFullscreen,
-                    isFullscreen: _isFullscreen,
-                    cachedSpans: _usesCacheProxy
-                        ? ref
-                              .watch(mediaCacheProxyProvider)
-                              .cachedSpansFor(widget.itemId)
-                        : null,
-                  ),
-                  Positioned(
-                    top: _isFullscreen ? 8 : integratedDesktopChromeHeight + 8,
-                    left: 8 + (_isFullscreen ? 0 : desktopLeadingControlInset),
-                    right:
-                        8 + (_isFullscreen ? 0 : desktopTrailingControlInset),
-                    child: SafeArea(
-                      child: Row(
-                        children: [
-                          IconButton(
-                            tooltip: 'Back',
-                            onPressed: _exit,
-                            icon: const Icon(Icons.arrow_back),
-                            style: IconButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              backgroundColor: Colors.black54,
-                            ),
-                          ),
-                          const Spacer(),
-                          _StartPartyButton(
-                            itemId: widget.itemId,
-                            audioStreamIndex: widget.audioStreamIndex,
-                            subtitleStreamIndex: widget.subtitleStreamIndex,
-                            onHandoff: () => _handoffToParty = true,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-      ),
-    );
-  }
-}
-
-/// "Start a party" affordance floated over solo playback, so a party can be
-/// spun up MID-MOVIE. Carries the currently-playing item + its live position
-/// into [PartyNotifier.createFromCurrentPlayback], then hands off to the
-/// immersive party screen.
-class _StartPartyButton extends ConsumerStatefulWidget {
-  const _StartPartyButton({
-    required this.itemId,
-    required this.onHandoff,
-    this.audioStreamIndex,
-    this.subtitleStreamIndex,
-  });
-  final String itemId;
-  final VoidCallback onHandoff;
-  final int? audioStreamIndex;
-  final int? subtitleStreamIndex;
-
-  @override
-  ConsumerState<_StartPartyButton> createState() => _StartPartyButtonState();
-}
-
-class _StartPartyButtonState extends ConsumerState<_StartPartyButton> {
-  bool _busy = false;
-
-  Future<void> _start() async {
-    setState(() => _busy = true);
-    try {
-      final position = ref.read(playerControllerProvider).positionNow;
-      final partyId = await ref
-          .read(partyProvider.notifier)
-          .createFromCurrentPlayback(
-            mediaItemId: widget.itemId,
-            position: position,
-            audioStreamIndex: widget.audioStreamIndex,
-            subtitleStreamIndex: widget.subtitleStreamIndex,
-          );
-      if (!mounted) return;
-      widget.onHandoff();
-      context.go('/party/$partyId');
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not start a party: $e')));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isAuthenticated = ref.watch(
-      authProvider.select((s) => s.isAuthenticated),
-    );
-    if (!isAuthenticated || ref.watch(partyProvider) != null) {
-      return const SizedBox.shrink();
-    }
-    return AppButton(
-      label: 'Start party',
-      icon: Icons.groups_outlined,
-      variant: AppButtonVariant.secondary,
-      busy: _busy,
-      onPressed: _busy ? null : _start,
-    );
-  }
 }

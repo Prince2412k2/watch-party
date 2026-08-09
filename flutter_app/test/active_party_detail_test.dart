@@ -76,7 +76,14 @@ void main() {
       await tester.tap(find.text('Watch now'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Party party-1'), findsOneWidget);
+      // Playing NEVER navigates now. The room is told what to play, the local
+      // player state opens, and you stay on the page you were reading.
+      expect(find.text('Party party-1'), findsNothing);
+      expect(find.text('Watch now'), findsOneWidget);
+      final now = container.read(nowPlayingProvider);
+      expect(now.itemId, 'mock-item-0');
+      expect(now.fromParty, isTrue);
+      expect(now.isExpanded, isTrue);
       expect(socket.emitted.last.$1, ClientEvent.partySelectMedia);
       expect(
         socket.emitted.last.$2,
@@ -86,7 +93,7 @@ void main() {
     },
   );
 
-  testWidgets('solo player Back returns immediately to details', (
+  testWidgets('watching solo opens the app player without navigating', (
     tester,
   ) async {
     final player = MockPlayerController();
@@ -137,14 +144,21 @@ void main() {
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(find.byTooltip('Back'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Back'));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-
+    // The player used to be a pushed route, so Back popped it and stopped
+    // playback. It is state now: the detail page is still underneath, and
+    // minimising is what Back does.
+    final notifier = container.read(nowPlayingProvider.notifier);
+    expect(container.read(nowPlayingProvider).isExpanded, isTrue);
     expect(find.text('Watch now'), findsOneWidget);
+
+    notifier.minimise();
+    expect(container.read(nowPlayingProvider).isFloating, isTrue);
+    expect(
+      container.read(nowPlayingProvider).itemId,
+      'mock-item-0',
+      reason: 'minimising keeps the title open',
+    );
     expect(tester.takeException(), isNull);
   });
 }

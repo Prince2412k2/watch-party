@@ -116,7 +116,27 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     }
   }
 
-  Future<void> _start() => _guard(() => _party.create());
+  /// Start a room.
+  ///
+  /// If something is already playing, the room starts ON it, carrying the live
+  /// position — the "start a party mid-movie" affordance that used to be a
+  /// button floated over the solo player. That button had nowhere to live once
+  /// the player stopped being a screen, and it belongs here anyway: starting a
+  /// room is a popcorn action wherever you are.
+  Future<void> _start() => _guard(() async {
+    final now = ref.read(nowPlayingProvider);
+    final itemId = now.itemId;
+    if (itemId == null) {
+      await _party.create();
+      return;
+    }
+    await _party.createFromCurrentPlayback(
+      mediaItemId: itemId,
+      position: ref.read(playerControllerProvider).positionNow,
+      audioStreamIndex: now.audioStreamIndex,
+      subtitleStreamIndex: now.subtitleStreamIndex,
+    );
+  });
 
   Future<void> _join() async {
     setState(() => _error = null);
