@@ -27,6 +27,7 @@ import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import '../analog/chrome/chrome.dart';
 import '../models/models.dart';
 import '../state/state.dart';
+import 'party_controls.dart';
 import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
 import '../ui/widgets/floating_camera_tile.dart';
@@ -65,6 +66,18 @@ class PartyOverlay extends ConsumerWidget {
             bottom: 0,
             right: chatOpen ? kChatDrawerWidth : 0.0,
             child: const FloatingCameraLayer(),
+          ),
+          // Your own mic, camera and hide-self, down the left edge.
+          //
+          // This rendered inside the deleted party route and was left mounted
+          // NOWHERE — the controls existed, were reachable from no screen, and
+          // a room had no way to mute itself. It belongs with the rest of the
+          // room's chrome, at the root.
+          const Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: Center(child: DeviceRail()),
           ),
           const Positioned(top: 64, right: 12, child: JoinRequestsLayer()),
           const Positioned(

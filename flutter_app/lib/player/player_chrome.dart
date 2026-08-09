@@ -16,6 +16,7 @@ import '../analog/player/analog_timeline.dart';
 import '../analog/player/analog_volume.dart';
 import '../analog/player/auto_hide_controller.dart';
 import '../analog/player_core.dart';
+import '../app/router.dart';
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
@@ -888,7 +889,13 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (widget.controller is! MediaKitPlayerController) return;
     _hold('subtitleSettings'); // keep the chrome awake while the dialog is open
     await showDialog<void>(
-      context: context,
+      // The root navigator, not this one. The player is mounted in
+      // `MaterialApp.builder`, which wraps the Navigator rather than living
+      // inside it, so `Navigator.of(context)` from here finds nothing and this
+      // dialog threw instead of opening. (The comment above used to say the
+      // chrome lives under a Scaffold; that stopped being true when the player
+      // moved above the router.)
+      context: rootNavigatorKey.currentContext ?? context,
       barrierColor: Colors.black54,
       builder: (_) => _SubtitleSettingsDialog(
         scale: _subScale,
