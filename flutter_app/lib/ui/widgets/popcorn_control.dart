@@ -6,6 +6,7 @@ import '../../models/models.dart';
 import '../../party/party_controls.dart';
 import '../../state/state.dart';
 import '../analog_tokens.dart';
+import '../tokens.dart';
 import '../palette.dart';
 import 'app_dialog.dart';
 import 'avatar_view.dart';
@@ -181,6 +182,9 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     final session = ref.watch(partyProvider);
     final waiting = ref.watch(partyWaitingProvider);
     final isHost = session != null && _party.isHost;
+    // Asked to join, not yet let in. The tray is the only surface that can say
+    // so since the waiting room was deleted with its route.
+    final pending = session == null && ref.watch(partyPendingProvider) != null;
 
     return TapRegion(
       onTapOutside: (_) => _close(),
@@ -194,7 +198,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
             animation: _tray,
             axis: Axis.vertical,
             children: [
-              ..._actions(session, isHost),
+              ..._actions(session, isHost, pending),
               // Guests waiting on the door. Transient, host-only, and the whole
               // reason the tray auto-opens.
               if (isHost && waiting.isNotEmpty) ...[
@@ -219,6 +223,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
           ),
           _PopcornButton(
             live: session != null,
+            pending: pending,
             waiting: waiting.length,
             onTap: () => _open ? _tray.reverse() : _tray.forward(),
           ),
@@ -229,7 +234,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
 
   /// The listed actions, in the order they were asked for: left to right, with
   /// the destructive one furthest from the handle in every state.
-  List<Widget> _actions(PartyState? session, bool isHost) {
+  List<Widget> _actions(PartyState? session, bool isHost, bool pending) {
     // Back on the film MINIMISES it to a tile — the room keeps running — so
     // there has to be a non-destructive way back to full screen, or minimising
     // strands the user next to a live session. It used to navigate to
@@ -268,6 +273,20 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
               ),
             ),
           ];
+
+    // Waiting on the host's answer. Neither "start a party" nor "join with a
+    // code" is true here, and offering them would invite you to ask twice.
+    if (pending) {
+      return [
+        TrayButton(
+          key: const Key('cancelJoinRequestButton'),
+          icon: Icons.close,
+          tooltip: 'Stop waiting',
+          tint: kSemanticRed,
+          onTap: () => _guard(() => _party.leave()),
+        ),
+      ];
+    }
 
     if (session == null) {
       return [
@@ -354,11 +373,18 @@ class _WaitingFace extends StatelessWidget {
 class _PopcornButton extends StatefulWidget {
   const _PopcornButton({
     required this.live,
+    required this.pending,
     required this.waiting,
     required this.onTap,
   });
 
   final bool live;
+
+  /// Asked to join and waiting on the host. Shown as a breathing ring rather
+  /// than the live dot: you are not in the room yet, and a steady green dot
+  /// would say you were.
+  final bool pending;
+
   final int waiting;
   final VoidCallback onTap;
 
@@ -371,8 +397,52 @@ class _PopcornButton extends StatefulWidget {
   State<_PopcornButton> createState() => _PopcornButtonState();
 }
 
-class _PopcornButtonState extends State<_PopcornButton> {
+class _PopcornButtonState extends State<_PopcornButton>
+    with SingleTickerProviderStateMixin {
   bool _hover = false;
+
+  /// Runs ONLY while pending, and that restriction is load-bearing. The popcorn
+  /// is mounted on every screen in the app, so a permanently-repeating ticker
+  /// here would mean `pumpAndSettle` never returns in any widget test that
+  /// renders the shell. A test that pumps-and-settles while a join request is
+  /// outstanding has to pump frames by hand instead.
+  ///
+  /// Built in [initState] for the same reason [_tray] is, and it is worth
+  /// spelling out because a `late final` initializer looks harmless here and is
+  /// not: nothing touches this field on the common path (nobody is ever
+  /// usually waiting), so the FIRST thing to read it was `dispose()` — which
+  /// constructed an AnimationController, and therefore looked up TickerMode,
+  /// during unmount. That throws "Looking up a deactivated widget's ancestor is
+  /// unsafe" on every teardown of a tree containing the popcorn.
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    );
+    if (widget.pending) _pulse.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_PopcornButton old) {
+    super.didUpdateWidget(old);
+    if (widget.pending == old.pending) return;
+    if (widget.pending) {
+      _pulse.repeat();
+    } else {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -404,6 +474,41 @@ class _PopcornButtonState extends State<_PopcornButton> {
             alignment: Alignment.center,
             children: [
               Image.asset('assets/popcorn.png', width: 51, height: 51),
+              if (widget.pending)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _pulse,
+                      builder: (context, _) {
+                        // One ring, expanding and fading — a request going out
+                        // and not yet answered. The old waiting room drew a
+                        // sonar sweep for the same reason; this is that idea at
+                        // the size the corner allows.
+                        final t = Curves.easeOut.transform(_pulse.value);
+                        return Transform.scale(
+                          scale: 1 + t * 0.35,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                // Neutral, not green: green is the live dot
+                                // and means you are IN. Waiting is not a
+                                // status the palette has a colour for, and
+                                // inventing one to say "almost" would put a
+                                // new semantic token in the system for a
+                                // transient state.
+                                color: AppColors.text.withValues(
+                                  alpha: (1 - t) * 0.7,
+                                ),
+                                width: 2,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
               if (widget.live)
                 Positioned(
                   right: -2,

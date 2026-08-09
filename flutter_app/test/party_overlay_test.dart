@@ -129,8 +129,8 @@ void main() {
     joinRoom(waiting: const [Participant(userId: 'gate', name: 'Nadia')]);
     await tester.pumpAndSettle();
 
-    expect(find.text('Wants to join · 1'), findsOneWidget);
     expect(find.text('Nadia'), findsOneWidget);
+    expect(find.text('wants to join'), findsOneWidget);
   });
 
   testWidgets('a guest is never shown the join queue', (tester) async {
