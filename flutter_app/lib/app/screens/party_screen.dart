@@ -278,30 +278,12 @@ class _ImmersiveParty extends ConsumerStatefulWidget {
 }
 
 class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
-  bool _chatOpen = false;
   bool _isFullscreen = false;
 
-  /// Camera layout: false = floating PiP tiles, true = docked left column.
-  bool _dock = false;
-
-  /// Whether the camera tiles are docked into the left column rather than
-  /// floating over the picture.
-  ///
-  /// Opening chat SUPPRESSES the dock. Chat used to force it, on the reasoning
-  /// that floating tiles anchored to the stage's right edge would end up under
-  /// the drawer — but forcing a left column at the same moment a right drawer
-  /// slides in rearranges the entire screen around a message, which is exactly
-  /// the distraction the drawer is meant to avoid. The tiles keep clear of the
-  /// drawer by insetting their layer instead (see [_kChatWidth]), which moves
-  /// nothing but them.
-  ///
-  /// The explicit toggle is remembered across a chat session: dock, open chat,
-  /// close it, and the cameras are docked again.
-  bool _camerasDocked(bool watching) => watching && _dock && !_chatOpen;
-
-  /// The chat drawer's width. It overlays the stage rather than narrowing it,
-  /// so this is only ever an inset for things that must stay clear of it.
-  static const double _kChatWidth = 360;
+  /// The drawer itself moved to [PartyOverlay] at the root, so its open state
+  /// has to be somewhere both can see. This screen only reads it (to pin the
+  /// chrome open and light the chat button) and toggles it.
+  bool get _chatOpen => ref.read(chatDrawerOpenProvider);
 
   /// Single-open guard for the right-click / long-press Watch Party menu.
   bool _menuOpen = false;
@@ -378,9 +360,6 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
   }
 
   void _setChatOpen(bool open) {
-    setState(() => _chatOpen = open);
-    // Published so the app-wide notification rail can stay quiet while the
-    // drawer is up — it sits above the router and cannot see this state.
     ref.read(chatDrawerOpenProvider.notifier).state = open;
     if (open) {
       _autoHide.hold(_kChatHold);
@@ -460,6 +439,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
     // by the first _poke on an immersive stage, exactly as the old timer was
     // only armed by the first _poke there.
     final chromeShown = _autoHide.visible;
+    final chatOpen = ref.watch(chatDrawerOpenProvider);
 
     final stage = watching
         ? PlayerView(
@@ -502,7 +482,7 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
             // Chat notifications over the player. The chrome owns the queue,
             // the three-deep stack and the four second lifetime (player_core);
             // this only supplies the log and whether the drawer is open.
-            chatOpen: _chatOpen,
+            chatOpen: chatOpen,
             chatToasts: [
               for (final message in ref.watch(chatProvider))
                 ToastMessage(
@@ -533,45 +513,11 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // 0 — the stage. Shrinks (animated left margin) when cameras dock,
-              // WITHOUT re-keying/remounting PlayerView or its media_kit
-              // VideoView — only the surrounding box narrows. Chat does NOT
-              // appear here: it is an overlay, so the picture keeps its size
-              // and its aspect when the drawer opens.
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOutCubic,
-                left: _camerasDocked(watching) ? 210.0 : 0.0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-                child: stage,
-              ),
-
-              // 1 — cameras: floating PiP layer, or the docked left column.
-              // Exactly one child so the stage above keeps a stable Stack slot.
-              //
-              // The floating layer is the one thing the drawer does move: its
-              // right edge insets by the drawer's width so a tile can neither
-              // hide under chat nor straddle its border.
-              if (_camerasDocked(watching))
-                const Positioned(
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 210,
-                  child: _CameraDock(),
-                )
-              else
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.easeOutCubic,
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  right: _chatOpen ? _kChatWidth : 0.0,
-                  child: const FloatingCameraLayer(),
-                ),
+              // 0 — the stage. The cameras, chat, join requests and the
+              // A/V banner are NOT here any more: they render in
+              // [PartyOverlay] at the root, so they survive leaving this
+              // screen. What is left is the picture and its own chrome.
+              Positioned.fill(child: stage),
 
               // 2 — auto-hiding chrome: top-left Back + top-right A/V cluster.
               Positioned(
@@ -585,11 +531,9 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                     duration: const Duration(milliseconds: 200),
                     child: _WatchChrome(
                       watching: watching,
-                      dock: _camerasDocked(watching),
-                      chatOpen: _chatOpen,
+                      chatOpen: chatOpen,
                       onBack: _minimize,
-                      onToggleChat: () => _setChatOpen(!_chatOpen),
-                      onToggleLayout: () => setState(() => _dock = !_dock),
+                      onToggleChat: () => _setChatOpen(!chatOpen),
                     ),
                   ),
                 ),
@@ -608,35 +552,12 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
                     opacity: chromeShown ? 1 : 0,
                     duration: const Duration(milliseconds: 200),
                     child: Center(
-                      child: _DeviceRail(
-                        watching: watching,
-                        dock: _camerasDocked(watching),
-                        onToggleLayout: () => setState(() => _dock = !_dock),
-                      ),
+                      child: const _DeviceRail(),
                     ),
                   ),
                 ),
               ),
 
-              // 3 — host-only join requests (a notification: never faded).
-              const Positioned(top: 64, right: 12, child: _JoinRequestsLayer()),
-
-              // 4 — LiveKit error banner (always visible).
-              const Positioned(
-                top: 70,
-                left: 0,
-                right: 0,
-                child: _LiveKitErrorBanner(),
-              ),
-
-              // 5 — the chat drawer: a glass overlay ON the picture. It takes
-              // no layout from anything else, so opening it never resizes the
-              // video.
-              _ChatSlideOver(
-                open: _chatOpen,
-                width: _kChatWidth,
-                onClose: () => _setChatOpen(false),
-              ),
             ],
           ),
         ),
@@ -653,19 +574,15 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
 class _WatchChrome extends ConsumerWidget {
   const _WatchChrome({
     required this.watching,
-    required this.dock,
     required this.chatOpen,
     required this.onBack,
     required this.onToggleChat,
-    required this.onToggleLayout,
   });
 
   final bool watching;
-  final bool dock;
   final bool chatOpen;
   final VoidCallback onBack;
   final VoidCallback onToggleChat;
-  final VoidCallback onToggleLayout;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -850,96 +767,6 @@ class _AvPendingToggleState extends State<_AvPendingToggle> {
 /// The docked camera column (`Dock.tsx`): a fixed left panel of camera tiles
 /// beside the shrunk video. Reuses [CameraGrid]'s strip layout so the docked
 /// and floating tiles render identically.
-class _CameraDock extends StatelessWidget {
-  const _CameraDock();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.only(left: 18, top: 76, right: 12, bottom: 108),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Color(0xF017181B),
-          borderRadius: BorderRadius.all(Radius.circular(AppSpacing.radiusLg)),
-          border: Border.fromBorderSide(BorderSide(color: AppColors.line2)),
-        ),
-        child: CameraGrid(layout: CameraGridLayout.strip),
-      ),
-    );
-  }
-}
-
-/// Host-only "wants to join" notification, kept visible independent of the
-/// auto-hide chrome (a notification, per the design guide). Renders nothing for
-/// guests or when no one is waiting.
-class _JoinRequestsLayer extends ConsumerWidget {
-  const _JoinRequestsLayer();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final party = ref.watch(partyProvider);
-    final me = ref.watch(currentUserIdProvider);
-    final isHost = party != null && me != null && party.hostId == me;
-    final waiting = ref.watch(partyWaitingProvider);
-    if (!isHost || waiting.isEmpty) return const SizedBox.shrink();
-    return SafeArea(child: _JoinRequests(waiting: waiting));
-  }
-}
-
-/// The LiveKit A/V error banner — opaque and always visible (a notification),
-/// not tied to the auto-hide chrome.
-class _LiveKitErrorBanner extends ConsumerWidget {
-  const _LiveKitErrorBanner();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final error = ref.watch(livekitProvider.select((s) => s.error));
-    if (error == null) return const SizedBox.shrink();
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Flexible(
-              child: AnalogPanel(
-                translucent: true,
-                blur: AppBlur.overlay,
-                lift: AnalogLift.over,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.md,
-                  vertical: AppSpacing.sm,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.error_outline,
-                      size: 16,
-                      color: AppColors.red,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Flexible(
-                      child: Text(
-                        error,
-                        style: const TextStyle(
-                          color: AppColors.text,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// The lobby stage: shown before a title is selected. Distinct from the watching
 /// stage (the movie), mirroring the web's lobby. Shows the room code + count and
 /// a status line; cameras still float and chat still works on top of it.
@@ -1191,252 +1018,6 @@ class _RoomCodePill extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Host-only "wants to join" card with approve/reject. Fades in on appear
-/// ([Reveal]) and sits on an acrylic surface.
-class _JoinRequests extends ConsumerWidget {
-  const _JoinRequests({required this.waiting});
-  final List<Participant> waiting;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final notifier = ref.read(partyProvider.notifier);
-    return Reveal(
-      child: SizedBox(
-        width: 268,
-        child: AnalogPanel(
-          translucent: true,
-          blur: AppBlur.overlay,
-          lift: AnalogLift.over,
-          radius: AppSpacing.radiusLg,
-          padding: EdgeInsets.zero,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.sm + 3,
-                  AppSpacing.md,
-                  AppSpacing.sm + 3,
-                ),
-                child: Text(
-                  'Wants to join · ${waiting.length}',
-                  style: const TextStyle(
-                    color: AppColors.dim,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-              const Divider(height: 1, color: AppColors.line),
-              for (final w in waiting)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
-                    vertical: AppSpacing.xs,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: AppSpacing.xs),
-                          child: Text(
-                            w.name,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.text,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                      AnalogIconButton(
-                        icon: Icons.close,
-                        tooltip: 'Reject',
-                        color: AppColors.red,
-                        onPressed: () => notifier.reject(w.userId),
-                      ),
-                      AnalogIconButton(
-                        icon: Icons.check,
-                        tooltip: 'Approve',
-                        color: AppColors.green,
-                        onPressed: () => notifier.approve(w.userId),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Right-side chat rail. It is deliberately opaque and blur-free; the movie
-/// stage narrows by the same width while open instead of sitting behind it.
-/// The room chat, as a glass panel over the picture.
-///
-/// It is an overlay in the strict sense: nothing else in the party Stack reads
-/// its width, so opening it changes no other widget's constraints and the
-/// video neither resizes nor reflows. What used to happen — the stage
-/// narrowing by 360px — reframed the entire movie every time someone wanted to
-/// type.
-///
-/// Opening it moves keyboard focus into the composer, and closing it hands
-/// focus back so the player's keymap (space, arrows, F) works again without a
-/// click. A drawer you have to click into before typing is a drawer that
-/// costs two actions instead of one.
-class _ChatSlideOver extends StatefulWidget {
-  const _ChatSlideOver({
-    required this.open,
-    required this.width,
-    required this.onClose,
-  });
-
-  final bool open;
-  final double width;
-  final VoidCallback onClose;
-
-  @override
-  State<_ChatSlideOver> createState() => _ChatSlideOverState();
-}
-
-class _ChatSlideOverState extends State<_ChatSlideOver> {
-  final FocusNode _composer = FocusNode(debugLabel: 'chatComposer');
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.open) _grabFocus();
-  }
-
-  @override
-  void didUpdateWidget(_ChatSlideOver old) {
-    super.didUpdateWidget(old);
-    if (widget.open == old.open) return;
-    if (widget.open) {
-      _grabFocus();
-    } else {
-      // Give focus back to whatever the player put it on. unfocus() alone
-      // would leave the tree with no primary focus and swallow the next key.
-      _composer.unfocus();
-    }
-  }
-
-  /// Focus after the frame that opens the drawer. Requesting it during build
-  /// targets a node that is still parked off-screen, and the request is
-  /// dropped.
-  void _grabFocus() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && widget.open) _composer.requestFocus();
-    });
-  }
-
-  @override
-  void dispose() {
-    _composer.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final open = widget.open;
-    return AnimatedPositioned(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      // Clear of the window-chrome band, exactly as _WatchChrome is. Running to
-      // the top edge put the drawer's own header inside the strip macOS uses
-      // for dragging the window, so the top-right of the title bar stopped
-      // responding whenever chat was open — and the panel's heading sat level
-      // with the traffic lights, reading as part of the title bar rather than
-      // as content.
-      top: Platform.isMacOS ? integratedDesktopChromeHeight : 0,
-      bottom: 0,
-      right: open ? 0 : -(widget.width + 12),
-      width: widget.width,
-      child: SafeArea(
-        left: false,
-        // Escape closes. With the cursor parked in the composer the player's
-        // own keymap no longer sees anything typed here, so without this the
-        // drawer would be a place you can get into from the keyboard and only
-        // out of with the mouse.
-        child: CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
-          },
-          child: LiquidGlass(
-          opaque: MediaQuery.of(context).highContrast,
-          // Square against the right edge, rounded on the side that faces the
-          // picture — the panel reads as something laid ON the stage rather
-          // than a slot cut out of it.
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(AnalogRadius.cardPx + 6),
-            bottomLeft: Radius.circular(AnalogRadius.cardPx + 6),
-          ),
-          blur: 24,
-          shadow: const [
-            BoxShadow(
-              color: Color(0x66000000),
-              blurRadius: 34,
-              offset: Offset(-10, 0),
-            ),
-          ],
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 16, 14, 14),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'ROOM CHAT',
-                            style: TextStyle(
-                              fontFamily: AppFonts.mono,
-                              color: AppColors.faint,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.5,
-                            ),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'Conversation',
-                            style: TextStyle(
-                              color: AppColors.text,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: -0.3,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    AnalogIconButton(
-                      icon: Icons.close,
-                      tooltip: 'Close chat',
-                      onPressed: widget.onClose,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Expanded(child: ChatPanel(composerFocus: _composer)),
-              ],
-            ),
-          ),
-          ),
-        ),
       ),
     );
   }
@@ -1837,15 +1418,7 @@ class _Face extends StatelessWidget {
 /// Fades with the rest of the chrome, and stops taking input while hidden —
 /// an invisible mute button is worse than no mute button.
 class _DeviceRail extends ConsumerWidget {
-  const _DeviceRail({
-    required this.watching,
-    required this.dock,
-    required this.onToggleLayout,
-  });
-
-  final bool watching;
-  final bool dock;
-  final VoidCallback onToggleLayout;
+  const _DeviceRail();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1880,14 +1453,6 @@ class _DeviceRail extends ConsumerWidget {
             active: lkState.hideSelf,
             onTap: () => lk.setHideSelf(!lkState.hideSelf),
           ),
-          if (watching)
-            _AvIconButton(
-              icon: dock
-                  ? Icons.view_sidebar_outlined
-                  : Icons.picture_in_picture_alt_outlined,
-              tooltip: dock ? 'Float cameras' : 'Dock cameras',
-              onTap: onToggleLayout,
-            ),
           // Reconnect is NOT here. It moved to the watch-party control panel:
           // the rail is the four things you reach for mid-film, and a repair
           // you need once a month does not earn a permanent seat among them.

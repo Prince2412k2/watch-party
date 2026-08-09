@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analog/chrome/analog_toast.dart';
+import '../party/party_overlay.dart';
 import '../player/player_host.dart';
 import '../state/theme_provider.dart';
 import '../ui/ui.dart';
@@ -77,7 +78,14 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
               // the router, because playback has to outlive navigation: the
               // player used to be mounted inside two routes' Scaffolds, so
               // pressing Back destroyed it instead of minimising it.
-              child: PlayerHost(child: child ?? const SizedBox.shrink()),
+              //
+              // PartyOverlay wraps it rather than the other way round: a room's
+              // cameras and chat have to render ON TOP of the movie, including
+              // while it is full-window. Both are outside the router for the
+              // same reason — a room outlives any one screen.
+              child: PartyOverlay(
+                child: PlayerHost(child: child ?? const SizedBox.shrink()),
+              ),
             ),
           ),
         );
