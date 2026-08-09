@@ -196,23 +196,50 @@ Future<ws.WebSocket> connectSocketWebSocket(
   final target = uri.hasPort
       ? uri
       : uri.replace(port: uri.isScheme('wss') ? 443 : 80);
-  final io_net.WebSocket socket;
-  try {
-    socket = await io_net.WebSocket.connect(
-      target.toString(),
-      protocols: protocols,
-      headers: headers,
-    );
-  } on io_net.WebSocketException catch (e) {
-    // dart:io throws "was not upgraded to websocket" for ANY non-101 response
-    // and throws the response away, so the one fact worth having — what the
-    // server actually said — is lost exactly when it is needed. Ask again, in
-    // plain HTTP, purely to report it.
-    final detail = await _describeFailedUpgrade(target, headers);
-    // The package's contract: transports expect ws.WebSocketException.
-    throw ws.WebSocketException('${e.message} (dialling $target)$detail');
+  // Retried, because a refused upgrade here is very often not a refusal.
+  //
+  // Diagnosing a report of this showed the handshake failing and an identical
+  // request issued a second later succeeding: 101, correct Sec-WebSocket-Accept,
+  // correct Connection/Upgrade headers, session cookie present — every check
+  // dart:io makes would have passed on the retry. The endpoint is behind a CDN
+  // and some edges intermittently answer an upgrade badly.
+  //
+  // One failed dial used to be fatal, and that is harsher here than almost
+  // anywhere else in the app: `setTransports(['websocket'])` means there is no
+  // polling fallback (socket_io_client's native Dart transport cannot complete
+  // an Engine.IO session over polling), so a single bad response was the whole
+  // connection. Three attempts across roughly a second cost nothing when the
+  // first works, which is the overwhelmingly common case.
+  //
+  // Deliberately NOT a general-purpose retry loop: only the "was not upgraded"
+  // family is retried, and only a fixed few times. A server that is genuinely
+  // down, refusing auth, or unreachable still fails fast, with the diagnostic
+  // from the LAST attempt attached.
+  const attempts = 3;
+  const backoff = [Duration(milliseconds: 250), Duration(milliseconds: 750)];
+  io_net.WebSocketException? lastError;
+  for (var attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) await Future<void>.delayed(backoff[attempt - 1]);
+    try {
+      final socket = await io_net.WebSocket.connect(
+        target.toString(),
+        protocols: protocols,
+        headers: headers,
+      );
+      return IOWebSocket.fromWebSocket(socket);
+    } on io_net.WebSocketException catch (e) {
+      lastError = e;
+    }
   }
-  return IOWebSocket.fromWebSocket(socket);
+  // dart:io throws "was not upgraded to websocket" for ANY non-101 response and
+  // throws the response away, so the one fact worth having — what the server
+  // actually said — is lost exactly when it is needed. Ask again, in plain
+  // HTTP, purely to report it.
+  final detail = await _describeFailedUpgrade(target, headers);
+  // The package's contract: transports expect ws.WebSocketException.
+  throw ws.WebSocketException(
+    '${lastError!.message} (dialling $target, $attempts attempts)$detail',
+  );
 }
 
 /// Re-run the handshake as a plain HTTP request and describe the response.

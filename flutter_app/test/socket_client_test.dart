@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/ui/widgets/join_code_dialog.dart';
@@ -100,5 +102,63 @@ void main() {
       socketUrlFor('https://host.example:8443'),
       'https://host.example:8443',
     );
+  });
+
+  group('a flaky upgrade is retried', () {
+    // Diagnosing a real report showed the handshake refused and an identical
+    // request a second later accepted — 101, correct accept, correct headers.
+    // The endpoint sits behind a CDN whose edges occasionally answer an upgrade
+    // badly. One failed dial used to be the whole connection, because there is
+    // no polling fallback to fall back TO.
+    late HttpServer server;
+    late int requests;
+
+    /// Fails the first [failures] upgrade attempts, then serves a real one.
+    Future<void> serve({required int failures}) async {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      requests = 0;
+      server.listen((request) async {
+        requests++;
+        if (requests <= failures) {
+          // A plausible bad answer: not a 101, so dart:io reports exactly the
+          // "was not upgraded to websocket" this retry exists for.
+          request.response.statusCode = HttpStatus.badGateway;
+          await request.response.close();
+          return;
+        }
+        final socket = await WebSocketTransformer.upgrade(request);
+        await socket.close();
+      });
+    }
+
+    tearDown(() => server.close(force: true));
+
+    test('two bad answers then a good one still connects', () async {
+      await serve(failures: 2);
+      final socket = await connectSocketWebSocket(
+        Uri.parse('ws://127.0.0.1:${server.port}/socket.io/'),
+      );
+      expect(requests, 3, reason: 'it kept trying until the edge behaved');
+      await socket.close();
+    });
+
+    test('a server that never upgrades still fails, and says what it said',
+        () async {
+      // The retry must not turn a genuinely broken endpoint into a hang or an
+      // endless loop: three attempts, then report.
+      await serve(failures: 1000);
+      await expectLater(
+        connectSocketWebSocket(
+          Uri.parse('ws://127.0.0.1:${server.port}/socket.io/'),
+        ),
+        throwsA(
+          isA<Exception>().having(
+            (e) => e.toString(),
+            'message',
+            allOf(contains('3 attempts'), contains('502')),
+          ),
+        ),
+      );
+    });
   });
 }
