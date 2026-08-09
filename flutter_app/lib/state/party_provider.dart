@@ -852,3 +852,10 @@ final syncEngineProvider = Provider<SyncEngine>((ref) {
   ref.onDispose(() => unawaited(engine.dispose()));
   return engine;
 });
+
+/// Whether the correction loop is currently nudging this client's playback, for
+/// the badge that tells the viewer so. Idle until the engine says otherwise —
+/// a stream with nothing on it yet means "not correcting", not "unknown".
+final catchUpProvider = StreamProvider<CatchUp>((ref) {
+  return ref.watch(syncEngineProvider).catchUp;
+});

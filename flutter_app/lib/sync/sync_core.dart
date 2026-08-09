@@ -17,7 +17,15 @@ const int ticksPerSecond = 10000000;
 const int controlMs = 200;
 
 /// Guest drift beyond this (seconds) → jump to live (hard seek) instead of nudge.
-const double hardSeekSec = 1.0;
+///
+/// Was 1.0, which meant rate-correction only ever handled jitter nobody would
+/// have noticed, and anything a viewer WOULD notice — a buffering stumble, a
+/// slow segment — was answered with a snap: the picture jumps, the audio clips,
+/// and you lose the second you were watching. Speeding up loses nothing; it
+/// borrows the time back. At the [maxRateAdj] cap, closing D seconds takes
+/// ~10*D seconds, so this is ~25s of catching up at worst — which is why the
+/// player says so while it happens.
+const double hardSeekSec = 2.5;
 
 /// A dragging host only corrects gross drift, not routine jitter.
 const double hostDragSeekSec = 2.0;
@@ -31,8 +39,13 @@ const double softExitSec = 0.04;
 /// How much of the current error is corrected per tick.
 const double rateGain = 0.12;
 
-/// How far playbackRate may move from 1.0 while nudging (0.92x–1.08x).
-const double maxRateAdj = 0.08;
+/// How far playbackRate may move from 1.0 while nudging (0.90x–1.10x).
+///
+/// Was 0.08, chosen so the correction would go unnoticed. The correction is
+/// announced now, so it no longer has to hide — and an explained 1.1x reads as
+/// the app working rather than as a glitch. Same cap the reference
+/// implementation uses, and still under the point speech distorts.
+const double maxRateAdj = 0.10;
 
 /// Slack (seconds) around the frozen position while paused before re-seeking.
 const double holdTolerance = 0.4;

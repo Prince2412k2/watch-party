@@ -4,12 +4,12 @@
   "constants": {
     "TICKS": 10000000,
     "CONTROL_MS": 200,
-    "HARD_SEEK_SEC": 1.0,
+    "HARD_SEEK_SEC": 2.5,
     "HOST_DRAG_SEEK_SEC": 2.0,
     "SOFT_SEC": 0.08,
     "SOFT_EXIT_SEC": 0.04,
     "RATE_GAIN": 0.12,
-    "MAX_RATE_ADJ": 0.08,
+    "MAX_RATE_ADJ": 0.1,
     "HOLD_TOLERANCE": 0.4,
     "HARD_SEEK_COOLDOWN_MS": 2500
   },
@@ -243,28 +243,28 @@
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,
       "clockReady": true,
-      "currentTime": 50.5,
+      "currentTime": 49,
       "paused": false,
       "isHost": false,
       "mode": "hopping",
       "userSeeking": false,
       "suppressHardSeek": false,
       "correctionState": null,
-      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 1.5 }
+      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 3 }
     },
     {
       "name": "the hard-seek cooldown downgrades a gross correction to a clamped nudge",
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,
       "clockReady": true,
-      "currentTime": 50.5,
+      "currentTime": 49,
       "paused": false,
       "isHost": false,
       "mode": "hopping",
       "userSeeking": false,
       "suppressHardSeek": true,
       "correctionState": null,
-      "expect": { "seekTo": null, "rate": 1.08, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 1.5 }
+      "expect": { "seekTo": null, "rate": 1.1, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 3 }
     },
     {
       "name": "drift inside the soft band is closed with a bounded rate nudge",
@@ -306,7 +306,7 @@
       "userSeeking": false,
       "suppressHardSeek": true,
       "correctionState": null,
-      "expect": { "seekTo": null, "rate": 0.92, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": -2 }
+      "expect": { "seekTo": null, "rate": 0.9, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": -2 }
     },
     {
       "name": "drift under SOFT_SEC leaves the rate alone",
@@ -368,18 +368,46 @@
       "expectCorrectionState": { "correcting": false }
     },
     {
+      "name": "a buffering stumble is now ridden out at speed, not snapped away",
+      "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
+      "serverNowMs": 3000,
+      "clockReady": true,
+      "currentTime": 50,
+      "paused": false,
+      "isHost": false,
+      "mode": "hopping",
+      "userSeeking": false,
+      "suppressHardSeek": false,
+      "correctionState": null,
+      "expect": { "seekTo": null, "rate": 1.1, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 2 }
+    },
+    {
+      "name": "drift just inside the band still nudges rather than jumping",
+      "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
+      "serverNowMs": 3000,
+      "clockReady": true,
+      "currentTime": 49.6,
+      "paused": false,
+      "isHost": false,
+      "mode": "hopping",
+      "userSeeking": false,
+      "suppressHardSeek": false,
+      "correctionState": null,
+      "expect": { "seekTo": null, "rate": 1.1, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 2.4 }
+    },
+    {
       "name": "a hard seek disarms the hysteresis latch",
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,
       "clockReady": true,
-      "currentTime": 50.5,
+      "currentTime": 49,
       "paused": false,
       "isHost": false,
       "mode": "hopping",
       "userSeeking": false,
       "suppressHardSeek": false,
       "correctionState": { "correcting": true },
-      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 1.5 },
+      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 3 },
       "expectCorrectionState": { "correcting": false }
     }
   ]

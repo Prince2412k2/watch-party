@@ -21,6 +21,7 @@ import '../analog/player_core.dart';
 import '../state/state.dart';
 import '../data/api_client.dart';
 import '../ui/ui.dart';
+import '../ui/widgets/catch_up_badge.dart';
 import '../ui/widgets/floating_camera_tile.dart';
 import 'open_title.dart';
 import 'player_view.dart';
@@ -262,6 +263,10 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                       height: rect.height,
                       child: _PlayerFrame(
                         expanded: now.isExpanded,
+                        // Only in a room: solo playback has no timeline to be
+                        // behind, so the correction loop never runs and the
+                        // badge would be permanently dead weight.
+                        showCatchUp: inParty,
                         onMinimise: notifier.minimise,
                         onExpand: notifier.expand,
                         onClose: () => notifier.close(),
@@ -372,6 +377,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 class _PlayerFrame extends StatelessWidget {
   const _PlayerFrame({
     required this.expanded,
+    this.showCatchUp = false,
     this.error,
     this.loading = false,
     required this.onRetry,
@@ -385,6 +391,7 @@ class _PlayerFrame extends StatelessWidget {
   });
 
   final bool expanded;
+  final bool showCatchUp;
   final Object? error;
   final bool loading;
   final VoidCallback onRetry;
@@ -425,6 +432,24 @@ class _PlayerFrame extends StatelessWidget {
     return child;
   }
 
+  /// The video with the catch-up badge over it. Top-left, clear of the
+  /// transport bar, and NOT tied to the auto-hide chrome: it reports something
+  /// happening to your playback right now, so it is a notification rather than
+  /// a control, and hiding it three seconds in would defeat the point.
+  Widget _stage() {
+    if (!showCatchUp) return _body();
+    return Stack(
+      children: [
+        Positioned.fill(child: _body()),
+        Positioned(
+          top: expanded ? 18 : 8,
+          left: expanded ? 18 : 8,
+          child: const CatchUpBadge(),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (expanded) {
@@ -435,7 +460,7 @@ class _PlayerFrame extends StatelessWidget {
         bindings: {
           const SingleActivator(LogicalKeyboardKey.escape): onMinimise,
         },
-        child: Focus(autofocus: true, child: _body()),
+        child: Focus(autofocus: true, child: _stage()),
       );
     }
 
@@ -477,7 +502,7 @@ class _PlayerFrame extends StatelessWidget {
                 Positioned.fill(
                   child: GestureDetector(
                     onTap: onExpand,
-                    child: AbsorbPointer(child: _body()),
+                    child: AbsorbPointer(child: _stage()),
                   ),
                 ),
                 // Bottom-right resize, matching the camera tiles' handle.
