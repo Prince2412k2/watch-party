@@ -91,15 +91,6 @@ abstract final class ClientEvent {
   static const browsePointer = 'browse:pointer';
   static const chatMessage = 'chat:message';
   static const cameraRemove = 'camera:remove';
-  // Shared browser: start/stop, drive it, and hand control around.
-  static const browserStart = 'browser:start';
-  static const browserStop = 'browser:stop';
-  static const browserNavigate = 'browser:navigate';
-  static const browserInput = 'browser:input';
-  static const browserRequestControl = 'browser:requestControl';
-  static const browserGrantControl = 'browser:grantControl';
-  static const browserDenyControl = 'browser:denyControl';
-  static const browserReclaimControl = 'browser:reclaimControl';
 }
 
 /// Server → client event names.
@@ -121,14 +112,6 @@ abstract final class ServerEvent {
   static const chatMessage = 'chat:message';
   static const chatHistory = 'chat:history';
   static const cameraRemoved = 'camera:removed';
-  /// The shared browser failed. Advisory only — the party is unaffected.
-  static const browserError = 'browser:error';
-
-  /// A guest asked the host for control of the shared browser.
-  static const browserControlRequested = 'browser:controlRequested';
-
-  /// The host declined this client's request for control.
-  static const browserControlDenied = 'browser:controlDenied';
 }
 
 /// Jellyfin tick conversions (1 tick = 100ns).

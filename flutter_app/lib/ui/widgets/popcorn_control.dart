@@ -31,8 +31,8 @@ import 'join_code_dialog.dart';
 ///
 /// | State | Actions |
 /// | --- | --- |
-/// | No party | start · shared browser ¦ join with a code |
-/// | Host | end · copy invite · shared browser ¦ return |
+/// | No party | start ¦ join with a code |
+/// | Host | end · copy invite ¦ return |
 /// | Guest | leave ¦ return |
 ///
 /// The three actions after the divider are not decoration and are not padding:
@@ -69,9 +69,12 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   bool _copied = false;
 
   /// A failure has nowhere to print now that the panel's error line is gone, so
-  /// it rides on the tooltip of the button that caused it and tints that button
-  /// red. The server's wording — "the shared browser is in use right now" —
-  /// still reaches the user, just on demand.
+  /// it rides on the tooltip of the action that caused it and tints that button
+  /// red. The server's wording still reaches the user, just on demand.
+  ///
+  /// Only "start a party" can fail on this tray today; the rest are local or
+  /// already have their own surface. Without this, a refused create would leave
+  /// the button doing visibly nothing.
   String? _error;
 
   bool get _open => _tray.value > 0;
@@ -149,26 +152,6 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     });
   }
 
-  /// Open or close the party's shared browser.
-  ///
-  /// With no session there is nothing to share a browser *with*, so this starts
-  /// the party first. "Browse together" is one intent, not two steps, and
-  /// making the user start a room before the button lights up would be asking
-  /// them to do the app's bookkeeping.
-  Future<void> _sharedBrowser() => _guard(() async {
-    final session = ref.read(partyProvider);
-    if (session == null) {
-      await _party.create();
-      await _party.startSharedBrowser();
-      return;
-    }
-    if (session.stage == 'browser') {
-      await _party.stopSharedBrowser();
-    } else {
-      await _party.startSharedBrowser();
-    }
-  });
-
   @override
   Widget build(BuildContext context) {
     ref.listen(partyWaitingProvider, (_, next) {
@@ -227,13 +210,12 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   /// The listed actions, in the order they were asked for: left to right, with
   /// the destructive one furthest from the handle in every state.
   List<Widget> _actions(PartyState? session, bool isHost) {
-    final browserAvailable = ref.watch(sharedBrowserProvider).available;
     // The party surface's Back MINIMISES — the room keeps running without a
     // window on it — so there has to be a non-destructive way back, or
     // minimising strands the user next to a live session.
     final onImmersiveStage =
         session != null &&
-        (session.stage == 'watching' || session.stage == 'browser');
+        session.stage == 'watching';
     final returnAction = onImmersiveStage
         ? [
             const TrayDivider(),
@@ -249,18 +231,12 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     if (session == null) {
       return [
         TrayButton(
-          icon: Icons.add,
-          tooltip: 'Start a watch party',
+          icon: _error != null ? Icons.error_outline : Icons.add,
+          tooltip: _error ?? 'Start a watch party',
+          tint: _error != null ? kSemanticRed : null,
           busy: _busy,
           onTap: _start,
         ),
-        // Shown unconditionally here, unlike the host case: `available` is
-        // reported by a live room, and out of a party there is no room to
-        // report it. Hiding the button until you already have one would mean
-        // it never appears in the state where it is most useful. A server
-        // without the feature answers with an error, which lands on the
-        // button's own tooltip.
-        _browserButton(null),
         const TrayDivider(),
         TrayButton(
           // A keypad, because the action is "type the code someone sent you".
@@ -292,7 +268,6 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
             '${ref.read(apiClientProvider).baseUrl}/party/${session.id}',
           ),
         ),
-        if (browserAvailable) _browserButton(session),
         ...returnAction,
       ];
     }
@@ -313,21 +288,6 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     ];
   }
 
-  Widget _browserButton(PartyState? session) {
-    final open = session?.stage == 'browser';
-    final failed = _error != null;
-    return TrayButton(
-      icon: open ? Icons.public_off : Icons.public,
-      tooltip: failed
-          ? _error!
-          : open
-          ? 'Close the shared browser'
-          : 'Browse together',
-      tint: failed ? kSemanticRed : null,
-      busy: _busy,
-      onTap: _sharedBrowser,
-    );
-  }
 }
 
 /// A face in the tray, so approving somebody is approving a person rather than

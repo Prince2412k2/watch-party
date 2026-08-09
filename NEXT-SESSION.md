@@ -1,65 +1,32 @@
 # Next session — prep
 
-Two features to discuss and build. Everything below was read out of the tree
-today, not recalled. `HANDOFF.md` still holds the operational detail (prod,
+Feature A is done; Feature B is the live work. Everything below was read out of
+the tree, not recalled. `HANDOFF.md` still holds the operational detail (prod,
 credentials, traps); this covers only the new work.
 
-**Branch state:** `main` = `9516695` (PR #77, merged from `dev`). Everything from
-the last session is on `main`; `main` and `dev` are level. Working tree clean.
+**Branch state:** the browser removal is on `feat/youtube-replaces-browser`,
+branched from `main` at `1fa45b6`. Not merged, not pushed.
 
 ---
 
-## Feature A — delete the shared browser, stream directly on the client
+## Feature A — delete the shared browser ✅ DONE
 
-### What exists today
+Removed on `feat/youtube-replaces-browser`. ~6,000 lines: the container, the
+server module and lease table, both clients, both compose files, the `'browser'`
+party stage, the docs and the two specs. Spec:
+`docs/specs/2026-08-09-remove-shared-browser.md`.
 
-The shared browser is a containerised Chromium that publishes its own screen
-into the party's LiveKit room as a publish-only participant. It is **~4,700
-lines** across five surfaces:
+**No replacement was built.** A YouTube implementation was specified in detail
+and then deliberately set aside — the first revision of that spec file still has
+it (`git log --follow`), including the finding that `youtube.com` cannot be
+iframed at all (`X-Frame-Options: SAMEORIGIN`; only `/embed/<id>` is embeddable),
+and that `3rd-party/howardchung-watchparty` solves this with a server-side Data
+API proxy plus a native search UI rather than an embedded browser. Worth reading
+before anyone proposes shared external content again.
 
-| Surface | Files |
-|---|---|
-| Container | `browser/` — Dockerfile, `agent.py`, `target_agent.py`, `network.py`, seccomp profile, `publisher/` (incl. a vendored `livekit-client.umd.js`) |
-| Server | `app/server/browser/` — `agent.js`, `config.js`, `events.js`, `lease.js`, `policy.js`, + 2 test files |
-| Web | `app/client/src/components/SharedBrowser.tsx` |
-| Flutter | `models/shared_browser.dart`, `state/shared_browser_provider.dart`, plus call sites in `party_screen.dart`, `party_provider.dart`, `popcorn_control.dart` |
-| Ops | 4 services + 3 networks + 3 volumes in **both** compose files, `docs/ops/shared-browser.md`, two specs |
-
-Also carried: the `'browser'` party stage (`session.js:95`, `:331`), the
-browser-control lease, and `BROWSER_*` env in `secrets/.env` on the VPS.
-
-### Worth knowing before we start
-
-**I added the browser stack to `docker-compose.prod.yml` yesterday** (`507f186`)
-because it was configured but never deployed. If it is coming out, that commit
-comes out with it — no harm done, but do not treat the prod compose as settled.
-The `VPS_PUBLIC_IP` assertion added in the same commit is **unrelated and must
-stay**; it is what catches coturn advertising an address the box does not own.
-
-**The problem the browser was built to solve does not disappear with it.** Per
-`docs/specs/2026-08-04-remote-browser.md`: *"A party can only watch what is in
-the Jellyfin library. Anything else — a YouTube video, a clip someone linked in
-chat, a livestream — means everybody opens it separately and tries to press play
-at the same time."* Direct client streaming has to answer that, or we are
-choosing to drop the use case.
-
-### Questions to settle first
-
-1. **What does "direct streaming on the client" mean?** Two very different
-   readings: (a) each client fetches the *same external source* itself and we
-   sync playback through the existing sync engine — cheap, sharp, no server
-   media path; or (b) something closer to the current model but without the
-   container. The answer changes the entire scope.
-2. **If (a): what plays the source?** An embedded webview per client, or a
-   direct media URL into the existing player? A webview brings back most of what
-   the container was avoiding — cookies, DRM, per-site breakage — just moved to
-   every client instead of one.
-3. **DRM.** The container never handled Widevine either, so this is not a
-   regression, but it decides whether "anything else" means YouTube or means
-   Netflix.
-4. **Is the removal staged or atomic?** The stage, the lease and the party
-   protocol are load-bearing; ripping all five surfaces in one commit is a large
-   blast radius on a system with a live prod deploy.
+**What survived on purpose:** `mirror.ts`, `browse:navigate`, `browse:view`,
+`browse:pointer`, `partyAuthority.ts` and `browseCore.ts`. They look
+browser-adjacent and are not — see Feature B.
 
 ---
 
