@@ -16,9 +16,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../state/now_playing_provider.dart';
-import '../state/providers.dart';
-import '../state/player_provider.dart';
+import '../analog/player/auto_hide_controller.dart';
+import '../analog/player_core.dart';
+import '../state/state.dart';
 import '../data/api_client.dart';
 import '../ui/ui.dart';
 import '../ui/widgets/floating_camera_tile.dart';
@@ -52,6 +52,12 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   /// running across the transition.
   final GlobalKey _playerKey = GlobalKey(debugLabel: 'app-player');
 
+  /// Chrome auto-hide, moved here from PartyScreen. It has to live with the
+  /// player, not with a route, for the same reason the player does.
+  late final AnalogAutoHideController _autoHide;
+  static const String _kFloatingHold = 'floating';
+  bool _pttHolding = false;
+
   /// The title this host has opened, so a rebuild does not re-open it. Party
   /// titles are never recorded here: PartyNotifier owns those opens.
   String? _openedItemId;
@@ -62,6 +68,10 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   @override
   void initState() {
     super.initState();
+    _autoHide = AnalogAutoHideController()..addListener(_onAutoHide);
+    // A floating tile has no chrome to hide, and an auto-hide clock ticking
+    // behind one is a timer that never settles.
+    _autoHide.hold(_kFloatingHold);
     // A title can already be set before the first build (a resumed party, a
     // deep link), so react on mount as well as on change.
     WidgetsBinding.instance.addPostFrameCallback(
@@ -103,6 +113,42 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
       _error = result.error;
       _usesCacheProxy = result.usesCacheProxy;
     });
+  }
+
+  void _onAutoHide() {
+    if (mounted) setState(() {});
+  }
+
+  void _syncChromeHold(NowPlaying now) {
+    if (now.isExpanded) {
+      _autoHide.release(_kFloatingHold);
+    } else {
+      _autoHide.hold(_kFloatingHold);
+    }
+  }
+
+  // Push-to-talk (hold T): momentarily opens the mic, returning to muted on
+  // release. No-op if the user has manually unmuted; the hold guard suppresses
+  // key-repeat. Wired through livekit only — never authors playback commands.
+  void _pttStart() {
+    if (_pttHolding) return;
+    if (ref.read(livekitProvider).micEnabled) return;
+    _pttHolding = true;
+    ref.read(livekitProvider.notifier).setMic(true);
+  }
+
+  void _pttStop() {
+    if (!_pttHolding) return;
+    _pttHolding = false;
+    ref.read(livekitProvider.notifier).setMic(false);
+  }
+
+  @override
+  void dispose() {
+    _autoHide
+      ..removeListener(_onAutoHide)
+      ..dispose();
+    super.dispose();
   }
 
   void _retry() {
@@ -171,7 +217,15 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   Widget build(BuildContext context) {
     final now = ref.watch(nowPlayingProvider);
     final notifier = ref.read(nowPlayingProvider.notifier);
-    ref.listen<NowPlaying>(nowPlayingProvider, (_, next) => _syncOpen(next));
+    // Party context, when there is one. The player is the same player either
+    // way — a room only changes who may drive it and where seeks are authored.
+    final party = ref.watch(partyProvider);
+    final partyNotifier = ref.read(partyProvider.notifier);
+    final inParty = party != null && now.fromParty;
+    ref.listen<NowPlaying>(nowPlayingProvider, (_, next) {
+      _syncOpen(next);
+      _syncChromeHold(next);
+    });
 
     return Stack(
       children: [
@@ -231,17 +285,75 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                           apiClient: ref.watch(apiClientProvider),
                           preferredSubtitleStreamIndex:
                               now.subtitleStreamIndex,
-                          cachedSpans: _usesCacheProxy && now.itemId != null
+                          // Party media is always routed through the cache
+                          // proxy, so the "downloaded" indicator is available
+                          // there without the solo path's flag.
+                          cachedSpans:
+                              (inParty || _usesCacheProxy) && now.itemId != null
                               ? ref
                                     .watch(mediaCacheProxyProvider)
                                     .cachedSpansFor(now.itemId!)
                               : null,
                           onBack: notifier.minimise,
-                          // No transport bar in a 300px tile: the chrome is
-                          // laid out for a full window and overflows one.
-                          // A PiP tile is a picture, and the frame around it
-                          // carries the only two controls it needs.
-                          visible: now.isExpanded ? null : false,
+                          // ── party ─────────────────────────────────────────
+                          // A guest may watch without driving. Outside a room
+                          // you always drive yourself.
+                          canControl: !inParty || partyNotifier.canControl,
+                          canManagePartyMedia: !inParty || partyNotifier.isHost,
+                          partyPlayback: inParty ? partyNotifier.playback : null,
+                          subtitlePreferences: inParty
+                              ? partyNotifier.subtitlePreferences
+                              : null,
+                          onSetPlaybackTracks: inParty
+                              ? (audio, subtitle) =>
+                                    partyNotifier.setPlaybackTracks(
+                                      audioStreamIndex: audio,
+                                      subtitleStreamIndex: subtitle,
+                                    )
+                              : null,
+                          onSetSubtitlePreferences: inParty
+                              ? partyNotifier.setSubtitlePreferences
+                              : null,
+                          // A driver's scrub is authored to the sync engine so
+                          // it reaches the server and every other client; solo
+                          // playback just seeks itself.
+                          onSeek: inParty
+                              ? (pos) =>
+                                    ref.read(syncEngineProvider).requestSeek(pos)
+                              : null,
+                          onPushToTalkStart: inParty ? _pttStart : null,
+                          onPushToTalkStop: inParty ? _pttStop : null,
+                          chatOpen: ref.watch(chatDrawerOpenProvider),
+                          chatToasts: inParty
+                              ? [
+                                  for (final message in ref.watch(chatProvider))
+                                    ToastMessage(
+                                      id:
+                                          '${message.userId}:${message.timestamp}:'
+                                          '${message.text.hashCode}',
+                                      sender: message.name,
+                                      preview: message.text,
+                                      // Restamped by the chrome on its own
+                                      // clock; the server timestamp only feeds
+                                      // the id.
+                                      receivedAtMs: message.timestamp,
+                                    ),
+                                ]
+                              : const [],
+                          onToggleChat: inParty
+                              ? () =>
+                                    ref
+                                            .read(
+                                              chatDrawerOpenProvider.notifier,
+                                            )
+                                            .state =
+                                        !ref.read(chatDrawerOpenProvider)
+                              : null,
+                          // Unified chrome visibility: one clock for the
+                          // transport bar and everything floating over it.
+                          visible: now.isExpanded ? _autoHide.visible : false,
+                          onWake: () =>
+                              _autoHide.noteInput(PlayerInputKind.pointer),
                         ),
                       ),
                     ),
