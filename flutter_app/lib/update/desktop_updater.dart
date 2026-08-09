@@ -371,15 +371,20 @@ class DesktopUpdateController extends StateNotifier<UpdateState> {
       if (!release.artifacts.containsKey(_platform)) {
         throw const FormatException('No update for this platform');
       }
+      final available = isUpdateAvailable(state.installedBuild, release);
       state = state.copyWith(
-        status: isUpdateAvailable(state.installedBuild, release)
-            ? UpdateStatus.available
-            : UpdateStatus.upToDate,
+        status: available ? UpdateStatus.available : UpdateStatus.upToDate,
         release: release,
-        message: isUpdateAvailable(state.installedBuild, release)
+        message: available
             ? 'Version ${release.version} is available.'
             : 'Watchparty is up to date.',
       );
+      // Pressing "check for updates" IS the consent. Finding one and then
+      // waiting to be asked a second time made every update a two-step
+      // errand — and the second step was a button that had silently changed
+      // meaning under the cursor. Download starts now; installing still
+      // happens on relaunch, which is the only part that interrupts anyone.
+      if (available) await install();
     } catch (error) {
       state = state.copyWith(
         status: UpdateStatus.error,
