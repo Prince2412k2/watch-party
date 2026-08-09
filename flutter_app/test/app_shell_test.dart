@@ -263,4 +263,68 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets('a guest in a room keeps a fully interactive app', (
+    tester,
+  ) async {
+    // Regression: the shell used to wrap its whole child in IgnorePointer for
+    // any member who was not the host, so being a guest in a room made your own
+    // library, tabs and settings dead to the pointer. Rooms share playback,
+    // chat and A/V — never your app.
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+
+    final container = ProviderContainer(
+      overrides: [
+        ..._signedIn(),
+        apiClientProvider.overrideWithValue(MockApiClient()),
+        currentUserIdProvider.overrideWithValue('guest-1'),
+      ],
+    );
+    addTearDown(container.dispose);
+    // A room I am in but do not host — the exact state that used to freeze the
+    // shell. Set before the first build, never during one.
+    container
+        .read(partyProvider.notifier)
+        .setState(const PartyState(id: 'ROOM1234', hostId: 'someone-else'));
+
+    var tapped = false;
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          builder: _analog,
+          home: AppShell(
+            location: '/movies',
+            child: Center(
+              child: GestureDetector(
+                onTap: () => tapped = true,
+                child: const Text('content'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Scoped to ANCESTORS of the content: other chrome legitimately parks an
+    // IgnorePointer over a hidden tray, and a tree-wide finder would catch those
+    // and fail for the wrong reason.
+    expect(
+      find.ancestor(
+        of: find.text('content'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is IgnorePointer && widget.ignoring,
+        ),
+      ),
+      findsNothing,
+      reason: 'a guest must never have the shell blocked',
+    );
+
+    await tester.tap(find.text('content'));
+    await tester.pump();
+    expect(tapped, isTrue);
+  });
 }

@@ -52,24 +52,6 @@ export interface SubtitlePreferences {
   backgroundOpacityPercent: number
 }
 
-export interface BrowseEntry {
-  id?: string
-  name?: string
-  type?: string
-  // Browse stack entries carry Jellyfin navigation metadata beyond the shared keys.
-  [key: string]: unknown
-}
-
-export interface PartyBrowse {
-  stack?: BrowseEntry[]
-  tab?: 'movies' | 'series' | 'discover' | 'downloads'
-  screen?: 'grid' | 'detail'
-  mediaId?: string | null
-  seasonId?: string | null
-  episodeId?: string | null
-  revision?: number
-}
-
 export interface PartySession {
   id: string
   hostId: string
@@ -81,7 +63,6 @@ export interface PartySession {
   waiting?: PartyUser[]
   collaborativeControl?: boolean
   syncMode?: 'hopping' | 'dragging'
-  browse?: PartyBrowse
   playback?: PartyPlayback | null
   mediaItemId?: string | null
   mediaSourceId?: string | null
@@ -124,9 +105,6 @@ export interface PartyContextValue {
    * previous room's session/role/messages can't bleed into the new one.
    */
   leaveParty: () => void
-  navigateBrowse: (stack: BrowseEntry[]) => void
-  shareView: (patch: Partial<PartyBrowse>) => void
-  sendPointer: (point: MirrorPoint) => void
   selectMedia: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   backToLobby: () => void
   approveUser: (userId: string) => void
@@ -151,8 +129,3 @@ export interface PartyContextValue {
   setAlertMode: (mode: 'focus' | 'on' | 'mute') => void
 }
 
-export interface MirrorPoint {
-  scroll?: number
-  x?: number
-  y?: number
-}

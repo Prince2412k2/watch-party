@@ -161,11 +161,6 @@ class _AppShellState extends ConsumerState<AppShell> {
     final isAuthenticated = ref.watch(
       authProvider.select((s) => s.isAuthenticated),
     );
-    final party = ref.watch(partyProvider);
-    final currentUserId = ref.watch(currentUserIdProvider);
-    final sharedHostView =
-        party != null && (currentUserId == null || party.hostId != currentUserId);
-
     final destinations = isAuthenticated
         ? kShellDestinations
         : kGuestShellDestinations;
@@ -176,16 +171,11 @@ class _AppShellState extends ConsumerState<AppShell> {
           children: [
             const Positioned.fill(child: AmbientWash()),
             Positioned.fill(child: ColoredBox(color: wp.stage)),
-            Positioned.fill(
-              child: Semantics(
-                container: sharedHostView,
-                label: sharedHostView ? 'Shared host view' : null,
-                child: IgnorePointer(
-                  ignoring: sharedHostView,
-                  child: widget.child,
-                ),
-              ),
-            ),
+            // Never gated on party role. A guest used to have this whole shell
+            // wrapped in IgnorePointer so their library followed the host's —
+            // which meant being in a room made your own app unusable. Rooms
+            // share playback, chat and A/V; they never take your app away.
+            Positioned.fill(child: widget.child),
             Positioned(
               left: 0,
               right: 0,

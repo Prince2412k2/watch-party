@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { browseTabRoute, canDriveBrowse, canManagePartyMedia, isBrowseFollower, partyJoinTransition, partyRoleForUser, shouldOpenPartyPlayer } from './partyAuthority.ts'
+import { canManagePartyMedia, partyJoinTransition, partyRoleForUser, shouldOpenPartyPlayer } from './partyAuthority.ts'
 import type { PartySession } from './types.ts'
 
 const watching: PartySession = { id: 'A1B2C3D4', hostId: 'host', stage: 'watching', mediaItemId: 'movie' }
@@ -54,31 +54,4 @@ test('a party surface with no target does nothing', () => {
   assert.deepEqual(partyJoinTransition({ joinedFor: null }), { kind: 'idle' })
   assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: undefined }), { kind: 'idle' })
   assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: '' }), { kind: 'idle' })
-})
-
-test('every shared browse tab resolves to one route for both device trees', () => {
-  assert.equal(browseTabRoute('movies'), '/movies')
-  assert.equal(browseTabRoute('series'), '/series')
-  assert.equal(browseTabRoute('discover'), '/discover')
-  assert.equal(browseTabRoute('downloads'), '/downloads')
-})
-
-test('only the host drives shared browsing unless control is collaborative', () => {
-  const lobby: PartySession = { id: 'A1B2C3D4', hostId: 'host', stage: 'lobby' }
-  assert.equal(canDriveBrowse(lobby, 'host'), true)
-  assert.equal(canDriveBrowse(lobby, 'guest'), false)
-  assert.equal(canDriveBrowse({ ...lobby, collaborativeControl: true }, 'guest'), true)
-  // A socket still waiting on approval is not in the room at all.
-  assert.equal(canDriveBrowse({ ...lobby, collaborativeControl: true }, 'waiting'), false)
-  // No party means nobody is driving anything — the member browses for themselves.
-  assert.equal(canDriveBrowse(null, 'host'), false)
-})
-
-test('a non-driving guest is the one who must mirror the shared position', () => {
-  const lobby: PartySession = { id: 'A1B2C3D4', hostId: 'host', stage: 'lobby' }
-  assert.equal(isBrowseFollower(lobby, 'guest'), true)
-  // The host is never following, and a collaborative guest drives instead.
-  assert.equal(isBrowseFollower(lobby, 'host'), false)
-  assert.equal(isBrowseFollower({ ...lobby, collaborativeControl: true }, 'guest'), false)
-  assert.equal(isBrowseFollower(null, 'guest'), false)
 })

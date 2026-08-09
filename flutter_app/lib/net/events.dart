@@ -30,10 +30,7 @@
 ///   sync:seek           { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error }
 ///   sync:report         { position, drift, rate }   (telemetry, no ack)
 ///   sync:stall          { ...stallReport }          (drives dragging mode)
-///   browse:navigate     { stack: [{id,name,type}, …≤8] }  (driver; relayed)
-///   browse:view         { tab?, screen?, mediaId?, seasonId?, episodeId? }  (driver; shared-screen tab/detail patch)
 ///                                                    (server whitelists tab∈movies|series|discover|downloads, screen∈grid|detail)
-///   browse:pointer      { scroll, x, y }            (driver; ephemeral relay)
 ///   chat:message        { text }                    ack: { ok } | { error: 'rate limited' }
 ///   camera:remove       { userId }                  ack: { ok } | { error }        (host only)
 ///
@@ -50,8 +47,6 @@
 ///   host:changed        { hostId }                   host migrated / transferred
 ///   user:joined         { userId, name }
 ///   user:left           { userId, name }
-///   browse:state        { stack: [...] }             mirrored shared-screen drill
-///   browse:pointer      { scroll, x, y }             mirrored cursor
 ///   chat:message        { userId, name, text, timestamp }
 ///   chat:history        [ { userId, name, text, timestamp }, … ]  full backlog on resume/join/approve
 ///   camera:removed      { userId }
@@ -86,9 +81,6 @@ abstract final class ClientEvent {
   static const syncSeek = 'sync:seek';
   static const syncReport = 'sync:report';
   static const syncStall = 'sync:stall';
-  static const browseNavigate = 'browse:navigate';
-  static const browseView = 'browse:view';
-  static const browsePointer = 'browse:pointer';
   static const chatMessage = 'chat:message';
   static const cameraRemove = 'camera:remove';
 }
@@ -107,8 +99,6 @@ abstract final class ServerEvent {
   static const hostChanged = 'host:changed';
   static const userJoined = 'user:joined';
   static const userLeft = 'user:left';
-  static const browseState = 'browse:state';
-  static const browsePointer = 'browse:pointer';
   static const chatMessage = 'chat:message';
   static const chatHistory = 'chat:history';
   static const cameraRemoved = 'camera:removed';
