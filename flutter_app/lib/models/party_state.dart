@@ -29,17 +29,6 @@ class SyncSchedule with _$SyncSchedule {
       _$SyncScheduleFromJson(json);
 }
 
-/// The shared browse (lobby "shared screen") drill state.
-@freezed
-class BrowseState with _$BrowseState {
-  const factory BrowseState({
-    @Default([]) List<Map<String, dynamic>> stack,
-  }) = _BrowseState;
-
-  factory BrowseState.fromJson(Map<String, dynamic> json) =>
-      _$BrowseStateFromJson(json);
-}
-
 /// Client-facing view of a party session — the shape of the server's
 /// `publicSession()` (`app/server/session.js`) plus the derived participant
 /// list. Host token / internal timeline scratch fields are never sent.
@@ -58,7 +47,6 @@ class PartyState with _$PartyState {
     @Default('hopping') String syncMode,
     @Default(<Participant>[]) List<Participant> participants,
     @Default(SyncSchedule()) SyncSchedule schedule,
-    @Default(BrowseState()) BrowseState browse,
   }) = _PartyState;
 
   factory PartyState.fromJson(Map<String, dynamic> json) =>

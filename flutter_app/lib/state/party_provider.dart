@@ -268,10 +268,6 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         ? SyncSchedule.fromJson(Map<String, dynamic>.from(scheduleJson))
         : const SyncSchedule();
 
-    final browseJson = json['browse'];
-    final browse = browseJson is Map
-        ? BrowseState.fromJson(Map<String, dynamic>.from(browseJson))
-        : const BrowseState();
 
     final playbackJson = json['playback'];
     _playback = playbackJson is Map
@@ -299,7 +295,6 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       syncMode: json['syncMode']?.toString() ?? 'hopping',
       participants: participants,
       schedule: schedule,
-      browse: browse,
     );
 
     final waitingJson = (json['waiting'] as List?) ?? const [];

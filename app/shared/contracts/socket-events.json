@@ -2,9 +2,6 @@
   "_": "Canonical socket.io vocabulary. The server is the truth; app/server/contract.test.js asserts these lists equal what it actually registers and emits. Both clients assert every name they use exists here, in the right direction. See ./README.md.",
 
   "clientToServer": [
-    "browse:navigate",
-    "browse:pointer",
-    "browse:view",
     "camera:remove",
     "chat:message",
     "clock:ping",
@@ -31,8 +28,6 @@
   ],
 
   "serverToClient": [
-    "browse:pointer",
-    "browse:state",
     "camera:removed",
     "chat:history",
     "chat:message",

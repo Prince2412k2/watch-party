@@ -2,10 +2,9 @@ import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { useSocket } from '../hooks/useSocket.ts'
 import { navigate } from '../router.ts'
-import { mirror } from '../mirror.ts'
-import type { BrowseEntry, MirrorPoint, PartyBrowse, PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types.ts'
-import { isChatMessage, isMirrorPoint, isObject, isPartyBrowse, isPartySession, isPartyUser } from '../guards.ts'
-import { browseTabRoute, partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority.ts'
+import type { PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types.ts'
+import { isChatMessage, isObject, isPartySession, isPartyUser } from '../guards.ts'
+import { partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority.ts'
 import { analogTokens } from '../design/analogTokens.ts'
 
 const PartyContext = createContext<PartyContextValue | null>(null)
@@ -168,7 +167,6 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       if (!isObject(value) || !isPartySession(value.session)) return
       const sess = value.session
       applySession(sess, 'guest')
-      if (sess.stage !== 'watching' && sess.browse?.tab) navigate(browseTabRoute(sess.browse.tab))
     })
 
     socket.on('party:rejected', () => {
@@ -216,19 +214,6 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       }
     })
 
-    socket.on('browse:state', (browse: unknown) => {
-      if (!isPartyBrowse(browse)) return
-      dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
-      const current = stateRef.current
-      if (current.role !== 'guest' || !browse.tab) return
-      const target = browseTabRoute(browse.tab)
-      if (window.location.pathname !== target) navigate(target)
-    })
-
-    // Host's live scroll/cursor → mirror store (kept out of React state; applied
-    // imperatively by followers so we don't re-render 60×/sec).
-    socket.on('browse:pointer', (p: unknown) => { if (isMirrorPoint(p)) mirror.set(p) })
-
     socket.on('chat:message', (value: unknown) => {
       if (!isChatMessage(value)) return
       const msg = value
@@ -254,8 +239,6 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       socket.off('user:joined')
       socket.off('user:left')
       socket.off('host:changed')
-      socket.off('browse:state')
-      socket.off('browse:pointer')
       socket.off('chat:message')
       socket.off('chat:history')
     }
@@ -317,25 +300,6 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
         resolve(value.partyId)
       })
     })
-  }
-
-  // Drive the shared library browsing (host, or any guest when collaborative).
-  function navigateBrowse(stack: BrowseEntry[]) {
-    const browse = { ...(stateRef.current.session?.browse ?? {}), stack }
-    dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
-    socket.emit('browse:navigate', { stack })
-  }
-
-  function shareView(patch: Partial<PartyBrowse>) {
-    const browse = { ...(stateRef.current.session?.browse ?? {}), ...patch }
-    dispatch({ type: 'UPDATE_SESSION', patch: { browse } })
-    socket.emit('browse:view', patch)
-  }
-
-  // Broadcast the driver's live scroll fraction + cursor to the room (throttled
-  // by the caller via rAF). Fire-and-forget; the server relays to followers.
-  function sendPointer(p: MirrorPoint) {
-    socket.emit('browse:pointer', p)
   }
 
   // Pick a title from the lobby → everyone transitions into the player.
@@ -452,7 +416,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     <PartyContext.Provider value={{
       ...state,
       createParty, createRoom, joinParty, leaveParty,
-       navigateBrowse, shareView, sendPointer, selectMedia, backToLobby,
+      selectMedia, backToLobby,
       approveUser, rejectUser, kickUser, transferHost, endParty,
       setCollaborative, setSyncMode, sendMessage, removeCamera,
       setPlaybackTracks,

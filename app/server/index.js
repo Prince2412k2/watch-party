@@ -681,41 +681,6 @@ io.on('connection', (socket) => {
 
   const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl
 
-  // browse:navigate — the driver moved through the library; mirror to everyone
-  // else in the room (the driver already applied it optimistically).
-  socket.on('browse:navigate', ({ stack = [] } = {}) => {
-    const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return
-    sess.browse = { ...sess.browse, stack: Array.isArray(stack) ? stack.slice(0, 8) : [], revision: (sess.browse?.revision ?? 0) + 1 }
-    persistSession(sess)
-    socket.to(sess.id).emit('browse:state', sess.browse)
-  })
-
-  socket.on('browse:view', (patch = {}) => {
-    const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess) || !patch || typeof patch !== 'object') return
-    const tabs = new Set(['movies', 'series', 'discover', 'downloads'])
-    const screens = new Set(['grid', 'detail'])
-    const next = {}
-    if (tabs.has(patch.tab)) next.tab = patch.tab
-    if (screens.has(patch.screen)) next.screen = patch.screen
-    for (const key of ['mediaId', 'seasonId', 'episodeId']) {
-      if (patch[key] === null || (typeof patch[key] === 'string' && patch[key].length <= 128)) next[key] = patch[key]
-    }
-    sess.browse = { ...sess.browse, ...next, revision: (sess.browse?.revision ?? 0) + 1 }
-    persistSession(sess)
-    socket.to(sess.id).emit('browse:state', sess.browse)
-  })
-
-  // browse:pointer — the driver's live scroll + cursor, mirrored to the room so
-  // guests see exactly where the host is looking. Ephemeral (never persisted):
-  // high-frequency, only meaningful in the moment. Relay-only, driver-gated.
-  socket.on('browse:pointer', ({ scroll, x, y } = {}) => {
-    const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return
-    socket.to(sess.id).emit('browse:pointer', { scroll, x, y })
-  })
-
   // party:selectMedia — a title was chosen in the lobby → enter watching stage
   socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
     const sess = findSessionForMember(userId)

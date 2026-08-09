@@ -16,7 +16,6 @@ import Chat from '../components/Chat.tsx'
 import RoomControls from '../components/RoomControls.tsx'
 import CameraTile from '../components/CameraTile.tsx'
 import { glass } from '../glass.tsx'
-import { mirror } from '../mirror.ts'
 import { usePhone } from '../hooks/useIsMobile.ts'
 import { Z } from '../watchLayers.ts'
 import {
@@ -54,7 +53,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   const { user } = useAuth()
   const {
     session, role, messages, layoutMode, chatOpen, chatRipple, alertMode,
-    setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks, setSubtitlePreferences,
+    setLayout, toggleChat, openChat, closeChat, selectMedia, setPlaybackTracks, setSubtitlePreferences,
   } = party
 
   const lk = useLiveKit({ partyId: session?.id, enabled: role === 'host' || role === 'guest' })
@@ -164,16 +163,12 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
       // on its own (icon-rail sidebar + fluid poster grid). Portrait phones get
       // the same non-rotating RotateHint the watch screen uses.
       <div style={{ position: 'fixed', inset: 0, background: '#000', overflow: 'hidden' }}>
-        {/* The analog stage, not an embedded variant of it. It already reads
-            the party from context — it publishes and follows session.browse.stack,
-            gates driving on canDriveBrowse, and calls selectMedia on activation —
-            so the lobby needs no props at all. The stack/onNavigate/onPickMedia/
-            canDrive wiring the superseded Library needed here is now internal.
-
-            Pointer mirroring is gone with it: the ghost cursor addressed a
-            fraction of a freely-scrolling pane, and the stage has no such pane.
-            The code pill and the "host is choosing" banner ride on the stage's
-            own chrome rather than being injected through slots. */}
+        {/* The analog stage, not an embedded variant of it. It reads the party
+            from context and calls selectMedia on activation, so the lobby needs
+            no props at all. Browsing is never shared: everyone moves through
+            their own library, and only the pick is a room event. The code pill
+            and the "host is choosing" banner ride on the stage's own chrome
+            rather than being injected through slots. */}
         <MoviesStage />
         <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 2 }}>
           <CodePill code={session.id} count={participantCount} />

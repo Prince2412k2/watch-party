@@ -84,7 +84,6 @@ test('create, save, reload, and delete preserve only durable state', async () =>
     delayMs: 750, fontScalePercent: 130, verticalOffsetPercent: 100,
     fontFamily: 'serif', textColor: '#FFE66D', backgroundOpacityPercent: 40,
   }
-  sess.browse = { stack: [{ id: 'folder', name: 'Folder', type: 'CollectionFolder' }] }
   sess.guests.push({
     userId: 'guest', name: 'Guest', token: 'guest-token', deviceId: 'guest-device',
     joinedAt: 123, socketId: 'guest-socket', telemetry: { drift: 10 },
@@ -121,7 +120,6 @@ test('create, save, reload, and delete preserve only durable state', async () =>
     assert.deepEqual([...loaded.approved], ['owner', 'guest'])
     assert.deepEqual(loaded.playback, sess.playback)
     assert.deepEqual(loaded.subtitlePreferences, sess.subtitlePreferences)
-    assert.deepEqual(loaded.browse, sess.browse)
     assert.deepEqual(loaded.messages, sess.messages)
     assert.equal(loaded.collaborativeControl, true)
     assert.equal(loaded.syncMode, 'dragging')

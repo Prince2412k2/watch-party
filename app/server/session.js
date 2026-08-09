@@ -56,7 +56,6 @@ function durableState(session) {
     playback: session.playback,
     subtitlePreferences: session.subtitlePreferences,
     stage: session.stage,
-    browse: session.browse,
     guests: session.guests.map(durableGuest),
     approved: [...session.approved],
     livekitRevokedBefore: Object.fromEntries(session.livekitRevokedBefore),
@@ -90,7 +89,6 @@ function runtimeState(saved) {
     // land somewhere it can act, so it opens in the lobby rather than a stage
     // that no longer exists.
     stage: saved.stage === 'browser' ? 'lobby' : saved.stage ?? (saved.mediaItemId ? 'watching' : 'lobby'),
-    browse: saved.browse ?? { stack: [] },
     guests: (saved.guests ?? []).map(guest => ({ ...guest, socketId: null })),
     waiting: [],
     approved: new Set(saved.approved ?? [saved.hostId]),
@@ -139,12 +137,9 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     mediaSourceId,
     playback: null,   // normalized PlaybackInfo for the current title
     subtitlePreferences: { ...DEFAULT_SUBTITLE_PREFERENCES },
-    // 'lobby'    = everyone's in, browsing the library together, no title yet
+    // 'lobby'    = the room is open, nobody has picked a title yet
     // 'watching' = a title is selected, playback sync engine is live
     stage: mediaItemId ? 'watching' : 'lobby',
-    // Host-authority browse state, mirrored to guests (the "shared screen").
-    // stack = drill path: [] = home, else [{ id, name, type }, …]
-    browse: { stack: [] },
     guests: [],       // [{ userId, name, socketId, joinedAt }]
     waiting: [],      // [{ userId, name, socketId }]
     approved: new Set([hostId]),  // userIds allowed to re-enter without asking (until kicked)
@@ -356,7 +351,6 @@ export function publicSession(session) {
     mediaSourceId: session.mediaSourceId,
     playback: session.playback,
     subtitlePreferences: session.subtitlePreferences,
-    browse: session.browse,
     guests: session.guests.map(publicMember),
     waiting: session.waiting.map(publicMember),
     collaborativeControl: session.collaborativeControl,
