@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../analog/chrome/analog_toast.dart';
 import '../party/party_overlay.dart';
 import '../player/player_host.dart';
+import '../state/state.dart';
 import '../state/theme_provider.dart';
 import '../ui/ui.dart';
 import 'router.dart';
@@ -83,8 +84,42 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
               // cameras and chat have to render ON TOP of the movie, including
               // while it is full-window. Both are outside the router for the
               // same reason — a room outlives any one screen.
-              child: PartyOverlay(
-                child: PlayerHost(child: child ?? const SizedBox.shrink()),
+              //
+              // The popcorn is ABOVE both, and mounted exactly once. It was
+              // mounted per-screen — the shell had one, the detail screen had
+              // another — which meant it blinked out of existence on any screen
+              // that had forgotten to add it, and vanished entirely behind a
+              // full-window film. It is the room's control surface, so the one
+              // moment it must not disappear is while you are watching.
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: PartyOverlay(
+                      child: PlayerHost(
+                        child: child ?? const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                  // Its own Overlay, because `MaterialApp.builder` wraps the
+                  // Navigator rather than living inside it — so there is no
+                  // Overlay above this point, and the popcorn's tooltips (and
+                  // the dialogs its buttons open) need one. Only the tray
+                  // itself is positioned, so the rest of this layer is empty
+                  // and takes no hits.
+                  Positioned.fill(
+                    child: Overlay(
+                      initialEntries: [
+                        OverlayEntry(
+                          builder: (_) => const Positioned(
+                            right: 22,
+                            bottom: 10,
+                            child: _AuthedPopcorn(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -95,4 +130,16 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
       },
     );
   }
+}
+
+/// The popcorn, for a signed-in user only. A logged-out guest has no session to
+/// start a room from, and nothing to join one with.
+class _AuthedPopcorn extends ConsumerWidget {
+  const _AuthedPopcorn();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) =>
+      ref.watch(authProvider.select((s) => s.isAuthenticated))
+      ? const PopcornControl()
+      : const SizedBox.shrink();
 }

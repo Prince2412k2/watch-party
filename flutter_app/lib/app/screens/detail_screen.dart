@@ -73,7 +73,6 @@ class DetailScreen extends ConsumerWidget {
               ),
             ),
           ),
-          const Positioned(right: 22, bottom: 18, child: PopcornControl()),
         ],
       ),
     );

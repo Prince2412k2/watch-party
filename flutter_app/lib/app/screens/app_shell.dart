@@ -200,8 +200,6 @@ class _AppShellState extends ConsumerState<AppShell> {
               right: 28 + desktopTrailingControlInset,
               child: isAuthenticated ? const ProfileMenu() : const _LoginButton(),
             ),
-            if (isAuthenticated)
-              const Positioned(right: 22, bottom: 10, child: PopcornControl()),
           ],
         ),
       ),
