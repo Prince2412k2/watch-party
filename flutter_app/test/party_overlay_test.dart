@@ -105,21 +105,31 @@ void main() {
     expect(find.text('library'), findsOneWidget);
   });
 
-  testWidgets('the chat drawer is parked off-screen until it is opened', (
+  testWidgets('the chat drawer grows out of the right edge when opened', (
     tester,
   ) async {
+    // It is no longer a full-width panel parked off-screen: closed, the glass
+    // does not exist at all, and opening grows it from a blob at the edge. So
+    // the assertion is about WIDTH over time, not position.
+    //
+    // Pumped by hand rather than settled: the panel is deformed by a jelly
+    // spring, which is not guaranteed to come to rest inside pumpAndSettle.
     await pumpOverlay(tester);
     joinRoom();
-    await tester.pumpAndSettle();
-    final closed = tester.getTopLeft(find.byType(ChatSlideOver)).dx;
-    expect(closed, greaterThan(1200 - kChatDrawerWidth));
+    await tester.pump();
+    expect(find.byType(ChatPanel), findsNothing);
 
     container.read(chatDrawerOpenProvider.notifier).state = true;
-    await tester.pumpAndSettle();
-    expect(
-      tester.getTopLeft(find.byType(ChatSlideOver)).dx,
-      1200 - kChatDrawerWidth,
-    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 40));
+    final early = tester.getSize(find.byType(ChatSlideOver)).width;
+
+    await tester.pump(const Duration(milliseconds: 600));
+    final settled = tester.getSize(find.byType(ChatSlideOver)).width;
+
+    expect(early, lessThan(settled), reason: 'it stretches out, not in');
+    expect(settled, closeTo(kChatDrawerWidth, 12));
+    expect(find.byType(ChatPanel), findsOneWidget);
   });
 
   testWidgets('join requests reach the host wherever they are standing', (

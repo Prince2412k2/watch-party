@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../net/events.dart';
 import '../net/socket_client.dart';
 import '../sync/sync_engine.dart';
+import 'now_playing_provider.dart';
 import '../sync/sync_engine_impl.dart';
 import 'chat_provider.dart';
 import 'livekit_provider.dart';
@@ -754,6 +755,14 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     await _bestEffort(
       () => _releaseSharedPlayer().timeout(const Duration(seconds: 5)),
     );
+    // And take the film off the screen. Stopping the controller without
+    // clearing this left an open player mounted over the app with nothing
+    // playing in it — the room is gone, so its film is too.
+    await _bestEffort(() async {
+      if (_ref.read(nowPlayingProvider).fromParty) {
+        await _ref.read(nowPlayingProvider.notifier).close();
+      }
+    });
     await _bestEffort(() async {
       await _ref.read(livekitProvider.notifier).leave();
       _ref.read(livekitProvider.notifier).reset();
