@@ -45,7 +45,8 @@ export interface PartyPlayback {
 export interface SubtitlePreferences {
   delayMs: number
   fontScalePercent: number
-  verticalPosition: 'top' | 'middle' | 'bottom'
+  /** How far above the bottom edge the subtitles sit, 0-100. 0 is the bottom. */
+  verticalOffsetPercent: number
   fontFamily: 'sans' | 'serif' | 'mono'
   textColor: string
   backgroundOpacityPercent: number

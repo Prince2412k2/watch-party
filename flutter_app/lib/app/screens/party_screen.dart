@@ -19,7 +19,6 @@ import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/floating_camera_tile.dart';
-import '../../ui/widgets/party_qr.dart';
 
 /// The watch-party screen — an IMMERSIVE, full-bleed layout mirroring the web
 /// app (`pages/Party.tsx`). The movie fills the window; camera tiles float over
@@ -382,6 +381,9 @@ class _ImmersivePartyState extends ConsumerState<_ImmersiveParty> {
 
   void _setChatOpen(bool open) {
     setState(() => _chatOpen = open);
+    // Published so the app-wide notification rail can stay quiet while the
+    // drawer is up — it sits above the router and cannot see this state.
+    ref.read(chatDrawerOpenProvider.notifier).state = open;
     if (open) {
       _autoHide.hold(_kChatHold);
     } else {
@@ -2012,7 +2014,13 @@ class _ChatSlideOverState extends State<_ChatSlideOver> {
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
-      top: 0,
+      // Clear of the window-chrome band, exactly as _WatchChrome is. Running to
+      // the top edge put the drawer's own header inside the strip macOS uses
+      // for dragging the window, so the top-right of the title bar stopped
+      // responding whenever chat was open — and the panel's heading sat level
+      // with the traffic lights, reading as part of the title bar rather than
+      // as content.
+      top: Platform.isMacOS ? integratedDesktopChromeHeight : 0,
       bottom: 0,
       right: open ? 0 : -(widget.width + 12),
       width: widget.width,
@@ -2036,7 +2044,6 @@ class _ChatSlideOverState extends State<_ChatSlideOver> {
             bottomLeft: Radius.circular(AnalogRadius.cardPx + 6),
           ),
           blur: 24,
-          rimPx: 26,
           shadow: const [
             BoxShadow(
               color: Color(0x66000000),
@@ -2096,18 +2103,72 @@ class _ChatSlideOverState extends State<_ChatSlideOver> {
   }
 }
 
-/// The Watch Party menu (mirrors the web's RoomControls modal): participant
-/// roster (host-only transfer/kick), a host-only collaborative-control toggle,
-/// a host+watching sync-mode picker with a mode description, host+watching
-/// "Switch movie" / "Pick something else" (backToLobby = Stop Movie), the QR +
-/// code share block (everyone), and a host-only danger-zone End party (Stop
-/// Stream). Opened for everyone via right-click / long-press; host-only sections
-/// are gated by [isHost] internally.
-class _HostControlsDialog extends ConsumerWidget {
+/// The Watch Party control panel, opened by right-click / long-press over the
+/// stage.
+///
+/// Rebuilt on the tray principle the rest of the app moved to: a face for each
+/// person, a glyph for each action, and no prose. What it replaced was a 540px
+/// scrolling column of section headings, explanatory sentences, labelled
+/// buttons and a QR block — a settings page rendered over a film.
+///
+/// What survived the cut and why:
+///
+/// * **Faces, not a roster.** Avatars carry identity better than a list of
+///   names, and the host's is ringed rather than captioned. Host actions
+///   (transfer, remove) hang off a right-click on the face itself, which is
+///   where you would aim anyway.
+/// * **Sync mode as two glyphs.** Tethered = everyone waits for the slowest
+///   viewer; free-running = the host never waits and others catch up. The
+///   paragraph explaining each now lives in the tooltip.
+/// * **No QR.** It cost the most space of anything here and answered a question
+///   nobody asks from inside a running party — you invite people before you
+///   start watching, and copy-link does that in one press from any device.
+/// * **The code stays.** It is data, not chrome: the one thing you read aloud
+///   to someone sitting next to you.
+///
+/// Everything is gated by role, and the two destructive actions (end the party,
+/// remove someone) keep their confirmation and their red.
+class _HostControlsDialog extends ConsumerStatefulWidget {
   const _HostControlsDialog();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_HostControlsDialog> createState() =>
+      _HostControlsDialogState();
+}
+
+class _HostControlsDialogState extends ConsumerState<_HostControlsDialog> {
+  bool _copied = false;
+  bool _refreshing = false;
+
+  Future<void> _copyInvite(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    // The glyph itself is the receipt, so no toast: a panel this small should
+    // not raise a notice over the top of itself.
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  /// Rebuild this client's A/V room. Host and guest alike — a wedged publish
+  /// path is not a role-specific fault, and the host having to end the party to
+  /// clear one was the worst version of this.
+  Future<void> _refresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    final error = await ref.read(partyProvider.notifier).reconnectAv();
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    showAnalogToast(
+      context,
+      error == null ? 'Video reconnected' : 'Could not reconnect video',
+      tone: error == null ? AnalogToastTone.success : AnalogToastTone.danger,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final wp = context.wp;
     final party = ref.watch(partyProvider);
     if (party == null) return const SizedBox.shrink();
@@ -2118,306 +2179,294 @@ class _HostControlsDialog extends ConsumerWidget {
     final joinUrl = '${ref.watch(apiClientProvider).baseUrl}/party/${party.id}';
 
     return Dialog(
-      backgroundColor: wp.surface,
+      backgroundColor: Colors.transparent,
+      elevation: 0,
       insetPadding: const EdgeInsets.all(AppSpacing.lg),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-        side: BorderSide(color: wp.line),
-      ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360, maxHeight: 540),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg,
-                AppSpacing.lg,
-                AppSpacing.md,
-                AppSpacing.md,
-              ),
-              child: Row(
-                children: [
-                  Text(
-                    'Watch party',
-                    style: TextStyle(
-                      color: wp.text,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  AnalogIconButton(
-                    icon: Icons.close,
-                    tooltip: 'Close',
-                    color: wp.dim,
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            Divider(height: 1, color: wp.line),
-            Flexible(
-              child: ListView(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                shrinkWrap: true,
-                children: [
-                  _sectionLabel(
-                    'In the party · ${party.participants.length}',
-                    wp,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  StaggeredList(
-                    spacing: AppSpacing.xs,
-                    children: [
-                      for (final p in party.participants)
-                        _RosterRow(
-                          key: ValueKey(p.userId),
-                          participant: p,
-                          notifier: notifier,
-                          isHost: isHost,
-                        ),
-                    ],
-                  ),
-                  if (isHost) ...[
-                    Divider(color: wp.line, height: AppSpacing.lg),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Collaborative control',
-                                style: TextStyle(
-                                  color: wp.text,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              SizedBox(height: 2),
-                              Text(
-                                'Let guests browse, play, pause & seek',
-                                style: TextStyle(color: wp.dim, fontSize: 12.5),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        AnalogSwitch(
-                          value: party.collaborativeControl,
-                          onChanged: (v) => notifier.setCollaborative(v),
-                          semanticLabel: 'Collaborative control',
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (watching && isHost) ...[
-                    Divider(color: wp.line, height: AppSpacing.lg),
-                    _sectionLabel('Sync mode', wp),
-                    const SizedBox(height: 6),
-                    Text(
-                      party.syncMode == 'dragging'
-                          ? 'Everyone waits for the slowest viewer'
-                          : 'Host never waits; slow viewers catch up',
-                      style: TextStyle(color: wp.dim, fontSize: 12.5),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    _SyncModeToggle(
-                      value: party.syncMode,
-                      onChanged: notifier.setSyncMode,
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                    AppButton(
-                      label: 'Switch movie',
-                      icon: Icons.swap_horiz,
-                      variant: AppButtonVariant.primary,
-                      expand: true,
-                      onPressed: () async {
-                        Navigator.of(context).pop();
-                        if (context.mounted) {
-                          await pickAndSwitchPartyMedia(context, ref);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    AppButton(
-                      label: '← Pick something else',
-                      variant: AppButtonVariant.secondary,
-                      expand: true,
-                      onPressed: () {
-                        notifier.backToLobby();
-                        Navigator.of(context).pop();
-                      },
-                    ),
-                  ],
-                  // Deliberately no shared-browser control here either: this menu
-                  // is reached from the player. It lives in the popcorn.
-                  Divider(color: wp.line, height: AppSpacing.lg),
-                  _sectionLabel('Share this code', wp),
-                  const SizedBox(height: AppSpacing.md),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      PartyQr(url: joinUrl, size: 76),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SelectableText(
-                              party.id,
-                              style: TextStyle(
-                                fontFamily: AppFonts.mono,
-                                color: wp.text,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 2,
-                              ),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            AppButton(
-                              label: 'Copy link',
-                              variant: AppButtonVariant.secondary,
-                              icon: Icons.copy,
-                              onPressed: () async {
-                                await Clipboard.setData(
-                                  ClipboardData(text: joinUrl),
-                                );
-                                if (context.mounted) {
-                                  _showPartyToast(
-                                    context,
-                                    'Invite link copied',
-                                  );
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (isHost) ...[
-                    Divider(color: wp.line, height: AppSpacing.lg),
-                    _sectionLabel('Danger zone', wp, danger: true),
-                    const SizedBox(height: AppSpacing.sm),
-                    AppButton(
-                      label: 'End party for everyone',
-                      variant: AppButtonVariant.danger,
-                      expand: true,
-                      onPressed: () async {
-                        // Capture the router before the async gaps — the dialog
-                        // context is defunct after the menu closes + the confirm
-                        // resolves, so navigating through it would silently no-op.
-                        final router = GoRouter.of(context);
-                        Navigator.of(context).pop();
-                        final ok = await showConfirm(
-                          context,
-                          title: 'End party for everyone?',
-                          body:
-                              'Everyone will be disconnected and returned to the lobby. This can\'t be undone.',
-                          confirmLabel: 'End party',
-                          danger: true,
-                        );
-                        if (!ok) return;
-                        await notifier.end();
-                        router.go('/home');
-                      },
-                    ),
-                  ],
-                ],
-              ),
+        constraints: const BoxConstraints(maxWidth: 336),
+        child: LiquidGlass(
+          opaque: MediaQuery.of(context).highContrast,
+          borderRadius: BorderRadius.circular(AnalogRadius.cardPx + 6),
+          blur: 24,
+          shadow: const [
+            BoxShadow(
+              color: Color(0x8C000000),
+              blurRadius: 40,
+              offset: Offset(0, 14),
             ),
           ],
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg,
+            vertical: AppSpacing.md,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _PartyFaces(
+                party: party,
+                isHost: isHost,
+                notifier: notifier,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Divider(height: 1, color: wp.line),
+              const SizedBox(height: AppSpacing.md),
+
+              // Everyone's actions, then the host's. One wrapping row so the
+              // panel grows by a line rather than by a section.
+              Wrap(
+                spacing: 2,
+                runSpacing: 2,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _AvIconButton(
+                    icon: _refreshing ? Icons.hourglass_empty : Icons.refresh,
+                    tooltip: _refreshing
+                        ? 'Reconnecting…'
+                        : 'Reconnect my video and audio',
+                    onTap: _refreshing ? null : _refresh,
+                  ),
+                  _AvIconButton(
+                    icon: _copied ? Icons.check : Icons.link,
+                    tooltip: _copied ? 'Invite copied' : 'Copy the invite link',
+                    onTap: () => _copyInvite(joinUrl),
+                  ),
+                  if (isHost) ...[
+                    if (watching) ...[
+                      _AvIconButton(
+                        icon: Icons.swap_horiz,
+                        tooltip: 'Switch to another title',
+                        onTap: () async {
+                          Navigator.of(context).pop();
+                          if (context.mounted) {
+                            await pickAndSwitchPartyMedia(context, ref);
+                          }
+                        },
+                      ),
+                      _AvIconButton(
+                        icon: Icons.grid_view,
+                        tooltip: 'Stop the movie and pick something else',
+                        onTap: () {
+                          notifier.backToLobby();
+                          Navigator.of(context).pop();
+                        },
+                      ),
+                    ],
+                    const _AvDivider.vertical(),
+                    _AvIconButton(
+                      icon: Icons.stop_circle_outlined,
+                      tooltip: 'End the party for everyone',
+                      danger: true,
+                      onTap: () => _end(context, notifier),
+                    ),
+                  ],
+                ],
+              ),
+
+              // The two SETTINGS, as switches.
+              //
+              // These stayed labelled on purpose. A glyph works for a verb —
+              // press it, something happens, and if you guessed wrong you press
+              // it again. It does not work for a persistent mode: a lock icon
+              // cannot say whether it means "locked now" or "press to lock",
+              // and getting sync mode wrong is not something a viewer can even
+              // see, let alone undo. A switch shows its state without being
+              // interpreted, and one word says which state that is.
+              if (isHost) ...[
+                const SizedBox(height: AppSpacing.md),
+                Divider(height: 1, color: wp.line),
+                _SettingRow(
+                  label: 'Everyone can control',
+                  hint: 'Guests may play, pause and seek',
+                  value: party.collaborativeControl,
+                  onChanged: notifier.setCollaborative,
+                ),
+                if (watching)
+                  _SettingRow(
+                    label: 'Wait for everyone',
+                    hint: party.syncMode == 'dragging'
+                        ? 'Playback holds for the slowest viewer'
+                        : 'You never wait; others catch up',
+                    value: party.syncMode == 'dragging',
+                    onChanged: (on) =>
+                        notifier.setSyncMode(on ? 'dragging' : 'hopping'),
+                  ),
+              ],
+
+              const SizedBox(height: AppSpacing.md),
+              // The code: data, not a label, so it keeps its own line and its
+              // own weight. Selectable because reading it out is half of what
+              // it is for.
+              SelectableText(
+                party.id,
+                style: TextStyle(
+                  fontFamily: AppFonts.mono,
+                  color: wp.dim,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 3,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  static Widget _sectionLabel(
-    String text,
-    WpPalette wp, {
-    bool danger = false,
-  }) => Text(
-    text.toUpperCase(),
-    style: TextStyle(
-      color: danger ? _dangerColor(wp) : wp.faint,
-      fontSize: 11,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 1,
-    ),
-  );
+  Future<void> _end(BuildContext context, PartyNotifier notifier) async {
+    // Captured before the async gaps: the dialog's context is defunct once the
+    // panel closes and the confirm resolves, so navigating through it would
+    // silently no-op.
+    final router = GoRouter.of(context);
+    Navigator.of(context).pop();
+    final ok = await showConfirm(
+      context,
+      title: 'End party for everyone?',
+      body:
+          'Everyone will be disconnected and returned to the lobby. This can\'t be undone.',
+      confirmLabel: 'End party',
+      danger: true,
+    );
+    if (!ok) return;
+    await notifier.end();
+    router.go('/home');
+  }
 }
 
-/// One participant in the Watch Party menu roster. Transfer-host / kick (inline
-/// + a right-click [AnalogContextMenu]) appear only when the VIEWER is the host and
-/// the row is a guest.
-class _RosterRow extends StatelessWidget {
-  const _RosterRow({
+/// A named switch: a mode you set and leave, as opposed to a button you press.
+///
+/// The hint is one line and it changes with the state, so it reports what is
+/// true rather than explaining the feature.
+class _SettingRow extends StatelessWidget {
+  const _SettingRow({
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String hint;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: wp.text,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  hint,
+                  style: TextStyle(color: wp.faint, fontSize: 11.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          AnalogSwitch(
+            value: value,
+            onChanged: onChanged,
+            semanticLabel: label,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The room, as faces.
+///
+/// The host's avatar is ringed — a mark on the face itself rather than a badge
+/// beside a name, because at this size the face IS the row. Right-clicking a
+/// guest's face gives the host transfer and remove; on a guest's own screen the
+/// faces are just faces.
+class _PartyFaces extends StatelessWidget {
+  const _PartyFaces({
+    required this.party,
+    required this.isHost,
+    required this.notifier,
+  });
+
+  final PartyState party;
+  final bool isHost;
+  final PartyNotifier notifier;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: AppSpacing.sm,
+      runSpacing: AppSpacing.sm,
+      children: [
+        for (final p in party.participants)
+          _Face(
+            key: ValueKey(p.userId),
+            participant: p,
+            actionable: isHost && !p.isHost,
+            notifier: notifier,
+          ),
+      ],
+    );
+  }
+}
+
+class _Face extends StatelessWidget {
+  const _Face({
     super.key,
     required this.participant,
+    required this.actionable,
     required this.notifier,
-    required this.isHost,
   });
 
   final Participant participant;
+  final bool actionable;
   final PartyNotifier notifier;
-  final bool isHost;
+
+  static const double _size = 40;
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
     final p = participant;
-    final showActions = isHost && !p.isHost;
-    final row = Row(
-      children: [
-        if (p.isHost)
-          Padding(
-            padding: const EdgeInsets.only(right: AppSpacing.xs),
-            child: Icon(Icons.star, color: wp.text, size: 15),
-          ),
-        Expanded(
-          child: Text(
-            p.name,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: wp.text,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+
+    final face = Tooltip(
+      message: p.isHost ? '${p.name} · host' : p.name,
+      child: Container(
+        width: _size + 6,
+        height: _size + 6,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          // Uniform, always: a non-uniform border on a circle throws every
+          // frame, so the ring is drawn at full width and merely made
+          // transparent when this is not the host.
+          border: Border.all(
+            color: p.isHost ? wp.text : Colors.transparent,
+            width: 2,
           ),
         ),
-        if (p.isHost)
-          const AnalogBadge(
-            child: Text(
-              'HOST',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.5,
-              ),
-            ),
-          )
-        else if (showActions) ...[
-          AnalogIconButton(
-            icon: Icons.swap_horiz,
-            tooltip: 'Make host',
-            color: wp.faint,
-            onPressed: () => notifier.transferHost(p.userId),
-          ),
-          AnalogIconButton(
-            icon: Icons.logout,
-            tooltip: 'Kick',
-            color: _dangerColor(wp),
-            onPressed: () => notifier.kick(p.userId),
-          ),
-        ],
-      ],
+        child: Center(
+          child: AvatarView(userId: p.userId, name: p.name, size: _size),
+        ),
+      ),
     );
 
-    if (!showActions) return row;
+    if (!actionable) return face;
 
     return AnalogContextMenu(
       actions: [
@@ -2427,45 +2476,15 @@ class _RosterRow extends StatelessWidget {
           onSelected: () => notifier.transferHost(p.userId),
         ),
         AnalogMenuAction(
-          label: 'Kick',
-          icon: Icons.logout,
+          label: 'Remove from party',
+          icon: Icons.person_remove,
           danger: true,
           onSelected: () => notifier.kick(p.userId),
         ),
       ],
-      child: row,
+      child: face,
     );
   }
-}
-
-Color _dangerColor(WpPalette wp) =>
-    wp.brightness == Brightness.dark ? kSemanticRed : const Color(0xFFB4232E);
-
-/// The sync-mode segmented control, an [AnalogSegmented]. Tapping the
-/// already-selected segment is a no-op (radio semantics), so a mode can never be
-/// deselected into an invalid empty state.
-class _SyncModeToggle extends StatelessWidget {
-  const _SyncModeToggle({required this.value, required this.onChanged});
-  final String value;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnalogSegmented<String>(
-      semanticLabel: 'Sync mode',
-      value: value,
-      onChanged: onChanged,
-      segments: const [
-        AnalogSegment(value: 'hopping', label: 'Hopping'),
-        AnalogSegment(value: 'dragging', label: 'Dragging'),
-      ],
-    );
-  }
-}
-
-/// Shows a transient notice on the app-wide [AnalogToastHost].
-void _showPartyToast(BuildContext context, String message) {
-  showAnalogToast(context, message, tone: AnalogToastTone.success);
 }
 
 /// Mic, camera and hide-self, as a vertical rail on the left edge of the
@@ -2530,8 +2549,34 @@ class _DeviceRail extends ConsumerWidget {
               tooltip: dock ? 'Float cameras' : 'Dock cameras',
               onTap: onToggleLayout,
             ),
+          // Reconnect is NOT here. It moved to the watch-party control panel:
+          // the rail is the four things you reach for mid-film, and a repair
+          // you need once a month does not earn a permanent seat among them.
         ],
       ),
+    );
+  }
+}
+
+/// A hairline separating groups of controls.
+class _AvDivider extends StatelessWidget {
+  const _AvDivider() : vertical = false;
+
+  /// For a row of controls rather than a column — the control panel groups
+  /// its glyphs the same way the rail does, turned ninety degrees.
+  const _AvDivider.vertical() : vertical = true;
+
+  final bool vertical;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: vertical ? 1 : 18,
+      height: vertical ? 18 : 1,
+      margin: vertical
+          ? const EdgeInsets.symmetric(horizontal: 6)
+          : const EdgeInsets.symmetric(vertical: 6),
+      color: AppColors.line2,
     );
   }
 }

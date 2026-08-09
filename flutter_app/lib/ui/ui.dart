@@ -13,6 +13,7 @@ export 'widgets/app_text_field.dart';
 export 'widgets/authed_image.dart';
 export 'widgets/avatar_view.dart';
 export 'widgets/camera_grid.dart';
+export 'widgets/chat_notifications.dart';
 export 'widgets/chat_panel.dart';
 export 'widgets/watch_party_animation.dart';
 export 'widgets/chip.dart';
