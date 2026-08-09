@@ -109,7 +109,9 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu>
               TrayButton(
                 icon: _updateIcon(update.status),
                 tooltip: _updateTooltip(update),
-                badge: update.status == UpdateStatus.available,
+                badge:
+                    update.status == UpdateStatus.available ||
+                    update.status == UpdateStatus.readyToInstall,
                 busy:
                     update.status == UpdateStatus.checking ||
                     update.status == UpdateStatus.downloading ||
@@ -253,6 +255,9 @@ class _Avatar extends StatelessWidget {
 
 IconData _updateIcon(UpdateStatus status) => switch (status) {
   UpdateStatus.available => Icons.system_update_alt,
+  // Downloaded and waiting on you. A restart glyph, because that is what
+  // pressing it does — the download already happened.
+  UpdateStatus.readyToInstall => Icons.restart_alt,
   UpdateStatus.error => Icons.error_outline,
   _ => Icons.refresh,
 };
@@ -265,6 +270,10 @@ String _updateTooltip(UpdateState state) {
     UpdateStatus.available => 'Update to ${state.release!.version}',
     UpdateStatus.downloading =>
       'Downloading ${(state.progress * 100).round()}%',
+    // Says what it costs. Installing quits and relaunches the app, and the one
+    // moment that matters is when someone is mid-film.
+    UpdateStatus.readyToInstall =>
+      'Install ${state.release?.version ?? 'update'} and restart',
     UpdateStatus.checking || UpdateStatus.loading => 'Checking...',
     _ => 'Check for updates',
   };
@@ -274,7 +283,13 @@ String _updateTooltip(UpdateState state) {
 
 VoidCallback? _updateAction(WidgetRef ref, UpdateState state) =>
     switch (state.status) {
+      // `available` is a transient state now — check() starts the download
+      // itself — but if it is ever reached, pressing fetches rather than
+      // installs. Only readyToInstall applies an update, because only a
+      // deliberate press should quit the app.
       UpdateStatus.available =>
+        () => ref.read(desktopUpdateProvider.notifier).download(),
+      UpdateStatus.readyToInstall =>
         () => ref.read(desktopUpdateProvider.notifier).install(),
       UpdateStatus.checking ||
       UpdateStatus.downloading ||
