@@ -50,6 +50,8 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  _popcornOverFilmTests();
+
   testWidgets('the player mounts over the app without an Overlay error', (
     tester,
   ) async {
@@ -90,5 +92,76 @@ void main() {
 
     expect(find.byTooltip('Start a watch party'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+}
+
+/// The popcorn over a film.
+///
+/// Mounting it at the root put it above the player — right for reachability
+/// (you can end a party without leaving the film) and wrong for everything
+/// else: it sat on top of the transport bar's volume and settings controls, and
+/// it was the one thing still lit when the rest of the chrome faded away.
+void _popcornOverFilmTests() {
+  testWidgets('over a film the popcorn lifts clear and fades with the chrome', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          serverConfigProvider.overrideWith(
+            (ref) => ServerConfigNotifier(ref, 'http://mock.local'),
+          ),
+          playerControllerProvider.overrideWithValue(MockPlayerController()),
+          authProvider.overrideWith((ref) {
+            final notifier = AuthNotifier(ref);
+            notifier.state = const AuthState(
+              user: User(userId: 'u1', name: 'Test User'),
+              initialized: true,
+            );
+            return notifier;
+          }),
+        ],
+        child: const WatchpartyApp(enableWindowFrame: false),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(WatchpartyApp)),
+    );
+    final restingBottom =
+        900 - tester.getBottomLeft(find.byType(PopcornControl)).dy;
+
+    container
+        .read(nowPlayingProvider.notifier)
+        .open(itemId: 'movie-1', fromParty: true);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final overFilmBottom =
+        900 - tester.getBottomLeft(find.byType(PopcornControl)).dy;
+    expect(
+      overFilmBottom,
+      greaterThan(restingBottom),
+      reason: 'it must clear the transport bar, not sit on it',
+    );
+
+    // Chrome goes idle: the popcorn goes with it rather than staying lit on an
+    // otherwise cleared picture.
+    container.read(playerChromeVisibleProvider.notifier).state = false;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final faded = tester.widget<AnimatedOpacity>(
+      find
+          .ancestor(
+            of: find.byType(PopcornControl),
+            matching: find.byType(AnimatedOpacity),
+          )
+          .first,
+    );
+    expect(faded.opacity, 0);
   });
 }

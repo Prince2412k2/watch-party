@@ -117,7 +117,12 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   }
 
   void _onAutoHide() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // Published from the listener, never from build — writing a provider during
+    // a build throws. Everything else mounted at the root reads this to fade
+    // out with the player's own chrome instead of sitting over it.
+    ref.read(playerChromeVisibleProvider.notifier).state = _autoHide.visible;
   }
 
   void _syncChromeHold(NowPlaying now) {
