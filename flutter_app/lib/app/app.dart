@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analog/chrome/analog_toast.dart';
+import '../player/player_host.dart';
 import '../state/theme_provider.dart';
 import '../ui/ui.dart';
 import 'router.dart';
@@ -72,7 +73,11 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
           child: ChatNotifications(
             child: Material(
               type: MaterialType.transparency,
-              child: child ?? const SizedBox.shrink(),
+              // PlayerHost owns the app's single PlayerView. It is HERE, above
+              // the router, because playback has to outlive navigation: the
+              // player used to be mounted inside two routes' Scaffolds, so
+              // pressing Back destroyed it instead of minimising it.
+              child: PlayerHost(child: child ?? const SizedBox.shrink()),
             ),
           ),
         );

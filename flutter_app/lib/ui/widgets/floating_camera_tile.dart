@@ -15,7 +15,9 @@ import 'camera_grid.dart';
 /// width, and are always clamped so they can never be dragged (or stranded by
 /// a window resize) fully off the video stage.
 abstract final class FloatingTileGeometry {
-  /// Camera aspect ratio (width : height).
+  /// Camera aspect ratio (width : height). The default for every helper below;
+  /// the floating PLAYER passes 16/9 instead, because a movie tile and a person
+  /// tile share every rule except their shape.
   static const double aspect = 4 / 3;
 
   static const double minWidth = 112;
@@ -39,11 +41,18 @@ abstract final class FloatingTileGeometry {
   static const double defaultWidth = 168;
 
   /// Full pixel size of a tile given its width and collapsed state.
-  static Size tileSize(double width, {required bool collapsed}) =>
-      Size(width, collapsed ? headerHeight : headerHeight + width / aspect);
+  static Size tileSize(
+    double width, {
+    required bool collapsed,
+    double aspect = FloatingTileGeometry.aspect,
+  }) => Size(width, collapsed ? headerHeight : headerHeight + width / aspect);
 
   /// Clamp a width to the min/max, also never wider than the stage allows.
-  static double clampWidth(double width, Size stage) {
+  static double clampWidth(
+    double width,
+    Size stage, {
+    double aspect = FloatingTileGeometry.aspect,
+  }) {
     // The stage is the only ceiling. Also bounded by height, which the old cap
     // was quietly standing in for: at 4:3 a tile 1200px wide is 900px tall, so
     // without this a wide short window would let you drag a tile taller than
