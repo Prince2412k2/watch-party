@@ -75,46 +75,46 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
           child: ChatNotifications(
             child: Material(
               type: MaterialType.transparency,
-              // PlayerHost owns the app's single PlayerView. It is HERE, above
-              // the router, because playback has to outlive navigation: the
-              // player used to be mounted inside two routes' Scaffolds, so
-              // pressing Back destroyed it instead of minimising it.
+              // ONE Overlay wrapping the lot.
               //
-              // PartyOverlay wraps it rather than the other way round: a room's
-              // cameras and chat have to render ON TOP of the movie, including
-              // while it is full-window. Both are outside the router for the
-              // same reason — a room outlives any one screen.
+              // `MaterialApp.builder` wraps the Navigator rather than living
+              // inside it, so nothing mounted here has an Overlay above it —
+              // and Tooltip, dialogs, menus and text selection all require one.
+              // Every root-mounted piece of chrome needs it, not just the
+              // popcorn: the player's own transport bar is full of tooltips,
+              // and without this it threw "No Overlay widget found" on the
+              // first frame a film appeared and again on every rebuild after.
               //
-              // The popcorn is ABOVE both, and mounted exactly once. It was
-              // mounted per-screen — the shell had one, the detail screen had
-              // another — which meant it blinked out of existence on any screen
-              // that had forgotten to add it, and vanished entirely behind a
-              // full-window film. It is the room's control surface, so the one
-              // moment it must not disappear is while you are watching.
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: PartyOverlay(
-                      child: PlayerHost(
-                        child: child ?? const SizedBox.shrink(),
-                      ),
-                    ),
-                  ),
-                  // Its own Overlay, because `MaterialApp.builder` wraps the
-                  // Navigator rather than living inside it — so there is no
-                  // Overlay above this point, and the popcorn's tooltips (and
-                  // the dialogs its buttons open) need one. Only the tray
-                  // itself is positioned, so the rest of this layer is empty
-                  // and takes no hits.
-                  Positioned.fill(
-                    child: Overlay(
-                      initialEntries: [
-                        OverlayEntry(
-                          builder: (_) => const Positioned(
-                            right: 22,
-                            bottom: 10,
-                            child: _AuthedPopcorn(),
+              // Fixed here, once, rather than per-widget. The popcorn used to
+              // carry a private Overlay of its own, which papered over the
+              // symptom for exactly the one widget I had tested and left
+              // everything else to fail at runtime.
+              child: Overlay(
+                initialEntries: [
+                  OverlayEntry(
+                    builder: (_) => Stack(
+                      children: [
+                        // PlayerHost owns the app's single PlayerView, above
+                        // the router, because playback has to outlive
+                        // navigation. PartyOverlay wraps it rather than the
+                        // other way round: a room's cameras and chat render ON
+                        // TOP of the film, including full-window.
+                        Positioned.fill(
+                          child: PartyOverlay(
+                            child: PlayerHost(
+                              child: child ?? const SizedBox.shrink(),
+                            ),
                           ),
+                        ),
+                        // The popcorn is above both, and mounted exactly once.
+                        // It used to be mounted per-screen, so it blinked out
+                        // on any screen that had forgotten it and vanished
+                        // entirely behind a full-window film — the one moment
+                        // the room's controls must not disappear.
+                        const Positioned(
+                          right: 22,
+                          bottom: 10,
+                          child: _AuthedPopcorn(),
                         ),
                       ],
                     ),
