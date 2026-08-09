@@ -28,18 +28,6 @@ Map<String, dynamic> _$$SyncScheduleImplToJson(_$SyncScheduleImpl instance) =>
       'mediaGeneration': instance.mediaGeneration,
     };
 
-_$BrowseStateImpl _$$BrowseStateImplFromJson(Map<String, dynamic> json) =>
-    _$BrowseStateImpl(
-      stack:
-          (json['stack'] as List<dynamic>?)
-              ?.map((e) => e as Map<String, dynamic>)
-              .toList() ??
-          const [],
-    );
-
-Map<String, dynamic> _$$BrowseStateImplToJson(_$BrowseStateImpl instance) =>
-    <String, dynamic>{'stack': instance.stack};
-
 _$PartyStateImpl _$$PartyStateImplFromJson(Map<String, dynamic> json) =>
     _$PartyStateImpl(
       id: json['id'] as String,
@@ -58,9 +46,6 @@ _$PartyStateImpl _$$PartyStateImplFromJson(Map<String, dynamic> json) =>
       schedule: json['schedule'] == null
           ? const SyncSchedule()
           : SyncSchedule.fromJson(json['schedule'] as Map<String, dynamic>),
-      browse: json['browse'] == null
-          ? const BrowseState()
-          : BrowseState.fromJson(json['browse'] as Map<String, dynamic>),
     );
 
 Map<String, dynamic> _$$PartyStateImplToJson(_$PartyStateImpl instance) =>
@@ -75,5 +60,4 @@ Map<String, dynamic> _$$PartyStateImplToJson(_$PartyStateImpl instance) =>
       'syncMode': instance.syncMode,
       'participants': instance.participants,
       'schedule': instance.schedule,
-      'browse': instance.browse,
     };

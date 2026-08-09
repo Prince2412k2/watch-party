@@ -39,10 +39,16 @@ export const TICKS = 10_000_000          // Jellyfin ticks per second
 //                           audio/video desync.
 //   RATE_GAIN / MAX_RATE_ADJ — how aggressively the nudge closes drift, and how
 //                           far playbackRate is allowed to move from 1.0 while
-//                           doing it. MAX_RATE_ADJ=0.08 (i.e. 0.92x–1.08x) is
-//                           chosen to stay under the point most viewers notice
-//                           a pitch/speed change; RATE_GAIN=0.12 sets how much
-//                           of the current error is corrected per tick.
+//                           doing it. RATE_GAIN=0.12 sets how much of the
+//                           current error is corrected per tick.
+//                           MAX_RATE_ADJ was 0.08, picked to stay under the
+//                           point most viewers notice a pitch change at all.
+//                           It is 0.10 now — the same cap howardchung/watchparty
+//                           uses — because the correction is no longer meant to
+//                           be invisible: a guest being sped up is TOLD so
+//                           ("Catching up ▶▶"), and an explained 1.1x reads as
+//                           the app working rather than as a glitch. Ten percent
+//                           is still well under the point speech distorts.
 //   HOLD_TOLERANCE       — slack around the frozen position while paused so a
 //                           guest already sitting on the right frame doesn't
 //                           re-seek on every tick from float/measurement noise.
@@ -58,7 +64,20 @@ export const TICKS = 10_000_000          // Jellyfin ticks per second
 // reasoning so a future change knows what each constant is actually trading
 // off before moving it.
 export const CONTROL_MS = 200
-export const HARD_SEEK_SEC = 1.0         // guest drift beyond this → jump to live
+// Guest drift beyond this → jump to live instead of nudging.
+//
+// This was 1.0, which meant rate-correction only ever handled jitter nobody
+// would have noticed, and everything a viewer WOULD notice — a buffering
+// stumble, a slow segment — was answered with a snap: the picture jumps, the
+// audio clips, and you lose the second you were watching. Speeding up loses
+// nothing; it just borrows time back.
+//
+// At the 0.10 cap, closing D seconds of drift takes ~10*D seconds, so 2.5 is
+// about 25 seconds of catching up in the worst case. That is a long time to be
+// off-speed silently, and exactly why it is surfaced. Past 2.5s the wait stops
+// being worth it and a snap is the kinder answer -- and drift that large
+// usually means something actually broke rather than merely lagged.
+export const HARD_SEEK_SEC = 2.5
 export const HOST_DRAG_SEEK_SEC = 2.0    // dragging host only corrects gross drift
 export const SOFT_SEC = 0.08             // drift beyond this → speed nudge begins (enter threshold)
 // Exit threshold for the soft-correction nudge, deliberately lower than SOFT_SEC.
@@ -68,7 +87,7 @@ export const SOFT_SEC = 0.08             // drift beyond this → speed nudge be
 // `correctionState` on decideSyncAction.
 export const SOFT_EXIT_SEC = 0.04
 export const RATE_GAIN = 0.12
-export const MAX_RATE_ADJ = 0.08
+export const MAX_RATE_ADJ = 0.10
 export const HOLD_TOLERANCE = 0.4
 // Debounce after a hard seek: suppresses re-triggering another hard seek for
 // this long so the buffer-aware catch-up (which takes real wall time) isn't

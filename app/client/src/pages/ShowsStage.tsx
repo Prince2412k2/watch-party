@@ -5,7 +5,6 @@ import { useParty } from '../context/PartyContext.tsx'
 import { useDownloadsHub } from '../context/DownloadsContext.tsx'
 import { navigate } from '../router.ts'
 import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../types/guards.ts'
-import { canDriveBrowse } from '../partyAuthority.ts'
 import { IS_NATIVE } from '../native/env.ts'
 import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc.ts'
@@ -125,23 +124,11 @@ export default function ShowsStage() {
   const [error, setError] = useState('')
   const [selection, setSelection] = useState(0)
 
-  const partyBrowsing = party.session != null
-  // Outside a party you always drive yourself. Inside one, defer to the tested
-  // predicate that mirrors the server's canDrive() — a plain host check silently
-  // drops the collaborative-control case, which is exactly what PartyPanel's
-  // "Let guests browse, play, pause & seek" switch hands out.
-  const canDrive = !partyBrowsing || canDriveBrowse(party.session, party.role)
+  // Everyone browses their own library. A room shares playback, chat and
+  // A/V — never navigation.
+  const stack: ShowLevel[] = internalStack
 
-  // The shared stack wins when the driver has published one; otherwise this
-  // client's own. A guest whose host has not browsed yet still gets a stage
-  // rather than an empty screen, and a driver's local copy is always current.
-  const shared = partyBrowsing ? (party.session?.browse?.stack as ShowLevel[] | undefined) : undefined
-  const stack: ShowLevel[] = shared && shared.length > 0 ? shared : internalStack
-
-  const setStack = (next: ShowLevel[]) => {
-    setInternalStack(next)
-    if (partyBrowsing && canDrive) party.navigateBrowse(next.map((level) => ({ ...level })))
-  }
+  const setStack = (next: ShowLevel[]) => setInternalStack(next)
 
   const viewId = stack[0]?.id ?? null
   const seriesLevel = seriesFromStack(stack)
@@ -387,7 +374,7 @@ export default function ShowsStage() {
   // ── movement ──────────────────────────────────────────────────────────────
 
   const setSeason = (next: string | null) => {
-    if (!canDrive || !seriesId || !next || next === activeSeasonId) return
+    if (!seriesId || !next || next === activeSeasonId) return
     playDetentCue()
     setStack(withSeason(stack, next))
   }
@@ -401,12 +388,11 @@ export default function ShowsStage() {
   }
 
   const goBack = () => {
-    if (!canDrive || stack.length <= 1) return
+    if (stack.length <= 1) return
     setStack(closeSeries(stack))
   }
 
   const activate = (index: number) => {
-    if (!canDrive) return
     const target = items[index]
     const action = activationFor(target)
     if (action.kind === 'open') setStack(openSeries(stack, action.series))
@@ -473,11 +459,6 @@ export default function ShowsStage() {
   // the browse stack carries them for an analog follower, but the phone tree and
   // the superseded Library both read the flat fields. Deliberately NOT keyed on
   // the focused item: that would be a socket emit per step of the rail.
-  useEffect(() => {
-    if (!party.session || !canDrive) return
-    party.shareView({ tab: 'series', screen, mediaId: seriesId, seasonId: activeSeasonId })
-  }, [party.session?.id, canDrive, screen, seriesId, activeSeasonId])
-
   // ── render ────────────────────────────────────────────────────────────────
 
   const railItems: AnalogRailItem[] = items.map((item) => ({
@@ -509,7 +490,6 @@ export default function ShowsStage() {
         }
         layout={layout}
         motion={motion}
-        inert={!canDrive}
         side={
           seriesId && seasonList.length > 0 ? (
             <AnalogSeasonRail
@@ -518,7 +498,6 @@ export default function ShowsStage() {
               series={seriesItem}
               onSelect={setSeason}
               motion={motion}
-              disabled={!canDrive}
             />
           ) : null
         }
@@ -526,7 +505,7 @@ export default function ShowsStage() {
           <div className="an-stage-head">
             <div className="an-stage-head-row">
               {seriesId ? (
-                <button type="button" className="an-back" onClick={goBack} disabled={!canDrive}>
+                <button type="button" className="an-back" onClick={goBack}>
                   <AnIcon name="back" size={14} />
                   <span>All shows</span>
                 </button>
@@ -540,7 +519,6 @@ export default function ShowsStage() {
               error={error || null}
               native={IS_NATIVE}
               actions={showActions(focused, IS_NATIVE)}
-              disabled={!canDrive}
               onPlay={() => activate(selection)}
               onDownload={() => void download()}
               onTracks={toggleTracks}
@@ -605,7 +583,6 @@ export default function ShowsStage() {
               ? 'Add something from Discover.'
               : 'Sonarr may still be fetching them — check back after the next scan.'
           }
-          disabled={!canDrive}
         />
       </AnalogStage>
     </div>

@@ -201,10 +201,74 @@ Future<ws.WebSocket> connectSocketWebSocket(
       headers: headers,
     );
   } on io_net.WebSocketException catch (e) {
+    // dart:io throws "was not upgraded to websocket" for ANY non-101 response
+    // and throws the response away, so the one fact worth having — what the
+    // server actually said — is lost exactly when it is needed. Ask again, in
+    // plain HTTP, purely to report it.
+    final detail = await _describeFailedUpgrade(target, headers);
     // The package's contract: transports expect ws.WebSocketException.
-    throw ws.WebSocketException('${e.message} (dialling $target)');
+    throw ws.WebSocketException('${e.message} (dialling $target)$detail');
   }
   return IOWebSocket.fromWebSocket(socket);
+}
+
+/// Re-run the handshake as a plain HTTP request and describe the response.
+///
+/// Diagnostic only, and only on the failure path — it costs one extra request
+/// when a connection has already failed, and nothing at all when things work.
+///
+/// Response headers are reported from an explicit ALLOWLIST rather than by
+/// filtering out anything that looks sensitive. A denylist keyed on header
+/// names is exactly how a secret ends up in a log the first time an upstream
+/// invents a new name for one. Request headers are never echoed at all: the
+/// session cookie rides in those, and its LENGTH is the only thing worth
+/// knowing.
+Future<String> _describeFailedUpgrade(
+  Uri target,
+  Map<String, String>? headers,
+) async {
+  const reportable = {
+    'server',
+    'content-type',
+    'content-length',
+    'cf-ray',
+    'cf-mitigated',
+    'location',
+    'retry-after',
+    'upgrade',
+    'connection',
+  };
+  final http = io_net.HttpClient()
+    ..connectionTimeout = const Duration(seconds: 10);
+  try {
+    final probe = target.replace(
+      scheme: target.isScheme('wss') ? 'https' : 'http',
+    );
+    final request = await http.getUrl(probe);
+    request.headers.set('Connection', 'Upgrade');
+    request.headers.set('Upgrade', 'websocket');
+    request.headers.set('Sec-WebSocket-Version', '13');
+    request.headers.set('Sec-WebSocket-Key', 'dGhlIHNhbXBsZSBub25jZQ==');
+    headers?.forEach(request.headers.set);
+    final response = await request.close();
+    final reported = <String>[];
+    response.headers.forEach((name, values) {
+      if (reportable.contains(name.toLowerCase())) {
+        reported.add('$name: ${values.join(', ')}');
+      }
+    });
+    await response.drain<void>();
+    final cookieLength = headers?['Cookie']?.length ?? 0;
+    return '\n  → server replied ${response.statusCode} '
+        '${response.reasonPhrase}'
+        '\n  → ${reported.isEmpty ? '(no reportable headers)' : reported.join('; ')}'
+        '\n  → sent ${headers?.length ?? 0} extra header(s), '
+        'cookie ${cookieLength == 0 ? 'ABSENT' : '$cookieLength chars'}';
+  } catch (e) {
+    return '\n  → could not re-probe the endpoint either: $e';
+  } finally {
+    http.close(force: true);
+  }
 }
 
 /// The URL to hand socket_io_client, with the port made EXPLICIT.

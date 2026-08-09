@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -5,23 +6,51 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/models.dart';
 import '../../state/downloads_provider.dart';
+import '../../state/offline_provider.dart';
 import '../../state/providers.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/download_poster.dart';
 import 'media_row.dart';
 
-/// Native on-device downloads (PLAN §4 E8.2) — resumable cache fills, backed by
-/// [downloadsProvider] (CacheFillController). Rows mirror the web
-/// `DownloadProgress`: an active red dot, the title (red on error), a thin
-/// progress bar (dim when paused), a mono `state · received/total · pct` line,
-/// and pause/resume/cancel controls (Retry on failure).
-class DownloadsScreen extends ConsumerWidget {
+/// Everything you have downloaded or are downloading, in one list.
+///
+/// It used to show only what was in flight, and a download DISAPPEARED from
+/// this screen the moment it finished — completing moved it to a separate
+/// "Downloaded" tab that signed-in users could not even reach. So the tab named
+/// Downloads was the one place your downloads were not, and finishing one
+/// looked exactly like losing it.
+///
+/// Now the in-flight records and the finished ones render together, newest
+/// activity first, with the finished ones deletable in place.
+class DownloadsScreen extends ConsumerStatefulWidget {
   const DownloadsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DownloadsScreen> createState() => _DownloadsScreenState();
+}
+
+class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Opening the tab is when a stale download is worth noticing, and it is
+    // cheap: one request per downloaded title, only on this screen, and only a
+    // definitive 404 removes anything. Off the first frame so it cannot delay
+    // the paint, and unawaited because nothing here waits on the answer.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        ref
+            .read(offlineProvider.notifier)
+            .reconcileWithLibrary(ref.read(apiClientProvider)),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final wp = context.wp;
-    final downloads =
+    final active =
         ref
             .watch(downloadsProvider)
             .where(
@@ -31,6 +60,13 @@ class DownloadsScreen extends ConsumerWidget {
             )
             .toList()
           ..sort((a, b) => (b.updatedAt ?? 0).compareTo(a.updatedAt ?? 0));
+    // Finished titles live in the offline manifest, not in the download list —
+    // completing hands the record over. Both are shown here.
+    final done = ref.watch(offlineProvider);
+    final rows = <Widget>[
+      for (final d in active) _DownloadRow(record: d),
+      for (final r in done) _CompletedRow(record: r),
+    ];
 
     return Scaffold(
       backgroundColor: wp.bg,
@@ -43,25 +79,26 @@ class DownloadsScreen extends ConsumerWidget {
               Text('Downloads', style: AppTheme.displaySmall.copyWith(color: wp.text)),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Resumable, survives a restart — kill and reopen the app mid-download.',
+                'Resumable, survives a restart, and retries itself when the '
+                'network drops.',
                 style: AppTheme.dim,
               ),
               const SizedBox(height: AppSpacing.xl),
               Expanded(
-                child: downloads.isEmpty
+                child: rows.isEmpty
                     ? const EmptyState(
                         icon: Icons.download_outlined,
-                        title: 'Nothing downloading',
+                        title: 'Nothing downloaded yet',
                         message:
                             'Start a download from a title\'s detail page.',
                       )
                     : ListView.separated(
-                        itemCount: downloads.length,
+                        itemCount: rows.length,
                         separatorBuilder: (_, _) =>
                             const SizedBox(height: AppSpacing.md),
                         itemBuilder: (context, i) => Reveal(
                           delay: AppMotion.stagger * math.min(i, 8),
-                          child: _DownloadRow(record: downloads[i]),
+                          child: rows[i],
                         ),
                       ),
               ),
@@ -215,5 +252,82 @@ class _DownloadRow extends ConsumerWidget {
     const mb = 1024 * 1024;
     if (bytes < 1024 * mb) return '${(bytes / mb).toStringAsFixed(1)} MB';
     return '${(bytes / (1024 * mb)).toStringAsFixed(2)} GB';
+  }
+}
+
+/// A title that finished downloading and is sitting on this device.
+///
+/// Deliberately the same card as an in-flight row rather than a poster tile:
+/// this list is one timeline of "what have I downloaded", and a finished item
+/// changing shape would read as a different kind of thing rather than the same
+/// thing further along.
+class _CompletedRow extends ConsumerWidget {
+  const _CompletedRow({required this.record});
+
+  final OfflineRecord record;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final wp = context.wp;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      decoration: BoxDecoration(
+        color: wp.surface,
+        borderRadius: BorderRadius.circular(AppSpacing.radius),
+        border: Border.all(color: wp.line),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.download_done_outlined,
+            size: 18,
+            color: AppColors.green,
+          ),
+          const SizedBox(width: AppSpacing.sm + 2),
+          Expanded(
+            child: Text(
+              record.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w600,
+                color: wp.text,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            'On this device',
+            style: AppTheme.mono.copyWith(fontSize: 12, color: wp.dim),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          MediaRowIconButton(
+            icon: Icons.delete_outline,
+            tooltip: 'Delete from this device',
+            color: AppColors.faint,
+            onPressed: () => _confirmDelete(context, ref),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Deleting frees real disk and cannot be undone without downloading the
+  /// whole film again, so it asks — unlike cancelling a download in progress,
+  /// which throws away only what has not finished arriving.
+  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
+    final ok = await showConfirm(
+      context,
+      title: 'Delete download?',
+      body: '${record.title} will be deleted from this device.',
+      confirmLabel: 'Delete',
+      danger: true,
+    );
+    if (!ok) return;
+    await ref.read(offlineProvider.notifier).remove(record.itemId);
   }
 }

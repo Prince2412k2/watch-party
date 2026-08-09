@@ -109,11 +109,28 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu>
               TrayButton(
                 icon: _updateIcon(update.status),
                 tooltip: _updateTooltip(update),
-                badge: update.status == UpdateStatus.available,
+                badge:
+                    update.status == UpdateStatus.available ||
+                    update.status == UpdateStatus.readyToInstall,
+                // `loading` is deliberately NOT busy. It is the INITIAL state
+                // — the app reading its own bundled version at boot — so
+                // treating it as work in flight put a permanent "busy" mark on
+                // the tray from launch, on a control nobody had touched. Now
+                // that busy animates, it also meant an animation that never
+                // stopped, which hung `pumpAndSettle` in every test that only
+                // wanted to boot the app.
+                //
+                // Busy means a request the user started. Checking and
+                // downloading qualify; noticing what version you already have
+                // does not, and the button stays pressable throughout.
                 busy:
                     update.status == UpdateStatus.checking ||
-                    update.status == UpdateStatus.downloading ||
-                    update.status == UpdateStatus.loading,
+                    update.status == UpdateStatus.downloading,
+                // A download knows how far along it is, so it says so in place
+                // of the glyph rather than making you hover for the tooltip.
+                progress: update.status == UpdateStatus.downloading
+                    ? update.progress
+                    : null,
                 onTap: _updateAction(ref, update),
               ),
               TrayButton(
@@ -248,6 +265,9 @@ class _Avatar extends StatelessWidget {
 
 IconData _updateIcon(UpdateStatus status) => switch (status) {
   UpdateStatus.available => Icons.system_update_alt,
+  // Downloaded and waiting on you. A restart glyph, because that is what
+  // pressing it does — the download already happened.
+  UpdateStatus.readyToInstall => Icons.restart_alt,
   UpdateStatus.error => Icons.error_outline,
   _ => Icons.refresh,
 };
@@ -260,6 +280,10 @@ String _updateTooltip(UpdateState state) {
     UpdateStatus.available => 'Update to ${state.release!.version}',
     UpdateStatus.downloading =>
       'Downloading ${(state.progress * 100).round()}%',
+    // Says what it costs. Installing quits and relaunches the app, and the one
+    // moment that matters is when someone is mid-film.
+    UpdateStatus.readyToInstall =>
+      'Install ${state.release?.version ?? 'update'} and restart',
     UpdateStatus.checking || UpdateStatus.loading => 'Checking...',
     _ => 'Check for updates',
   };
@@ -269,7 +293,13 @@ String _updateTooltip(UpdateState state) {
 
 VoidCallback? _updateAction(WidgetRef ref, UpdateState state) =>
     switch (state.status) {
+      // `available` is a transient state now — check() starts the download
+      // itself — but if it is ever reached, pressing fetches rather than
+      // installs. Only readyToInstall applies an update, because only a
+      // deliberate press should quit the app.
       UpdateStatus.available =>
+        () => ref.read(desktopUpdateProvider.notifier).download(),
+      UpdateStatus.readyToInstall =>
         () => ref.read(desktopUpdateProvider.notifier).install(),
       UpdateStatus.checking ||
       UpdateStatus.downloading ||

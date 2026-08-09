@@ -146,11 +146,13 @@ void main() {
     });
   });
 
-  // ── Auto-open vs. minimize (audit #61) ─────────────────────────────────
+  // ── The room's film opens in place (audit #61) ─────────────────────────
   //
-  // `/party/:id` is a top-level route, so entering it REPLACES the shell — the
-  // shell is built from scratch on the way back with no memory of having been
-  // minimized. These drive a real router so that rebuild actually happens.
+  // This used to be about navigation: a watching room pulled the client onto
+  // `/party/:id`, and a latch existed purely to stop it dragging you back after
+  // you minimised. Being in a room took your app away. Now the film opens in
+  // the app's one player, over the screen you are already on, and minimising is
+  // a property of the player rather than a route you are absent from.
 
   const watching = PartyState(
     id: 'ROOM1234',
@@ -174,11 +176,6 @@ void main() {
               GoRoute(path: '/movies', builder: (_, _) => const SizedBox()),
             ],
           ),
-          GoRoute(
-            path: '/party/:id',
-            builder: (_, state) =>
-                Text('Party ${state.pathParameters['id']}'),
-          ),
         ],
       ),
     ),
@@ -191,7 +188,7 @@ void main() {
     return container;
   }
 
-  testWidgets('the shell opens the player for a watching party', (
+  testWidgets("a watching room's film opens without leaving the shell", (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -201,54 +198,55 @@ void main() {
     await tester.pumpWidget(shellRouter(container));
     await tester.pumpAndSettle();
 
-    expect(find.text('Party ROOM1234'), findsOneWidget);
+    final now = container.read(nowPlayingProvider);
+    expect(now.itemId, 'movie-1');
+    expect(now.fromParty, isTrue);
+    expect(now.isExpanded, isTrue);
+    // Still on Movies. Nothing navigated.
+    expect(find.text('Movies'), findsOneWidget);
   });
 
-  testWidgets('a minimized party is not re-opened, and stays live', (
+  testWidgets('a minimised film is not re-expanded by the room repeating itself', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     final container = partyContainer();
-    // What the party surface's Back does before returning to the shell.
-    container.read(partyMinimizedProvider.notifier).minimize('ROOM1234');
-
     await tester.pumpWidget(shellRouter(container));
     await tester.pumpAndSettle();
 
-    expect(find.text('Party ROOM1234'), findsNothing);
-    expect(find.text('Movies'), findsOneWidget);
-    // Minimize is not a leave: the session is untouched behind the popcorn.
+    container.read(nowPlayingProvider.notifier).minimise();
+    // A `party:state` heartbeat: same title, over and over.
+    container.read(partyProvider.notifier).setState(watching);
+    await tester.pumpAndSettle();
+
+    expect(container.read(nowPlayingProvider).isFloating, isTrue);
+    // Minimising is not a leave: the session is untouched behind the popcorn.
     expect(container.read(partyProvider), isNotNull);
   });
 
-  testWidgets('leaving the player surface clears the minimize latch', (
+  testWidgets('a NEW title from the room takes the screen again', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     final container = partyContainer();
-    container.read(partyMinimizedProvider.notifier).minimize('ROOM1234');
-
     await tester.pumpWidget(shellRouter(container));
     await tester.pumpAndSettle();
+    container.read(nowPlayingProvider.notifier).minimise();
 
-    // Back to the lobby: there is no player surface to be minimized away from,
-    // so the next `watching` stage has to open normally again.
     container
         .read(partyProvider.notifier)
-        .setState(watching.copyWith(stage: 'lobby'));
+        .setState(watching.copyWith(mediaItemId: 'movie-2'));
     await tester.pumpAndSettle();
-    expect(container.read(partyMinimizedProvider), isNull);
 
-    container.read(partyProvider.notifier).setState(watching);
-    await tester.pumpAndSettle();
-    expect(find.text('Party ROOM1234'), findsOneWidget);
+    expect(container.read(nowPlayingProvider).itemId, 'movie-2');
+    expect(container.read(nowPlayingProvider).isExpanded, isTrue);
   });
 
-  test('partyPlayerRoute opens only a watching session with selected media', () {
+  test('partyWatchingItemId names a title only for a watching room', () {
     expect(
-      partyPlayerRoute(
+      partyWatchingItemId(
         const PartyState(
           id: 'ROOM1234',
           hostId: 'host',
@@ -256,11 +254,75 @@ void main() {
           mediaItemId: 'movie-1',
         ),
       ),
-      '/party/ROOM1234',
+      'movie-1',
     );
     expect(
-      partyPlayerRoute(const PartyState(id: 'ROOM1234', hostId: 'host')),
+      partyWatchingItemId(const PartyState(id: 'ROOM1234', hostId: 'host')),
       isNull,
     );
+  });
+
+  testWidgets('a guest in a room keeps a fully interactive app', (
+    tester,
+  ) async {
+    // Regression: the shell used to wrap its whole child in IgnorePointer for
+    // any member who was not the host, so being a guest in a room made your own
+    // library, tabs and settings dead to the pointer. Rooms share playback,
+    // chat and A/V — never your app.
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+
+    final container = ProviderContainer(
+      overrides: [
+        ..._signedIn(),
+        apiClientProvider.overrideWithValue(MockApiClient()),
+        currentUserIdProvider.overrideWithValue('guest-1'),
+      ],
+    );
+    addTearDown(container.dispose);
+    // A room I am in but do not host — the exact state that used to freeze the
+    // shell. Set before the first build, never during one.
+    container
+        .read(partyProvider.notifier)
+        .setState(const PartyState(id: 'ROOM1234', hostId: 'someone-else'));
+
+    var tapped = false;
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: AppTheme.dark,
+          builder: _analog,
+          home: AppShell(
+            location: '/movies',
+            child: Center(
+              child: GestureDetector(
+                onTap: () => tapped = true,
+                child: const Text('content'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Scoped to ANCESTORS of the content: other chrome legitimately parks an
+    // IgnorePointer over a hidden tray, and a tree-wide finder would catch those
+    // and fail for the wrong reason.
+    expect(
+      find.ancestor(
+        of: find.text('content'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is IgnorePointer && widget.ignoring,
+        ),
+      ),
+      findsNothing,
+      reason: 'a guest must never have the shell blocked',
+    );
+
+    await tester.tap(find.text('content'));
+    await tester.pump();
+    expect(tapped, isTrue);
   });
 }

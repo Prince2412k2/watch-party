@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:watchparty/app/app.dart';
 import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
+import 'package:watchparty/ui/ui.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -72,5 +73,15 @@ void main() {
     expect(find.text('This row is unavailable right now.'), findsNothing);
     expect(find.text('Discover'), findsWidgets);
     expect(find.text('12 Angry Men'), findsOneWidget);
+
+    // SC-006 — exactly one popcorn, on every screen. It used to be mounted
+    // per-screen (the shell had one, the detail screen had another), so it
+    // blinked out on any screen that had forgotten to add it. It is the room's
+    // control surface, so it has to be the same one everywhere and always
+    // present.
+    expect(find.byType(PopcornControl), findsOneWidget);
+    await tester.tap(find.text('Movies').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(PopcornControl), findsOneWidget);
   });
 }

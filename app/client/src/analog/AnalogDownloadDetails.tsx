@@ -228,7 +228,8 @@ export interface AnalogDownloadDetailsProps {
   loading: boolean
   /** Shown in place of an item — which of the several nothings this is. */
   message: StageMessage | null
-  disabled: boolean
+  /** Optional: nothing gates these controls now that browsing is never shared. */
+  disabled?: boolean
   torrent?: TorrentFocus | null
   queue?: QueueFocus | null
 }

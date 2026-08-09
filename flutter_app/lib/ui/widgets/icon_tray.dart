@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../analog_tokens.dart';
 import '../palette.dart';
+import 'wave_dots.dart';
 
 /// A pill of icon-only actions that unrolls out from beside a round handle —
 /// leftwards from the profile avatar in the top-right, upwards from the popcorn
@@ -211,6 +212,7 @@ class TrayButton extends StatefulWidget {
     this.tint,
     this.badge = false,
     this.busy = false,
+    this.progress,
   });
 
   /// Square. [IconTray.thickness] is derived from it.
@@ -239,6 +241,16 @@ class TrayButton extends StatefulWidget {
   /// so a tray that happened to be busy pinned the compositor and, worse, hung
   /// `pumpAndSettle` in three tests that only wanted to boot the app.
   final bool busy;
+
+  /// Fraction done, 0..1, when the work in flight can say how far along it is.
+  ///
+  /// Shown as a live percentage in place of the glyph, with a ring around it.
+  /// [busy] alone renders an ellipsis, which is honest for work of unknown
+  /// length and useless for a download — the figure was reachable only by
+  /// hovering for a tooltip, so the one control that knew how far along it was
+  /// made you ask. Still no indeterminate animation: the ring is drawn to a
+  /// value, so it settles.
+  final double? progress;
 
   @override
   State<TrayButton> createState() => _TrayButtonState();
@@ -294,11 +306,31 @@ class _TrayButtonState extends State<TrayButton> {
               clipBehavior: Clip.none,
               alignment: Alignment.center,
               children: [
-                Icon(
-                  widget.busy ? Icons.more_horiz : widget.icon,
-                  size: TrayButton.iconSize,
-                  color: color,
-                ),
+                if (widget.progress != null)
+                  _Percent(value: widget.progress!, color: color)
+                else if (widget.busy)
+                  // Work of unknown length, in flight. This was
+                  // `Icons.more_horiz` — a motionless three dots, which is the
+                  // same picture whether the request left a second ago or the
+                  // server stopped answering, so the button said "wait" without
+                  // ever saying "still going".
+                  //
+                  // Still not a CircularProgressIndicator. That is what the
+                  // ellipsis replaced: an indeterminate spinner pinned the
+                  // compositor and hung `pumpAndSettle` in three tests that
+                  // only wanted to boot the app, because this control is
+                  // mounted on every shelled screen. WaveDots has the same
+                  // never-settling property, so the bound that matters is
+                  // unchanged and worth restating: it is mounted ONLY while
+                  // busy, and busy is only ever true across an in-flight
+                  // request.
+                  WaveDots(color: color, dotSize: 4.5, amplitude: 2.5)
+                else
+                  Icon(
+                    widget.icon,
+                    size: TrayButton.iconSize,
+                    color: color,
+                  ),
                 if (widget.badge)
                   Positioned(
                     top: 4,
@@ -336,6 +368,49 @@ class TrayDivider extends StatelessWidget {
           ? const EdgeInsets.symmetric(horizontal: 6)
           : const EdgeInsets.symmetric(vertical: 6),
       color: context.wp.line2,
+    );
+  }
+}
+
+/// A live percentage inside a determinate ring — the tray's answer to "how far
+/// along is it". Sized to sit in the same square a glyph does.
+class _Percent extends StatelessWidget {
+  const _Percent({required this.value, required this.color});
+
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = (value.clamp(0.0, 1.0) * 100).round();
+    return SizedBox.square(
+      dimension: TrayButton.iconSize + 6,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Determinate, so it has an end state and never spins forever.
+          Positioned.fill(
+            child: CircularProgressIndicator(
+              value: value.clamp(0.0, 1.0),
+              strokeWidth: 2,
+              backgroundColor: color.withValues(alpha: 0.18),
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+          Text(
+            '$pct',
+            style: TextStyle(
+              fontFamily: AnalogType.monoFamily,
+              color: color,
+              // Two or three digits inside a 30px ring; tabular so the figure
+              // does not jitter sideways as it counts up.
+              fontSize: pct >= 100 ? 8.5 : 10,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

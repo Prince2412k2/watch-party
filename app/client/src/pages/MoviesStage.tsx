@@ -5,7 +5,6 @@ import { useParty } from '../context/PartyContext.tsx'
 import { useDownloadsHub } from '../context/DownloadsContext.tsx'
 import { navigate } from '../router.ts'
 import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../types/guards.ts'
-import { canDriveBrowse } from '../partyAuthority.ts'
 import { IS_NATIVE } from '../native/env.ts'
 import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc.ts'
@@ -111,23 +110,11 @@ export default function MoviesStage() {
   const [error, setError] = useState('')
   const [selection, setSelection] = useState(0)
 
-  const partyBrowsing = party.session != null
-  // Outside a party you always drive yourself. Inside one, defer to the tested
-  // predicate that mirrors the server's canDrive() — a plain host check silently
-  // drops the collaborative-control case, which is exactly what PartyPanel's
-  // "Let guests browse, play, pause & seek" switch hands out.
-  const canDrive = !partyBrowsing || canDriveBrowse(party.session, party.role)
+  // Everyone browses their own library. A room shares playback, chat and
+  // A/V — never navigation.
+  const stack: MovieLevel[] = internalStack
 
-  // The shared stack wins when the driver has published one; otherwise this
-  // client's own. A guest whose host has not browsed yet still gets a stage
-  // rather than an empty screen, and a driver's local copy is always current.
-  const shared = partyBrowsing ? (party.session?.browse?.stack as MovieLevel[] | undefined) : undefined
-  const stack: MovieLevel[] = shared && shared.length > 0 ? shared : internalStack
-
-  const setStack = (next: MovieLevel[]) => {
-    setInternalStack(next)
-    if (partyBrowsing && canDrive) party.navigateBrowse(next.map((level) => ({ ...level })))
-  }
+  const setStack = (next: MovieLevel[]) => setInternalStack(next)
 
   const mode = modeFromStack(stack, DEFAULT_MODE)
   const collection = collectionFromStack(stack)
@@ -343,7 +330,7 @@ export default function MoviesStage() {
   // ── movement ──────────────────────────────────────────────────────────────
 
   const setMode = (next: BrowseMode) => {
-    if (!canDrive || next === mode || stack.length === 0) return
+    if (next === mode || stack.length === 0) return
     playDetentCue()
     setStack(withMode(stack, next))
   }
@@ -357,12 +344,11 @@ export default function MoviesStage() {
   }
 
   const goBack = () => {
-    if (!canDrive || stack.length <= 1) return
+    if (stack.length <= 1) return
     setStack(closeCollection(stack))
   }
 
   const activate = (index: number) => {
-    if (!canDrive) return
     const target = items[index]
     const action = activationFor(target)
     if (action.kind === 'open') setStack(openCollection(stack, action.collection))
@@ -418,15 +404,6 @@ export default function MoviesStage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // ── party ─────────────────────────────────────────────────────────────────
-
-  // The driver publishes the tab it is on, exactly as the WebShell nav did, so a
-  // guest on any client follows. The stack carries the rest, including the mode.
-  useEffect(() => {
-    if (!party.session || !canDrive) return
-    party.shareView({ tab: 'movies', screen: 'grid' })
-  }, [party.session?.id, canDrive])
-
   // ── render ────────────────────────────────────────────────────────────────
 
   const railItems: AnalogRailItem[] = items.map((item) => ({
@@ -457,13 +434,12 @@ export default function MoviesStage() {
         backdropFallbackUrl={focused ? artworkSrc(resolveArtwork(focused)) : null}
         layout={layout}
         motion={motion}
-        inert={!canDrive}
-        side={<AnalogModeSlider mode={mode} onChange={setMode} disabled={!canDrive} />}
+        side={<AnalogModeSlider mode={mode} onChange={setMode} />}
         header={
           <div className="an-stage-head">
             <div className="an-stage-head-row">
               {collection ? (
-                <button type="button" className="an-back" onClick={goBack} disabled={!canDrive}>
+                <button type="button" className="an-back" onClick={goBack}>
                   <AnIcon name="back" size={14} />
                   <span>All collections</span>
                 </button>
@@ -476,7 +452,6 @@ export default function MoviesStage() {
               fallbackTitle={error ? 'Movies' : loading ? 'Loading' : railLabel}
               error={error || null}
               native={IS_NATIVE}
-              disabled={!canDrive}
               onPlay={() => activate(selection)}
               onDownload={() => void download()}
               onTracks={toggleTracks}
@@ -539,7 +514,6 @@ export default function MoviesStage() {
               ? 'Group films into a collection in Jellyfin and it shows up here.'
               : 'Add something from Discover.'
           }
-          disabled={!canDrive}
         />
       </AnalogStage>
     </div>

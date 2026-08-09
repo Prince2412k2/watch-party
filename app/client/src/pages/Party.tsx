@@ -15,9 +15,7 @@ import Dock from '../components/Dock.tsx'
 import Chat from '../components/Chat.tsx'
 import RoomControls from '../components/RoomControls.tsx'
 import CameraTile from '../components/CameraTile.tsx'
-import SharedBrowser from '../components/SharedBrowser.tsx'
 import { glass } from '../glass.tsx'
-import { mirror } from '../mirror.ts'
 import { usePhone } from '../hooks/useIsMobile.ts'
 import { Z } from '../watchLayers.ts'
 import {
@@ -55,7 +53,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   const { user } = useAuth()
   const {
     session, role, messages, layoutMode, chatOpen, chatRipple, alertMode,
-    setLayout, toggleChat, openChat, closeChat, navigateBrowse, sendPointer, selectMedia, setPlaybackTracks, setSubtitlePreferences,
+    setLayout, toggleChat, openChat, closeChat, selectMedia, setPlaybackTracks, setSubtitlePreferences,
   } = party
 
   const lk = useLiveKit({ partyId: session?.id, enabled: role === 'host' || role === 'guest' })
@@ -165,16 +163,12 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
       // on its own (icon-rail sidebar + fluid poster grid). Portrait phones get
       // the same non-rotating RotateHint the watch screen uses.
       <div style={{ position: 'fixed', inset: 0, background: '#000', overflow: 'hidden' }}>
-        {/* The analog stage, not an embedded variant of it. It already reads
-            the party from context — it publishes and follows session.browse.stack,
-            gates driving on canDriveBrowse, and calls selectMedia on activation —
-            so the lobby needs no props at all. The stack/onNavigate/onPickMedia/
-            canDrive wiring the superseded Library needed here is now internal.
-
-            Pointer mirroring is gone with it: the ghost cursor addressed a
-            fraction of a freely-scrolling pane, and the stage has no such pane.
-            The code pill and the "host is choosing" banner ride on the stage's
-            own chrome rather than being injected through slots. */}
+        {/* The analog stage, not an embedded variant of it. It reads the party
+            from context and calls selectMedia on activation, so the lobby needs
+            no props at all. Browsing is never shared: everyone moves through
+            their own library, and only the pick is a room event. The code pill
+            and the "host is choosing" banner ride on the stage's own chrome
+            rather than being injected through slots. */}
         <MoviesStage />
         <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 2 }}>
           <CodePill code={session.id} count={participantCount} />
@@ -205,20 +199,6 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
     )
   }
 
-  // ── SHARED BROWSER: a containerised Chromium is the party's activity ──────
-  // Deliberately not routed through WatchView: that screen is built around the
-  // HLS player and the sync engine, and this is a live stream with no timeline.
-  if (session.stage === 'browser') {
-    return (
-      <BrowserStage
-        session={session} isHost={isHost}
-        lk={lk} cameraProps={cameraProps} chatOpen={chatOpen} phone={phone}
-        closeChat={closeChat} toggleChat={toggleChat}
-        hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf}
-      />
-    )
-  }
-
   // ── WATCHING: a title is selected, playback sync is live ─────────────────
   return (
     <WatchView
@@ -236,7 +216,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
 /**
  * Camera / microphone / room failures, in front of the user.
  *
- * Rendered on EVERY stage — lobby, shared browser, watch. It used to exist only
+ * Rendered on EVERY stage — lobby and watch. It used to exist only
  * inside WatchView, so a denied camera permission in the lobby (where people
  * first switch their camera on, before any title is picked) flagged an error the
  * UI never showed: the button just did nothing. useLiveKit auto-dismisses the
@@ -255,95 +235,6 @@ function AVErrorBanner({ error, top = 'calc(var(--sa-t) + 70px)' }: { error?: st
     }}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></svg>
       {error}
-    </div>
-  )
-}
-
-/**
- * The shared-browser stage.
- *
- * Same party chrome as the watch screen — cameras, chat, room controls — around a
- * remote browser instead of a player. Everything except the stage itself is
- * unchanged on purpose: if the browser fails, the party is still a party.
- */
-function BrowserStage({
-  session, isHost, lk, cameraProps, chatOpen, phone, closeChat, toggleChat, hideSelf, onToggleHideSelf,
-}: {
-  session: PartySession
-  isHost: boolean
-  lk: LiveKitState
-  cameraProps: CameraProps
-  chatOpen?: boolean
-  phone: boolean
-  closeChat: () => void
-  toggleChat: () => void
-  hideSelf?: boolean
-  onToggleHideSelf?: () => void
-}) {
-  const { user } = useAuth()
-  const [visible, setVisible] = useState(true)
-  const hideTimer = useRef<number | null>(null)
-
-  // Same auto-hide as the watch screen: the driver's toolbar sits over the page
-  // they are reading, so it gets out of the way when the pointer stops moving.
-  const poke = () => {
-    setVisible(true)
-    if (hideTimer.current != null) window.clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => setVisible(false), 3000)
-  }
-  useEffect(() => { poke(); return () => { if (hideTimer.current != null) window.clearTimeout(hideTimer.current) } }, [])
-
-  return (
-    <div
-      onMouseMove={phone ? undefined : poke}
-      onClick={poke}
-      style={{
-        position: 'fixed', top: 0, left: 0, right: 0, height: '100dvh', minHeight: '100dvh',
-        background: '#000', overflow: 'hidden',
-      }}
-    >
-      <SharedBrowser
-        session={session}
-        userId={user?.userId}
-        isHost={isHost}
-        videoTrack={lk.sharedBrowser?.videoTrack ?? null}
-        audioTrack={lk.sharedBrowser?.audioTrack ?? null}
-        visible={visible}
-      />
-
-      {/* Cameras float over the browser rather than docking beside it: the remote
-          screen has a fixed 16:9 shape, so shrinking the stage would only add
-          letterboxing without making anything bigger. */}
-      {!phone && <CameraGrid {...cameraProps} />}
-      {phone && <MobileCameraStrip {...cameraProps} visible={visible} />}
-
-      {chatOpen && (
-        phone
-          ? (
-            <>
-              <div onClick={(e) => { e.stopPropagation(); closeChat() }}
-                style={{ position: 'absolute', inset: 0, zIndex: Z.chatScrim, background: 'rgba(4,5,8,.5)', animation: 'scrimIn .2s ease both' }} />
-              <ChatSheet />
-            </>
-          )
-          : <Chat top={76} />
-      )}
-
-      <AVErrorBanner error={lk.error} />
-
-      {/* The party keeps every control it has anywhere else — mic, camera,
-          self-view, chat — plus the browser's own sound. Same bar as the lobby, so
-          nothing about being on this stage costs the party a capability. */}
-      <LobbyAVBar
-        lk={lk} chatOpen={chatOpen} onToggleChat={toggleChat}
-        hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-        sound={{ blocked: lk.audioBlocked, onEnable: () => { void lk.startAudio() } }}
-      />
-
-      <RoomControls
-        stage="browser" visible={visible} phone={phone}
-        hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-      />
     </div>
   )
 }
@@ -963,19 +854,14 @@ function ChoosingBanner({ host }: { host?: string } = {}) {
   )
 }
 
-// The party's own controls: mic, camera, self-view and chat. Shared by the lobby
-// and the shared-browser stage, which both need them and neither of which has a
-// player bar to put them in. `sound` is passed only by the browser stage — a
-// stream that starts without a user gesture cannot legally play audio, so the
-// control to start it belongs with the other A/V controls rather than floating on
-// its own somewhere else.
-function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf, sound }: {
+// The party's own controls: mic, camera, self-view and chat. Used by the lobby,
+// which has no player bar to put them in.
+function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }: {
   lk: LiveKitState
   chatOpen?: boolean
   onToggleChat?: () => void
   hideSelf?: boolean
   onToggleHideSelf?: () => void
-  sound?: { blocked: boolean; onEnable: () => void }
 }) {
   const Btn = ({ on, danger = false, onClick, title, children }: {
     on?: boolean
@@ -996,15 +882,6 @@ function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf, so
       position: 'absolute', bottom: 'calc(var(--sa-b) + 22px)', left: '50%', transform: 'translateX(-50%)', zIndex: 40,
       display: 'flex', gap: 10,
     }}>
-      {sound && (
-        // Highlighted while blocked, because a silent stream is indistinguishable
-        // from a broken one and the fix is one click the user has to be told about.
-        <Btn on={!sound.blocked} onClick={sound.onEnable} title={sound.blocked ? 'Enable the browser\'s sound' : 'Browser sound is on'}>
-          {sound.blocked
-            ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5zM22 9l-6 6M16 9l6 6" /></svg>
-            : <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M11 5 6 9H2v6h4l5 4V5zM19 5a9 9 0 0 1 0 14M15.5 8.5a5 5 0 0 1 0 7" /></svg>}
-        </Btn>
-      )}
       <Btn on={lk.micOn} onClick={() => lk.enableMic(!lk.micOn)} title="Microphone">
         {lk.micOn
           ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4" /></svg>

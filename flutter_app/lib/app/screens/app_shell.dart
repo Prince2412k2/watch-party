@@ -53,12 +53,16 @@ String shellSectionTitle(String location) {
   return 'Watchparty';
 }
 
-String? partyPlayerRoute(PartyState? party) {
-  if (party?.stage != 'watching' ||
-      !(party?.mediaItemId?.isNotEmpty ?? false)) {
-    return null;
-  }
-  return '/party/${party!.id}';
+/// The title a room is watching, or null if it is not watching one.
+///
+/// This used to return a ROUTE, and the shell used to navigate to it — being in
+/// a room that started a film took your app away and put you on `/party/:id`.
+/// Now it names a title, and the room's film opens in the same player your own
+/// films open in, over whatever screen you happen to be on.
+String? partyWatchingItemId(PartyState? party) {
+  if (party?.stage != 'watching') return null;
+  final itemId = party?.mediaItemId;
+  return (itemId == null || itemId.isEmpty) ? null : itemId;
 }
 
 /// The persistent, edge-to-edge shell that wraps the primary destinations
@@ -81,17 +85,17 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
-  String? _navigatedPartyId;
+  String? _shownItemId;
 
   @override
   void initState() {
     super.initState();
-    // The party surface has to be considered on MOUNT, not only on the next
+    // The room's film has to be considered on MOUNT, not only on the next
     // state change: a room can already be watching by the time the shell is
     // built (a boot-time `party:resume`, or a return from another top-level
-    // route). Deferred a frame so the first navigation happens off the build.
+    // route). Deferred a frame so the open happens off the build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _openParty(ref.read(partyProvider));
+      _showPartyMedia(ref.read(partyProvider));
       _warmCatalog(ref.read(catalogNamespaceProvider));
     });
   }
@@ -114,31 +118,34 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.read(catalogPrefetcherProvider).warmBrowse(namespace);
   }
 
-  /// Pull this client onto `/party/:id` when the room is watching — unless the
-  /// user minimized THIS party, in which case the session stays live behind the
-  /// popcorn and they choose when to come back.
+  /// Show what the room is watching, in place.
   ///
-  /// Only ever called from `initState` and the [partyProvider] listener, never
-  /// from `build`: it mutates [partyMinimizedProvider], and it used to run on
-  /// every rebuild, which made "minimize" impossible — the shell is rebuilt from
-  /// scratch when `/party/:id` is left, so its `_navigatedPartyId` latch was
-  /// always null and Back bounced straight back into the player.
-  void _openParty(PartyState? party) {
+  /// Nothing here navigates any more. The film opens in the app's one player,
+  /// over the screen you are already on, and Back minimises it to a tile the
+  /// same way your own films do — so there is no longer any such thing as
+  /// "minimized away from the party surface", and the latch that used to
+  /// track it is gone with it.
+  ///
+  /// The `_shownItemId` guard is what stops a `party:state` heartbeat from
+  /// re-expanding a film you deliberately minimised: the room repeats its
+  /// current title constantly, and only a CHANGE of title should take the
+  /// screen.
+  void _showPartyMedia(PartyState? party) {
     if (!mounted) return;
-    final route = partyPlayerRoute(party);
-    if (route == null) {
-      _navigatedPartyId = null;
-      // No player surface to be minimized away from any more (back to the
-      // lobby, or the room is gone), so a later `watching` stage must open.
-      ref.read(partyMinimizedProvider.notifier).restore();
+    final itemId = partyWatchingItemId(party);
+    if (itemId == null) {
+      _shownItemId = null;
       return;
     }
-    if (_navigatedPartyId == party!.id) return;
-    if (ref.read(partyMinimizedProvider) == party.id) return;
-    _navigatedPartyId = party.id;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.go(route);
-    });
+    if (_shownItemId == itemId) return;
+    _shownItemId = itemId;
+    ref
+        .read(nowPlayingProvider.notifier)
+        .open(
+          itemId: itemId,
+          mediaSourceId: party!.mediaSourceId,
+          fromParty: true,
+        );
   }
 
   String _currentOf(List<NavDestination> destinations) {
@@ -150,7 +157,7 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<PartyState?>(partyProvider, (_, party) => _openParty(party));
+    ref.listen<PartyState?>(partyProvider, (_, party) => _showPartyMedia(party));
     // Signing in is the other "launch": the shell is already up, so the
     // post-frame warm above has been and gone by the time a namespace exists.
     ref.listen<String?>(
@@ -161,11 +168,6 @@ class _AppShellState extends ConsumerState<AppShell> {
     final isAuthenticated = ref.watch(
       authProvider.select((s) => s.isAuthenticated),
     );
-    final party = ref.watch(partyProvider);
-    final currentUserId = ref.watch(currentUserIdProvider);
-    final sharedHostView =
-        party != null && (currentUserId == null || party.hostId != currentUserId);
-
     final destinations = isAuthenticated
         ? kShellDestinations
         : kGuestShellDestinations;
@@ -176,16 +178,11 @@ class _AppShellState extends ConsumerState<AppShell> {
           children: [
             const Positioned.fill(child: AmbientWash()),
             Positioned.fill(child: ColoredBox(color: wp.stage)),
-            Positioned.fill(
-              child: Semantics(
-                container: sharedHostView,
-                label: sharedHostView ? 'Shared host view' : null,
-                child: IgnorePointer(
-                  ignoring: sharedHostView,
-                  child: widget.child,
-                ),
-              ),
-            ),
+            // Never gated on party role. A guest used to have this whole shell
+            // wrapped in IgnorePointer so their library followed the host's —
+            // which meant being in a room made your own app unusable. Rooms
+            // share playback, chat and A/V; they never take your app away.
+            Positioned.fill(child: widget.child),
             Positioned(
               left: 0,
               right: 0,
@@ -203,8 +200,6 @@ class _AppShellState extends ConsumerState<AppShell> {
               right: 28 + desktopTrailingControlInset,
               child: isAuthenticated ? const ProfileMenu() : const _LoginButton(),
             ),
-            if (isAuthenticated)
-              const Positioned(right: 22, bottom: 10, child: PopcornControl()),
           ],
         ),
       ),

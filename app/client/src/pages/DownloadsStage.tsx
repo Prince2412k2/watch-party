@@ -5,7 +5,6 @@ import { useAuth } from '../context/AuthContext.tsx'
 import { useParty } from '../context/PartyContext.tsx'
 import { useDownloadsHub } from '../context/DownloadsContext.tsx'
 import { navigate } from '../router.ts'
-import { canDriveBrowse } from '../partyAuthority.ts'
 import { apiJson } from '../types/guards.ts'
 import { AnalogStage } from '../analog/AnalogStage.tsx'
 import { AnalogNav } from '../analog/AnalogNav.tsx'
@@ -85,13 +84,6 @@ export default function DownloadsStage() {
   const [removal, setRemoval] = useState<RemovalIntent | null>(null)
   /** The queue key whose resolve panel is open. */
   const [resolving, setResolving] = useState<string | null>(null)
-
-  // Outside a party you always drive yourself. Inside one, defer to the tested
-  // predicate that mirrors the server's canDrive(): a plain host check drops the
-  // collaborative-control case, and a guest who has been handed control should
-  // be able to pause a download as well as move the browse cursor.
-  const partyBrowsing = party.session != null
-  const canDrive = !partyBrowsing || canDriveBrowse(party.session, party.role)
 
   // ── data ──────────────────────────────────────────────────────────────────
 
@@ -186,7 +178,7 @@ export default function DownloadsStage() {
   // ── actions ───────────────────────────────────────────────────────────────
 
   const runPrimary = () => {
-    if (!canDrive || !focusedTorrent) return
+    if (!focusedTorrent) return
     const action = primaryAction(downloadState(focusedTorrent.state), hub.busy.has(focusedTorrent.hash))
     // The button is disabled for this, but Enter reaches the same handler without
     // going through it — so a held key would otherwise fire a second pause on top
@@ -214,7 +206,7 @@ export default function DownloadsStage() {
   // ── movement ──────────────────────────────────────────────────────────────
 
   const changeMode = (next: DownloadsMode) => {
-    if (!canDrive || next === mode) return
+    if (next === mode) return
     playDetentCue()
     setMode(next)
   }
@@ -231,7 +223,6 @@ export default function DownloadsStage() {
   // focused movie. For a stuck grab that is opening the resolve panel — the two
   // ways out of it are both destructive, so neither may be one keypress away.
   const activate = () => {
-    if (!canDrive) return
     if (focusedQueue) {
       setResolving(queueKey(focusedQueue))
       return
@@ -295,15 +286,6 @@ export default function DownloadsStage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // ── party ─────────────────────────────────────────────────────────────────
-
-  // The driver publishes the tab it is on, exactly as the shell nav did, so a
-  // guest on any client follows onto the same surface.
-  useEffect(() => {
-    if (!party.session || !canDrive) return
-    party.shareView({ tab: 'downloads', screen: 'grid' })
-  }, [party.session?.id, canDrive])
-
   // ── render ────────────────────────────────────────────────────────────────
 
   const rail = railMetrics(Math.max(0, viewportWidthPx - layout.gutterPx * 2), layout.size)
@@ -344,8 +326,7 @@ export default function DownloadsStage() {
         backdropUrl={focused?.posterUrl ?? null}
         layout={layout}
         motion={motion}
-        inert={!canDrive}
-        side={<DownloadsModeSlider mode={mode} counts={counts} onChange={changeMode} disabled={!canDrive} />}
+        side={<DownloadsModeSlider mode={mode} counts={counts} onChange={changeMode} />}
         header={
           <div className="an-stage-head">
             <div className="an-stage-head-row">
@@ -370,7 +351,6 @@ export default function DownloadsStage() {
               eyebrow={eyebrow}
               loading={loading}
               message={message}
-              disabled={!canDrive}
               torrent={
                 focusedTorrent
                   ? {
@@ -438,7 +418,6 @@ export default function DownloadsStage() {
           // Title only: the stage above is already carrying the explanation, and
           // printing the same two sentences twice on one screen reads as a bug.
           emptyTitle={message?.title ?? 'Nothing here'}
-          disabled={!canDrive}
           renderPoster={(item, isFocused) => (
             <AnalogDownloadArt
               posterUrl={artwork.get(item.id)?.posterUrl ?? null}
@@ -478,7 +457,7 @@ function DownloadsModeSlider({
   mode: DownloadsMode
   counts: Record<DownloadsMode, number>
   onChange: (mode: DownloadsMode) => void
-  disabled: boolean
+  disabled?: boolean
 }) {
   return (
     <div className="an-modes" role="tablist" aria-label="Downloads view">

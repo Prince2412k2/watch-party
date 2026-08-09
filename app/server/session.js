@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto'
 import { loadParties, removeParty, saveParty } from './party-store.js'
-import { browserEnabled } from './browser/config.js'
 import { getProfile } from './profile-store.js'
 
 const sessions = new Map() // partyId → Session
@@ -57,8 +56,6 @@ function durableState(session) {
     playback: session.playback,
     subtitlePreferences: session.subtitlePreferences,
     stage: session.stage,
-    browse: session.browse,
-    browser: session.browser,
     guests: session.guests.map(durableGuest),
     approved: [...session.approved],
     livekitRevokedBefore: Object.fromEntries(session.livekitRevokedBefore),
@@ -76,10 +73,6 @@ function durableState(session) {
 
 function runtimeState(saved) {
   const mediaGeneration = saved.mediaGeneration ?? 0
-  // Turning the feature off must never strand a party on an activity it can no
-  // longer leave, so a restored browser party falls back to the lobby. No
-  // migration: the field simply stops being read.
-  const browserRestorable = browserEnabled() && saved.stage === 'browser'
   return {
     id: saved.id,
     originalHostId: saved.originalHostId ?? saved.hostId,
@@ -92,13 +85,10 @@ function runtimeState(saved) {
     mediaSourceId: saved.mediaSourceId ?? null,
     playback: saved.playback ?? null,
     subtitlePreferences: validateSubtitlePreferences(saved.subtitlePreferences).value ?? { ...DEFAULT_SUBTITLE_PREFERENCES },
-    stage: browserRestorable ? 'browser' : (saved.stage === 'browser' ? 'lobby' : saved.stage ?? (saved.mediaItemId ? 'watching' : 'lobby')),
-    browse: saved.browse ?? { stack: [] },
-    // Control is never restored: every socket is gone after a restart, so nobody
-    // is holding the pointer. startBrowserActivity/reconcile re-seats the host.
-    browser: browserRestorable && saved.browser
-      ? { ...saved.browser, driverUserId: saved.hostId, requests: [] }
-      : null,
+    // Migration: the shared browser is gone. A party persisted mid-browse must
+    // land somewhere it can act, so it opens in the lobby rather than a stage
+    // that no longer exists.
+    stage: saved.stage === 'browser' ? 'lobby' : saved.stage ?? (saved.mediaItemId ? 'watching' : 'lobby'),
     guests: (saved.guests ?? []).map(guest => ({ ...guest, socketId: null })),
     waiting: [],
     approved: new Set(saved.approved ?? [saved.hostId]),
@@ -147,15 +137,9 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     mediaSourceId,
     playback: null,   // normalized PlaybackInfo for the current title
     subtitlePreferences: { ...DEFAULT_SUBTITLE_PREFERENCES },
-    // 'lobby'    = everyone's in, browsing the library together, no title yet
+    // 'lobby'    = the room is open, nobody has picked a title yet
     // 'watching' = a title is selected, playback sync engine is live
     stage: mediaItemId ? 'watching' : 'lobby',
-    // Host-authority browse state, mirrored to guests (the "shared screen").
-    // stack = drill path: [] = home, else [{ id, name, type }, …]
-    browse: { stack: [] },
-    // Shared-browser activity: null unless this party currently holds it.
-    // { state: 'starting' | 'active' | 'error', url, driverUserId, requests, error }
-    browser: null,
     guests: [],       // [{ userId, name, socketId, joinedAt }]
     waiting: [],      // [{ userId, name, socketId }]
     approved: new Set([hostId]),  // userIds allowed to re-enter without asking (until kicked)
@@ -308,30 +292,6 @@ export function pushMessage(session, msg) {
   persistSession(session)
 }
 
-// ── Shared-browser activity ─────────────────────────────────────────────────
-// A party has exactly one current activity. Entering the browser leaves the
-// Jellyfin stage (the caller stops the timeline — that engine is not this
-// module's business); leaving it returns to the lobby.
-
-export function setBrowserActivity(session, browser) {
-  session.stage = 'browser'
-  session.browser = browser
-  persistSession(session)
-}
-
-export function updateBrowserActivity(session, patch) {
-  if (!session.browser) return null
-  session.browser = { ...session.browser, ...patch }
-  persistSession(session)
-  return session.browser
-}
-
-export function clearBrowserActivity(session) {
-  session.browser = null
-  if (session.stage === 'browser') session.stage = 'lobby'
-  persistSession(session)
-}
-
 export function isHost(session, userId) {
   return session.hostId === userId
 }
@@ -391,23 +351,6 @@ export function publicSession(session) {
     mediaSourceId: session.mediaSourceId,
     playback: session.playback,
     subtitlePreferences: session.subtitlePreferences,
-    browse: session.browse,
-    // Availability is answered by the server, never by a client's own build
-    // configuration, so one deployment's setting cannot be contradicted by a
-    // stale client bundle that still has the button compiled in.
-    browserAvailable: browserEnabled(),
-    browser: session.browser
-      ? {
-        state: session.browser.state,
-        url: session.browser.url ?? null,
-        driverUserId: session.browser.driverUserId ?? null,
-        requests: (session.browser.requests ?? []).map(publicMember),
-        error: session.browser.error ?? null,
-        // The remote screen's pixel size, so a client can translate a click in
-        // its own window into a coordinate on that screen.
-        screen: session.browser.screen ?? null,
-      }
-      : null,
     guests: session.guests.map(publicMember),
     waiting: session.waiting.map(publicMember),
     collaborativeControl: session.collaborativeControl,

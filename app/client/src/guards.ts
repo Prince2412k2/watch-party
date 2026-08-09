@@ -1,4 +1,4 @@
-import type { AuthUser, BrowseEntry, ChatMessage, MirrorPoint, PartyBrowse, PartyBrowserState, PartySession, PartyUser, SubtitlePreferences, UserProfile } from './types.ts'
+import type { AuthUser, ChatMessage, PartySession, PartyUser, SubtitlePreferences, UserProfile } from './types.ts'
 import type { AvatarConfig } from './lib/avatar.ts'
 
 export function isObject(value: unknown): value is Record<string, unknown> {
@@ -44,23 +44,6 @@ export function isPartyUser(value: unknown): value is PartyUser {
     isOptionalAvatar(value.avatar)
 }
 
-export function isBrowseEntry(value: unknown): value is BrowseEntry {
-  return isObject(value) && (value.id === undefined || typeof value.id === 'string') &&
-    (value.name === undefined || typeof value.name === 'string') &&
-    (value.type === undefined || typeof value.type === 'string')
-}
-
-export function isPartyBrowse(value: unknown): value is PartyBrowse {
-  return isObject(value) && (value.stack === undefined ||
-    (Array.isArray(value.stack) && value.stack.every(isBrowseEntry))) &&
-    (value.tab === undefined || ['movies', 'series', 'discover', 'downloads'].includes(String(value.tab))) &&
-    (value.screen === undefined || value.screen === 'grid' || value.screen === 'detail') &&
-    (value.mediaId === undefined || value.mediaId === null || typeof value.mediaId === 'string') &&
-    (value.seasonId === undefined || value.seasonId === null || typeof value.seasonId === 'string') &&
-    (value.episodeId === undefined || value.episodeId === null || typeof value.episodeId === 'string') &&
-    (value.revision === undefined || typeof value.revision === 'number')
-}
-
 function isPlayback(value: unknown): boolean {
   if (!isObject(value)) return false
   return (value.selectedAudioIndex === undefined || value.selectedAudioIndex === null || typeof value.selectedAudioIndex === 'number') &&
@@ -76,22 +59,11 @@ function isSubtitlePreferences(value: unknown): value is SubtitlePreferences {
     typeof value.textColor === 'string' && Number.isInteger(value.backgroundOpacityPercent)
 }
 
-function isPartyBrowserState(value: unknown): value is PartyBrowserState {
-  return isObject(value) &&
-    ['starting', 'active', 'error'].includes(String(value.state)) &&
-    (value.url === undefined || value.url === null || typeof value.url === 'string') &&
-    (value.driverUserId === undefined || value.driverUserId === null || typeof value.driverUserId === 'string') &&
-    (value.requests === undefined || (Array.isArray(value.requests) && value.requests.every(isPartyUser))) &&
-    (value.error === undefined || value.error === null || typeof value.error === 'string')
-}
 
 export function isPartySession(value: unknown): value is PartySession {
   if (!isObject(value) || typeof value.id !== 'string' || typeof value.hostId !== 'string') return false
-  return (value.browser === undefined || value.browser === null || isPartyBrowserState(value.browser)) &&
-    (value.browserAvailable === undefined || typeof value.browserAvailable === 'boolean') &&
-    (value.guests === undefined || (Array.isArray(value.guests) && value.guests.every(isPartyUser))) &&
+  return (value.guests === undefined || (Array.isArray(value.guests) && value.guests.every(isPartyUser))) &&
     (value.waiting === undefined || (Array.isArray(value.waiting) && value.waiting.every(isPartyUser))) &&
-    (value.browse === undefined || isPartyBrowse(value.browse)) &&
     (value.playback === undefined || value.playback === null || isPlayback(value.playback)) &&
     (value.subtitlePreferences === undefined || isSubtitlePreferences(value.subtitlePreferences)) &&
     (value.hostName === undefined || typeof value.hostName === 'string') &&
@@ -110,8 +82,3 @@ export function isChatMessage(value: unknown): value is ChatMessage {
     (value.timestamp === undefined || typeof value.timestamp === 'number')
 }
 
-export function isMirrorPoint(value: unknown): value is MirrorPoint {
-  return isObject(value) && (value.scroll === undefined || typeof value.scroll === 'number') &&
-    (value.x === undefined || typeof value.x === 'number') &&
-    (value.y === undefined || typeof value.y === 'number')
-}

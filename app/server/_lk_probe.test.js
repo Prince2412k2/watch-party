@@ -16,16 +16,15 @@ test('LiveKit upgrade path matching rejects prefix confusion', () => {
 test('LiveKit upgrades accept a session or verified token and reject anonymous requests', async () => {
   const verifier = { verify: async token => {
     if (token === 'member') return { sub: 'user-1', nbf: 100, video: { roomJoin: true, room: 'party-1' } }
-    if (token === 'browser') return { sub: 'shared-browser', video: { roomJoin: true, room: 'party-1' } }
+    if (token === 'outsider') return { sub: 'not-a-member', video: { roomJoin: true, room: 'party-1' } }
     if (token === 'wrong-room') return { sub: 'user-1', video: { roomJoin: true, room: 'party-2' } }
     throw new Error('bad token')
   } }
-  const party = { id: 'party-1', members: new Set(['user-1']), browser: {} }
+  const party = { id: 'party-1', members: new Set(['user-1']) }
   const options = {
     tokenVerifier: verifier,
     getParty: room => room === party.id ? party : null,
     isPartyMember: (candidate, identity) => candidate.members.has(identity),
-    isServiceIdentity: (identity, candidate) => identity === 'shared-browser' && Boolean(candidate.browser),
     isTokenRevoked: (_candidate, identity, notBefore) => identity === 'user-1' && notBefore <= 99,
   }
 
@@ -43,9 +42,10 @@ test('LiveKit upgrades accept a session or verified token and reject anonymous r
   assert.equal(await authorizeLiveKitUpgrade({ session: {}, accessToken: 'wrong-room', ...options }), false)
   party.members.delete('user-1')
   assert.equal(await authorizeLiveKitUpgrade({ session: {}, accessToken: 'member', ...options }), false)
-  assert.equal(await authorizeLiveKitUpgrade({ session: {}, accessToken: 'browser', ...options }), true)
-  party.browser = null
-  assert.equal(await authorizeLiveKitUpgrade({ session: {}, accessToken: 'browser', ...options }), false)
+  // Party membership is now the only way in. The shared browser was the one
+  // service identity that could join without being a member, and it is gone —
+  // a validly signed token for a non-member must be refused.
+  assert.equal(await authorizeLiveKitUpgrade({ session: {}, accessToken: 'outsider', ...options }), false)
   assert.equal(createLiveKitTokenVerifier('', ''), null)
 })
 

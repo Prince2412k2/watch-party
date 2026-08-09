@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../models/models.dart';
+import '../../party/party_controls.dart';
 import '../../state/state.dart';
 import '../analog_tokens.dart';
+import '../tokens.dart';
+import 'wave_dots.dart';
 import '../palette.dart';
 import 'app_dialog.dart';
 import 'avatar_view.dart';
@@ -31,8 +33,8 @@ import 'join_code_dialog.dart';
 ///
 /// | State | Actions |
 /// | --- | --- |
-/// | No party | start · shared browser ¦ join with a code |
-/// | Host | end · copy invite · shared browser ¦ return |
+/// | No party | start ¦ join with a code |
+/// | Host | end · copy invite ¦ return |
 /// | Guest | leave ¦ return |
 ///
 /// The three actions after the divider are not decoration and are not padding:
@@ -69,9 +71,12 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   bool _copied = false;
 
   /// A failure has nowhere to print now that the panel's error line is gone, so
-  /// it rides on the tooltip of the button that caused it and tints that button
-  /// red. The server's wording — "the shared browser is in use right now" —
-  /// still reaches the user, just on demand.
+  /// it rides on the tooltip of the action that caused it and tints that button
+  /// red. The server's wording still reaches the user, just on demand.
+  ///
+  /// Only "start a party" can fail on this tray today; the rest are local or
+  /// already have their own surface. Without this, a refused create would leave
+  /// the button doing visibly nothing.
   String? _error;
 
   bool get _open => _tray.value > 0;
@@ -113,7 +118,27 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     }
   }
 
-  Future<void> _start() => _guard(() => _party.create());
+  /// Start a room.
+  ///
+  /// If something is already playing, the room starts ON it, carrying the live
+  /// position — the "start a party mid-movie" affordance that used to be a
+  /// button floated over the solo player. That button had nowhere to live once
+  /// the player stopped being a screen, and it belongs here anyway: starting a
+  /// room is a popcorn action wherever you are.
+  Future<void> _start() => _guard(() async {
+    final now = ref.read(nowPlayingProvider);
+    final itemId = now.itemId;
+    if (itemId == null) {
+      await _party.create();
+      return;
+    }
+    await _party.createFromCurrentPlayback(
+      mediaItemId: itemId,
+      position: ref.read(playerControllerProvider).positionNow,
+      audioStreamIndex: now.audioStreamIndex,
+      subtitleStreamIndex: now.subtitleStreamIndex,
+    );
+  });
 
   Future<void> _join() async {
     setState(() => _error = null);
@@ -149,26 +174,6 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     });
   }
 
-  /// Open or close the party's shared browser.
-  ///
-  /// With no session there is nothing to share a browser *with*, so this starts
-  /// the party first. "Browse together" is one intent, not two steps, and
-  /// making the user start a room before the button lights up would be asking
-  /// them to do the app's bookkeeping.
-  Future<void> _sharedBrowser() => _guard(() async {
-    final session = ref.read(partyProvider);
-    if (session == null) {
-      await _party.create();
-      await _party.startSharedBrowser();
-      return;
-    }
-    if (session.stage == 'browser') {
-      await _party.stopSharedBrowser();
-    } else {
-      await _party.startSharedBrowser();
-    }
-  });
-
   @override
   Widget build(BuildContext context) {
     ref.listen(partyWaitingProvider, (_, next) {
@@ -178,6 +183,9 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     final session = ref.watch(partyProvider);
     final waiting = ref.watch(partyWaitingProvider);
     final isHost = session != null && _party.isHost;
+    // Asked to join, not yet let in. The tray is the only surface that can say
+    // so since the waiting room was deleted with its route.
+    final pending = session == null && ref.watch(partyPendingProvider) != null;
 
     return TapRegion(
       onTapOutside: (_) => _close(),
@@ -191,7 +199,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
             animation: _tray,
             axis: Axis.vertical,
             children: [
-              ..._actions(session, isHost),
+              ..._actions(session, isHost, pending),
               // Guests waiting on the door. Transient, host-only, and the whole
               // reason the tray auto-opens.
               if (isHost && waiting.isNotEmpty) ...[
@@ -216,6 +224,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
           ),
           _PopcornButton(
             live: session != null,
+            pending: pending,
             waiting: waiting.length,
             onTap: () => _open ? _tray.reverse() : _tray.forward(),
           ),
@@ -226,41 +235,69 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
 
   /// The listed actions, in the order they were asked for: left to right, with
   /// the destructive one furthest from the handle in every state.
-  List<Widget> _actions(PartyState? session, bool isHost) {
-    final browserAvailable = ref.watch(sharedBrowserProvider).available;
-    // The party surface's Back MINIMISES — the room keeps running without a
-    // window on it — so there has to be a non-destructive way back, or
-    // minimising strands the user next to a live session.
-    final onImmersiveStage =
+  List<Widget> _actions(PartyState? session, bool isHost, bool pending) {
+    // Back on the film MINIMISES it to a tile — the room keeps running — so
+    // there has to be a non-destructive way back to full screen, or minimising
+    // strands the user next to a live session. It used to navigate to
+    // `/party/:id`; now it just expands the player that is already playing.
+    final minimised =
         session != null &&
-        (session.stage == 'watching' || session.stage == 'browser');
-    final returnAction = onImmersiveStage
+        session.stage == 'watching' &&
+        ref.watch(nowPlayingProvider).isFloating;
+    final returnAction = minimised
         ? [
             const TrayDivider(),
             TrayButton(
               key: const Key('returnToPartyButton'),
               icon: Icons.open_in_full,
-              tooltip: 'Return to the party',
-              onTap: () => context.go('/party/${session.id}'),
+              tooltip: 'Back to full screen',
+              onTap: ref.read(nowPlayingProvider.notifier).expand,
             ),
           ]
         : const <Widget>[];
 
+    // The Watch Party panel — roster, transfer, kick, sync mode, switch movie.
+    // It used to open on a right-click over the party route's stage, which
+    // means it went unreachable the moment that route did. It belongs here
+    // anyway: the popcorn is on every screen, and this is the room's menu.
+    final panelAction = session == null
+        ? const <Widget>[]
+        : [
+            TrayButton(
+              key: const Key('partyControlsButton'),
+              icon: Icons.tune,
+              tooltip: 'Watch party controls',
+              onTap: () => showDialog<void>(
+                context: context,
+                barrierColor: const Color(0xB8000000),
+                builder: (_) => const HostControlsDialog(),
+              ),
+            ),
+          ];
+
+    // Waiting on the host's answer. Neither "start a party" nor "join with a
+    // code" is true here, and offering them would invite you to ask twice.
+    if (pending) {
+      return [
+        TrayButton(
+          key: const Key('cancelJoinRequestButton'),
+          icon: Icons.close,
+          tooltip: 'Stop waiting',
+          tint: kSemanticRed,
+          onTap: () => _guard(() => _party.leave()),
+        ),
+      ];
+    }
+
     if (session == null) {
       return [
         TrayButton(
-          icon: Icons.add,
-          tooltip: 'Start a watch party',
+          icon: _error != null ? Icons.error_outline : Icons.add,
+          tooltip: _error ?? 'Start a watch party',
+          tint: _error != null ? kSemanticRed : null,
           busy: _busy,
           onTap: _start,
         ),
-        // Shown unconditionally here, unlike the host case: `available` is
-        // reported by a live room, and out of a party there is no room to
-        // report it. Hiding the button until you already have one would mean
-        // it never appears in the state where it is most useful. A server
-        // without the feature answers with an error, which lands on the
-        // button's own tooltip.
-        _browserButton(null),
         const TrayDivider(),
         TrayButton(
           // A keypad, because the action is "type the code someone sent you".
@@ -292,7 +329,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
             '${ref.read(apiClientProvider).baseUrl}/party/${session.id}',
           ),
         ),
-        if (browserAvailable) _browserButton(session),
+        ...panelAction,
         ...returnAction,
       ];
     }
@@ -309,25 +346,11 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
         busy: _busy,
         onTap: _leave,
       ),
+      ...panelAction,
       ...returnAction,
     ];
   }
 
-  Widget _browserButton(PartyState? session) {
-    final open = session?.stage == 'browser';
-    final failed = _error != null;
-    return TrayButton(
-      icon: open ? Icons.public_off : Icons.public,
-      tooltip: failed
-          ? _error!
-          : open
-          ? 'Close the shared browser'
-          : 'Browse together',
-      tint: failed ? kSemanticRed : null,
-      busy: _busy,
-      onTap: _sharedBrowser,
-    );
-  }
 }
 
 /// A face in the tray, so approving somebody is approving a person rather than
@@ -351,11 +374,18 @@ class _WaitingFace extends StatelessWidget {
 class _PopcornButton extends StatefulWidget {
   const _PopcornButton({
     required this.live,
+    required this.pending,
     required this.waiting,
     required this.onTap,
   });
 
   final bool live;
+
+  /// Asked to join and waiting on the host. Shown as a breathing ring rather
+  /// than the live dot: you are not in the room yet, and a steady green dot
+  /// would say you were.
+  final bool pending;
+
   final int waiting;
   final VoidCallback onTap;
 
@@ -370,6 +400,12 @@ class _PopcornButton extends StatefulWidget {
 
 class _PopcornButtonState extends State<_PopcornButton> {
   bool _hover = false;
+
+  // No controller here any more. WaveDots owns its own ticker and is mounted
+  // only while pending, which keeps the same bound this class used to enforce
+  // by hand: the popcorn is on every screen, so a ticker that ran here
+  // unconditionally would mean `pumpAndSettle` never returns in any test that
+  // renders the shell.
 
   @override
   Widget build(BuildContext context) {
@@ -401,6 +437,41 @@ class _PopcornButtonState extends State<_PopcornButton> {
             alignment: Alignment.center,
             children: [
               Image.asset('assets/popcorn.png', width: 51, height: 51),
+              if (widget.pending)
+                // Waiting on the host, shown where the live dot would be. Wave
+                // dots rather than a ring or a static pip: the request is in
+                // flight and has not failed, which is the only thing anyone
+                // wants to know while waiting, and a motionless mark says
+                // nothing about either.
+                //
+                // Neutral, not green: green is the live dot and means you are
+                // IN. Waiting has no colour in the palette, and inventing one
+                // to say "almost" would add a semantic token for a transient
+                // state.
+                Positioned(
+                  right: -2,
+                  bottom: -1,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xE617181B),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: AppColors.line2),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 3,
+                        ),
+                        child: WaveDots(
+                          color: AppColors.text,
+                          dotSize: 3.5,
+                          amplitude: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               if (widget.live)
                 Positioned(
                   right: -2,
