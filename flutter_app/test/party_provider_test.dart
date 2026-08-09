@@ -216,6 +216,9 @@ void main() {
       final preferences = {
         'delayMs': -750,
         'fontScalePercent': 130,
+        // Deliberately the LEGACY key: a party persisted before the
+        // continuous scale, or a peer still running an older build, must not
+        // have its whole preference set rejected over one renamed field.
         'verticalPosition': 'middle',
         'fontFamily': 'mono',
         'textColor': '#7fdbff',
@@ -249,7 +252,10 @@ void main() {
       expect(notifier.subtitlePreferences.toJson(), {
         ...preferences,
         'textColor': '#7FDBFF',
-      });
+        // Read as legacy, re-emitted on the current scale: middle is halfway
+        // up. The old key does not survive into what this client sends.
+        'verticalOffsetPercent': 50,
+      }..remove('verticalPosition'));
     },
   );
 

@@ -81,7 +81,7 @@ test('create, save, reload, and delete preserve only durable state', async () =>
   })
   sess.playback = { PlaySessionId: 'play-session' }
   sess.subtitlePreferences = {
-    delayMs: 750, fontScalePercent: 130, verticalPosition: 'top',
+    delayMs: 750, fontScalePercent: 130, verticalOffsetPercent: 100,
     fontFamily: 'serif', textColor: '#FFE66D', backgroundOpacityPercent: 40,
   }
   sess.browse = { stack: [{ id: 'folder', name: 'Folder', type: 'CollectionFolder' }] }
@@ -247,4 +247,35 @@ test('joining another party drops the previous room but never the socket\'s own'
   assert.deepEqual(staleRoomIds(new Set(['sock-1', 'BBB']), { socketId: 'sock-1', keepId: 'BBB' }), [])
   assert.deepEqual(staleRoomIds(new Set(['sock-1']), { socketId: 'sock-1', keepId: 'BBB' }), [])
   assert.deepEqual(staleRoomIds(undefined, { socketId: 'sock-1', keepId: 'BBB' }), [])
+})
+
+test('a subtitle preference written before the continuous scale still loads', () => {
+  // A party persisted with the three-value verticalPosition, or an old client
+  // still sending one. Rejecting it would drop every other preference in the
+  // payload over one renamed field.
+  const legacy = {
+    delayMs: 0, fontScalePercent: 100, verticalPosition: 'middle',
+    fontFamily: 'sans', textColor: '#FFFFFF', backgroundOpacityPercent: 65,
+  }
+  const { value, error } = validateSubtitlePreferences(legacy)
+  assert.equal(error, undefined)
+  assert.equal(value.verticalOffsetPercent, 50)
+  assert.ok(!('verticalPosition' in value))
+})
+
+test('the continuous position keeps values the old scale could not express', () => {
+  const { value, error } = validateSubtitlePreferences({
+    ...DEFAULT_SUBTITLE_PREFERENCES, verticalOffsetPercent: 37,
+  })
+  assert.equal(error, undefined)
+  assert.equal(value.verticalOffsetPercent, 37)
+})
+
+test('an out-of-range position is refused', () => {
+  for (const bad of [-1, 101, 'bottom', 12.5]) {
+    const { error } = validateSubtitlePreferences({
+      ...DEFAULT_SUBTITLE_PREFERENCES, verticalOffsetPercent: bad,
+    })
+    assert.equal(error, 'invalid verticalOffsetPercent', `accepted ${bad}`)
+  }
 })

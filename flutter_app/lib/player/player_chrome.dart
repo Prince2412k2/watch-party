@@ -13,7 +13,6 @@ import 'package:flutter/services.dart';
 
 import '../analog/player/analog_settings_stack.dart';
 import '../analog/player/analog_timeline.dart';
-import '../analog/player/analog_toast_stack.dart';
 import '../analog/player/analog_volume.dart';
 import '../analog/player/auto_hide_controller.dart';
 import '../analog/player_core.dart';
@@ -483,10 +482,28 @@ class _PlayerChromeState extends State<PlayerChrome>
     ];
   }
 
+  /// Identity for de-duplication: title and language, NOT codec.
+  ///
+  /// Codec used to be part of this, and it is exactly the field that disagrees
+  /// across the two descriptions of one subtitle. Jellyfin describes an
+  /// external track one way; once selected, mpv loads it and reports the same
+  /// subtitle back through the player's own track list with a different (often
+  /// absent) codec. The two signatures then differed, nothing filtered either
+  /// out, and the picker grew a second "English" the moment you chose the
+  /// first — which is what made re-opening the menu show the entry twice.
+  ///
+  /// [_loadedExternalSubtitleTrackIds] is meant to catch this by native id, but
+  /// only records one when `currentSubtitleTrackId` is already populated, and
+  /// mpv updates its track list asynchronously after the add. So the id map is
+  /// the fast path and this is the one that has to hold.
+  ///
+  /// The cost is that two tracks with the same title AND language in different
+  /// formats collapse into one entry. That is rare, and a picker showing one of
+  /// them is a much smaller problem than a picker that grows an entry every
+  /// time it is used.
   static String _subtitleTrackSignature(PlayerTrack track) => [
     track.title,
     track.language,
-    track.codec,
   ].map((value) => value?.trim().toLowerCase() ?? '').join('|');
 
   Future<String> _contentForExternal(PlaybackTrack track) {
@@ -723,14 +740,20 @@ class _PlayerChromeState extends State<PlayerChrome>
     _wake();
   }
 
+  /// mpv's `sub-pos` and the shared preference run in OPPOSITE directions:
+  /// sub-pos 100 is the bottom of the frame, and the preference counts upward
+  /// from the bottom because that is how the setting reads to a person. One
+  /// conversion, in one place, rather than the arithmetic appearing at each
+  /// call site and eventually disagreeing with itself.
+  static int _offsetFromSubPos(int subPos) => 100 - subPos.clamp(0, 100);
+  static int _subPosFromOffset(int offset) => 100 - offset.clamp(0, 100);
+
   Future<void> _setSubtitlePosition(int v) async {
     final c = widget.controller;
     if (c is! MediaKitPlayerController) return;
     setState(() => _subPos = v);
     await c.setSubtitlePosition(v);
-    _emitSubtitlePreferences(
-      verticalPosition: v <= 25 ? 'top' : (v <= 75 ? 'middle' : 'bottom'),
-    );
+    _emitSubtitlePreferences(verticalOffsetPercent: _offsetFromSubPos(v));
     _wake();
   }
 
@@ -775,7 +798,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   void _emitSubtitlePreferences({
     int? delayMs,
     int? fontScalePercent,
-    String? verticalPosition,
+    int? verticalOffsetPercent,
     String? fontFamily,
     String? textColor,
     int? backgroundOpacityPercent,
@@ -785,9 +808,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     final local = SubtitlePreferences(
       delayMs: (_subDelay * 1000).round(),
       fontScalePercent: (_subScale * 100).round(),
-      verticalPosition: _subPos <= 25
-          ? 'top'
-          : (_subPos <= 75 ? 'middle' : 'bottom'),
+      verticalOffsetPercent: _offsetFromSubPos(_subPos),
       fontFamily: _subFont == 'monospace'
           ? 'mono'
           : (_subFont == 'serif' ? 'serif' : 'sans'),
@@ -798,7 +819,7 @@ class _PlayerChromeState extends State<PlayerChrome>
       local.copyWith(
         delayMs: delayMs,
         fontScalePercent: fontScalePercent,
-        verticalPosition: verticalPosition,
+        verticalOffsetPercent: verticalOffsetPercent,
         fontFamily: fontFamily,
         textColor: textColor,
         backgroundOpacityPercent: backgroundOpacityPercent,
@@ -809,11 +830,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   Future<void> _applyCanonicalSubtitlePreferences() async {
     final preferences = widget.subtitlePreferences;
     if (preferences == null) return;
-    final position = switch (preferences.verticalPosition) {
-      'top' => 10,
-      'middle' => 50,
-      _ => 100,
-    };
+    final position = _subPosFromOffset(preferences.verticalOffsetPercent);
     final font = switch (preferences.fontFamily) {
       'serif' => 'serif',
       'mono' => 'monospace',
@@ -1397,14 +1414,15 @@ class _PlayerChromeState extends State<PlayerChrome>
                 ),
               ),
 
-              // Chat toasts: TOP-LEFT, clear of the subtitles and transport at
-              // the bottom, the chat toggle at the top right, and the floating
-              // participant tiles that cascade up from the bottom right.
-              Positioned(
-                left: AnalogSpace.lgPx,
-                top: 72,
-                child: AnalogToastStack(view: toastView(_toasts)),
-              ),
+              // Chat notices are NOT drawn here any more. They were, at the top
+              // left, and this widget is the party screen's Stack index 0 —
+              // underneath the floating camera tiles. A message arriving while
+              // someone's tile happened to sit there appeared BEHIND their
+              // face, which is the one place a notice cannot be seen.
+              //
+              // There is one notification path now: the app-wide rail
+              // (ChatNotifications -> AnalogToastHost), mounted above the
+              // router, so nothing the player or the party draws can cover it.
 
               if (activeCues.isNotEmpty)
                 _SubtitleOverlay(
@@ -1985,22 +2003,35 @@ class _SubtitleSettingsDialogState extends State<_SubtitleSettingsDialog> {
                         widget.onScale(v);
                       },
               ),
+              // Height above the bottom, continuously.
+              //
+              // This was three detents — Top, Middle, Bottom — snapping to
+              // 10/50/100, which is not a position control so much as a choice
+              // of three places to be. Subtitles need to clear a hardcoded
+              // burned-in caption, a chat drawer, a black bar; none of those is
+              // a third of the way up.
+              //
+              // The axis reads upward from the bottom because that is the
+              // default and the thing being adjusted is how far to LIFT them
+              // off it. 20 divisions gives 5% steps: fine enough to clear an
+              // obstacle, coarse enough to land on a round number and to be
+              // driven from a keyboard.
               _slider(
                 palette: wp,
-                label: 'Position',
-                value: _position.toDouble(),
-                min: 10,
+                label: 'Height',
+                value: (100 - _position).toDouble(),
+                min: 0,
                 max: 100,
-                divisions: 2,
-                display: _position <= 25
-                    ? 'Top'
-                    : (_position <= 75 ? 'Middle' : 'Bottom'),
+                divisions: 20,
+                display: _position >= 100
+                    ? 'Bottom'
+                    : (_position <= 0 ? 'Top' : '${100 - _position}%'),
                 onChanged: !widget.enabled
                     ? null
                     : (v) {
-                        final position = v < 33 ? 10 : (v < 78 ? 50 : 100);
+                        final position = 100 - v.round();
                         setState(() => _position = position);
-                        widget.onPosition(_position);
+                        widget.onPosition(position);
                       },
               ),
               _slider(
