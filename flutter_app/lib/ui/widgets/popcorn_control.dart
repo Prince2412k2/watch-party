@@ -7,6 +7,7 @@ import '../../party/party_controls.dart';
 import '../../state/state.dart';
 import '../analog_tokens.dart';
 import '../tokens.dart';
+import 'wave_dots.dart';
 import '../palette.dart';
 import 'app_dialog.dart';
 import 'avatar_view.dart';
@@ -397,52 +398,14 @@ class _PopcornButton extends StatefulWidget {
   State<_PopcornButton> createState() => _PopcornButtonState();
 }
 
-class _PopcornButtonState extends State<_PopcornButton>
-    with SingleTickerProviderStateMixin {
+class _PopcornButtonState extends State<_PopcornButton> {
   bool _hover = false;
 
-  /// Runs ONLY while pending, and that restriction is load-bearing. The popcorn
-  /// is mounted on every screen in the app, so a permanently-repeating ticker
-  /// here would mean `pumpAndSettle` never returns in any widget test that
-  /// renders the shell. A test that pumps-and-settles while a join request is
-  /// outstanding has to pump frames by hand instead.
-  ///
-  /// Built in [initState] for the same reason [_tray] is, and it is worth
-  /// spelling out because a `late final` initializer looks harmless here and is
-  /// not: nothing touches this field on the common path (nobody is ever
-  /// usually waiting), so the FIRST thing to read it was `dispose()` — which
-  /// constructed an AnimationController, and therefore looked up TickerMode,
-  /// during unmount. That throws "Looking up a deactivated widget's ancestor is
-  /// unsafe" on every teardown of a tree containing the popcorn.
-  late final AnimationController _pulse;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    );
-    if (widget.pending) _pulse.repeat();
-  }
-
-  @override
-  void didUpdateWidget(_PopcornButton old) {
-    super.didUpdateWidget(old);
-    if (widget.pending == old.pending) return;
-    if (widget.pending) {
-      _pulse.repeat();
-    } else {
-      _pulse.stop();
-      _pulse.value = 0;
-    }
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
+  // No controller here any more. WaveDots owns its own ticker and is mounted
+  // only while pending, which keeps the same bound this class used to enforce
+  // by hand: the popcorn is on every screen, so a ticker that ran here
+  // unconditionally would mean `pumpAndSettle` never returns in any test that
+  // renders the shell.
 
   @override
   Widget build(BuildContext context) {
@@ -475,37 +438,37 @@ class _PopcornButtonState extends State<_PopcornButton>
             children: [
               Image.asset('assets/popcorn.png', width: 51, height: 51),
               if (widget.pending)
-                Positioned.fill(
+                // Waiting on the host, shown where the live dot would be. Wave
+                // dots rather than a ring or a static pip: the request is in
+                // flight and has not failed, which is the only thing anyone
+                // wants to know while waiting, and a motionless mark says
+                // nothing about either.
+                //
+                // Neutral, not green: green is the live dot and means you are
+                // IN. Waiting has no colour in the palette, and inventing one
+                // to say "almost" would add a semantic token for a transient
+                // state.
+                Positioned(
+                  right: -2,
+                  bottom: -1,
                   child: IgnorePointer(
-                    child: AnimatedBuilder(
-                      animation: _pulse,
-                      builder: (context, _) {
-                        // One ring, expanding and fading — a request going out
-                        // and not yet answered. The old waiting room drew a
-                        // sonar sweep for the same reason; this is that idea at
-                        // the size the corner allows.
-                        final t = Curves.easeOut.transform(_pulse.value);
-                        return Transform.scale(
-                          scale: 1 + t * 0.35,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                // Neutral, not green: green is the live dot
-                                // and means you are IN. Waiting is not a
-                                // status the palette has a colour for, and
-                                // inventing one to say "almost" would put a
-                                // new semantic token in the system for a
-                                // transient state.
-                                color: AppColors.text.withValues(
-                                  alpha: (1 - t) * 0.7,
-                                ),
-                                width: 2,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xE617181B),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: AppColors.line2),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 3,
+                        ),
+                        child: WaveDots(
+                          color: AppColors.text,
+                          dotSize: 3.5,
+                          amplitude: 2,
+                        ),
+                      ),
                     ),
                   ),
                 ),
