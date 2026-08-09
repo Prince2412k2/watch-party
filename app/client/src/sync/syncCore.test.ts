@@ -48,5 +48,7 @@ test('hard-seek cooldown keeps a playing guest on bounded rate correction', () =
   assert.ok(intent)
   assert.equal(intent.hardSeek, undefined)
   assert.equal(intent.seekTo, undefined)
-  assert.equal(intent.rate, 1.08)
+  // Clamped at MAX_RATE_ADJ, which is 0.10 now: the catch-up is announced to
+  // the viewer, so it no longer has to stay under the threshold of notice.
+  assert.equal(intent.rate, 1.1)
 })

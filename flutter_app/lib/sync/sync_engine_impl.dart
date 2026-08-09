@@ -74,6 +74,8 @@ class SyncEngineImpl implements SyncEngine {
 
   final _scheduleCtrl = StreamController<SyncSchedule>.broadcast();
   final _driftCtrl = StreamController<Duration>.broadcast();
+  final _catchUpCtrl = StreamController<CatchUp>.broadcast();
+  CatchUp _catchUp = CatchUp.idle;
 
   static const int _reportMs = 1000;
 
@@ -296,6 +298,9 @@ class SyncEngineImpl implements SyncEngine {
     // Drift telemetry — guests only (a hopping host returned null above).
     if (!_isHost && intent.drift != null) {
       _driftCtrl.add(_sec(intent.drift!));
+      _emitCatchUp(
+        CatchUp(rate: intent.rate ?? 1, drift: _sec(intent.drift!)),
+      );
       final now = _nowMs();
       if (now - _lastReportMs >= _reportMs) {
         _lastReportMs = now.toInt();
@@ -308,7 +313,20 @@ class SyncEngineImpl implements SyncEngine {
     }
   }
 
+  /// Only on a CHANGE. The correction loop runs every CONTROL_MS, and pushing
+  /// an identical value 5x a second would rebuild the badge for nothing.
+  void _emitCatchUp(CatchUp next) {
+    if (next.active == _catchUp.active && next.behind == _catchUp.behind) {
+      _catchUp = next;
+      return;
+    }
+    _catchUp = next;
+    if (!_catchUpCtrl.isClosed) _catchUpCtrl.add(next);
+  }
+
   void _hardSeek(PlayerController p, SyncIntent intent) {
+    // A jump is not a catch-up; whatever was being announced is over.
+    _emitCatchUp(CatchUp.idle);
     _markApplying();
     if (intent.seekToSec != null) p.seek(_sec(intent.seekToSec!));
     p.setRate(1);
@@ -394,6 +412,9 @@ class SyncEngineImpl implements SyncEngine {
   @override
   Stream<Duration> get drift => _driftCtrl.stream;
 
+  @override
+  Stream<CatchUp> get catchUp => _catchUpCtrl.stream;
+
   /// True once [dispose] has run: no control loop, applying timers, user-seek
   /// timer, socket handlers, clock ping, or open stream controllers remain.
   bool get isDisposed => _disposed;
@@ -410,5 +431,6 @@ class SyncEngineImpl implements SyncEngine {
     await detach();
     await _scheduleCtrl.close();
     await _driftCtrl.close();
+    await _catchUpCtrl.close();
   }
 }
