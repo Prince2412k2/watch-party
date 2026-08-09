@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/router.dart';
 import '../../models/models.dart';
 import '../../party/party_controls.dart';
 import '../../state/state.dart';
@@ -56,6 +57,17 @@ class PopcornControl extends ConsumerStatefulWidget {
 
 class _PopcornControlState extends ConsumerState<PopcornControl>
     with TickerProviderStateMixin {
+  /// The context to open dialogs and sheets from.
+  ///
+  /// NOT this widget's own. The popcorn is mounted in `MaterialApp.builder`,
+  /// which wraps the Navigator rather than living inside it — so `Navigator.of`
+  /// on the local context finds nothing and every dialog this tray opens threw
+  /// "Navigator operation requested with a context that does not include a
+  /// Navigator". The router already keeps a key for exactly this reason.
+  ///
+  /// Same shape of bug as the missing Overlay: root-mounted chrome cannot
+  /// assume it inherits anything the Navigator provides.
+  BuildContext get _navContext => rootNavigatorKey.currentContext ?? context;
   /// Built in [initState], not as a `late final` initializer, and vsynced by
   /// the plural mixin.
   ///
@@ -143,7 +155,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   Future<void> _join() async {
     setState(() => _error = null);
     await showDialog<String>(
-      context: context,
+      context: _navContext,
       builder: (_) => JoinCodeDialog(onJoin: (code) => _party.join(code)),
     );
     // The shell opens the player when the approved room enters watching.
@@ -152,7 +164,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   Future<void> _end() async {
     _close();
     final ok = await showConfirm(
-      context,
+      _navContext,
       title: 'End this party?',
       body: 'The room closes for everyone.',
       confirmLabel: 'End party',
@@ -268,7 +280,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
               icon: Icons.tune,
               tooltip: 'Watch party controls',
               onTap: () => showDialog<void>(
-                context: context,
+                context: _navContext,
                 barrierColor: const Color(0xB8000000),
                 builder: (_) => const HostControlsDialog(),
               ),
