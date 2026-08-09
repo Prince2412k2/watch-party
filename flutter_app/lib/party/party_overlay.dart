@@ -155,86 +155,115 @@ class LiveKitErrorBanner extends ConsumerWidget {
   }
 }
 
-/// Host-only "wants to join" card with approve/reject. Fades in on appear
-/// ([Reveal]) and sits on an acrylic surface.
+/// Host-only "wants to join" card.
+///
+/// It used to be a titled panel with a rule under the heading and a row per
+/// person: a name in a list, and two icon buttons beside it. That is a settings
+/// table, and it read as one — nothing about it said a PERSON was standing at
+/// the door, which is the only thing this notice is about.
+///
+/// So it leads with the face, the way the toast rail and the popcorn tray
+/// already do, on the same glass the chat drawer is made of. Approve and reject
+/// are the same two glyphs in the same two colours as their counterparts in the
+/// tray, because they are the same two actions and a host should not have to
+/// learn them twice.
 class _JoinRequests extends ConsumerWidget {
   const _JoinRequests({required this.waiting});
   final List<Participant> waiting;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notifier = ref.read(partyProvider.notifier);
     return Reveal(
       child: SizedBox(
-        width: 268,
-        child: AnalogPanel(
-          translucent: true,
+        width: 292,
+        child: LiquidGlass(
+          opaque: MediaQuery.of(context).highContrast,
+          borderRadius: BorderRadius.circular(AnalogRadius.cardPx + 4),
           blur: AppBlur.overlay,
-          lift: AnalogLift.over,
-          radius: AppSpacing.radiusLg,
-          padding: EdgeInsets.zero,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.sm + 3,
-                  AppSpacing.md,
-                  AppSpacing.sm + 3,
-                ),
-                child: Text(
-                  'Wants to join · ${waiting.length}',
-                  style: const TextStyle(
-                    color: AppColors.dim,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-              const Divider(height: 1, color: AppColors.line),
-              for (final w in waiting)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
-                    vertical: AppSpacing.xs,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: AppSpacing.xs),
-                          child: Text(
-                            w.name,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.text,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                      AnalogIconButton(
-                        icon: Icons.close,
-                        tooltip: 'Reject',
-                        color: AppColors.red,
-                        onPressed: () => notifier.reject(w.userId),
-                      ),
-                      AnalogIconButton(
-                        icon: Icons.check,
-                        tooltip: 'Approve',
-                        color: AppColors.green,
-                        onPressed: () => notifier.approve(w.userId),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
+          shadow: const [
+            BoxShadow(
+              color: Color(0x59000000),
+              blurRadius: 28,
+              offset: Offset(0, 10),
+            ),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.sm + 2),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final w in waiting) _JoinRequestRow(participant: w),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// One person at the door: their face, their name, and the two answers.
+class _JoinRequestRow extends ConsumerWidget {
+  const _JoinRequestRow({required this.participant});
+
+  final Participant participant;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notifier = ref.read(partyProvider.notifier);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          AvatarView(
+            userId: participant.userId,
+            name: participant.name,
+            size: 38,
+          ),
+          const SizedBox(width: AppSpacing.sm + 2),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  participant.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.text,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                // Under the name, not as a panel heading: it describes this
+                // person, and there is no longer a list for a heading to head.
+                const Text(
+                  'wants to join',
+                  style: TextStyle(
+                    color: AppColors.faint,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          AnalogIconButton(
+            icon: Icons.close,
+            tooltip: 'Reject ${participant.name}',
+            color: AppColors.red,
+            onPressed: () => notifier.reject(participant.userId),
+          ),
+          AnalogIconButton(
+            icon: Icons.check,
+            tooltip: 'Approve ${participant.name}',
+            color: AppColors.green,
+            onPressed: () => notifier.approve(participant.userId),
+          ),
+        ],
       ),
     );
   }

@@ -33,7 +33,22 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   StreamSubscription<bool>? _connectionSubscription;
   bool _subscribed = false;
   bool _recoveringConnection = false;
-  String? _pendingPartyId;
+  String? __pendingPartyId;
+
+  /// The room this client has asked to join and is waiting on.
+  ///
+  /// Published through [partyPendingProvider] rather than kept private,
+  /// because SOMETHING has to tell the guest they are waiting. This used to be
+  /// a whole screen — the sonar waiting room on `/party/:id` — and when that
+  /// route was deleted the state went unrendered: you typed a code, the dialog
+  /// closed, and the app looked exactly as it had before you asked. Silence is
+  /// the one response a request for permission must never get.
+  String? get _pendingPartyId => __pendingPartyId;
+  set _pendingPartyId(String? value) {
+    if (__pendingPartyId == value) return;
+    __pendingPartyId = value;
+    _ref.read(partyPendingProvider.notifier).state = value;
+  }
 
   SocketClient get _socket => _ref.read(socketClientProvider);
   String? get _myUserId => _ref.read(currentUserIdProvider);
@@ -831,6 +846,11 @@ final partyWaitingProvider =
     StateNotifierProvider<PartyWaitingNotifier, List<Participant>>(
       (ref) => PartyWaitingNotifier(),
     );
+
+/// The room this client has asked to join and is waiting for approval on, or
+/// null. Distinct from [partyProvider], which stays null until you are actually
+/// let in — being admitted is the transition between the two.
+final partyPendingProvider = StateProvider<String?>((ref) => null);
 
 /// Whether the chat drawer is on screen.
 ///
