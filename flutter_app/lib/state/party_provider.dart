@@ -86,9 +86,6 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _playback = null;
     _subtitlePreferences = SubtitlePreferences.defaults;
     _ref.read(partyWaitingProvider.notifier).clear();
-    // There is no party surface left to be minimized away from, so the shell's
-    // auto-open must not stay latched shut for the next session.
-    _ref.read(partyMinimizedProvider.notifier).restore();
   }
 
   // ── Socket subscription (idempotent) ─────────────────────────────────────
@@ -835,37 +832,12 @@ final partyWaitingProvider =
       (ref) => PartyWaitingNotifier(),
     );
 
-/// The id of the party whose immersive surface this client has deliberately
-/// MINIMIZED away from, or null.
-///
-/// The party screen's top-left Back is a minimize: the session — socket, A/V,
-/// sync engine, playback — stays live behind the popcorn. Something has to stop
-/// the shell's auto-open from dragging the user straight back in, and it cannot
-/// be `_AppShellState` state: `/party/:id` is a top-level route, so navigating
-/// to it REPLACES the shell, and the shell is built from scratch on the way
-/// back with no memory of why it was entered.
-class PartyMinimizedNotifier extends StateNotifier<String?> {
-  PartyMinimizedNotifier() : super(null);
-
-  void minimize(String partyId) => state = partyId;
-
-  /// Re-entering the player, the room leaving the player surface, and the
-  /// session ending all clear the latch, so the next `watching` stage opens
-  /// normally again.
-  void restore() => state = null;
-}
-
 /// Whether the chat drawer is on screen.
 ///
 /// The notification rail reads it: a message you are already looking at does
 /// not need announcing. It lives here rather than in the party screen's own
 /// state because the rail sits above the router and cannot see into a route.
 final chatDrawerOpenProvider = StateProvider<bool>((ref) => false);
-
-final partyMinimizedProvider =
-    StateNotifierProvider<PartyMinimizedNotifier, String?>(
-      (ref) => PartyMinimizedNotifier(),
-    );
 
 /// The sync engine driving playback from the party timeline (PLAN §3.4). The
 /// real host-authority [SyncEngineImpl] (E5.1); [PartyNotifier] attaches it
