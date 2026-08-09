@@ -212,17 +212,17 @@ test('in a party every participant gets QR, copy, roster and a way out', () => {
   assert.deepEqual(idsOf({ session: session(), role: 'guest' }), ['qr', 'copy', 'roster', 'leave'])
 })
 
-test('the host gets end, collaborative control and the shared browser instead', () => {
-  const ids = idsOf({ session: session({ browserAvailable: true }), role: 'host' })
-  assert.deepEqual(ids, ['qr', 'copy', 'roster', 'collaborative', 'browserStart', 'end'])
+test('the host gets end and collaborative control instead', () => {
+  const ids = idsOf({ session: session(), role: 'host' })
+  assert.deepEqual(ids, ['qr', 'copy', 'roster', 'collaborative', 'end'])
 })
 
 test('every host-only control is marked and says so', () => {
-  const view = partyWidgetView({ session: session({ browserAvailable: true }), role: 'host' })
+  const view = partyWidgetView({ session: session(), role: 'host' })
   const hostOnly = allPartyControls(view).filter((control) => control.hostOnly)
   assert.deepEqual(
     hostOnly.map((c) => c.id).sort(),
-    ['collaborative', 'browserStart', 'end', 'promote:guest-1', 'kick:guest-1'].sort(),
+    ['collaborative', 'end', 'promote:guest-1', 'kick:guest-1'].sort(),
   )
   for (const control of hostOnly) {
     assert.ok(
@@ -234,26 +234,11 @@ test('every host-only control is marked and says so', () => {
 
 test('a guest is never handed a host-only control', () => {
   const view = partyWidgetView({
-    session: session({ browserAvailable: true, waiting: [{ userId: 'w1', name: 'Bo' }] }),
+    session: session({ waiting: [{ userId: 'w1', name: 'Bo' }] }),
     role: 'guest',
   })
   assert.deepEqual(allPartyControls(view).filter((control) => control.hostOnly), [])
   assert.equal(view.alerts, 0)
-})
-
-test('the shared browser follows the server, not the role alone', () => {
-  const host = 'host' as const
-  // No browser in this deployment at all.
-  assert.equal(idsOf({ session: session(), role: host }).includes('browserStart'), false)
-  // Available and idle -> offer it.
-  assert.equal(
-    idsOf({ session: session({ browserAvailable: true }), role: host }).includes('browserStart'),
-    true,
-  )
-  // Already on the stage -> the only thing left to do is close it.
-  const running = idsOf({ session: session({ browserAvailable: true, stage: 'browser' }), role: host })
-  assert.equal(running.includes('browserStart'), false)
-  assert.equal(running.includes('browserStop'), true)
 })
 
 test('the collaborative toggle reports the state it is in', () => {
@@ -333,8 +318,6 @@ function everyControl(): IconControl[] {
   const roles = ['host', 'guest'] as const
   const sessions = [
     session(),
-    session({ browserAvailable: true }),
-    session({ browserAvailable: true, stage: 'browser' }),
     session({ collaborativeControl: true, waiting: [{ userId: 'w1', name: 'Bo' }] }),
   ]
   const live = roles.flatMap((role) =>
@@ -376,10 +359,7 @@ test('no two controls on one surface share a name', () => {
   const surfaces: IconControl[][] = [
     profileTrayControls('idle', true),
     profileTrayControls('current', false),
-    allPartyControls(partyWidgetView({ session: session({ browserAvailable: true }), role: 'host' })),
-    allPartyControls(
-      partyWidgetView({ session: session({ browserAvailable: true, stage: 'browser' }), role: 'host' }),
-    ),
+    allPartyControls(partyWidgetView({ session: session(), role: 'host' })),
     allPartyControls(partyWidgetView({ session: session(), role: 'guest' })),
     partyWidgetView({ session: null, role: null }).controls,
   ]

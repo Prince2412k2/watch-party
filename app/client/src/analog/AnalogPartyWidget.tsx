@@ -108,8 +108,6 @@ export function AnalogPartyWidget() {
     kickUser,
     transferHost,
     setCollaborative,
-    startSharedBrowser,
-    stopSharedBrowser,
   } = useParty()
 
   const [widget, dispatch] = useReducer(widgetNext, closedWidget)
@@ -247,14 +245,6 @@ export function AnalogPartyWidget() {
       case 'collaborative':
         dispatch({ type: 'action', sticky: true })
         setCollaborative(session?.collaborativeControl !== true)
-        return
-      case 'browserStart':
-        dispatch({ type: 'action' })
-        void startSharedBrowser()
-        return
-      case 'browserStop':
-        dispatch({ type: 'action' })
-        stopSharedBrowser()
         return
       case 'end':
         if (!window.confirm('End this party for everyone?')) return
