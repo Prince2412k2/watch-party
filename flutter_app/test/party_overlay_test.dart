@@ -79,7 +79,7 @@ void main() {
             child: Stack(
               children: [
                 Positioned.fill(child: Center(child: Text('library'))),
-                PartyOverlay(),
+                Positioned.fill(child: PartyOverlay()),
               ],
             ),
           ),
@@ -108,6 +108,13 @@ void main() {
     expect(find.byType(FloatingCameraLayer), findsOneWidget);
     expect(find.byType(ChatSlideOver), findsOneWidget);
     expect(find.text('library'), findsOneWidget);
+    // Present in the tree is not the same as visible. The overlay's own Stack
+    // holds only positioned children, so under loose constraints it shrinks to
+    // nothing and every tile inside it collapses while still being findable —
+    // which is exactly how the cameras and the device rail disappeared once
+    // this stopped wrapping the app.
+    expect(tester.getSize(find.byType(FloatingCameraLayer)).height,
+        greaterThan(0));
   });
 
   testWidgets('the chat drawer grows out of the right edge when opened', (
