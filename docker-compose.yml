@@ -1,8 +1,6 @@
 # Unified watch-party deployment — SINGLE source of truth.
 #
 # Core services share watchparty-net so the app reaches them by container name.
-# The optional browser uses separate control, media, and egress networks so it
-# cannot resolve or connect to Jellyfin, Servarr, or qBittorrent containers.
 # The app builds + serves the frontend and exposes /api + Socket.io on one port.
 #
 # Bring up:  docker compose up -d --build
@@ -35,7 +33,7 @@ services:
     image: livekit/livekit-server:latest
     container_name: watchparty-livekit
     restart: unless-stopped
-    networks: [watchparty-net, browser-media-net]
+    networks: [watchparty-net]
     ports:
       - "7880:7880"
       - "7881:7881"
@@ -70,7 +68,7 @@ services:
     build: ./app
     container_name: watchparty-app
     restart: unless-stopped
-    networks: [watchparty-net, browser-control-net]
+    networks: [watchparty-net]
     ports:
       # One port: built web UI + /api + Socket.io + /jellyfin + /livekit proxies.
       # Host 3000 was occupied by an unrelated process on this machine, so the
@@ -94,7 +92,7 @@ services:
       - .env
       - .env.local
     environment:
-      # ── Server → service: INTERNAL container names (never sent to browser) ──
+      # ── Server → service: INTERNAL container names ─────────────────────────
       - JELLYFIN_URL=http://jellyfin:8096
       - LIVEKIT_URL=ws://livekit:7880
       - PARTY_DB_PATH=/app/data/watchparty.sqlite
@@ -103,31 +101,12 @@ services:
       - PROWLARR_URL=http://prowlarr:9696
       - BAZARR_URL=http://bazarr:6767
       - QBITTORRENT_URL=http://qbittorrent:8080
-      # ── Browser → LiveKit: must be reachable from the user's machine. ───────
+      # ── Client → LiveKit: must be reachable from the user's machine. ───────
       # Default is the published host port; behind HTTPS set this (in .env) to
       # the app-origin signaling proxy, e.g. wss://<host>/livekit.
       - LIVEKIT_PUBLIC_URL=${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
       # Extra allowed CORS origin(s), comma-separated (dev + tailnet are built in).
       - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-}
-      # ── Shared browser (off unless BROWSER_ENABLED is set) ──────────────────
-      # The agent is reached by container name on this network. An unreachable or
-      # absent container reads as "the feature is unavailable", never as a fault,
-      # so setting the flag without the container degrades safely.
-      - BROWSER_ENABLED=${BROWSER_ENABLED:-}
-      - BROWSER_AGENT_URL=http://browser-control-gateway:8080
-      - BROWSER_AGENT_TOKEN=${BROWSER_AGENT_TOKEN:-}
-      - BROWSER_LIVEKIT_URL=ws://livekit:7880
-      # Set to every deployment host public/interface address or CIDR. Tailscale,
-      # private, loopback, link-local, and reserved ranges are denied by default.
-      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
-      - BROWSER_HOME_URL=${BROWSER_HOME_URL:-https://www.google.com}
-      - BROWSER_MAX_BITRATE_KBPS=${BROWSER_MAX_BITRATE_KBPS:-2500}
-      # The same two values the container gets below. The server sends them to
-      # clients, which need them to translate a click into a remote coordinate —
-      # so both sides must read one setting, not two.
-      - BROWSER_SCREEN_W=${BROWSER_SCREEN_W:-1280}
-      - BROWSER_SCREEN_H=${BROWSER_SCREEN_H:-720}
-      # ── Serve config ──
       - SERVE_CLIENT=1
       - PORT=3000
     depends_on:
@@ -146,167 +125,6 @@ services:
       qbittorrent:
         condition: service_started
 
-  # ── Shared browser (opt-in) ────────────────────────────────────────────────
-  # A containerised Chromium that publishes its own screen into a party's LiveKit
-  # room. Two switches, both in .env, because they answer different questions:
-  #
-  #   BROWSER_ENABLED=1          does the app offer the feature?
-  #   COMPOSE_PROFILES=browser   does this container exist at all?
-  #
-  # Either one alone is safe: the app treats an unreachable container as
-  # "unavailable", and a container nobody talks to sits idle at near-zero CPU.
-  # See docs/ops/shared-browser.md.
-  browser:
-    build: ./browser
-    container_name: watchparty-browser
-    restart: unless-stopped
-    profiles: [browser]
-    init: true
-    cap_drop: [ALL]
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-      - seccomp:./browser/chromium-seccomp.json
-    pids_limit: 512
-    networks: [browser-media-net, browser-sandbox-net]
-    # No `ports:` on purpose. The control API accepts input injection and must be
-    # reachable only from app/server on this network — publishing it would put a
-    # remote-keyboard endpoint on the host's interfaces.
-    #
-    # Chromium wants real shared memory; on the default 64m it either crashes or
-    # falls back to disk and the framerate collapses. Note that under cgroup v2
-    # these pages count against mem_limit below.
-    shm_size: "1gb"
-    tmpfs:
-      # Chromium profiles: cookies, history, downloads, extensions. On a tmpfs so
-      # a wipe that fails, or a container killed outright, still cannot leak a
-      # signed-in session into the next party.
-      - /profiles:size=512m,mode=0700,uid=10001,gid=10001
-      - /tmp:size=64m,mode=1777,uid=10001,gid=10001
-    volumes:
-      - browser-x11:/tmp/.X11-unix
-      - browser-target-xauth:/target-xauth
-      - browser-pulse:/pulse
-      # Optional corporate TLS-inspection CA. It is imported into each ephemeral
-      # publisher profile and wiped with that session.
-      - ./browser/extra-ca:/opt/browser/extra-ca:ro
-    environment:
-      # Interpolated with :- not :? — a `:?` guard here fails every compose
-      # command in the repo, even ones that do not select this profile.
-      # entrypoint.sh refuses to start without it instead.
-      - BROWSER_AGENT_TOKEN=${BROWSER_AGENT_TOKEN:-}
-      - BROWSER_TARGET_TOKEN=${BROWSER_TARGET_TOKEN:-}
-      - BROWSER_NETWORK_MODE=isolated-sidecars-v1
-      - TARGET_AGENT_URL=http://browser-target:8081
-      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
-      - SCREEN_W=${BROWSER_SCREEN_W:-1280}
-      - SCREEN_H=${BROWSER_SCREEN_H:-720}
-      - SCREEN_FPS=${BROWSER_FPS:-30}
-      - MAX_BITRATE_KBPS=${BROWSER_MAX_BITRATE_KBPS:-2500}
-    # The measured 4-vCPU/3-GiB browser budget is split across the publisher and
-    # untrusted target so neither sidecar can consume the host by itself.
-    cpus: "2.0"
-    mem_limit: 1536m
-    depends_on:
-      livekit:
-        condition: service_started
-      browser-target:
-        condition: service_started
-      browser-egress-proxy:
-        condition: service_started
-
-  # Topology contract for the browser profile:
-  # app -> control gateway -> publisher/controller; publisher -> LiveKit;
-  # target -> filtered egress proxy -> Internet. The target has no app, LiveKit,
-  # core-service, or direct-egress network attachment.
-  browser-target:
-    build: ./browser
-    restart: unless-stopped
-    profiles: [browser]
-    init: true
-    entrypoint: ["python3", "/opt/browser/target_agent.py"]
-    cap_drop: [ALL]
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-      - seccomp:./browser/chromium-seccomp.json
-    pids_limit: 512
-    networks: [browser-sandbox-net]
-    shm_size: "1gb"
-    tmpfs:
-      - /target-state:size=512m,mode=0700,uid=10001,gid=10001
-      - /tmp:size=64m,mode=1777,uid=10001,gid=10001
-    volumes:
-      - browser-x11:/tmp/.X11-unix
-      - browser-target-xauth:/xauth:ro
-      - browser-pulse:/pulse:ro
-      - ./browser/extra-ca:/opt/browser/extra-ca:ro
-    environment:
-      - BROWSER_TARGET_TOKEN=${BROWSER_TARGET_TOKEN:-}
-      - BROWSER_NETWORK_MODE=isolated-sidecars-v1
-      - TARGET_PROXY_URL=http://browser-egress-proxy:8888
-      - XAUTHORITY=/xauth/authority
-      - PULSE_SERVER=unix:/pulse/native
-      - PULSE_COOKIE=/pulse/cookie
-      - SCREEN_W=${BROWSER_SCREEN_W:-1280}
-      - SCREEN_H=${BROWSER_SCREEN_H:-720}
-    cpus: "2.0"
-    mem_limit: 1536m
-    depends_on:
-      browser-egress-proxy:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  browser-egress-proxy:
-    build: ./browser
-    restart: unless-stopped
-    profiles: [browser]
-    init: true
-    entrypoint: ["python3", "/opt/browser/network.py", "proxy", "--port", "8888"]
-    cap_drop: [ALL]
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    pids_limit: 96
-    networks: [browser-sandbox-net, browser-egress-net]
-    environment:
-      - BROWSER_DENY_ADDRESSES=${BROWSER_DENY_ADDRESSES:-}
-      - VPS_PUBLIC_IP=${VPS_PUBLIC_IP:-}
-      - REQUIRE_DENY_ADDRESSES=1
-      - PROXY_MAX_CONNECTIONS=${BROWSER_PROXY_MAX_CONNECTIONS:-64}
-      - PROXY_IDLE_TIMEOUT_SECONDS=${BROWSER_PROXY_IDLE_TIMEOUT_SECONDS:-30}
-      - PROXY_MAX_TUNNEL_SECONDS=${BROWSER_PROXY_MAX_TUNNEL_SECONDS:-600}
-    cpus: "0.25"
-    mem_limit: 128m
-    healthcheck:
-      disable: true
-
-  browser-control-gateway:
-    build: ./browser
-    restart: unless-stopped
-    profiles: [browser]
-    init: true
-    entrypoint: ["python3", "/opt/browser/network.py", "gateway", "8080:browser:8080"]
-    cap_drop: [ALL]
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    pids_limit: 32
-    cpus: "0.10"
-    mem_limit: 64m
-    networks: [browser-control-net, browser-sandbox-net]
-    depends_on:
-      browser:
-        condition: service_started
-    healthcheck:
-      disable: true
-
-  # ── Media-acquisition stack (Servarr + qBittorrent) ────────────────────────
-  # All on watchparty-net so the app reaches them by name and they reach each
-  # other (Prowlarr -> Sonarr, Sonarr -> qBittorrent). Config + media bind
-  # mounts are preserved from the standalone servarr stack this replaced.
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
     container_name: watchparty-prowlarr
@@ -422,23 +240,6 @@ services:
       - "${QBITTORRENT_BT_PORT:-6881}:6881/udp"
 
 networks:
-  # Core application network. The browser is deliberately not attached.
   watchparty-net:
     name: watchparty-net
     driver: bridge
-  browser-control-net:
-    driver: bridge
-    internal: true
-  browser-media-net:
-    driver: bridge
-    internal: true
-  browser-egress-net:
-    driver: bridge
-  browser-sandbox-net:
-    driver: bridge
-    internal: true
-
-volumes:
-  browser-x11:
-  browser-target-xauth:
-  browser-pulse:

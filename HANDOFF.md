@@ -94,22 +94,7 @@ For the VPS there is a live SSH session in a Herdr pane — find it with
 `herdr pane list` and look for the one whose output is on the box. It is
 sometimes occupied by a TUI (lazydocker); commands silently do nothing then.
 
----
-
-## 3. What the shared browser needs
-
-It is OFF by default and prod never enabled it. `docs/ops/shared-browser.md` is
-accurate. Needs `BROWSER_ENABLED=1`, `COMPOSE_PROFILES=browser`, and two
-independently-generated tokens in `secrets/.env`.
-
-**Not done deliberately:** `BROWSER_AGENT_TOKEN` gates an API that accepts
-input injection, and `BROWSER_DENY_ADDRESSES` is what stops an untrusted page
-reaching the admin UIs — every one of which is published on `0.0.0.0` and held
-off the internet only by the firewall. Needs the user's explicit go-ahead.
-
----
-
-## 4. Architecture worth knowing
+## 3. Architecture worth knowing
 
 **Design tokens are generated.** Edit ONLY
 `app/shared/design/analog-tokens.json`, then run
@@ -131,7 +116,7 @@ both the profile control and the popcorn control.
 
 ---
 
-## 5. Traps, all hit for real
+## 4. Traps, all hit for real
 
 1. `NeverScrollableScrollPhysics` does NOT remove a scrollbar. Physics governs
    input; the bar is added by the desktop `ScrollBehavior` and paints whenever
@@ -159,7 +144,7 @@ both the profile control and the popcorn control.
 
 ---
 
-## 6. Outstanding
+## 5. Outstanding
 
 **Asked for, not done:**
 - **Unread badge / notifications outside the player.** Chat toasts exist ONLY
@@ -185,7 +170,7 @@ fallback and shows a bare placeholder.
 
 ---
 
-## 7. How the user works
+## 6. How the user works
 
 Fast, visual, iterative. Screenshots at `~/projects/*.png` — **read them off
 disk**, and check the file, because a pair has twice been byte-identical.

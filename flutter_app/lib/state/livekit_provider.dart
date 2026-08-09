@@ -19,7 +19,6 @@ class LiveKitState {
     this.hideSelf = false,
     this.participants = const [],
     this.tracks = const [],
-    this.screenShare,
     this.error,
   });
 
@@ -36,8 +35,6 @@ class LiveKitState {
   /// Render-ready per-participant track state — what [CameraGrid] consumes.
   final List<ParticipantTrack> tracks;
 
-  /// The shared browser's screen, when one is running. Never in [tracks].
-  final lk.VideoTrack? screenShare;
   final String? error;
 
   LiveKitState copyWith({
@@ -48,8 +45,6 @@ class LiveKitState {
     bool? hideSelf,
     List<Participant>? participants,
     List<ParticipantTrack>? tracks,
-    lk.VideoTrack? screenShare,
-    bool clearScreenShare = false,
     String? error,
   }) => LiveKitState(
     connected: connected ?? this.connected,
@@ -59,7 +54,6 @@ class LiveKitState {
     hideSelf: hideSelf ?? this.hideSelf,
     participants: participants ?? this.participants,
     tracks: tracks ?? this.tracks,
-    screenShare: clearScreenShare ? null : (screenShare ?? this.screenShare),
     error: error,
   );
 }
@@ -82,8 +76,6 @@ class LiveKitNotifier extends StateNotifier<LiveKitState> {
       participants: s.participants
           .map((t) => Participant(userId: t.identity, name: t.name))
           .toList(),
-      screenShare: s.screenShare,
-      clearScreenShare: s.screenShare == null,
       error: s.error,
     );
   }
