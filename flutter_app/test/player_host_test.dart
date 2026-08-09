@@ -47,7 +47,7 @@ void main() {
             child: Stack(
               children: [
                 Positioned.fill(child: Center(child: Text('library'))),
-                PlayerHost(),
+                Positioned.fill(child: PlayerHost()),
               ],
             ),
           ),
