@@ -66,18 +66,6 @@ class AnalogChoiceGroup<T> {
 Future<void> showAnalogSelect<T>({
   required BuildContext context,
 
-  /// The context the MENU ROUTE is pushed on, when it differs from the one the
-  /// anchor lives in.
-  ///
-  /// `showMenu` needs a Navigator above its context. Chrome mounted in
-  /// `MaterialApp.builder` — the player's transport bar, and anything else
-  /// living above the router — has an Overlay but no Navigator, so opening any
-  /// menu from there threw and the control looked simply dead. The caller can
-  /// hand in a context that does have one.
-  ///
-  /// Position is unaffected: it is computed from [anchor]'s global rect, not
-  /// from this.
-  BuildContext? routeContext,
   required GlobalKey anchor,
   required List<AnalogChoiceGroup<T>> groups,
   required T? selected,
@@ -102,7 +90,7 @@ Future<void> showAnalogSelect<T>({
   final anchorRect = topLeft & box.size;
 
   final chosen = await showMenu<AnalogChoice<T>>(
-    context: routeContext ?? context,
+    context: context,
     // Hangs off the control that opened it, growing downwards, and flips
     // itself when there is no room below.
     position: RelativeRect.fromRect(

@@ -22,7 +22,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analog/player/auto_hide_controller.dart';
 import '../analog/player_core.dart';
-import '../app/router.dart';
 import '../party/party_controls.dart';
 import '../state/state.dart';
 import '../data/api_client.dart';
@@ -40,9 +39,7 @@ const double _playerAspect = 16 / 9;
 const double _defaultFloatingWidth = 300;
 
 class PlayerHost extends ConsumerStatefulWidget {
-  const PlayerHost({super.key, required this.child});
-
-  final Widget child;
+  const PlayerHost({super.key});
 
   @override
   ConsumerState<PlayerHost> createState() => _PlayerHostState();
@@ -85,11 +82,12 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 
   Future<void> _openPartyMenu() async {
     if (_menuOpen) return;
-    final navigator = rootNavigatorKey.currentContext;
-    if (navigator == null) return;
     _menuOpen = true;
     await showDialog<void>(
-      context: navigator,
+      // The chrome's own Navigator, directly above. This briefly went through
+      // rootNavigatorKey and silently did NOTHING whenever the key had no
+      // context — a right-click that opened no menu and reported no error.
+      context: context,
       barrierColor: const Color(0xB8000000),
       builder: (_) => const HostControlsDialog(),
     );
@@ -274,7 +272,6 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 
     return Stack(
       children: [
-        Positioned.fill(child: widget.child),
         if (now.isOpen)
           Positioned.fill(
             child: LayoutBuilder(

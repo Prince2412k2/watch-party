@@ -42,9 +42,7 @@ const double kChatDrawerWidth = 360;
 /// then the two notification layers (join requests, A/V errors — never faded,
 /// never auto-hidden), then chat on top.
 class PartyOverlay extends ConsumerWidget {
-  const PartyOverlay({super.key, required this.child});
-
-  final Widget child;
+  const PartyOverlay({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -53,7 +51,6 @@ class PartyOverlay extends ConsumerWidget {
 
     return Stack(
       children: [
-        Positioned.fill(child: child),
         if (party != null) ...[
           // Cameras keep clear of the drawer by insetting their layer, so a
           // tile can neither hide under chat nor straddle its border. Nothing

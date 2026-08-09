@@ -16,7 +16,6 @@ import '../analog/player/analog_timeline.dart';
 import '../analog/player/analog_volume.dart';
 import '../analog/player/auto_hide_controller.dart';
 import '../analog/player_core.dart';
-import '../app/router.dart';
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
@@ -889,13 +888,11 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (widget.controller is! MediaKitPlayerController) return;
     _hold('subtitleSettings'); // keep the chrome awake while the dialog is open
     await showDialog<void>(
-      // The root navigator, not this one. The player is mounted in
-      // `MaterialApp.builder`, which wraps the Navigator rather than living
-      // inside it, so `Navigator.of(context)` from here finds nothing and this
-      // dialog threw instead of opening. (The comment above used to say the
-      // chrome lives under a Scaffold; that stopped being true when the player
-      // moved above the router.)
-      context: rootNavigatorKey.currentContext ?? context,
+      // Plain `context`: the chrome sits inside its own Navigator now, so a
+      // dialog opened from here lands above the player rather than behind it.
+      // (The comment above used to say the chrome lives under a Scaffold; that
+      // stopped being true when the player moved above the router.)
+      context: context,
       barrierColor: Colors.black54,
       builder: (_) => _SubtitleSettingsDialog(
         scale: _subScale,
@@ -1178,9 +1175,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     _hold('audioPicker');
     await showAnalogSelect<String?>(
       context: context,
-      // The player is mounted above the router, so this context has no
-      // Navigator; the menu route needs one.
-      routeContext: rootNavigatorKey.currentContext,
       anchor: _settingsAnchor,
       selected: _selectedAudio,
       groups: [
@@ -1205,9 +1199,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     _hold('speedPicker');
     await showAnalogSelect<double>(
       context: context,
-      // The player is mounted above the router, so this context has no
-      // Navigator; the menu route needs one.
-      routeContext: rootNavigatorKey.currentContext,
       anchor: _settingsAnchor,
       selected: _rate,
       width: 200,
@@ -2237,9 +2228,6 @@ class _FontFieldState extends State<_FontField> {
             ? null
             : () => showAnalogSelect<String>(
                 context: context,
-                // The player is mounted above the router, so this context has no
-                // Navigator; the menu route needs one.
-                routeContext: rootNavigatorKey.currentContext,
                 anchor: _anchor,
                 selected: widget.value,
                 groups: [
@@ -2310,9 +2298,6 @@ class _SubtitleControl extends StatelessWidget {
     onMenuChanged(true);
     await showAnalogSelect<String?>(
       context: context,
-      // The player is mounted above the router, so this context has no
-      // Navigator; the menu route needs one.
-      routeContext: rootNavigatorKey.currentContext,
       anchor: anchor,
       selected: selected,
       groups: [
