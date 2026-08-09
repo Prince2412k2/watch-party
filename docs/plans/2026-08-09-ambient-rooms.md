@@ -105,7 +105,32 @@ Removes the local `_isFullscreen`/`_stopPlayback`/`_exit` machinery.
 
 **Verify:** navigate away mid-playback → position keeps advancing.
 
-### T6 — Delete `/party/:id`, re-home its chrome (FR-010, FR-013)
+### T6 — Delete `/party/:id`, re-home its chrome (FR-010, FR-013) — IN PROGRESS
+
+**Done:** the keystone. `PlayerHost` now carries every party prop the party's
+own `PlayerView` carried (canControl, canManagePartyMedia, partyPlayback,
+subtitle preferences, track selection, PTT, chat toasts, sync-authored seeks),
+plus the auto-hide controller. There is no longer a second player to delete.
+
+**Remaining, in this order — each step must land before the next:**
+
+1. Extract `_JoinRequestsLayer`, `_ChatSlideOver` and the camera layer out of
+   `party_screen.dart` into a `PartyOverlay` widget, mounted at the root beside
+   `PlayerHost`. **Do this BEFORE removing the route**: today they render only
+   inside `PartyScreen`, so removing the route first would leave a room with no
+   cameras and no chat.
+2. Remove `_openParty` / `partyPlayerRoute` forced navigation from
+   `app_shell.dart` (it drags the user onto `/party/:id` whenever a room starts
+   watching) and `partyMinimizedProvider`, which only exists to fight it.
+3. Remove the `/party/:id` route from `router.dart` and delete
+   `party_screen.dart`.
+4. `_HostControlsDialog` and `_DeviceRail` move to the popcorn (folds into T7).
+5. `party_minimize_test.dart` tests the navigation latch being removed and will
+   need rewriting against the new model.
+
+`_LobbyStage`, `_WaitingRoom`, `_PartyEntry` and `_Connecting` are deleted
+outright: a room with no title selected shows nothing but its tiles.
+
 
 `PartyScreen` is ~2,500 lines. Its parts, and where each goes:
 
