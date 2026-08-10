@@ -24,8 +24,10 @@ class _CountingApi extends MockApiClient {
 /// AppShell chrome renders analog tooltips/badges and can raise notices, so it
 /// needs the theme plus an [AnalogToastHost] above it — mirror app.dart's
 /// builder wrap here.
-Widget _analog(BuildContext context, Widget? child) =>
-    Theme(data: AppTheme.dark, child: AnalogToastHost(child: child!));
+Widget _analog(BuildContext context, Widget? child) => Theme(
+  data: AppTheme.dark,
+  child: AnalogToastHost(child: child!),
+);
 
 /// A bare `ProviderScope` defaults `authProvider` to its un-initialized,
 /// logged-out `AuthState()`. Signed-in tests need an authenticated override to
@@ -146,14 +148,6 @@ void main() {
     });
   });
 
-  // ── The room's film opens in place (audit #61) ─────────────────────────
-  //
-  // This used to be about navigation: a watching room pulled the client onto
-  // `/party/:id`, and a latch existed purely to stop it dragging you back after
-  // you minimised. Being in a room took your app away. Now the film opens in
-  // the app's one player, over the screen you are already on, and minimising is
-  // a property of the player rather than a route you are absent from.
-
   const watching = PartyState(
     id: 'ROOM1234',
     hostId: 'u1',
@@ -188,7 +182,7 @@ void main() {
     return container;
   }
 
-  testWidgets("a watching room's film opens without leaving the shell", (
+  testWidgets("a watching room does not open or replace the user's movie", (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -199,14 +193,12 @@ void main() {
     await tester.pumpAndSettle();
 
     final now = container.read(nowPlayingProvider);
-    expect(now.itemId, 'movie-1');
-    expect(now.fromParty, isTrue);
-    expect(now.isExpanded, isTrue);
-    // Still on Movies. Nothing navigated.
+    expect(now.itemId, isNull);
+    expect(now.isOpen, isFalse);
     expect(find.text('Movies'), findsOneWidget);
   });
 
-  testWidgets('a minimised film is not re-expanded by the room repeating itself', (
+  testWidgets('party updates do not affect local playback presentation', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -215,51 +207,14 @@ void main() {
     await tester.pumpWidget(shellRouter(container));
     await tester.pumpAndSettle();
 
+    container.read(nowPlayingProvider.notifier).open(itemId: 'my-movie');
     container.read(nowPlayingProvider.notifier).minimise();
-    // A `party:state` heartbeat: same title, over and over.
     container.read(partyProvider.notifier).setState(watching);
     await tester.pumpAndSettle();
 
     expect(container.read(nowPlayingProvider).isFloating, isTrue);
-    // Minimising is not a leave: the session is untouched behind the popcorn.
+    expect(container.read(nowPlayingProvider).itemId, 'my-movie');
     expect(container.read(partyProvider), isNotNull);
-  });
-
-  testWidgets('a NEW title from the room takes the screen again', (
-    tester,
-  ) async {
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.binding.setSurfaceSize(const Size(1200, 800));
-    final container = partyContainer();
-    await tester.pumpWidget(shellRouter(container));
-    await tester.pumpAndSettle();
-    container.read(nowPlayingProvider.notifier).minimise();
-
-    container
-        .read(partyProvider.notifier)
-        .setState(watching.copyWith(mediaItemId: 'movie-2'));
-    await tester.pumpAndSettle();
-
-    expect(container.read(nowPlayingProvider).itemId, 'movie-2');
-    expect(container.read(nowPlayingProvider).isExpanded, isTrue);
-  });
-
-  test('partyWatchingItemId names a title only for a watching room', () {
-    expect(
-      partyWatchingItemId(
-        const PartyState(
-          id: 'ROOM1234',
-          hostId: 'host',
-          stage: 'watching',
-          mediaItemId: 'movie-1',
-        ),
-      ),
-      'movie-1',
-    );
-    expect(
-      partyWatchingItemId(const PartyState(id: 'ROOM1234', hostId: 'host')),
-      isNull,
-    );
   });
 
   testWidgets('a guest in a room keeps a fully interactive app', (

@@ -1,5 +1,5 @@
 import 'package:fake_async/fake_async.dart';
-import 'package:flutter/widgets.dart' show Rect;
+import 'package:flutter/widgets.dart' show Rect, Size;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:watchparty/app/desktop_lifecycle.dart';
@@ -8,6 +8,30 @@ import 'package:watchparty/app/desktop_lifecycle.dart';
 /// of a drag, so everything here is about what happens when the geometry
 /// changes faster than it can be stored.
 void main() {
+  test('restored bounds must leave a usable area on a current display', () {
+    const display = Rect.fromLTWH(0, 0, 1920, 1080);
+
+    expect(
+      windowBoundsAreVisible(const Rect.fromLTWH(1800, 100, 400, 400), const [
+        display,
+      ]),
+      isTrue,
+    );
+    expect(
+      windowBoundsAreVisible(const Rect.fromLTWH(2000, 100, 400, 400), const [
+        display,
+      ]),
+      isFalse,
+    );
+  });
+
+  test('restored size is clamped to the current display', () {
+    expect(
+      clampWindowSize(const Size(3000, 2000), const Size(1920, 1080)),
+      const Size(1920, 1080),
+    );
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const someBounds = Rect.fromLTWH(120, 80, 1400, 900);
@@ -78,30 +102,33 @@ void main() {
       ]);
     });
 
-    test('closing mid-drag writes the pending geometry instead of losing it', () async {
-      var writes = 0;
-      WindowGeometry? stored;
-      final recorder = recorderThat(
-        // Long enough that the timer would never fire before `exit(0)`.
-        wait: const Duration(seconds: 30),
-        read: () async =>
-            WindowGeometry.from(bounds: someBounds, maximized: false),
-        write: (geometry) async {
-          writes++;
-          stored = geometry;
-        },
-      );
+    test(
+      'closing mid-drag writes the pending geometry instead of losing it',
+      () async {
+        var writes = 0;
+        WindowGeometry? stored;
+        final recorder = recorderThat(
+          // Long enough that the timer would never fire before `exit(0)`.
+          wait: const Duration(seconds: 30),
+          read: () async =>
+              WindowGeometry.from(bounds: someBounds, maximized: false),
+          write: (geometry) async {
+            writes++;
+            stored = geometry;
+          },
+        );
 
-      recorder.schedule();
-      expect(recorder.hasPendingWrite, isTrue);
+        recorder.schedule();
+        expect(recorder.hasPendingWrite, isTrue);
 
-      // What _shutdown() awaits.
-      await recorder.flush();
+        // What _shutdown() awaits.
+        await recorder.flush();
 
-      expect(writes, 1);
-      expect(recorder.hasPendingWrite, isFalse);
-      expect(stored!.normalBounds, someBounds);
-    });
+        expect(writes, 1);
+        expect(recorder.hasPendingWrite, isFalse);
+        expect(stored!.normalBounds, someBounds);
+      },
+    );
 
     test('a write that throws neither escapes nor wedges the queue', () async {
       var writes = 0;
@@ -123,53 +150,65 @@ void main() {
   });
 
   group('maximized windows', () {
-    test('report no normal bounds, because the live ones are the maximized frame', () {
-      final maximized = WindowGeometry.from(
-        bounds: const Rect.fromLTWH(0, 0, 3840, 2160),
-        maximized: true,
-      );
-      expect(maximized.normalBounds, isNull);
-      expect(maximized.maximized, isTrue);
-
-      final restored = WindowGeometry.from(bounds: someBounds, maximized: false);
-      expect(restored.normalBounds, someBounds);
-      expect(restored.maximized, isFalse);
-    });
-
-    test('keep the size and position the window will unmaximize back to', () async {
-      SharedPreferences.setMockInitialValues(<String, Object>{});
-      final prefs = await SharedPreferences.getInstance();
-
-      await persistWindowGeometry(
-        prefs,
-        WindowGeometry.from(bounds: someBounds, maximized: false),
-      );
-      // Then the user maximizes: the frame is now the whole screen.
-      await persistWindowGeometry(
-        prefs,
-        WindowGeometry.from(
+    test(
+      'report no normal bounds, because the live ones are the maximized frame',
+      () {
+        final maximized = WindowGeometry.from(
           bounds: const Rect.fromLTWH(0, 0, 3840, 2160),
           maximized: true,
-        ),
-      );
+        );
+        expect(maximized.normalBounds, isNull);
+        expect(maximized.maximized, isTrue);
 
-      // The stored geometry is still the window, not the screen. Writing the
-      // maximized frame here is what used to make an unmaximize (or the next
-      // launch) come up at 3840x2160 with the real window size gone.
-      expect(prefs.getDouble(kWindowXPref), 120);
-      expect(prefs.getDouble(kWindowYPref), 80);
-      expect(prefs.getDouble(kWindowWPref), 1400);
-      expect(prefs.getDouble(kWindowHPref), 900);
-      expect(prefs.getBool(kWindowMaximizedPref), isTrue);
-    });
+        final restored = WindowGeometry.from(
+          bounds: someBounds,
+          maximized: false,
+        );
+        expect(restored.normalBounds, someBounds);
+        expect(restored.maximized, isFalse);
+      },
+    );
 
-    test('the persisted keys are the schema the installed base already has', () {
-      // A rename silently loses everyone's window position, so it is pinned.
-      expect(kWindowXPref, 'desktop.window.x');
-      expect(kWindowYPref, 'desktop.window.y');
-      expect(kWindowWPref, 'desktop.window.w');
-      expect(kWindowHPref, 'desktop.window.h');
-      expect(kWindowMaximizedPref, 'desktop.window.maximized');
-    });
+    test(
+      'keep the size and position the window will unmaximize back to',
+      () async {
+        SharedPreferences.setMockInitialValues(<String, Object>{});
+        final prefs = await SharedPreferences.getInstance();
+
+        await persistWindowGeometry(
+          prefs,
+          WindowGeometry.from(bounds: someBounds, maximized: false),
+        );
+        // Then the user maximizes: the frame is now the whole screen.
+        await persistWindowGeometry(
+          prefs,
+          WindowGeometry.from(
+            bounds: const Rect.fromLTWH(0, 0, 3840, 2160),
+            maximized: true,
+          ),
+        );
+
+        // The stored geometry is still the window, not the screen. Writing the
+        // maximized frame here is what used to make an unmaximize (or the next
+        // launch) come up at 3840x2160 with the real window size gone.
+        expect(prefs.getDouble(kWindowXPref), 120);
+        expect(prefs.getDouble(kWindowYPref), 80);
+        expect(prefs.getDouble(kWindowWPref), 1400);
+        expect(prefs.getDouble(kWindowHPref), 900);
+        expect(prefs.getBool(kWindowMaximizedPref), isTrue);
+      },
+    );
+
+    test(
+      'the persisted keys are the schema the installed base already has',
+      () {
+        // A rename silently loses everyone's window position, so it is pinned.
+        expect(kWindowXPref, 'desktop.window.x');
+        expect(kWindowYPref, 'desktop.window.y');
+        expect(kWindowWPref, 'desktop.window.w');
+        expect(kWindowHPref, 'desktop.window.h');
+        expect(kWindowMaximizedPref, 'desktop.window.maximized');
+      },
+    );
   });
 }

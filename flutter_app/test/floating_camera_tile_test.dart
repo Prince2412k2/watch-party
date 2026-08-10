@@ -21,8 +21,10 @@ void main() {
     });
 
     test('width clamps to the minimum, and to the stage rather than a cap', () {
-      expect(FloatingTileGeometry.clampWidth(10, stage),
-          FloatingTileGeometry.minWidth);
+      expect(
+        FloatingTileGeometry.clampWidth(10, stage),
+        FloatingTileGeometry.minWidth,
+      );
 
       // There is no fixed maximum any more — a hard cap made the resize handle
       // stop responding partway through a drag. The tile grows until it runs
@@ -37,28 +39,39 @@ void main() {
     test('offset is clamped within stage bounds', () {
       final tile = FloatingTileGeometry.tileSize(160, collapsed: false);
       // Dragged far off the bottom-right corner.
-      final clamped =
-          FloatingTileGeometry.clamp(const Offset(5000, 5000), tile, stage);
+      final clamped = FloatingTileGeometry.clamp(
+        const Offset(5000, 5000),
+        tile,
+        stage,
+      );
       expect(clamped.dx, stage.width - tile.width);
       expect(clamped.dy, stage.height - tile.height);
       // Dragged off the top-left.
-      final clamped2 =
-          FloatingTileGeometry.clamp(const Offset(-500, -500), tile, stage);
+      final clamped2 = FloatingTileGeometry.clamp(
+        const Offset(-500, -500),
+        tile,
+        stage,
+      );
       expect(clamped2, Offset.zero);
     });
 
     test('shrinking the stage re-clamps a previously valid offset', () {
       final tile = FloatingTileGeometry.tileSize(160, collapsed: false);
       const offset = Offset(700, 380); // valid in 800x450
-      final small = FloatingTileGeometry.clamp(offset, tile, const Size(300, 200));
+      final small = FloatingTileGeometry.clamp(
+        offset,
+        tile,
+        const Size(300, 200),
+      );
       expect(small.dx, 300 - tile.width);
       expect(small.dy, 200 - tile.height);
     });
 
     test('cascade anchors tiles at the bottom-right, stacked upward', () {
       final tile = FloatingTileGeometry.tileSize(
-          FloatingTileGeometry.defaultWidth,
-          collapsed: false);
+        FloatingTileGeometry.defaultWidth,
+        collapsed: false,
+      );
       final a0 = FloatingTileGeometry.cascadeAnchor(0, tile, stage);
       final a1 = FloatingTileGeometry.cascadeAnchor(1, tile, stage);
       expect(a0.dx, a1.dx); // same right-aligned column
@@ -66,6 +79,30 @@ void main() {
       // Both stay inside the stage.
       expect(a0.dx + tile.width, lessThanOrEqualTo(stage.width));
       expect(a0.dy + tile.height, lessThanOrEqualTo(stage.height));
+    });
+
+    test('movie tiles settle at the nearest corner', () {
+      const tile = Size(200, 120);
+
+      expect(
+        FloatingTileGeometry.snapToNearestCorner(
+          const Offset(500, 300),
+          tile,
+          stage,
+        ),
+        Offset(
+          stage.width - tile.width - FloatingTileGeometry.margin,
+          stage.height - tile.height - FloatingTileGeometry.margin,
+        ),
+      );
+      expect(
+        FloatingTileGeometry.snapToNearestCorner(
+          const Offset(100, 50),
+          tile,
+          stage,
+        ),
+        const Offset(FloatingTileGeometry.margin, FloatingTileGeometry.margin),
+      );
     });
   });
 
@@ -81,35 +118,41 @@ void main() {
       var offset = const Offset(100, 100);
       const size = Size(160, 146);
 
-      await tester.pumpWidget(_withProviders(MaterialApp(
-        home: Scaffold(
-          body: StatefulBuilder(
-            builder: (context, setState) => Stack(
-              children: [
-                Positioned(
-                  left: offset.dx,
-                  top: offset.dy,
-                  width: size.width,
-                  height: size.height,
-                  child: FloatingCameraTile(
-                    track: track,
-                    collapsed: false,
-                    onDrag: (d) => setState(() => offset += d),
-                    onDragEnd: () {},
-                    onResize: (_) {},
-                    onToggleCollapse: () {},
-                  ),
+      await tester.pumpWidget(
+        _withProviders(
+          MaterialApp(
+            home: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) => Stack(
+                  children: [
+                    Positioned(
+                      left: offset.dx,
+                      top: offset.dy,
+                      width: size.width,
+                      height: size.height,
+                      child: FloatingCameraTile(
+                        track: track,
+                        collapsed: false,
+                        onDrag: (d) => setState(() => offset += d),
+                        onDragEnd: () {},
+                        onResize: (_) {},
+                        onToggleCollapse: () {},
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
-      )));
+      );
 
       final before = tester.getTopLeft(find.byType(FloatingCameraTile));
       // Drag on the header (top ~13px of the tile).
       await tester.drag(
-          find.byIcon(Icons.drag_indicator), const Offset(40, 30));
+        find.byIcon(Icons.drag_indicator),
+        const Offset(40, 30),
+      );
       await tester.pumpAndSettle();
       final after = tester.getTopLeft(find.byType(FloatingCameraTile));
 
@@ -117,32 +160,37 @@ void main() {
       expect(after.dy, greaterThan(before.dy));
     });
 
-    testWidgets('dragging the resize handle reports resize deltas',
-        (tester) async {
+    testWidgets('dragging the resize handle reports resize deltas', (
+      tester,
+    ) async {
       var resized = Offset.zero;
 
-      await tester.pumpWidget(_withProviders(MaterialApp(
-        home: Scaffold(
-          body: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                top: 0,
-                width: 160,
-                height: 146,
-                child: FloatingCameraTile(
-                  track: track,
-                  collapsed: false,
-                  onDrag: (_) {},
-                  onDragEnd: () {},
-                  onResize: (d) => resized += d,
-                  onToggleCollapse: () {},
-                ),
+      await tester.pumpWidget(
+        _withProviders(
+          MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    width: 160,
+                    height: 146,
+                    child: FloatingCameraTile(
+                      track: track,
+                      collapsed: false,
+                      onDrag: (_) {},
+                      onDragEnd: () {},
+                      onResize: (d) => resized += d,
+                      onToggleCollapse: () {},
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
-      )));
+      );
 
       await tester.drag(find.byIcon(Icons.south_east), const Offset(30, 30));
       await tester.pump();

@@ -17,6 +17,7 @@ import 'package:watchparty/analog/player/analog_volume.dart';
 import 'package:watchparty/analog/player/auto_hide_controller.dart';
 import 'package:watchparty/analog/player_core.dart';
 import 'package:watchparty/ui/analog_tokens.dart';
+import 'package:watchparty/ui/palette.dart';
 
 const _track = Rect.fromLTWH(0, 0, 100, 2);
 
@@ -36,59 +37,71 @@ void main() {
       expect(rects[1].right, 80);
       // The engine can report ranges that touch to the pixel; the gap is only
       // opened where one is needed.
-      expect(rects[1].left - rects[0].right, greaterThanOrEqualTo(
-        AnalogHairline.rangeGapPx,
-      ));
+      expect(
+        rects[1].left - rects[0].right,
+        greaterThanOrEqualTo(AnalogHairline.rangeGapPx),
+      );
     });
 
     test('a boundary tighter than the gap is opened up by shortening the left '
         'span, never by moving the right one', () {
-      final rects = timelineSegments(
-        const [TimelineRange(0, 0.5), TimelineRange(0.505, 1)],
-        _track,
-      );
+      final rects = timelineSegments(const [
+        TimelineRange(0, 0.5),
+        TimelineRange(0.505, 1),
+      ], _track);
       expect(rects, hasLength(2));
       // The later range still starts exactly where it starts.
       expect(rects[1].left, closeTo(50.5, 1e-9));
       expect(rects[1].left - rects[0].right, AnalogHairline.rangeGapPx);
     });
 
-    test('contiguous and overlapping ranges merge instead of showing a seam', () {
-      expect(
-        timelineSegments(
-          const [TimelineRange(0, 0.4), TimelineRange(0.4, 0.9)],
-          _track,
-        ),
-        [const Rect.fromLTWH(0, 0, 90, 2)],
-      );
-      expect(
-        timelineSegments(
-          const [TimelineRange(0.2, 0.6), TimelineRange(0.1, 0.3)],
-          _track,
-        ),
-        [const Rect.fromLTWH(10, 0, 50, 2)],
-      );
-    });
+    test(
+      'contiguous and overlapping ranges merge instead of showing a seam',
+      () {
+        expect(
+          timelineSegments(const [
+            TimelineRange(0, 0.4),
+            TimelineRange(0.4, 0.9),
+          ], _track),
+          [const Rect.fromLTWH(0, 0, 90, 2)],
+        );
+        expect(
+          timelineSegments(const [
+            TimelineRange(0.2, 0.6),
+            TimelineRange(0.1, 0.3),
+          ], _track),
+          [const Rect.fromLTWH(10, 0, 50, 2)],
+        );
+      },
+    );
 
     test('empty, inverted and out-of-bounds ranges are dropped or clamped', () {
       expect(timelineSegments(const [], _track), isEmpty);
-      expect(timelineSegments(const [TimelineRange(0.5, 0.5)], _track), isEmpty);
-      expect(timelineSegments(const [TimelineRange(0.8, 0.2)], _track), isEmpty);
       expect(
-        timelineSegments(const [TimelineRange(-1, 2)], _track),
-        [const Rect.fromLTWH(0, 0, 100, 2)],
+        timelineSegments(const [TimelineRange(0.5, 0.5)], _track),
+        isEmpty,
       );
+      expect(
+        timelineSegments(const [TimelineRange(0.8, 0.2)], _track),
+        isEmpty,
+      );
+      expect(timelineSegments(const [TimelineRange(-1, 2)], _track), [
+        const Rect.fromLTWH(0, 0, 100, 2),
+      ]);
       expect(timelineSegments(const [TimelineRange(0, 1)], Rect.zero), isEmpty);
     });
 
-    test('a sliver too narrow to survive the gap is dropped rather than drawn', () {
-      final rects = timelineSegments(
-        const [TimelineRange(0.5, 0.505), TimelineRange(0.51, 1)],
-        _track,
-      );
-      expect(rects, hasLength(1));
-      expect(rects.single.left, closeTo(51, 1e-9));
-    });
+    test(
+      'a sliver too narrow to survive the gap is dropped rather than drawn',
+      () {
+        final rects = timelineSegments(const [
+          TimelineRange(0.5, 0.505),
+          TimelineRange(0.51, 1),
+        ], _track);
+        expect(rects, hasLength(1));
+        expect(rects.single.left, closeTo(51, 1e-9));
+      },
+    );
 
     test('the visible line thickens on activity without changing the row', () {
       const size = Size(200, AnalogHairline.hitPx);
@@ -105,7 +118,6 @@ void main() {
   group('AnalogTimeline', () {
     Future<AnalogTimelinePainter> pumpTimeline(
       WidgetTester tester, {
-      List<TimelineRange> buffered = const [],
       List<TimelineRange> cached = const [],
       bool enabled = true,
       List<Duration>? commits,
@@ -121,7 +133,6 @@ void main() {
                   position: const Duration(minutes: 10),
                   duration: const Duration(minutes: 100),
                   enabled: enabled,
-                  buffered: buffered,
                   cached: cached,
                   onPreview: (_) {},
                   onCommit: (p) => commits?.add(p),
@@ -142,37 +153,36 @@ void main() {
       return paint.painter! as AnalogTimelinePainter;
     }
 
-    testWidgets('cached spans stay a separate layer from the network buffer', (
+    testWidgets('cached spans stay separate from played progress', (
       tester,
     ) async {
       final painter = await pumpTimeline(
         tester,
-        buffered: const [TimelineRange(0.1, 0.2)],
         cached: const [TimelineRange(0.6, 0.9), TimelineRange(0.95, 1)],
       );
-      expect(painter.buffered, const [TimelineRange(0.1, 0.2)]);
       expect(painter.cached, hasLength(2));
-      // Weakest to strongest: unloaded < buffer < cached < played.
-      expect(AnalogColor.line.a, lessThan(AnalogColor.inkFaint.a));
-      expect(AnalogColor.inkFaint.a, lessThan(AnalogColor.inkDim.a));
-      expect(AnalogColor.inkDim.a, lessThan(AnalogColor.accent.a));
+      expect(AnalogColor.line.a, lessThan(AnalogColor.inkDim.a));
+      expect(AnalogTimelinePainter.playedColor, kBrandRed);
     });
 
-    testWidgets('the hit target is hitPx tall, well clear of the visible line', (
-      tester,
-    ) async {
-      final commits = <Duration>[];
-      await pumpTimeline(tester, commits: commits);
-      final box = tester.getRect(find.byKey(const Key('timeline')));
-      expect(box.height, AnalogHairline.hitPx);
+    testWidgets(
+      'the hit target is hitPx tall, well clear of the visible line',
+      (tester) async {
+        final commits = <Duration>[];
+        await pumpTimeline(tester, commits: commits);
+        final box = tester.getRect(find.byKey(const Key('timeline')));
+        expect(box.height, AnalogHairline.hitPx);
 
-      // A press 10px above the hairline — nowhere near the 2px line — still
-      // seeks, which is the whole point of the invisible target.
-      await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy - 10));
-      await tester.pump();
-      expect(commits, hasLength(1));
-      expect(commits.single, const Duration(minutes: 50));
-    });
+        // A press 10px above the hairline — nowhere near the 2px line — still
+        // seeks, which is the whole point of the invisible target.
+        await tester.tapAt(
+          Offset(box.left + box.width / 2, box.center.dy - 10),
+        );
+        await tester.pump();
+        expect(commits, hasLength(1));
+        expect(commits.single, const Duration(minutes: 50));
+      },
+    );
 
     testWidgets('a read-only guest still gets a handle and a position', (
       tester,
@@ -352,41 +362,42 @@ void main() {
       expect(find.text('Video decoder'), findsNothing);
     });
 
-    testWidgets('a row the viewer may not act on is shown greyed, not dropped', (
-      tester,
-    ) async {
-      var taps = 0;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Align(
-              alignment: Alignment.bottomRight,
-              child: AnalogSettingsStack(
-                entries: [
-                  AnalogSettingsEntry(
-                    icon: Icons.memory,
-                    label: 'Video decoder',
-                    detail: 'Hardware',
-                    enabled: false,
-                    onTap: () => taps++,
-                  ),
-                ],
+    testWidgets(
+      'a row the viewer may not act on is shown greyed, not dropped',
+      (tester) async {
+        var taps = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.bottomRight,
+                child: AnalogSettingsStack(
+                  entries: [
+                    AnalogSettingsEntry(
+                      icon: Icons.memory,
+                      label: 'Video decoder',
+                      detail: 'Hardware',
+                      enabled: false,
+                      onTap: () => taps++,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.tap(find.byIcon(Icons.settings));
-      await tester.pumpAndSettle();
+        );
+        await tester.tap(find.byIcon(Icons.settings));
+        await tester.pumpAndSettle();
 
-      // Still readable: the guest can see WHICH decoder is running.
-      expect(find.text('Video decoder'), findsOneWidget);
-      expect(find.text('Hardware'), findsOneWidget);
-      await tester.tap(find.text('Video decoder'));
-      await tester.pumpAndSettle();
-      expect(taps, 0);
-      expect(find.text('Video decoder'), findsOneWidget);
-    });
+        // Still readable: the guest can see WHICH decoder is running.
+        expect(find.text('Video decoder'), findsOneWidget);
+        expect(find.text('Hardware'), findsOneWidget);
+        await tester.tap(find.text('Video decoder'));
+        await tester.pumpAndSettle();
+        expect(taps, 0);
+        expect(find.text('Video decoder'), findsOneWidget);
+      },
+    );
   });
 
   group('AnalogAutoHideController', () {

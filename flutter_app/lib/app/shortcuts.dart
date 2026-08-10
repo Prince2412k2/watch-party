@@ -1,15 +1,13 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../state/state.dart';
 import '../ui/command_palette.dart';
 import '../ui/ui.dart' show NavDestination;
-import 'screens/app_shell.dart' show kGuestShellDestinations, kShellDestinations;
+import 'screens/app_shell.dart'
+    show kGuestShellDestinations, kShellDestinations;
 
 /// Jump to the nth primary destination (keys 1–4, the four bottom-nav tabs).
 class NavigateToIndexIntent extends Intent {
@@ -26,11 +24,6 @@ class OpenCommandPaletteIntent extends Intent {
 /// palette (the app's unified search surface) with its input focused.
 class FocusSearchIntent extends Intent {
   const FocusSearchIntent();
-}
-
-/// Hide the window to the tray (Ctrl/Cmd-W) — close-to-tray, not quit.
-class HideToTrayIntent extends Intent {
-  const HideToTrayIntent();
 }
 
 const List<LogicalKeyboardKey> _digitKeys = [
@@ -71,12 +64,6 @@ class AppShortcuts extends ConsumerWidget {
     );
   }
 
-  void _hideToTray() {
-    if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-      windowManager.hide();
-    }
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // A logged-out guest only gets Movies + Downloaded (PLAN guest-browse) — the
@@ -98,10 +85,6 @@ class AppShortcuts extends ConsumerWidget {
           const OpenCommandPaletteIntent(),
       const SingleActivator(LogicalKeyboardKey.slash):
           const FocusSearchIntent(),
-      const SingleActivator(LogicalKeyboardKey.keyW, control: true):
-          const HideToTrayIntent(),
-      const SingleActivator(LogicalKeyboardKey.keyW, meta: true):
-          const HideToTrayIntent(),
     };
 
     return Shortcuts(
@@ -127,12 +110,6 @@ class AppShortcuts extends ConsumerWidget {
             onInvoke: (_) {
               if (_isEditing()) return null;
               _openPalette(context, ref, destinations);
-              return null;
-            },
-          ),
-          HideToTrayIntent: CallbackAction<HideToTrayIntent>(
-            onInvoke: (_) {
-              _hideToTray();
               return null;
             },
           ),

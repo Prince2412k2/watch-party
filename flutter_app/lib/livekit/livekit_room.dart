@@ -56,7 +56,6 @@ class LiveKitRoomSnapshot {
   final List<ParticipantTrack> participants;
   final bool micEnabled;
   final bool cameraEnabled;
-
   final String? error;
 
   bool get connected => connectionState == lk.ConnectionState.connected;
@@ -83,8 +82,15 @@ class LiveKitRoomSnapshot {
 class LiveKitRoomService {
   lk.Room? _room;
   lk.EventsListener<lk.RoomEvent>? _listener;
+  final Map<String, Timer> _cameraSubscriptionTimers = {};
+  final Map<String, int> _cameraSubscriptionAttempts = {};
   final _controller = StreamController<LiveKitRoomSnapshot>.broadcast();
   LiveKitRoomSnapshot _snapshot = const LiveKitRoomSnapshot();
+  Future<void> _lifecycleTail = Future<void>.value();
+  Future<void> _micTail = Future<void>.value();
+  Future<void> _cameraTail = Future<void>.value();
+  bool _desiredMic = false;
+  bool _desiredCamera = false;
 
   /// True while the local participant chooses to hide their own tile from
   /// the grid (does NOT unpublish — camera keeps flowing to remotes).
@@ -113,8 +119,26 @@ class LiveKitRoomService {
     // in via the mic/cam toggles instead — also the expected watch-party UX.
     bool enableMic = false,
     bool enableCamera = false,
+  }) {
+    return _queueLifecycle(
+      () => _connect(
+        url,
+        token,
+        enableMic: enableMic,
+        enableCamera: enableCamera,
+      ),
+    );
+  }
+
+  Future<void> _connect(
+    String url,
+    String token, {
+    required bool enableMic,
+    required bool enableCamera,
   }) async {
-    await disconnect();
+    _desiredMic = enableMic;
+    _desiredCamera = enableCamera;
+    await _disconnect();
 
     // Keep the capture device OPEN across mute toggles. By default livekit
     // stops the mic/camera on mute and re-opens (getUserMedia) on unmute — and
@@ -149,11 +173,41 @@ class LiveKitRoomService {
         );
       })
       ..on<lk.RoomReconnectingEvent>((_) => _refresh())
-      ..on<lk.RoomReconnectedEvent>((_) => _refresh())
+      ..on<lk.RoomReconnectedEvent>((_) {
+        for (final timer in _cameraSubscriptionTimers.values) {
+          timer.cancel();
+        }
+        _cameraSubscriptionTimers.clear();
+        _cameraSubscriptionAttempts.clear();
+        _refresh();
+      })
       ..on<lk.LocalTrackPublishedEvent>((_) => _refresh())
       ..on<lk.LocalTrackUnpublishedEvent>((_) => _refresh())
-      ..on<lk.TrackSubscribedEvent>((_) => _refresh())
+      ..on<lk.TrackPublishedEvent>((e) {
+        _log.info(
+          'TrackPublishedEvent participant=${e.participant.identity} '
+          'source=${e.publication.source}',
+        );
+        _refresh();
+      })
+      ..on<lk.TrackUnpublishedEvent>((e) {
+        _clearCameraSubscriptionRetry(e.publication.sid);
+        _refresh();
+      })
+      ..on<lk.TrackSubscribedEvent>((e) {
+        _clearCameraSubscriptionRetry(e.publication.sid);
+        _refresh();
+      })
       ..on<lk.TrackUnsubscribedEvent>((_) => _refresh())
+      ..on<lk.TrackSubscriptionExceptionEvent>((e) {
+        _log.warning(
+          'camera subscription failed participant=${e.participant?.identity} '
+          'sid=${e.sid} reason=${e.reason}',
+        );
+        final sid = e.sid;
+        if (sid != null) _retryCameraSubscriptionNow(sid);
+      })
+      ..on<lk.TrackStreamStateUpdatedEvent>((_) => _refresh())
       ..on<lk.TrackMutedEvent>((_) => _refresh())
       ..on<lk.TrackUnmutedEvent>((_) => _refresh())
       ..on<lk.ParticipantConnectedEvent>((_) => _refresh())
@@ -201,44 +255,51 @@ class LiveKitRoomService {
   /// to `true` when omitted. Passing `false` keeps the device open so a toggle
   /// is an instant mute/unmute instead of a slow (UI-blocking) device re-open.
   Future<void> setMicEnabled(bool enabled) async {
-    final lp = _room?.localParticipant;
-    if (lp == null) return _noRoom('microphone');
-    try {
-      await lp.setMicrophoneEnabled(
-        enabled,
-        audioCaptureOptions: const lk.AudioCaptureOptions(
-          stopAudioCaptureOnMute: false,
-        ),
-      );
-      _refresh();
-    } catch (e) {
-      _captureFailed('microphone', e);
-    }
+    _desiredMic = enabled;
+    final operation = _micTail.then((_) async {
+      final room = _room;
+      final lp = room?.localParticipant;
+      if (lp == null) return _noRoom('microphone');
+      try {
+        await lp.setMicrophoneEnabled(
+          _desiredMic,
+          audioCaptureOptions: const lk.AudioCaptureOptions(
+            stopAudioCaptureOnMute: false,
+          ),
+        );
+        if (_room == room) _refresh();
+      } catch (e) {
+        _captureFailed('microphone', e);
+      }
+    });
+    _micTail = operation.catchError((_) {});
+    await operation;
   }
 
   /// Toggle the local camera. See [setMicEnabled] for why the capture options
   /// are passed on every call (livekit reads `stopCameraCaptureOnMute` from
   /// this argument, defaulting to `true`, i.e. stop/re-open on each toggle).
   Future<void> setCameraEnabled(bool enabled) async {
-    final lp = _room?.localParticipant;
-    if (lp == null) return _noRoom('camera');
-    try {
-      await lp.setCameraEnabled(
-        enabled,
-        cameraCaptureOptions: const lk.CameraCaptureOptions(
-          stopCameraCaptureOnMute: false,
-          // Capture at 360p. The camera only ever shows in a small floating PiP
-          // tile, so HD is wasted — and requesting 720p makes the (UI-thread)
-          // v4l2 device open + format negotiation much slower, and the ongoing
-          // encode heavier. 360p opens faster (shorter first-enable freeze) and
-          // encodes lighter.
-          params: lk.VideoParametersPresets.h360_169,
-        ),
-      );
-      _refresh();
-    } catch (e) {
-      _captureFailed('camera', e);
-    }
+    _desiredCamera = enabled;
+    final operation = _cameraTail.then((_) async {
+      final room = _room;
+      final lp = room?.localParticipant;
+      if (lp == null) return _noRoom('camera');
+      try {
+        await lp.setCameraEnabled(
+          _desiredCamera,
+          cameraCaptureOptions: const lk.CameraCaptureOptions(
+            stopCameraCaptureOnMute: false,
+            params: lk.VideoParametersPresets.h360_169,
+          ),
+        );
+        if (_room == room) _refresh();
+      } catch (e) {
+        _captureFailed('camera', e);
+      }
+    });
+    _cameraTail = operation.catchError((_) {});
+    await operation;
   }
 
   /// There is no room to publish into, so the toggle cannot do anything.
@@ -272,7 +333,7 @@ class LiveKitRoomService {
       _snapshot.copyWith(
         error: missing
             ? 'No $device was found. Connect one and try again.'
-            : 'Could not enable the $device. Check macOS privacy permissions.',
+            : 'Could not enable the $device. Check the system privacy permissions.',
       ),
     );
   }
@@ -336,9 +397,6 @@ class LiveKitRoomService {
     }
 
     for (final p in room.remoteParticipants.values) {
-      // Nothing publishes a screen share today. If something ever does, it is a
-      // surface and not a face, so it must not fall through into the grid.
-      if (_screenShareTrack(p.videoTrackPublications) != null) continue;
       tracks.add(
         _toParticipantTrack(
           identity: p.identity,
@@ -359,15 +417,88 @@ class LiveKitRoomService {
         cameraEnabled: room.localParticipant?.isCameraEnabled() ?? false,
       ),
     );
+    _ensureRemoteCameraSubscriptions(room);
   }
 
-  lk.VideoTrack? _screenShareTrack(List<lk.TrackPublication> videoPubs) {
-    for (final pub in videoPubs) {
-      if (pub.source != lk.TrackSource.screenShareVideo) continue;
-      final track = pub.track;
-      if (track is lk.VideoTrack && !pub.muted) return track;
+  void _ensureRemoteCameraSubscriptions(lk.Room room) {
+    for (final participant in room.remoteParticipants.values) {
+      for (final publication in participant.videoTrackPublications) {
+        if (publication.source != lk.TrackSource.camera ||
+            publication.muted ||
+            publication.subscribed ||
+            !publication.subscriptionAllowed) {
+          if (publication.subscribed || publication.muted) {
+            _clearCameraSubscriptionRetry(publication.sid);
+          }
+          continue;
+        }
+        _scheduleCameraSubscription(publication);
+      }
     }
-    return null;
+  }
+
+  void _scheduleCameraSubscription(
+    lk.RemoteTrackPublication<lk.RemoteVideoTrack> publication, {
+    Duration delay = const Duration(milliseconds: 750),
+  }) {
+    final sid = publication.sid;
+    if (_cameraSubscriptionTimers.containsKey(sid) ||
+        (_cameraSubscriptionAttempts[sid] ?? 0) >= 3) {
+      return;
+    }
+    _cameraSubscriptionTimers[sid] = Timer(delay, () async {
+      _cameraSubscriptionTimers.remove(sid);
+      final room = _room;
+      if (room == null || publication.subscribed || publication.muted) return;
+      _cameraSubscriptionAttempts[sid] =
+          (_cameraSubscriptionAttempts[sid] ?? 0) + 1;
+      try {
+        _log.info(
+          'requesting camera subscription sid=$sid '
+          'attempt=${_cameraSubscriptionAttempts[sid]}',
+        );
+        await publication.subscribe();
+      } catch (error) {
+        _log.warning('camera subscription request failed sid=$sid: $error');
+      }
+      if (_room == room && !publication.subscribed) {
+        if ((_cameraSubscriptionAttempts[sid] ?? 0) >= 3) {
+          _cameraSubscriptionTimers[sid] = Timer(
+            const Duration(seconds: 15),
+            () {
+              _cameraSubscriptionTimers.remove(sid);
+              if (_room != room) return;
+              _cameraSubscriptionAttempts.remove(sid);
+              _scheduleCameraSubscription(publication, delay: Duration.zero);
+            },
+          );
+        } else {
+          _scheduleCameraSubscription(
+            publication,
+            delay: const Duration(seconds: 2),
+          );
+        }
+      }
+    });
+  }
+
+  void _retryCameraSubscriptionNow(String sid) {
+    _cameraSubscriptionTimers.remove(sid)?.cancel();
+    final room = _room;
+    if (room == null) return;
+    for (final participant in room.remoteParticipants.values) {
+      for (final publication in participant.videoTrackPublications) {
+        if (publication.sid == sid) {
+          _scheduleCameraSubscription(publication, delay: Duration.zero);
+          return;
+        }
+      }
+    }
+  }
+
+  void _clearCameraSubscriptionRetry(String sid) {
+    _cameraSubscriptionTimers.remove(sid)?.cancel();
+    _cameraSubscriptionAttempts.remove(sid);
   }
 
   ParticipantTrack _toParticipantTrack({
@@ -381,8 +512,7 @@ class LiveKitRoomService {
     lk.VideoTrack? videoTrack;
     var videoMuted = true;
     for (final pub in videoPubs) {
-      // A tile shows a camera. Never let a screen share become someone's face.
-      if (pub.source == lk.TrackSource.screenShareVideo) continue;
+      if (pub.source != lk.TrackSource.camera) continue;
       final t = pub.track;
       if (t is lk.VideoTrack && !pub.muted) {
         videoTrack = t;
@@ -411,11 +541,29 @@ class LiveKitRoomService {
   /// Leave the room (if connected) without disposing the service — safe to
   /// call [connect] again afterward.
   Future<void> disconnect() async {
+    _desiredMic = false;
+    _desiredCamera = false;
+    await _queueLifecycle(_disconnect);
+  }
+
+  Future<void> _disconnect() async {
+    await Future.wait([
+      _micTail.timeout(const Duration(seconds: 2)).catchError((_) {}),
+      _cameraTail.timeout(const Duration(seconds: 2)).catchError((_) {}),
+    ]);
     final room = _room;
     _room = null;
     _listener?.dispose();
     _listener = null;
-    if (room == null) return;
+    for (final timer in _cameraSubscriptionTimers.values) {
+      timer.cancel();
+    }
+    _cameraSubscriptionTimers.clear();
+    _cameraSubscriptionAttempts.clear();
+    if (room == null) {
+      _emit(const LiveKitRoomSnapshot());
+      return;
+    }
     // Stop capture explicitly before disconnecting. `room.disconnect()` is
     // documented to unpublish local tracks, but the camera/mic indicator going
     // dark is a privacy guarantee we should not delegate: if the disconnect
@@ -428,17 +576,25 @@ class LiveKitRoomService {
         () => lp.setMicrophoneEnabled(false),
       ]) {
         try {
-          await release();
+          await release().timeout(const Duration(seconds: 2));
         } catch (_) {
           // Keep going — a failure on one device must not skip the other.
         }
       }
     }
     try {
-      await room.disconnect();
+      await room.disconnect().timeout(const Duration(seconds: 2));
     } catch (_) {
       // best-effort
+    } finally {
+      _emit(const LiveKitRoomSnapshot());
     }
+  }
+
+  Future<void> _queueLifecycle(Future<void> Function() operation) {
+    final queued = _lifecycleTail.then((_) => operation());
+    _lifecycleTail = queued.catchError((_) {});
+    return queued;
   }
 
   /// Tear down for good — disconnect and close the snapshot stream.

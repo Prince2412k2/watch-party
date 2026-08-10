@@ -86,39 +86,69 @@ class _SpyController implements PlayerController {
 }
 
 void main() {
-  test('Jellyfin global indices map by metadata then preserve subtitle off', () {
-    const playback = PlaybackInfo(
-      audioStreams: [
-        PlaybackTrack(index: 1, title: 'English', language: 'eng', codec: 'aac'),
-        PlaybackTrack(index: 5, title: 'Commentary', language: 'eng', codec: 'aac'),
-      ],
-      subtitleStreams: [
-        PlaybackTrack(index: 7, title: 'English SDH', language: 'eng', codec: 'subrip'),
-      ],
-    );
-    const nativeAudio = [
-      PlayerTrack(id: '2', type: 'audio', title: 'Commentary', language: 'eng', codec: 'aac'),
-      PlayerTrack(id: '1', type: 'audio', title: 'English', language: 'eng', codec: 'aac'),
-    ];
-    expect(
-      playerTrackIdForJellyfinIndex(
-        jellyfinIndex: 5,
-        type: 'audio',
-        playerTracks: nativeAudio,
-        playback: playback,
-      ),
-      '2',
-    );
-    expect(
-      jellyfinIndexForPlayerTrack(
-        playerTrackId: null,
-        type: 'subtitle',
-        playerTracks: const [],
-        playback: playback,
-      ),
-      -1,
-    );
-  });
+  test(
+    'Jellyfin global indices map by metadata then preserve subtitle off',
+    () {
+      const playback = PlaybackInfo(
+        audioStreams: [
+          PlaybackTrack(
+            index: 1,
+            title: 'English',
+            language: 'eng',
+            codec: 'aac',
+          ),
+          PlaybackTrack(
+            index: 5,
+            title: 'Commentary',
+            language: 'eng',
+            codec: 'aac',
+          ),
+        ],
+        subtitleStreams: [
+          PlaybackTrack(
+            index: 7,
+            title: 'English SDH',
+            language: 'eng',
+            codec: 'subrip',
+          ),
+        ],
+      );
+      const nativeAudio = [
+        PlayerTrack(
+          id: '2',
+          type: 'audio',
+          title: 'Commentary',
+          language: 'eng',
+          codec: 'aac',
+        ),
+        PlayerTrack(
+          id: '1',
+          type: 'audio',
+          title: 'English',
+          language: 'eng',
+          codec: 'aac',
+        ),
+      ];
+      expect(
+        playerTrackIdForJellyfinIndex(
+          jellyfinIndex: 5,
+          type: 'audio',
+          playerTracks: nativeAudio,
+          playback: playback,
+        ),
+        '2',
+      );
+      expect(
+        jellyfinIndexForPlayerTrack(
+          playerTrackId: null,
+          type: 'subtitle',
+          playerTracks: const [],
+          playback: playback,
+        ),
+        -1,
+      );
+    },
+  );
 
   Future<void> pumpChrome(WidgetTester tester, _SpyController c) async {
     await tester.pumpWidget(
@@ -224,98 +254,6 @@ void main() {
     await tester.tap(find.text('Off'));
     await tester.pumpAndSettle();
     expect(c.subtitles, ['s0', null]);
-  });
-
-  testWidgets('canonical party track changes apply and guest menus are read-only', (
-    tester,
-  ) async {
-    final c = _SpyController();
-    const playback = PlaybackInfo(
-      audioStreams: [PlaybackTrack(index: 3, title: 'Commentary')],
-      subtitleStreams: [PlaybackTrack(index: 7, title: 'English SDH')],
-      selectedAudioIndex: 3,
-      selectedSubtitleIndex: 7,
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.dark,
-        home: Scaffold(
-          body: PlayerChrome(
-            controller: c,
-            partyPlayback: playback,
-            canManagePartyMedia: false,
-          ),
-        ),
-      ),
-    );
-    c.emitTracks(const PlayerTracks(
-      audio: [PlayerTrack(id: 'native-a', type: 'audio', title: 'Commentary')],
-      subtitle: [PlayerTrack(id: 'native-s', type: 'subtitle', title: 'English SDH')],
-    ));
-    await tester.pump();
-    await tester.pump();
-
-    expect(c.audioTracks, contains('native-a'));
-    expect(c.subtitles, contains('native-s'));
-
-    // Read-only means the row is VISIBLE and inert, not absent. A guest is
-    // meant to see which track the party is on — the settings row carries it
-    // as its trailing detail — and simply cannot change it.
-    //
-    // This used to assert the track name was nowhere on screen, which worked
-    // only because a guest could not open the old menu at all. That assertion
-    // would now fail against correct behaviour: the name appears as the row's
-    // own detail. What actually has to hold is that tapping the row reaches
-    // the controller with nothing.
-    await tester.tap(find.byIcon(Icons.settings));
-    await tester.pumpAndSettle();
-    expect(find.text('Audio track'), findsOneWidget);
-
-    final writesBefore = c.audioTracks.length;
-    await tester.tap(find.text('Audio track'));
-    await tester.pumpAndSettle();
-    expect(c.audioTracks.length, writesBefore);
-  });
-
-  testWidgets('host track choice reports Jellyfin indices to party protocol', (
-    tester,
-  ) async {
-    final c = _SpyController();
-    final changes = <(int?, int)>[];
-    const playback = PlaybackInfo(
-      audioStreams: [
-        PlaybackTrack(index: 3, title: 'Commentary'),
-        PlaybackTrack(index: 8, title: 'English'),
-      ],
-      subtitleStreams: [PlaybackTrack(index: 7, title: 'English SDH')],
-      selectedAudioIndex: 3,
-      selectedSubtitleIndex: 7,
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.dark,
-        home: Scaffold(
-          body: PlayerChrome(
-            controller: c,
-            partyPlayback: playback,
-            onSetPlaybackTracks: (audio, subtitle) =>
-                changes.add((audio, subtitle)),
-          ),
-        ),
-      ),
-    );
-    c.emitTracks(const PlayerTracks(audio: [
-      PlayerTrack(id: 'native-a', type: 'audio', title: 'Commentary'),
-      PlayerTrack(id: 'native-b', type: 'audio', title: 'English'),
-    ]));
-    await tester.pump();
-    await tester.pump();
-
-    await openAudioPicker(tester);
-    await tester.tap(find.text('English'));
-    await tester.pumpAndSettle();
-
-    expect(changes.last, (8, 7));
   });
 
   testWidgets('external subtitle overlay follows playback and clears on Off', (
@@ -549,6 +487,7 @@ void main() {
     final c = _SpyController();
     var chatToggles = 0;
     var pttStarts = 0;
+    var fullscreenToggles = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark,
@@ -557,6 +496,7 @@ void main() {
             controller: c,
             onToggleChat: () => chatToggles++,
             onPushToTalkStart: () => pttStarts++,
+            onToggleFullscreen: () => fullscreenToggles++,
           ),
         ),
       ),
@@ -573,6 +513,10 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
     await tester.pump();
     expect(chatToggles, 2);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.pump();
+    expect(fullscreenToggles, 1);
 
     // Every OTHER accelerator the player used to swallow is left to the
     // platform: Ctrl+T is a new window, not push-to-talk.

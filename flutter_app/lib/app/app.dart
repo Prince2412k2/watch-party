@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../analog/chrome/analog_toast.dart';
 import '../party/party_overlay.dart';
@@ -29,6 +33,35 @@ class WatchpartyApp extends ConsumerStatefulWidget {
 
 class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
   late final _router = buildRouter(ref);
+
+  Future<void> _toggleFullscreen() async {
+    final fullscreen = await windowManager.isFullScreen();
+    await windowManager.setFullScreen(!fullscreen);
+  }
+
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        (!HardwareKeyboard.instance.isControlPressed &&
+            !HardwareKeyboard.instance.isMetaPressed)) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyF &&
+        ref.read(nowPlayingProvider).isOpen) {
+      unawaited(_toggleFullscreen());
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey != LogicalKeyboardKey.keyC ||
+        ref.read(partyProvider) == null) {
+      return KeyEventResult.ignored;
+    }
+    final focusedContext = FocusManager.instance.primaryFocus?.context;
+    if (focusedContext?.findAncestorStateOfType<EditableTextState>() != null) {
+      return KeyEventResult.ignored;
+    }
+    final chat = ref.read(chatDrawerOpenProvider.notifier);
+    chat.state = !chat.state;
+    return KeyEventResult.handled;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,31 +108,6 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
           child: ChatNotifications(
             child: Material(
               type: MaterialType.transparency,
-              // The router underneath; every piece of root-mounted chrome
-              // above it, inside a Navigator of its own.
-              //
-              // `MaterialApp.builder` wraps the Navigator rather than living
-              // inside it, so nothing mounted here inherits one. Tooltip needs
-              // an Overlay; showDialog, showMenu and every PopupRoute need a
-              // Navigator. Chrome up here had neither, which produced the same
-              // bug four times over — first as "No Overlay widget found", then
-              // as "Navigator operation requested with a context that does not
-              // include a Navigator", and finally, once each call site was
-              // handed the ROUTER's navigator, as menus that opened correctly
-              // but rendered BELOW the player: the subtitle dropdown drew
-              // behind a full-window film and only appeared once it minimised.
-              //
-              // The base route is an OverlayRoute, NOT a ModalRoute, and that
-              // is the whole trick. Every ModalRoute inserts a ModalBarrier,
-              // which absorbs pointer events across the entire screen — a
-              // Navigator built the ordinary way over an interactive app eats
-              // every tap meant for it (tapping "Shows" in the nav did
-              // nothing). An OverlayRoute has no barrier, so this layer only
-              // takes the hits its own widgets ask for.
-              //
-              // Chrome is a SIBLING of the router, not a wrapper around it: a
-              // wrapper would capture the router's widget inside a route built
-              // once, where it would go stale on every rebuild.
               child: Stack(
                 children: [
                   Positioned.fill(child: child ?? const SizedBox.shrink()),
@@ -111,20 +119,15 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
             ),
           ),
         );
+        final focusedContent = Focus(onKeyEvent: _onKeyEvent, child: content);
         return widget.enableWindowFrame
-            ? DesktopWindowChrome(child: content)
-            : content;
+            ? DesktopWindowChrome(child: focusedContent)
+            : focusedContent;
       },
     );
   }
 }
 
-/// The chrome's base route: one overlay entry, and nothing else.
-///
-/// Extends [OverlayRoute] rather than a PageRoute deliberately — see the note
-/// in the builder. No barrier (so taps fall through to the app underneath), no
-/// transition, and it is never popped. Menus and dialogs pushed on this
-/// Navigator land ABOVE the chrome, which is the point.
 class _ChromeRoute extends OverlayRoute<void> {
   @override
   Iterable<OverlayEntry> createOverlayEntries() sync* {
@@ -188,9 +191,11 @@ class _PopcornLayer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final expanded = ref.watch(
-      nowPlayingProvider.select((n) => n.isExpanded),
+    final presentation = ref.watch(
+      nowPlayingProvider.select((n) => n.presentation),
     );
+    final expanded = presentation == PlayerPresentation.expanded;
+    final floating = presentation == PlayerPresentation.floating;
     // Only the expanded player hides its chrome; a floating tile has none, and
     // over the library there is nothing to hide with.
     final shown = !expanded || ref.watch(playerChromeVisibleProvider);
@@ -198,7 +203,7 @@ class _PopcornLayer extends ConsumerWidget {
     return AnimatedPositioned(
       duration: AppMotion.snap,
       curve: AppMotion.emphasized,
-      right: 22,
+      right: floating ? (MediaQuery.sizeOf(context).width - 69) / 2 : 22,
       bottom: expanded ? _overFilmBottom : _restingBottom,
       child: IgnorePointer(
         ignoring: !shown,

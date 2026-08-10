@@ -96,6 +96,20 @@ abstract final class FloatingTileGeometry {
     if (dy >= maxY - margin - snap) dy = (maxY - margin).clamp(0.0, maxY);
     return Offset(dx, dy);
   }
+
+  static Offset snapToNearestCorner(Offset offset, Size tile, Size stage) {
+    final maxX = math.max(0.0, stage.width - tile.width);
+    final maxY = math.max(0.0, stage.height - tile.height);
+    final center = offset + Offset(tile.width / 2, tile.height / 2);
+    return Offset(
+      center.dx < stage.width / 2
+          ? margin.clamp(0.0, maxX)
+          : (maxX - margin).clamp(0.0, maxX),
+      center.dy < stage.height / 2
+          ? margin.clamp(0.0, maxY)
+          : (maxY - margin).clamp(0.0, maxY),
+    );
+  }
 }
 
 /// Per-tile mutable layout state held by [FloatingCameraLayer].

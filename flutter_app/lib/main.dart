@@ -105,19 +105,21 @@ Future<void> main() async {
   // the one with a privacy cost.
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
     DesktopLifecycle.instance.onShutdown = () async {
-      try {
-        await container.read(livekitProvider.notifier).leave();
-      } catch (_) {}
-      try {
-        await container.read(playerControllerProvider).pause();
-      } catch (_) {}
-      try {
-        // The in-flight transfers are cache fills, not `background_downloader`
-        // tasks — [downloaderProvider] is retired (nothing enqueues to it), so
-        // pausing it inspected an empty task DB while the real fill loops kept
-        // running.
-        container.read(cacheFillControllerProvider).pauseAll();
-      } catch (_) {}
+      await Future.wait([
+        container
+            .read(livekitProvider.notifier)
+            .leave()
+            .timeout(const Duration(seconds: 2))
+            .catchError((_) {}),
+        container
+            .read(playerControllerProvider)
+            .pause()
+            .timeout(const Duration(seconds: 2))
+            .catchError((_) {}),
+        Future<void>.sync(
+          container.read(cacheFillControllerProvider).pauseAll,
+        ).catchError((_) {}),
+      ]);
     };
 
     // Only NOW start intercepting close: init() sets preventClose, and a close

@@ -1,21 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/player/mock_player_controller.dart';
 import 'package:watchparty/player/player_host.dart';
 import 'package:watchparty/player/player_view.dart';
+import 'package:watchparty/models/party_state.dart';
+import 'package:watchparty/state/party_provider.dart';
+import 'package:watchparty/state/chat_provider.dart';
 import 'package:watchparty/state/now_playing_provider.dart';
 import 'package:watchparty/state/player_provider.dart';
 import 'package:watchparty/state/providers.dart';
 import 'package:watchparty/ui/ui.dart';
+import 'package:watchparty/ui/widgets/floating_camera_tile.dart';
 
-/// `fromParty: true` throughout: these tests are about PRESENTATION — where the
-/// player is mounted and how it moves — not about opening media. A solo title
-/// makes the host run the real open pipeline and show an indeterminate spinner
-/// while it waits, which never settles and leaves a pending timer at teardown.
-/// Party media is opened by PartyNotifier, so the host just renders it.
-///
+class _TestPlayer extends MockPlayerController {
+  @override
+  Future<void> play() async {}
+}
+
 /// The host exists so there is exactly ONE PlayerView for the life of the
 /// session, with expanded/floating being a rect it animates between rather than
 /// two different mounts. The identity assertions below are the whole point: if
@@ -23,16 +27,22 @@ import 'package:watchparty/ui/ui.dart';
 /// reloads — which is the bug this replaced.
 void main() {
   late ProviderContainer container;
+  late _TestPlayer player;
 
   setUp(() {
+    player = _TestPlayer();
     container = ProviderContainer(
       overrides: [
-        playerControllerProvider.overrideWithValue(MockPlayerController()),
+        playerControllerProvider.overrideWithValue(player),
         apiClientProvider.overrideWithValue(MockApiClient()),
+        currentUserIdProvider.overrideWithValue('host'),
       ],
     );
   });
-  tearDown(() => container.dispose());
+  tearDown(() async {
+    await player.dispose();
+    container.dispose();
+  });
 
   Future<void> pumpHost(WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
@@ -69,20 +79,21 @@ void main() {
     // The screen you were on is not replaced — that is the difference between a
     // player that floats over your app and a player that IS a route.
     await pumpHost(tester);
-    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1', fromParty: true);
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
     await tester.pump();
 
     expect(find.byType(PlayerView), findsOneWidget);
     expect(find.text('library'), findsOneWidget);
   });
 
-  testWidgets('minimise and expand reuse the SAME PlayerView element', (
+  testWidgets('minimise and expand reuse the same PlayerView safely', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     await pumpHost(tester);
     final notifier = container.read(nowPlayingProvider.notifier);
 
-    notifier.open(itemId: 'movie-1', fromParty: true);
+    notifier.open(itemId: 'movie-1');
     await tester.pump();
     final expanded = tester.element(find.byType(PlayerView));
 
@@ -101,6 +112,8 @@ void main() {
     );
     expect(identical(floating, again), isTrue);
     expect(find.byType(PlayerView), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 
   testWidgets('the floating tile is smaller than the window and 16:9', (
@@ -109,7 +122,7 @@ void main() {
     await pumpHost(tester);
     final notifier = container.read(nowPlayingProvider.notifier);
 
-    notifier.open(itemId: 'movie-1', fromParty: true);
+    notifier.open(itemId: 'movie-1');
     await tester.pumpAndSettle();
     final expandedSize = tester.getSize(find.byType(PlayerView));
 
@@ -124,18 +137,81 @@ void main() {
     expect(floatingSize.width / floatingSize.height, closeTo(16 / 9, 0.05));
   });
 
+  testWidgets('platform Back minimises an expanded movie', (tester) async {
+    await pumpHost(tester);
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+    await tester.pump();
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+
+    expect(container.read(nowPlayingProvider).isFloating, isTrue);
+  });
+
+  testWidgets('the whole floating movie drags and snaps to a corner', (
+    tester,
+  ) async {
+    await pumpHost(tester);
+    final notifier = container.read(nowPlayingProvider.notifier);
+    notifier.open(itemId: 'movie-1');
+    notifier.minimise();
+    await tester.pumpAndSettle();
+
+    await tester.dragFrom(
+      tester.getCenter(find.byType(PlayerView)),
+      const Offset(-900, 700),
+    );
+    await tester.pumpAndSettle();
+
+    final rect = tester.getRect(find.byType(PlayerView));
+    expect(rect.left, closeTo(FloatingTileGeometry.margin, 1));
+    expect(rect.bottom, closeTo(800 - FloatingTileGeometry.margin, 1));
+  });
+
   testWidgets('closing unmounts the player and leaves the app behind', (
     tester,
   ) async {
     await pumpHost(tester);
     final notifier = container.read(nowPlayingProvider.notifier);
 
-    notifier.open(itemId: 'movie-1', fromParty: true);
+    notifier.open(itemId: 'movie-1');
     await tester.pump();
     await notifier.close();
     await tester.pump();
 
     expect(find.byType(PlayerView), findsNothing);
     expect(find.text('library'), findsOneWidget);
+  });
+
+  testWidgets('party ending is not duplicated in the movie top bar', (
+    tester,
+  ) async {
+    container
+        .read(partyProvider.notifier)
+        .setState(const PartyState(id: 'ROOM1234', hostId: 'host'));
+    await pumpHost(tester);
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+    await tester.pump();
+
+    expect(find.byKey(const Key('closePartyFromPlayerButton')), findsNothing);
+    expect(find.text('End watch party'), findsNothing);
+  });
+
+  testWidgets('Ctrl+C opens chat from the app-wide player host', (
+    tester,
+  ) async {
+    container
+        .read(partyProvider.notifier)
+        .setState(const PartyState(id: 'ROOM1234', hostId: 'host'));
+    await pumpHost(tester);
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect(container.read(chatDrawerOpenProvider), isTrue);
   });
 }
