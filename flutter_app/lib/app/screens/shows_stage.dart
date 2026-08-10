@@ -39,6 +39,7 @@ import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/bottom_nav.dart';
+import '../../ui/widgets/title_logo.dart';
 import 'title_layout.dart';
 
 class ShowsStage extends ConsumerStatefulWidget {
@@ -221,6 +222,7 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
                             physics: const NeverScrollableScrollPhysics(),
                             child: _Details(
                               key: ValueKey(detailed?.id ?? 'empty'),
+                              api: api,
                               item: detailed,
                               loading: async.isLoading,
                               error: async.hasError
@@ -294,6 +296,7 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
 class _Details extends StatelessWidget {
   const _Details({
     super.key,
+    required this.api,
     required this.item,
     required this.loading,
     required this.error,
@@ -302,6 +305,7 @@ class _Details extends StatelessWidget {
     required this.velocity,
   });
 
+  final ApiClient api;
   final LibraryItem? item;
   final bool loading;
   final String? error;
@@ -366,11 +370,15 @@ class _Details extends StatelessWidget {
             direction: direction,
             velocity: velocity,
             fontSizePx: TitleType.heading.fontSize ?? 52,
-            child: Text(
-              current?.name ?? (loading ? '' : 'Nothing here'),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TitleType.heading.copyWith(color: AnalogColor.ink),
+            child: TitleLogo(
+              url: current == null ? null : titleLogoUrl(api, current),
+              maxHeightPx: TitleLayout.logoMaxHeight,
+              child: Text(
+                current?.name ?? (loading ? '' : 'Nothing here'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TitleType.heading.copyWith(color: AnalogColor.ink),
+              ),
             ),
           ),
 

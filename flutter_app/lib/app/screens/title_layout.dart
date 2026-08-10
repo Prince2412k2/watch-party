@@ -40,6 +40,16 @@ abstract final class TitleLayout {
   static const int copyFlex = 92;
   static const int asideFlex = 108;
 
+  /// Height the title's logo artwork is held to where it stands in for the
+  /// heading.
+  ///
+  /// Same argument as [copyMaxWidth] and the shared type below: the logo is the
+  /// largest thing in the block on both the browse stage and the detail page,
+  /// and the two transition into each other, so it has to be one number. Set
+  /// against [TitleType.heading] — a little under two lines of it, which is the
+  /// room the text heading it replaces was already allowed.
+  static const double logoMaxHeight = 92;
+
   /// Measures the copy is held to. Prose wants a readable line length far
   /// short of a desktop stage's width.
   static const double copyMaxWidth = 650;

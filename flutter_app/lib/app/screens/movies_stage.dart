@@ -41,6 +41,7 @@ import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/bottom_nav.dart';
+import '../../ui/widgets/title_logo.dart';
 import 'title_layout.dart';
 
 class MoviesStage extends ConsumerStatefulWidget {
@@ -288,6 +289,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                             physics: const NeverScrollableScrollPhysics(),
                             child: _Details(
                               key: ValueKey(detailed?.id ?? 'empty'),
+                              api: api,
                               item: detailed,
                               collection: _collection,
                               loading: async.isLoading,
@@ -385,6 +387,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
 class _Details extends StatelessWidget {
   const _Details({
     super.key,
+    required this.api,
     required this.item,
     required this.collection,
     required this.loading,
@@ -395,6 +398,7 @@ class _Details extends StatelessWidget {
     required this.velocity,
   });
 
+  final ApiClient api;
   final LibraryItem? item;
   final LibraryItem? collection;
   final bool loading;
@@ -482,11 +486,15 @@ class _Details extends StatelessWidget {
             direction: direction,
             velocity: velocity,
             fontSizePx: TitleType.heading.fontSize ?? 52,
-            child: Text(
-              current?.name ?? (loading ? '' : 'Nothing here'),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TitleType.heading.copyWith(color: AnalogColor.ink),
+            child: TitleLogo(
+              url: current == null ? null : titleLogoUrl(api, current),
+              maxHeightPx: TitleLayout.logoMaxHeight,
+              child: Text(
+                current?.name ?? (loading ? '' : 'Nothing here'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TitleType.heading.copyWith(color: AnalogColor.ink),
+              ),
             ),
           ),
 
