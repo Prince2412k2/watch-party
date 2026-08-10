@@ -29,3 +29,4 @@ export 'widgets/poster_shelf.dart';
 export 'widgets/popcorn_control.dart';
 export 'widgets/scrim.dart';
 export 'widgets/section_header.dart';
+export 'widgets/title_logo.dart';

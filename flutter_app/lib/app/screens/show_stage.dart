@@ -6,6 +6,7 @@ import '../../state/servarr_provider.dart' show fmtRuntimeFromMinutes;
 import '../../state/show_source.dart';
 import '../../ui/ui.dart';
 import 'servarr_manual_source.dart';
+import 'title_layout.dart';
 import 'servarr_release_picker.dart';
 
 /// One stage for a TV series, mounted by BOTH the library and Discover tabs
@@ -451,11 +452,15 @@ class _CopyColumn extends StatelessWidget {
                 child: GestureDetector(
                   onSecondaryTapUp: (d) =>
                       _showScopeMenu(context, d.globalPosition, info),
-                  child: Text(
-                    info.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.displayLarge.copyWith(color: wp.text),
+                  child: TitleLogo(
+                    url: info.logoUrl,
+                    maxHeightPx: TitleLayout.logoMaxHeight,
+                    child: Text(
+                      info.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.displayLarge.copyWith(color: wp.text),
+                    ),
                   ),
                 ),
               ),
