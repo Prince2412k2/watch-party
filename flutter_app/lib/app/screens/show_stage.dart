@@ -218,13 +218,7 @@ class _ShowStageState extends ConsumerState<ShowStage> {
           ),
           data: (info) => _StageBody(state: this, info: info),
         ),
-        Positioned(
-          top: 25,
-          left: desktopLeadingControlInset > 0
-              ? desktopLeadingControlInset
-              : 40,
-          child: _GlassBackButton(onTap: widget.onBack),
-        ),
+        StageBackButton(onTap: widget.onBack),
       ],
     );
   }
@@ -1226,28 +1220,6 @@ class _Wash extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _GlassBackButton extends StatelessWidget {
-  const _GlassBackButton({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    return Material(
-      color: wp.surface.withValues(alpha: 0.72),
-      shape: CircleBorder(side: BorderSide(color: wp.line2)),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: SizedBox.square(
-          dimension: 40,
-          child: Icon(Icons.chevron_left, size: 22, color: wp.text),
-        ),
       ),
     );
   }

@@ -1365,20 +1365,21 @@ class _TopBar extends StatelessWidget {
     }
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
+      // Inset to put the back button exactly where every other surface puts it
+      // — see [BackButtonPlacement]. Leaving the player on its own bar padding
+      // meant the one control you reach for on the way out of a film moved as
+      // you entered it.
+      padding: EdgeInsets.only(
+        left: BackButtonPlacement.left,
+        top: BackButtonPlacement.top,
+        right: AppSpacing.md,
+        bottom: AppSpacing.sm,
       ),
       // Flat near-black translucent bar — no gradients per the design system.
       decoration: const BoxDecoration(color: _kChromeScrim),
       child: Row(
         children: [
-          if (onBack != null)
-            _ChromeIconButton(
-              icon: Icons.arrow_back,
-              tooltip: 'Back',
-              onPressed: onBack,
-            ),
+          if (onBack != null) GlassBackButton(onTap: onBack!),
           if (title != null) ...[
             const SizedBox(width: AppSpacing.sm),
             Expanded(

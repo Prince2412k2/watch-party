@@ -15,9 +15,13 @@ void main() {
       expect(size.height, FloatingTileGeometry.headerHeight + 120);
     });
 
-    test('collapsed tile is just the header', () {
+    test('collapsed tile is a round ball, whatever width it was', () {
       final size = FloatingTileGeometry.tileSize(160, collapsed: true);
-      expect(size.height, FloatingTileGeometry.headerHeight);
+      expect(size.width, FloatingTileGeometry.ballDiameter);
+      expect(size.height, FloatingTileGeometry.ballDiameter);
+      // The expanded width is remembered, not applied — a ball is the same size
+      // whether it was collapsed from a small tile or a large one.
+      expect(FloatingTileGeometry.tileSize(400, collapsed: true), size);
     });
 
     test('width clamps to the minimum, and to the stage rather than a cap', () {
@@ -196,6 +200,53 @@ void main() {
       await tester.pump();
       expect(resized.dx, greaterThan(0));
       expect(resized.dy, greaterThan(0));
+    });
+
+    testWidgets('a collapsed tile is the person, and clicking it expands', (
+      tester,
+    ) async {
+      var expanded = 0;
+
+      await tester.pumpWidget(
+        _withProviders(
+          MaterialApp(
+            home: Scaffold(
+              body: Stack(
+                children: [
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    width: FloatingTileGeometry.ballDiameter,
+                    height: FloatingTileGeometry.ballDiameter,
+                    child: FloatingCameraTile(
+                      track: track,
+                      collapsed: true,
+                      onDrag: (_) {},
+                      onDragEnd: () {},
+                      onResize: (_) {},
+                      onToggleCollapse: () => expanded++,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // No avatar drawing to fetch in a test, so it falls back to initials —
+      // which is still the person rather than the old strip of chrome.
+      expect(find.text('A'), findsOneWidget);
+      expect(find.byIcon(Icons.drag_indicator), findsNothing);
+      expect(find.byIcon(Icons.south_east), findsNothing);
+      // Muted, and you can see that without expanding them.
+      expect(find.byIcon(Icons.mic_off), findsOneWidget);
+
+      // Anywhere on the ball, not a toggle in a corner of it.
+      await tester.tap(find.byType(FloatingCameraTile));
+      await tester.pump();
+      expect(expanded, 1);
     });
   });
 }
