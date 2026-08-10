@@ -204,11 +204,7 @@ class ServarrDetailView extends ConsumerWidget {
             ],
           ),
         ),
-        Positioned(
-          top: 18,
-          left: 34,
-          child: _BackButton(onTap: onBack),
-        ),
+        StageBackButton(onTap: onBack),
       ],
     );
   }
@@ -673,36 +669,6 @@ class _Poster extends StatelessWidget {
         color: wp.surface,
         child: Center(child: Icon(Icons.movie_outlined, color: wp.faint)),
       );
-}
-
-class _BackButton extends StatelessWidget {
-  const _BackButton({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xB80C0F13),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-        onTap: onTap,
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.chevron_left, size: 18, color: Colors.white),
-              SizedBox(width: 6),
-              Text('Back', style: TextStyle(color: Colors.white, fontSize: 14)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 // Manual-source dialog (magnet / .torrent) moved to servarr_manual_source.dart

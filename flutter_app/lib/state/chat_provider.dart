@@ -30,8 +30,11 @@ const String _rateLimitedMessage = 'Rate limited — slow down.';
 /// a round trip.
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   ChatNotifier(this._socket, {this.ackTimeout = chatAckTimeout})
-      : super(const []) {
-    _unsubscribe = _socket.on(ServerEvent.chatMessage, _onIncoming);
+    : super(const []) {
+    _unsubscribes = [
+      _socket.on(ServerEvent.chatMessage, _onIncoming),
+      _socket.on(ServerEvent.chatHistory, _onHistory),
+    ];
   }
 
   final SocketClient _socket;
@@ -40,10 +43,14 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   /// have to wait out the real [chatAckTimeout].
   final Duration ackTimeout;
 
-  void Function()? _unsubscribe;
+  late final List<void Function()> _unsubscribes;
+  String? _partyId;
+  bool _acceptingHistory = false;
+  List<ChatMessage>? _pendingHistory;
   final Queue<DateTime> _sendTimes = Queue();
 
   void _onIncoming(dynamic data) {
+    if (_partyId == null) return;
     if (data is! Map) return;
     final json = data.map((k, v) => MapEntry(k.toString(), v));
     final userId = json['userId']?.toString();
@@ -53,10 +60,59 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
       userId: userId,
       name: json['name']?.toString() ?? userId,
       text: text,
-      timestamp: (json['timestamp'] as num?)?.toInt() ??
+      timestamp:
+          (json['timestamp'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch,
     );
     state = [...state, message];
+  }
+
+  void _onHistory(dynamic data) {
+    if (data is! List || (_partyId == null && !_acceptingHistory)) return;
+    final history = [
+      for (final entry in data)
+        if (entry is Map) _messageFrom(entry),
+    ];
+    if (_partyId == null) {
+      _pendingHistory = history;
+    } else {
+      state = history;
+    }
+  }
+
+  ChatMessage _messageFrom(Map<dynamic, dynamic> data) {
+    final json = data.map((k, v) => MapEntry(k.toString(), v));
+    final userId = json['userId']?.toString() ?? '';
+    return ChatMessage(
+      userId: userId,
+      name: json['name']?.toString() ?? userId,
+      text: json['text']?.toString() ?? '',
+      timestamp:
+          (json['timestamp'] as num?)?.toInt() ??
+          DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  void prepareForJoin() {
+    _partyId = null;
+    _acceptingHistory = true;
+    _pendingHistory = null;
+    state = const [];
+  }
+
+  void activate(String partyId) {
+    if (_partyId == partyId) return;
+    _partyId = partyId;
+    _acceptingHistory = false;
+    state = _pendingHistory ?? const [];
+    _pendingHistory = null;
+  }
+
+  void deactivate() {
+    _partyId = null;
+    _acceptingHistory = false;
+    _pendingHistory = null;
+    state = const [];
   }
 
   /// True when a send right now would trip the server's rate limit.
@@ -118,7 +174,9 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
 
   @override
   void dispose() {
-    _unsubscribe?.call();
+    for (final unsubscribe in _unsubscribes) {
+      unsubscribe();
+    }
     super.dispose();
   }
 }

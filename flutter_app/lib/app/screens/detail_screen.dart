@@ -123,9 +123,9 @@ class _GuestOfflineDetailBody extends StatelessWidget {
             tone: AnalogIconButtonTone.primary,
             size: 56,
             iconSize: 28,
-            onPressed: () => ProviderScope.containerOf(context)
-                .read(nowPlayingProvider.notifier)
-                .open(itemId: record.itemId),
+            onPressed: () => ProviderScope.containerOf(
+              context,
+            ).read(nowPlayingProvider.notifier).open(itemId: record.itemId),
           ),
         ],
       ),
@@ -135,13 +135,12 @@ class _GuestOfflineDetailBody extends StatelessWidget {
 
 /// Start playing a library item.
 ///
-/// Into the party when one is active and this client may drive it; otherwise
-/// into the app's own player. Either way this only sets STATE — [PlayerHost],
+/// Opens into the app's own player. A watch party is an ambient chat/A/V room
+/// and does not own or replace anyone's local movie. This only sets STATE — [PlayerHost],
 /// mounted above the router, is what renders it. Nothing navigates, which is
 /// the point: the player is no longer a place you go.
 ///
-/// Public because the show stage launches playback too and must not re-derive
-/// the party check.
+/// Public because the show stage launches playback too.
 Future<void> startPlayback(
   BuildContext context,
   WidgetRef ref, {
@@ -149,27 +148,7 @@ Future<void> startPlayback(
   int? audioStreamIndex,
   int? subtitleStreamIndex,
 }) async {
-  final party = ref.read(partyProvider);
   final nowPlaying = ref.read(nowPlayingProvider.notifier);
-  if (party != null) {
-    final notifier = ref.read(partyProvider.notifier);
-    if (!notifier.canControl) return;
-    await notifier.selectMedia(
-      itemId,
-      audioStreamIndex: audioStreamIndex,
-      subtitleStreamIndex: subtitleStreamIndex,
-    );
-    // The room's own `party:state` will confirm this; opening optimistically
-    // means the person who pressed play sees the player immediately rather
-    // than after a round trip.
-    nowPlaying.open(
-      itemId: itemId,
-      audioStreamIndex: audioStreamIndex,
-      subtitleStreamIndex: subtitleStreamIndex,
-      fromParty: true,
-    );
-    return;
-  }
   nowPlaying.open(
     itemId: itemId,
     audioStreamIndex: audioStreamIndex,

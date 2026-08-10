@@ -14,6 +14,8 @@
 // bug this file exists to prevent is a variation of something else calling
 // pause().
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../player/player_controller.dart';
@@ -41,7 +43,7 @@ class NowPlaying {
     this.audioStreamIndex,
     this.subtitleStreamIndex,
     this.presentation = PlayerPresentation.hidden,
-    this.fromParty = false,
+    this.revision = 0,
   });
 
   final String? itemId;
@@ -51,11 +53,12 @@ class NowPlaying {
   final int? subtitleStreamIndex;
   final PlayerPresentation presentation;
 
-  /// True when the room chose this title, rather than this user opening it.
-  /// Closing a party title is a room decision; closing your own is not.
-  final bool fromParty;
+  /// Changes whenever the requested source or track selection changes, even if
+  /// the library item id stays the same.
+  final int revision;
 
-  bool get isOpen => itemId != null && presentation != PlayerPresentation.hidden;
+  bool get isOpen =>
+      itemId != null && presentation != PlayerPresentation.hidden;
   bool get isExpanded => presentation == PlayerPresentation.expanded;
   bool get isFloating => presentation == PlayerPresentation.floating;
 
@@ -66,7 +69,7 @@ class NowPlaying {
     int? audioStreamIndex,
     int? subtitleStreamIndex,
     PlayerPresentation? presentation,
-    bool? fromParty,
+    int? revision,
   }) => NowPlaying(
     itemId: itemId ?? this.itemId,
     mediaSourceId: mediaSourceId ?? this.mediaSourceId,
@@ -74,7 +77,7 @@ class NowPlaying {
     audioStreamIndex: audioStreamIndex ?? this.audioStreamIndex,
     subtitleStreamIndex: subtitleStreamIndex ?? this.subtitleStreamIndex,
     presentation: presentation ?? this.presentation,
-    fromParty: fromParty ?? this.fromParty,
+    revision: revision ?? this.revision,
   );
 }
 
@@ -94,20 +97,22 @@ class NowPlayingNotifier extends StateNotifier<NowPlaying> {
 
   /// Open a title, full-window by default.
   ///
-  /// Re-opening the SAME item only changes the presentation: a party
-  /// `party:state` resync repeats the current title constantly, and treating
-  /// each repeat as a new open would reset the position on every heartbeat.
   void open({
     required String itemId,
     String? mediaSourceId,
     String? title,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
-    bool fromParty = false,
     PlayerPresentation presentation = PlayerPresentation.expanded,
   }) {
-    if (state.itemId == itemId) {
-      state = state.copyWith(presentation: presentation, fromParty: fromParty);
+    final samePlayback =
+        state.itemId == itemId &&
+        state.mediaSourceId == mediaSourceId &&
+        state.title == title &&
+        state.audioStreamIndex == audioStreamIndex &&
+        state.subtitleStreamIndex == subtitleStreamIndex;
+    if (samePlayback) {
+      state = state.copyWith(presentation: presentation);
       return;
     }
     state = NowPlaying(
@@ -117,7 +122,7 @@ class NowPlayingNotifier extends StateNotifier<NowPlaying> {
       audioStreamIndex: audioStreamIndex,
       subtitleStreamIndex: subtitleStreamIndex,
       presentation: presentation,
-      fromParty: fromParty,
+      revision: state.revision + 1,
     );
   }
 
@@ -136,21 +141,63 @@ class NowPlayingNotifier extends StateNotifier<NowPlaying> {
 
   /// Stop. The ONLY path in the app that pauses and rewinds.
   Future<void> close() async {
-    if (state.presentation == PlayerPresentation.hidden && state.itemId == null) {
+    if (state.presentation == PlayerPresentation.hidden &&
+        state.itemId == null) {
       return;
     }
-    state = const NowPlaying();
+    state = NowPlaying(revision: state.revision + 1);
     // Ordered: state first, so the host unmounts the surface before the
     // controller work lands. Guarded independently for the same reason
     // `_leaveLocal` guards its steps — one failure must not skip the rest.
-    try {
-      await _player.pause();
-    } catch (_) {}
-    try {
-      await _player.seek(Duration.zero);
-    } catch (_) {}
+    await _ref.read(playbackOperationsProvider).replace((isSuperseded) async {
+      try {
+        await _player.pause();
+      } catch (_) {}
+      if (isSuperseded()) return;
+      try {
+        await _player.seek(Duration.zero);
+      } catch (_) {}
+    });
   }
 }
+
+/// Serializes every mutation of the app-wide player controller. A newer
+/// operation invalidates queued work, while work already inside a native open
+/// is allowed to finish before the current owner settles the controller.
+class PlaybackOperations {
+  int _generation = 0;
+  Future<void> _tail = Future<void>.value();
+
+  Future<T?> replace<T>(Future<T> Function(bool Function()) operation) {
+    final generation = ++_generation;
+    return _enqueue(generation, operation);
+  }
+
+  Future<T?> _enqueue<T>(
+    int generation,
+    Future<T> Function(bool Function()) operation,
+  ) {
+    final completer = Completer<T?>();
+    final queued = _tail.then((_) async {
+      if (generation != _generation) {
+        completer.complete(null);
+        return;
+      }
+      try {
+        final value = await operation(() => generation != _generation);
+        completer.complete(generation == _generation ? value : null);
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    _tail = queued.catchError((_) {});
+    return completer.future;
+  }
+}
+
+final playbackOperationsProvider = Provider<PlaybackOperations>(
+  (ref) => PlaybackOperations(),
+);
 
 /// Whether the expanded player's chrome is currently on screen.
 ///

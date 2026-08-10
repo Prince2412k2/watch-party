@@ -87,6 +87,7 @@ class _NavTabState extends State<_NavTab> {
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minWidth: 88),

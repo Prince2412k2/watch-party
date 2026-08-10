@@ -41,6 +41,8 @@ import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/bottom_nav.dart';
+import '../../ui/widgets/title_logo.dart';
+import 'stage_search.dart';
 import 'title_layout.dart';
 
 class MoviesStage extends ConsumerStatefulWidget {
@@ -65,7 +67,31 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
   @override
   void dispose() {
     _copyEntry.dispose();
+    _search.dispose();
     super.dispose();
+  }
+
+  /// The search line's text. Held here rather than read back out of the field so
+  /// clearing it from either side — the × or Escape — moves one thing.
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  void _setQuery(String value) {
+    setState(() {
+      _query = value;
+      // The rail is a different list now, so the cursor cannot mean what it
+      // meant a keystroke ago.
+      _selected = 0;
+    });
+    _copyEntry.forward(from: 0);
+  }
+
+  /// Drops the query when the surface underneath changes. A filter typed for
+  /// one shelf silently hiding most of the next one is how a stage ends up
+  /// looking empty for no visible reason.
+  void _clearQuery() {
+    _search.clear();
+    _query = '';
   }
 
   BrowseMode _mode = BrowseMode.singles;
@@ -91,6 +117,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
       // Switching modes leaves any franchise you were inside: a franchise's
       // parts are not something Singles can show.
       _collection = null;
+      _clearQuery();
     });
   }
 
@@ -105,7 +132,10 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
     // three that have to agree.
     switch (activationFor(id: item.id, name: item.name, type: item.type)) {
       case OpenActivation():
-        setState(() => _collection = item);
+        setState(() {
+          _collection = item;
+          _clearQuery();
+        });
       case PlayActivation(:final itemId):
         // Straight to the detail page. The poster carries a Hero tag matching
         // the one that page already uses, so the artwork flies across the
@@ -118,7 +148,12 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
   }
 
   void _back() {
-    if (_collection != null) setState(() => _collection = null);
+    if (_collection != null) {
+      setState(() {
+        _collection = null;
+        _clearQuery();
+      });
+    }
   }
 
   /// Shared with the web through app/shared/design/interaction.json: a
@@ -205,7 +240,14 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
       case LogicalKeyboardKey.backspace:
-        _back();
+        // Escape means "undo the narrowing I just did", innermost first: the
+        // search, then the franchise.
+        if (_query.isNotEmpty) {
+          _setQuery('');
+          _search.clear();
+        } else {
+          _back();
+        }
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -223,7 +265,10 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
       ),
     };
 
-    final items = async.valueOrNull ?? const <LibraryItem>[];
+    final items = searchTitles(
+      async.valueOrNull ?? const <LibraryItem>[],
+      _query,
+    );
     final selected = items.isEmpty
         ? null
         : items[_selected.clamp(0, items.length - 1)];
@@ -258,102 +303,126 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
           // "scrolling anywhere should work" means the whole stage, not the
           // strip of it the posters happen to occupy.
           behavior: HitTestBehavior.opaque,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              TitleLayout.padLeft,
-              TitleLayout.padTop,
-              TitleLayout.padLeft,
-              kBottomNavReservedPx,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // The copy takes the room the rail does not, and is centred in
-                // it. A Column rather than a Stack because the two genuinely
-                // compete for height once the posters are large: overlaying
-                // them meant the rail sat on top of the overview, and no
-                // choice of bottom reserve fixes that on a short window.
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        flex: TitleLayout.copyFlex,
-                        child: Center(
-                          child: SingleChildScrollView(
-                            // Never scrollable: the wheel belongs to the rail,
-                            // and a scroll view here would swallow it. It is
-                            // present only so a window too short for the copy
-                            // clips instead of throwing an overflow.
-                            physics: const NeverScrollableScrollPhysics(),
-                            child: _Details(
-                              key: ValueKey(detailed?.id ?? 'empty'),
-                              item: detailed,
-                              collection: _collection,
-                              loading: async.isLoading,
-                              error: async.hasError
-                                  ? 'Could not load this library'
-                                  : null,
-                              onBack: _collection == null ? null : _back,
-                              // Every line rides this one controller, each on
-                              // an interval weighted by its own type size.
-                              entry: _copyEntry,
-                              direction: _stepDirection,
-                              velocity: _velocity,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  TitleLayout.padLeft,
+                  TitleLayout.padTop,
+                  TitleLayout.padLeft,
+                  kBottomNavReservedPx,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // The copy takes the room the rail does not, and is centred in
+                    // it. A Column rather than a Stack because the two genuinely
+                    // compete for height once the posters are large: overlaying
+                    // them meant the rail sat on top of the overview, and no
+                    // choice of bottom reserve fixes that on a short window.
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            flex: TitleLayout.copyFlex,
+                            child: Center(
+                              child: SingleChildScrollView(
+                                // Never scrollable: the wheel belongs to the rail,
+                                // and a scroll view here would swallow it. It is
+                                // present only so a window too short for the copy
+                                // clips instead of throwing an overflow.
+                                physics: const NeverScrollableScrollPhysics(),
+                                child: _Details(
+                                  key: ValueKey(detailed?.id ?? 'empty'),
+                                  api: api,
+                                  item: detailed,
+                                  collection: _collection,
+                                  loading: async.isLoading,
+                                  error: async.hasError
+                                      ? 'Could not load this library'
+                                      : null,
+                                  onBack: _collection == null ? null : _back,
+                                  // Every line rides this one controller, each on
+                                  // an interval weighted by its own type size.
+                                  entry: _copyEntry,
+                                  direction: _stepDirection,
+                                  velocity: _velocity,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: TitleLayout.columnGap),
+                          Expanded(
+                            flex: TitleLayout.asideFlex,
+                            child: _collection == null
+                                ? Align(
+                                    alignment: Alignment.centerRight,
+                                    // Same reason as the copy: on a window short
+                                    // enough that the two positions do not fit
+                                    // beside the rail, this clips rather than
+                                    // throwing. Not scrollable — the wheel drives
+                                    // the rail.
+                                    child: SingleChildScrollView(
+                                      physics:
+                                          const NeverScrollableScrollPhysics(),
+                                      child: _ModeStrip(
+                                        mode: _mode,
+                                        onChanged: _setMode,
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: TitleLayout.columnGap),
-                      Expanded(
-                        flex: TitleLayout.asideFlex,
-                        child: _collection == null
-                            ? Align(
-                                alignment: Alignment.centerRight,
-                                // Same reason as the copy: on a window short
-                                // enough that the two positions do not fit
-                                // beside the rail, this clips rather than
-                                // throwing. Not scrollable — the wheel drives
-                                // the rail.
-                                child: SingleChildScrollView(
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  child: _ModeStrip(
-                                    mode: _mode,
-                                    onChanged: _setMode,
-                                  ),
-                                ),
-                              )
-                            : const SizedBox.shrink(),
+                    ),
+                    const SizedBox(height: TitleLayout.copyToBandGap),
+                    AnalogRail(
+                      maxHeightPx: railBudget,
+                      items: _railItems(items, api),
+                      selection: _selected.clamp(
+                        0,
+                        items.isEmpty ? 0 : items.length - 1,
                       ),
-                    ],
-                  ),
+                      size: size,
+                      motion: motion,
+                      // The rail has always taken a velocity and this stage has
+                      // always computed one for the copy; it just was not handed
+                      // over, so every step settled at the same canned speed no
+                      // matter how hard the row was pushed.
+                      velocity: _velocity,
+                      onSelect: (i) => setState(() => _selected = i),
+                      onActivate: (i) => _activate(items, i),
+                      emptyLabel: switch ((
+                        async.isLoading,
+                        _query.isNotEmpty,
+                        _mode,
+                      )) {
+                        (true, _, _) => 'Loading…',
+                        // The library is not empty — the search is. Saying "no
+                        // movies in this library" here would blame the wrong thing.
+                        (false, true, _) => 'Nothing matches “$_query”',
+                        (false, false, BrowseMode.collections) =>
+                          'No collections in this library',
+                        (false, false, BrowseMode.singles) =>
+                          'No movies in this library',
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: TitleLayout.copyToBandGap),
-                AnalogRail(
-                  maxHeightPx: railBudget,
-                  items: _railItems(items, api),
-                  selection: _selected.clamp(
-                    0,
-                    items.isEmpty ? 0 : items.length - 1,
-                  ),
-                  size: size,
-                  motion: motion,
-                  // The rail has always taken a velocity and this stage has
-                  // always computed one for the copy; it just was not handed
-                  // over, so every step settled at the same canned speed no
-                  // matter how hard the row was pushed.
-                  velocity: _velocity,
-                  onSelect: (i) => setState(() => _selected = i),
-                  onActivate: (i) => _activate(items, i),
-                  emptyLabel: switch ((async.isLoading, _mode)) {
-                    (true, _) => 'Loading…',
-                    (false, BrowseMode.collections) =>
-                      'No collections in this library',
-                    (false, BrowseMode.singles) => 'No movies in this library',
-                  },
-                ),
-              ],
-            ),
+              ),
+              StageSearchOverlay(
+                hint: _collection != null
+                    ? 'Search ${_collection!.name}'
+                    : _mode == BrowseMode.collections
+                    ? 'Search collections'
+                    : 'Search movies',
+                query: _query,
+                controller: _search,
+                onChanged: _setQuery,
+              ),
+            ],
           ),
         ),
       ),
@@ -385,6 +454,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
 class _Details extends StatelessWidget {
   const _Details({
     super.key,
+    required this.api,
     required this.item,
     required this.collection,
     required this.loading,
@@ -395,6 +465,7 @@ class _Details extends StatelessWidget {
     required this.velocity,
   });
 
+  final ApiClient api;
   final LibraryItem? item;
   final LibraryItem? collection;
   final bool loading;
@@ -482,11 +553,15 @@ class _Details extends StatelessWidget {
             direction: direction,
             velocity: velocity,
             fontSizePx: TitleType.heading.fontSize ?? 52,
-            child: Text(
-              current?.name ?? (loading ? '' : 'Nothing here'),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TitleType.heading.copyWith(color: AnalogColor.ink),
+            child: TitleLogo(
+              url: current == null ? null : titleLogoUrl(api, current),
+              maxHeightPx: TitleLayout.logoMaxHeight,
+              child: Text(
+                current?.name ?? (loading ? '' : 'Nothing here'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TitleType.heading.copyWith(color: AnalogColor.ink),
+              ),
             ),
           ),
 

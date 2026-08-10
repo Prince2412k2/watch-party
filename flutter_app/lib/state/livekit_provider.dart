@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 
@@ -34,7 +35,6 @@ class LiveKitState {
 
   /// Render-ready per-participant track state — what [CameraGrid] consumes.
   final List<ParticipantTrack> tracks;
-
   final String? error;
 
   LiveKitState copyWith({
@@ -87,7 +87,11 @@ class LiveKitNotifier extends StateNotifier<LiveKitState> {
     try {
       await _service.connect(url, token);
     } catch (e) {
-      state = state.copyWith(connecting: false, error: '$e');
+      state = state.copyWith(
+        connecting: false,
+        error: liveKitConnectionMessage(e),
+      );
+      rethrow;
     }
   }
 
@@ -102,15 +106,17 @@ class LiveKitNotifier extends StateNotifier<LiveKitState> {
   void reportConnectFailure(Object error) {
     state = state.copyWith(
       connecting: false,
-      error: 'Video chat could not connect: $error',
+      error: liveKitConnectionMessage(error),
     );
   }
 
-  Future<void> leave() => _service.disconnect();
+  Future<void> leave() async {
+    await _service.disconnect();
+    state = const LiveKitState();
+  }
 
   Future<void> setMic(bool on) => _service.setMicEnabled(on);
   Future<void> setCamera(bool on) => _service.setCameraEnabled(on);
-
   void setHideSelf(bool hide) {
     _service.setHideSelf(hide);
     state = state.copyWith(hideSelf: hide);
@@ -132,6 +138,23 @@ class LiveKitNotifier extends StateNotifier<LiveKitState> {
     _service.dispose();
     super.dispose();
   }
+}
+
+String liveKitConnectionMessage(Object error) {
+  if (error is DioException) {
+    if (error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.sendTimeout) {
+      return 'Video chat timed out. The party is still active; check the '
+          'server\'s LiveKit configuration and try reconnecting.';
+    }
+    final status = error.response?.statusCode;
+    if (status != null) {
+      return 'Video chat could not connect because the server returned $status.';
+    }
+  }
+  return 'Video chat could not connect. Check the server\'s LiveKit '
+      'configuration and try reconnecting.';
 }
 
 /// The underlying room service — one per app lifetime; E5's party screen

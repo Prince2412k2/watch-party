@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/models.dart';
 import '../../state/chat_provider.dart';
+import '../palette.dart';
 import '../tokens.dart';
 
 /// Party chat, docked beside the player (PLAN §3.8 / E7 / mounted by E5's
@@ -50,10 +51,10 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
     if (error == null) {
       _controller.clear();
       _scrollToEnd();
-      // Submitting a single-line field drops focus. Nobody sends one message,
-      // so put the cursor straight back rather than making them click again.
-      widget.composerFocus?.requestFocus();
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.composerFocus?.requestFocus();
+    });
   }
 
   void _scrollToEnd() {
@@ -174,13 +175,9 @@ class _ChatBubble extends StatelessWidget {
                 vertical: 10,
               ),
               decoration: BoxDecoration(
-                color: isOwn
-                    ? const Color(0x14FFFFFF)
-                    : const Color(0x0AFFFFFF),
+                color: isOwn ? context.wp.surface3 : context.wp.surface2,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: isOwn ? AppColors.line2 : AppColors.line,
-                ),
+                border: Border.all(color: context.wp.line2),
               ),
               child: Text(
                 message.text,
@@ -235,7 +232,7 @@ class _ChatInput extends StatelessWidget {
                   key: const Key('chatInput'),
                   controller: controller,
                   focusNode: focusNode,
-                  enabled: !busy,
+                  readOnly: busy,
                   onSubmitted: (_) => onSend(),
                   style: const TextStyle(color: AppColors.text, fontSize: 13.5),
                   decoration: InputDecoration(
@@ -245,7 +242,7 @@ class _ChatInput extends StatelessWidget {
                       fontSize: 13.5,
                     ),
                     filled: true,
-                    fillColor: const Color(0xFF1A1B1E),
+                    fillColor: context.wp.surface2,
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14,

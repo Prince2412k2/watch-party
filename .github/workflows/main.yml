@@ -136,6 +136,10 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Apply Flutter semantics fix
+        shell: bash
+        run: bash flutter_app/tool/apply-flutter-semantics-fix.sh
+
       - working-directory: flutter_app
         run: flutter pub get
 
@@ -257,6 +261,10 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Apply Flutter semantics fix
+        shell: bash
+        run: bash flutter_app/tool/apply-flutter-semantics-fix.sh
+
       - name: Resolve version
         id: version
         working-directory: flutter_app
@@ -318,6 +326,10 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Apply Flutter semantics fix
+        shell: bash
+        run: bash flutter_app/tool/apply-flutter-semantics-fix.sh
+
       - name: Resolve version
         id: version
         working-directory: flutter_app
@@ -355,6 +367,10 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+
+      - name: Apply Flutter semantics fix
+        shell: bash
+        run: bash flutter_app/tool/apply-flutter-semantics-fix.sh
 
       - name: Resolve version
         id: version

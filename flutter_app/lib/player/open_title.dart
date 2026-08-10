@@ -5,10 +5,8 @@
 // URL, prefer an offline copy, play — could only run while that route was
 // mounted, and was torn down with it.
 //
-// The PARTY path does not come through here. `PartyNotifier._syncPlayerToMedia`
-// opens party media itself, behind a generation-guarded queue that exists to stop
-// two opens racing. Routing party titles through this function as well would be
-// exactly the double-open that queue was written to prevent.
+// Party membership does not change this path. Movies remain local playback;
+// joining or leaving a room cannot open, replace, or stop them.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -84,12 +82,8 @@ Future<OpenTitleResult> openTitleIntoPlayer(
       streamUrl: streamUrl,
       autoplay: false,
     );
-    if (isStale()) {
-      await controller.pause();
-      return const OpenTitleResult.ready(usesCacheProxy: false);
-    }
+    if (isStale()) return const OpenTitleResult.ready(usesCacheProxy: false);
     await controller.play();
-    if (isStale()) await controller.pause();
     return OpenTitleResult.ready(usesCacheProxy: isAuthenticated);
   } catch (e) {
     return OpenTitleResult.failed(e);

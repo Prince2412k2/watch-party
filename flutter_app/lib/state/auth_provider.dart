@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api_client.dart';
 import '../models/models.dart';
+import 'now_playing_provider.dart';
 import 'party_provider.dart';
 import 'profile_provider.dart';
 import 'providers.dart';
@@ -16,7 +17,12 @@ import 'server_provider.dart';
 /// user isn't bounced to `/login` before we've had a chance to check the
 /// persisted cookie.
 class AuthState {
-  const AuthState({this.user, this.loading = false, this.error, this.initialized = false});
+  const AuthState({
+    this.user,
+    this.loading = false,
+    this.error,
+    this.initialized = false,
+  });
 
   final User? user;
   final bool loading;
@@ -32,26 +38,29 @@ class AuthState {
     bool? initialized,
     bool clearError = false,
     bool clearUser = false,
-  }) =>
-      AuthState(
-        user: clearUser ? null : (user ?? this.user),
-        loading: loading ?? this.loading,
-        error: clearError ? null : (error ?? this.error),
-        initialized: initialized ?? this.initialized,
-      );
+  }) => AuthState(
+    user: clearUser ? null : (user ?? this.user),
+    loading: loading ?? this.loading,
+    error: clearError ? null : (error ?? this.error),
+    initialized: initialized ?? this.initialized,
+  );
 }
 
 class AuthNotifier extends StateNotifier<AuthState> {
   AuthNotifier(this._ref) : super(const AuthState());
 
   final Ref _ref;
+  int _generation = 0;
 
   Future<void> login(String username, String password) async {
+    final generation = ++_generation;
     state = state.copyWith(loading: true, clearError: true);
     try {
       final user = await _ref.read(apiClientProvider).login(username, password);
+      if (generation != _generation) return;
       state = AuthState(user: user, initialized: true);
     } catch (e) {
+      if (generation != _generation) return;
       state = AuthState(error: _message(e), initialized: true);
     }
   }
@@ -59,11 +68,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// Attempt to restore an existing session from the persisted cookie jar by
   /// probing `GET /api/auth/me`. Call once at app boot.
   Future<void> restore() async {
+    final generation = ++_generation;
     state = state.copyWith(loading: true, clearError: true);
     try {
       final user = await _ref.read(apiClientProvider).me();
+      if (generation != _generation) return;
       state = AuthState(user: user, initialized: true);
     } catch (_) {
+      if (generation != _generation) return;
       state = const AuthState(initialized: true);
     }
   }
@@ -72,21 +84,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// signs this device out is [_teardownSession], which runs whether or not the
   /// round trip succeeded.
   Future<void> logout() async {
-    try {
-      await _ref.read(apiClientProvider).logout();
-    } catch (_) {
-      // A dropped connection or an HTTP 500 must not strand the user in a
-      // half-signed-out app — and it must not surface as an unhandled error
-      // from the sign-out button either. `ApiClient.logout` has already
-      // dropped the local cookies on its own way out.
-    } finally {
-      await _teardownSession();
+    final generation = ++_generation;
+    state = const AuthState(initialized: true);
+    await Future.wait([
+      _ref.read(apiClientProvider).logout().catchError((_) {}),
+      _teardownSession(),
+    ]);
+    if (generation == _generation) {
+      state = const AuthState(initialized: true);
     }
   }
 
   /// Release everything that belongs to the signed-in session, in the order it
   /// has to go: the party first (it owns the socket, the LiveKit room, the sync
-  /// engine and the shared player), then the per-user state the UI reads, then
+  /// engine), then local playback, then the per-user state the UI reads, then
   /// the configured server.
   ///
   /// Each step is independent and best-effort. A failure part-way through used
@@ -94,9 +105,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// the socket still authenticated as the previous user.
   Future<void> _teardownSession() async {
     final steps = <FutureOr<void> Function()>[
-      // Leaves the party and, with it, disconnects the socket and the LiveKit
-      // room, detaches the sync engine, stops playback and clears chat.
+      // Leaving a party deliberately preserves local playback. Signing out is
+      // the stronger boundary: the stream credentials belong to this session.
       () => _ref.read(partyProvider.notifier).leave(),
+      () => _ref.read(nowPlayingProvider.notifier).close(),
       () => _ref.read(profileProvider.notifier).clear(),
       // Avatar widgets cache the SVG they drew, keyed by account id — bump the
       // revision so the next account can't be shown wearing this one's face.
@@ -107,20 +119,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // logout so the next login starts from the server picker.
       () => _ref.read(serverConfigProvider.notifier).clear(),
     ];
-    for (final step in steps) {
-      try {
-        await step();
-      } catch (_) {
-        // Best-effort: the remaining steps still have to run.
-      }
-    }
-    state = const AuthState(initialized: true);
+    await Future.wait([
+      for (final step in steps) Future<void>.sync(step).catchError((_) {}),
+    ]);
   }
 
   /// Boot-time initialization when no server is configured yet: mark the auth
   /// layer initialized (unauthenticated) without a network probe, so the router
   /// shows the login screen immediately instead of hanging on a dead default.
-  void markUnauthenticated() => state = const AuthState(initialized: true);
+  void markUnauthenticated() {
+    _generation++;
+    state = const AuthState(initialized: true);
+  }
 
   String _message(Object e) {
     if (e is ApiException) {
@@ -130,5 +140,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 }
 
-final authProvider =
-    StateNotifierProvider<AuthNotifier, AuthState>((ref) => AuthNotifier(ref));
+final authProvider = StateNotifierProvider<AuthNotifier, AuthState>(
+  (ref) => AuthNotifier(ref),
+);

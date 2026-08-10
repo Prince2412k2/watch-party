@@ -19,7 +19,6 @@ import '../analog/player_core.dart';
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../models/playback_info.dart';
-import '../models/subtitle_preferences.dart';
 import '../models/trickplay_manifest.dart';
 import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
@@ -56,20 +55,13 @@ class PlayerChrome extends StatefulWidget {
     this.onBack,
     this.onToggleFullscreen,
     this.isFullscreen = false,
-    this.onSeek,
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
     this.preferredSubtitleStreamIndex,
-    this.partyPlayback,
-    this.subtitlePreferences,
-    this.canManagePartyMedia = true,
-    this.onSetPlaybackTracks,
-    this.onSetSubtitlePreferences,
     this.cachedSpans,
     this.visible,
     this.onWake,
-    this.onRequestPlaying,
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
@@ -82,26 +74,12 @@ class PlayerChrome extends StatefulWidget {
   final String? title;
   final VoidCallback? onBack;
 
-  /// When non-null, chrome visibility is owned by the PARENT (the party screen's
-  /// single unified auto-hide) and this widget stops running its own idle timer
+  /// When non-null, chrome visibility is owned by the app-wide player host and
+  /// this widget stops running its own idle timer
   /// — it renders at [visible] and forwards activity via [onWake]. Null (solo
   /// playback / detail screen) keeps the built-in idle behaviour intact.
   final bool? visible;
   final VoidCallback? onWake;
-
-  /// When non-null a PARTY owns playback, and the transport's play/pause is
-  /// authored through the sync engine (`requestPlay`/`requestPause`) instead of
-  /// being poked into the controller.
-  ///
-  /// This is not a preference. Calling `controller.pause()` directly in a party
-  /// leaves the engine unaware a command was authored, so its applying-guard
-  /// never fires — and its host kick-loop, which exists so muted guests can
-  /// autoplay, sees a 'playing' schedule against a stopped player 200ms later
-  /// and starts it again. That is the "pause won't stick" bug.
-  ///
-  /// Null for solo playback, where there is no schedule and the controller IS
-  /// the authority.
-  final ValueChanged<bool>? onRequestPlaying;
 
   /// Party-only key bindings, independent of playback control: `c` toggles chat,
   /// hold-`T` is push-to-talk. Null in solo playback (the keys do nothing).
@@ -126,21 +104,10 @@ class PlayerChrome extends StatefulWidget {
   /// tests/mocks that don't wire a cache proxy.
   final ValueListenable<List<CachedSpan>>? cachedSpans;
 
-  /// Fired (in addition to the local seek) whenever the user scrubs or uses a
-  /// keyboard seek. In a watch party this is wired to the sync engine's
-  /// `requestSeek` so the host's seek is authored to the server and mirrored to
-  /// every other client (web + Flutter). Null for solo playback (local only).
-  final ValueChanged<Duration>? onSeek;
   final String? itemId;
   final String? mediaSourceId;
   final ApiClient? apiClient;
   final int? preferredSubtitleStreamIndex;
-  final PlaybackInfo? partyPlayback;
-  final SubtitlePreferences? subtitlePreferences;
-  final bool canManagePartyMedia;
-  final void Function(int? audioStreamIndex, int subtitleStreamIndex)?
-  onSetPlaybackTracks;
-  final ValueChanged<SubtitlePreferences>? onSetSubtitlePreferences;
 
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
@@ -163,9 +130,6 @@ class _PlayerChromeState extends State<PlayerChrome>
   final Set<String> _seenToastIds = {};
   final Map<String, Timer> _toastTimers = {};
   int _toastStampMs = 0;
-
-  /// How far libmpv has read ahead, when the concrete controller can say.
-  Duration _bufferedTo = Duration.zero;
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -231,7 +195,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     _loadTrickplay();
     _loadExternalSubtitles();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _applyCanonicalSubtitlePreferences();
       _applyCanonicalTracks();
     });
   }
@@ -292,15 +255,9 @@ class _PlayerChromeState extends State<PlayerChrome>
 
     // media_kit surfaces decode/network errors on an additive `errors` stream
     // (not part of the frozen contract) — drive the E4.3 error overlay off it
-    // when the concrete controller supports it. `bufferedTo` is additive in the
-    // same way and feeds the timeline's buffered layer; a controller without it
-    // (mock/spy, or an offline local file) renders that layer empty.
+    // when the concrete controller supports it.
     if (c is MediaKitPlayerController) {
       _subs.add(c.errors.listen((e) => setState(() => _error = e)));
-      _bufferedTo = c.bufferedToNow;
-      _subs.add(c.bufferedTo.listen((b) => setState(() => _bufferedTo = b)));
-    } else {
-      _bufferedTo = Duration.zero;
     }
   }
 
@@ -331,11 +288,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         _loadedExternalSubtitleTrackIds.clear();
         _bindController(widget.controller);
       });
-      // Idle behaviour follows the new player's play state, and the party's
-      // canonical audio/subtitle/appearance choices have to be re-applied —
-      // the replacement starts on libmpv's own defaults.
       _autoHide.setPlaying(widget.controller.isPlayingNow);
-      unawaited(_applyCanonicalSubtitlePreferences());
       unawaited(_applyCanonicalTracks());
     }
     if (oldWidget.itemId != widget.itemId ||
@@ -343,13 +296,6 @@ class _PlayerChromeState extends State<PlayerChrome>
         oldWidget.apiClient != widget.apiClient) {
       _loadTrickplay();
       _loadExternalSubtitles();
-    }
-    if (oldWidget.partyPlayback != widget.partyPlayback) {
-      _playbackInfo = widget.partyPlayback;
-      _applyCanonicalTracks();
-    }
-    if (oldWidget.subtitlePreferences != widget.subtitlePreferences) {
-      _applyCanonicalSubtitlePreferences();
     }
     if (oldWidget.chatOpen != widget.chatOpen) {
       // Opening chat dismisses what is on screen and does not resurrect it on
@@ -552,7 +498,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         return;
       }
       final external = info.subtitleStreams.where((track) => track.isExternal);
-      _playbackInfo = widget.partyPlayback ?? info;
+      _playbackInfo = info;
       _externalSubtitleById.clear();
       for (final track in external) {
         _externalSubtitleById[_externalSubtitleId(track.index)] = track;
@@ -573,9 +519,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         ];
       });
       if (_selectedSubtitle == null) {
-        final preferred =
-            widget.partyPlayback?.selectedSubtitleIndex ??
-            widget.preferredSubtitleStreamIndex;
+        final preferred = widget.preferredSubtitleStreamIndex;
         PlaybackTrack? requested;
         if (preferred != null) {
           for (final track in external) {
@@ -664,10 +608,7 @@ class _PlayerChromeState extends State<PlayerChrome>
 
   Future<void> _togglePlay() async {
     if (!widget.canControl) return;
-    final author = widget.onRequestPlaying;
-    if (author != null) {
-      author(!_playing);
-    } else if (_playing) {
+    if (_playing) {
       await widget.controller.pause();
     } else {
       await widget.controller.play();
@@ -684,14 +625,12 @@ class _PlayerChromeState extends State<PlayerChrome>
               ? _duration
               : target);
     await widget.controller.seek(clamped);
-    widget.onSeek?.call(clamped);
     _wake();
   }
 
   Future<void> _seekTo(Duration position) async {
     if (!widget.canControl) return;
     await widget.controller.seek(position);
-    widget.onSeek?.call(position);
     _wake();
   }
 
@@ -736,7 +675,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (c is! MediaKitPlayerController) return;
     setState(() => _subScale = v);
     await c.setSubtitleScale(v);
-    _emitSubtitlePreferences(fontScalePercent: (v * 100).round());
     _wake();
   }
 
@@ -745,15 +683,11 @@ class _PlayerChromeState extends State<PlayerChrome>
   /// from the bottom because that is how the setting reads to a person. One
   /// conversion, in one place, rather than the arithmetic appearing at each
   /// call site and eventually disagreeing with itself.
-  static int _offsetFromSubPos(int subPos) => 100 - subPos.clamp(0, 100);
-  static int _subPosFromOffset(int offset) => 100 - offset.clamp(0, 100);
-
   Future<void> _setSubtitlePosition(int v) async {
     final c = widget.controller;
     if (c is! MediaKitPlayerController) return;
     setState(() => _subPos = v);
     await c.setSubtitlePosition(v);
-    _emitSubtitlePreferences(verticalOffsetPercent: _offsetFromSubPos(v));
     _wake();
   }
 
@@ -762,7 +696,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (c is! MediaKitPlayerController) return;
     setState(() => _subDelay = v);
     await c.setSubtitleDelay(v);
-    _emitSubtitlePreferences(delayMs: (v * 1000).round());
     _wake();
   }
 
@@ -771,11 +704,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (c is! MediaKitPlayerController) return;
     setState(() => _subFont = font);
     await c.setSubtitleFont(font);
-    _emitSubtitlePreferences(
-      fontFamily: font == 'monospace'
-          ? 'mono'
-          : (font == 'serif' ? 'serif' : 'sans'),
-    );
     _wake();
   }
 
@@ -784,7 +712,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (c is! MediaKitPlayerController) return;
     setState(() => _subColor = color.toUpperCase());
     await c.setSubtitleColor(_subColor);
-    _emitSubtitlePreferences(textColor: _subColor);
   }
 
   Future<void> _setSubtitleBackgroundOpacity(int percent) async {
@@ -792,73 +719,10 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (c is! MediaKitPlayerController) return;
     setState(() => _subBackgroundOpacity = percent);
     await c.setSubtitleBackgroundOpacity(percent);
-    _emitSubtitlePreferences(backgroundOpacityPercent: percent);
-  }
-
-  void _emitSubtitlePreferences({
-    int? delayMs,
-    int? fontScalePercent,
-    int? verticalOffsetPercent,
-    String? fontFamily,
-    String? textColor,
-    int? backgroundOpacityPercent,
-  }) {
-    final callback = widget.onSetSubtitlePreferences;
-    if (callback == null || !widget.canManagePartyMedia) return;
-    final local = SubtitlePreferences(
-      delayMs: (_subDelay * 1000).round(),
-      fontScalePercent: (_subScale * 100).round(),
-      verticalOffsetPercent: _offsetFromSubPos(_subPos),
-      fontFamily: _subFont == 'monospace'
-          ? 'mono'
-          : (_subFont == 'serif' ? 'serif' : 'sans'),
-      textColor: _subColor,
-      backgroundOpacityPercent: _subBackgroundOpacity,
-    );
-    callback(
-      local.copyWith(
-        delayMs: delayMs,
-        fontScalePercent: fontScalePercent,
-        verticalOffsetPercent: verticalOffsetPercent,
-        fontFamily: fontFamily,
-        textColor: textColor,
-        backgroundOpacityPercent: backgroundOpacityPercent,
-      ),
-    );
-  }
-
-  Future<void> _applyCanonicalSubtitlePreferences() async {
-    final preferences = widget.subtitlePreferences;
-    if (preferences == null) return;
-    final position = _subPosFromOffset(preferences.verticalOffsetPercent);
-    final font = switch (preferences.fontFamily) {
-      'serif' => 'serif',
-      'mono' => 'monospace',
-      _ => 'sans-serif',
-    };
-    if (mounted) {
-      setState(() {
-        _subScale = preferences.fontScalePercent / 100;
-        _subPos = position;
-        _subDelay = preferences.delayMs / 1000;
-        _subFont = font;
-        _subColor = preferences.textColor;
-        _subBackgroundOpacity = preferences.backgroundOpacityPercent;
-      });
-    }
-    final c = widget.controller;
-    if (c is MediaKitPlayerController) {
-      await c.setSubtitleScale(_subScale);
-      await c.setSubtitlePosition(_subPos);
-      await c.setSubtitleDelay(_subDelay);
-      await c.setSubtitleFont(_subFont);
-      await c.setSubtitleColor(_subColor);
-      await c.setSubtitleBackgroundOpacity(_subBackgroundOpacity);
-    }
   }
 
   Future<void> _applyCanonicalTracks() async {
-    final playback = widget.partyPlayback ?? _playbackInfo;
+    final playback = _playbackInfo;
     if (playback == null) return;
     final audioId = playerTrackIdForJellyfinIndex(
       jellyfinIndex: playback.selectedAudioIndex,
@@ -873,10 +737,10 @@ class _PlayerChromeState extends State<PlayerChrome>
       playback: playback,
     );
     if (playback.selectedAudioIndex != null && audioId != null) {
-      await _setAudio(audioId, authored: false);
+      await _setAudio(audioId);
     }
     if (playback.selectedSubtitleIndex != null) {
-      await _setSubtitle(subtitleId, authored: false);
+      await _setSubtitle(subtitleId);
     }
   }
 
@@ -901,7 +765,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         font: _subFont,
         color: _subColor,
         backgroundOpacity: _subBackgroundOpacity,
-        enabled: widget.canManagePartyMedia,
+        enabled: true,
         onScale: _setSubtitleScale,
         onPosition: _setSubtitlePosition,
         onDelay: _setSubtitleDelay,
@@ -913,27 +777,13 @@ class _PlayerChromeState extends State<PlayerChrome>
     _release('subtitleSettings');
   }
 
-  Future<void> _setAudio(String? id, {bool authored = true}) async {
+  Future<void> _setAudio(String? id) async {
     setState(() => _selectedAudio = id);
     await widget.controller.setAudioTrack(id);
-    if (authored && widget.onSetPlaybackTracks != null) {
-      final playback = widget.partyPlayback ?? _playbackInfo;
-      if (playback != null) {
-        widget.onSetPlaybackTracks!(
-          jellyfinIndexForPlayerTrack(
-            playerTrackId: id,
-            type: 'audio',
-            playerTracks: _tracks.audio,
-            playback: playback,
-          ),
-          playback.selectedSubtitleIndex ?? -1,
-        );
-      }
-    }
     _wake();
   }
 
-  Future<void> _setSubtitle(String? id, {bool authored = true}) async {
+  Future<void> _setSubtitle(String? id) async {
     final previous = _selectedSubtitle;
     final version = ++_subtitleSelectionVersion;
     final external = id == null ? null : _externalSubtitleById[id];
@@ -996,21 +846,6 @@ class _PlayerChromeState extends State<PlayerChrome>
     }
     if (mounted && version == _subtitleSelectionVersion) {
       setState(() => _selectedSubtitle = id);
-    }
-    if (authored && widget.onSetPlaybackTracks != null) {
-      final playback = widget.partyPlayback ?? _playbackInfo;
-      if (playback != null) {
-        widget.onSetPlaybackTracks!(
-          playback.selectedAudioIndex,
-          jellyfinIndexForPlayerTrack(
-                playerTrackId: id,
-                type: 'subtitle',
-                playerTracks: _visibleSubtitleTracks,
-                playback: playback,
-              ) ??
-              -1,
-        );
-      }
     }
     _wake();
   }
@@ -1083,8 +918,8 @@ class _PlayerChromeState extends State<PlayerChrome>
     // keystroke into a platform or application command — Ctrl+C copy, Ctrl+T
     // new tab/window, Ctrl+F find — and the player used to match on the logical
     // key alone and return `handled`, swallowing all of them. The one
-    // deliberate exception is Ctrl/Cmd+C, which the analog player defines as
-    // the chat shortcut and which `shouldToggleChat` guards.
+    // deliberate exceptions are Ctrl/Cmd+C for chat and Ctrl/Cmd+F for
+    // fullscreen.
     final ctrlOrMeta =
         HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
@@ -1108,6 +943,11 @@ class _PlayerChromeState extends State<PlayerChrome>
       // Ctrl+C with a selection, or any C typed into a field: leave it to the
       // platform so copy still copies.
       return KeyEventResult.ignored;
+    }
+
+    if (ctrlOrMeta && event.logicalKey == LogicalKeyboardKey.keyF) {
+      widget.onToggleFullscreen?.call();
+      return KeyEventResult.handled;
     }
 
     if (ctrlOrMeta) return KeyEventResult.ignored;
@@ -1247,7 +1087,7 @@ class _PlayerChromeState extends State<PlayerChrome>
           label: 'Audio track',
           detail: _audioTrackDetail,
           // A guest may read which track the party is on but not change it.
-          enabled: widget.canManagePartyMedia,
+          enabled: true,
           onTap: _openAudioPicker,
         ),
       AnalogSettingsEntry(
@@ -1275,21 +1115,6 @@ class _PlayerChromeState extends State<PlayerChrome>
       if (track.id == _selectedAudio) return _trackName(track);
     }
     return null;
-  }
-
-  /// libmpv reports only the forward edge of its demuxer cache, so this is one
-  /// contiguous range from the playhead to that edge — never the several
-  /// disjoint ranges an HTML media element can expose. [AnalogTimeline] draws a
-  /// list either way, so a richer engine needs no change here.
-  List<TimelineRange> get _bufferedRanges {
-    final total = _duration.inMilliseconds;
-    if (total <= 0 || _bufferedTo <= _position) return const [];
-    return [
-      TimelineRange(
-        _position.inMilliseconds / total,
-        _bufferedTo.inMilliseconds / total,
-      ),
-    ];
   }
 
   @override
@@ -1348,7 +1173,7 @@ class _PlayerChromeState extends State<PlayerChrome>
                 alignment: Alignment.bottomCenter,
                 child: _TransportBar(
                   canControl: widget.canControl,
-                  canManageTracks: widget.canManagePartyMedia,
+                  canManageTracks: true,
                   playing: _playing,
                   position: _dragPosition ?? _position,
                   duration: _duration,
@@ -1383,7 +1208,6 @@ class _PlayerChromeState extends State<PlayerChrome>
                   onToggleFullscreen: widget.onToggleFullscreen,
                   trickplay: _trickplay,
                   apiClient: widget.apiClient,
-                  buffered: _bufferedRanges,
                   cachedSpans: widget.cachedSpans,
                   previewPosition: _previewPosition,
                   previewFraction: _previewFraction,
@@ -1427,7 +1251,6 @@ class _PlayerChromeState extends State<PlayerChrome>
               // There is one notification path now: the app-wide rail
               // (ChatNotifications -> AnalogToastHost), mounted above the
               // router, so nothing the player or the party draws can cover it.
-
               if (activeCues.isNotEmpty)
                 _SubtitleOverlay(
                   text: activeCues.map((cue) => cue.text).join('\n'),
@@ -1537,23 +1360,26 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (onBack == null && title == null) return const SizedBox.shrink();
+    if (onBack == null && title == null) {
+      return const SizedBox.shrink();
+    }
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm,
+      // Inset to put the back button exactly where every other surface puts it
+      // — see [BackButtonPlacement]. Leaving the player on its own bar padding
+      // meant the one control you reach for on the way out of a film moved as
+      // you entered it.
+      padding: EdgeInsets.only(
+        left: BackButtonPlacement.left,
+        top: BackButtonPlacement.top,
+        right: AppSpacing.md,
+        bottom: AppSpacing.sm,
       ),
       // Flat near-black translucent bar — no gradients per the design system.
       decoration: const BoxDecoration(color: _kChromeScrim),
       child: Row(
         children: [
-          if (onBack != null)
-            _ChromeIconButton(
-              icon: Icons.arrow_back,
-              tooltip: 'Back',
-              onPressed: onBack,
-            ),
+          if (onBack != null) GlassBackButton(onTap: onBack!),
           if (title != null) ...[
             const SizedBox(width: AppSpacing.sm),
             Expanded(
@@ -1565,6 +1391,7 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           ],
+          if (title == null) const Spacer(),
         ],
       ),
     );
@@ -1597,7 +1424,6 @@ class _TransportBar extends StatelessWidget {
     required this.onToggleFullscreen,
     required this.trickplay,
     required this.apiClient,
-    required this.buffered,
     this.cachedSpans,
     required this.previewPosition,
     required this.previewFraction,
@@ -1646,8 +1472,6 @@ class _TransportBar extends StatelessWidget {
   final TrickplayManifest? trickplay;
   final ApiClient? apiClient;
 
-  /// Transient network buffer (media_kit's demuxer cache edge).
-  final List<TimelineRange> buffered;
   final ValueListenable<List<CachedSpan>>? cachedSpans;
   final Duration? previewPosition;
   final double previewFraction;
@@ -1691,7 +1515,6 @@ class _TransportBar extends StatelessWidget {
                   onScrubbingChanged: onScrubbingChanged,
                   onHoverPreview: onHoverPreview,
                   onHoverEnd: onHoverEnd,
-                  buffered: buffered,
                   cachedSpans: cachedSpans,
                 ),
                 if (previewPosition != null &&
@@ -1811,7 +1634,6 @@ class _Timeline extends StatelessWidget {
     required this.onScrubbingChanged,
     required this.onHoverPreview,
     required this.onHoverEnd,
-    required this.buffered,
     this.cachedSpans,
   });
 
@@ -1823,9 +1645,6 @@ class _Timeline extends StatelessWidget {
   final ValueChanged<bool> onScrubbingChanged;
   final void Function(Duration position, double fraction) onHoverPreview;
   final VoidCallback onHoverEnd;
-
-  /// Transient network buffer.
-  final List<TimelineRange> buffered;
 
   /// Cached ("downloaded") spans, already on disk. Byte fractions, which only
   /// approximate time for variable-bitrate media — see the caveat on
@@ -1841,7 +1660,6 @@ class _Timeline extends StatelessWidget {
     onScrubbingChanged: onScrubbingChanged,
     onHoverPreview: onHoverPreview,
     onHoverEnd: onHoverEnd,
-    buffered: buffered,
     cached: [for (final span in spans) TimelineRange(span.start, span.end)],
   );
 

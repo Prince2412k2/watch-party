@@ -22,76 +22,71 @@ class _TestMediaCacheProxy extends MediaCacheProxy {
 }
 
 void main() {
-  testWidgets(
-    'Watch sends media into an existing party instead of going solo',
-    (tester) async {
-      final socket = MockSocketClient();
-      final container = ProviderContainer(
-        overrides: [
-          apiClientProvider.overrideWithValue(MockApiClient()),
-          socketClientProvider.overrideWithValue(socket),
-          authProvider.overrideWith((ref) {
-            final notifier = AuthNotifier(ref);
-            notifier.state = const AuthState(
-              user: User(userId: 'host', name: 'Host'),
-              initialized: true,
-            );
-            return notifier;
-          }),
-        ],
-      );
-      addTearDown(container.dispose);
-      container
-          .read(partyProvider.notifier)
-          .setState(const PartyState(id: 'party-1', hostId: 'host'));
+  testWidgets('Watch stays local while a party is active', (tester) async {
+    final socket = MockSocketClient();
+    final container = ProviderContainer(
+      overrides: [
+        apiClientProvider.overrideWithValue(MockApiClient()),
+        socketClientProvider.overrideWithValue(socket),
+        authProvider.overrideWith((ref) {
+          final notifier = AuthNotifier(ref);
+          notifier.state = const AuthState(
+            user: User(userId: 'host', name: 'Host'),
+            initialized: true,
+          );
+          return notifier;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    container
+        .read(partyProvider.notifier)
+        .setState(const PartyState(id: 'party-1', hostId: 'host'));
 
-      final router = GoRouter(
-        initialLocation: '/detail/mock-item-0',
-        routes: [
-          GoRoute(
-            path: '/detail/:id',
-            builder: (_, state) =>
-                DetailScreen(itemId: state.pathParameters['id']!),
-          ),
-          GoRoute(
-            path: '/party/:id',
-            builder: (_, state) => Text('Party ${state.pathParameters['id']}'),
-          ),
-        ],
-      );
-      addTearDown(router.dispose);
-
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: MaterialApp.router(
-            theme: AppTheme.dark,
-            routerConfig: router,
-            builder: (context, child) => AnalogToastHost(child: child!),
-          ),
+    final router = GoRouter(
+      initialLocation: '/detail/mock-item-0',
+      routes: [
+        GoRoute(
+          path: '/detail/:id',
+          builder: (_, state) =>
+              DetailScreen(itemId: state.pathParameters['id']!),
         ),
-      );
-      await tester.pumpAndSettle();
+        GoRoute(
+          path: '/party/:id',
+          builder: (_, state) => Text('Party ${state.pathParameters['id']}'),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
 
-      await tester.tap(find.text('Watch now'));
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(
+          theme: AppTheme.dark,
+          routerConfig: router,
+          builder: (context, child) => AnalogToastHost(child: child!),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      // Playing NEVER navigates now. The room is told what to play, the local
-      // player state opens, and you stay on the page you were reading.
-      expect(find.text('Party party-1'), findsNothing);
-      expect(find.text('Watch now'), findsOneWidget);
-      final now = container.read(nowPlayingProvider);
-      expect(now.itemId, 'mock-item-0');
-      expect(now.fromParty, isTrue);
-      expect(now.isExpanded, isTrue);
-      expect(socket.emitted.last.$1, ClientEvent.partySelectMedia);
-      expect(
-        socket.emitted.last.$2,
-        containsPair('mediaItemId', 'mock-item-0'),
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
+    await tester.tap(find.text('Watch now'));
+    await tester.pumpAndSettle();
+
+    // Playing NEVER navigates now. The room is told what to play, the local
+    // player state opens, and you stay on the page you were reading.
+    expect(find.text('Party party-1'), findsNothing);
+    expect(find.text('Watch now'), findsOneWidget);
+    final now = container.read(nowPlayingProvider);
+    expect(now.itemId, 'mock-item-0');
+    expect(now.isExpanded, isTrue);
+    expect(
+      socket.emitted.where((event) => event.$1 == ClientEvent.partySelectMedia),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('watching solo opens the app player without navigating', (
     tester,

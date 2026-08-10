@@ -58,10 +58,7 @@ Future<void> _pump(WidgetTester tester) async {
 /// Top-left of the poster tile carrying [label] as its caption.
 Offset _posterAt(WidgetTester tester, String label) => tester.getTopLeft(
   find
-      .ancestor(
-        of: find.text(label),
-        matching: find.byType(AnalogPosterTile),
-      )
+      .ancestor(of: find.text(label), matching: find.byType(AnalogPosterTile))
       .first,
 );
 
@@ -114,7 +111,8 @@ void main() {
       expect(
         _posterAt(tester, 'Show $expected').dx,
         moreOrLessEquals(cursorX, epsilon: 0.5),
-        reason: 'show $expected must slide into the cursor slot, rather than '
+        reason:
+            'show $expected must slide into the cursor slot, rather than '
             'the cursor moving to it',
       );
       // The copy follows the cursor, exactly as it does on Movies.
@@ -145,6 +143,39 @@ void main() {
     );
   });
 
+  testWidgets('the search line narrows the rail, and Escape gives it back', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    await tester.enterText(find.byType(TextField), 'Show 1');
+    await tester.pumpAndSettle();
+
+    // Substring, so 1, 10 and 11 all survive — and nothing else does.
+    expect(find.text('Show 1'), findsWidgets);
+    expect(find.text('Show 10'), findsOneWidget);
+    expect(find.text('Show 2'), findsNothing);
+    // The cursor went back to the top of the new list, so the copy is the first
+    // match rather than whatever index 0 used to be.
+    expect(find.text('Overview of show 1.'), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Show 2'), findsOneWidget);
+    expect(find.text('Overview of show 0.'), findsOneWidget);
+  });
+
+  testWidgets('a search that matches nothing says so', (tester) async {
+    await _pump(tester);
+
+    await tester.enterText(find.byType(TextField), 'zzz');
+    await tester.pumpAndSettle();
+
+    // Not "No shows in this library" — the library is fine, the query is not.
+    expect(find.text('Nothing matches “zzz”'), findsOneWidget);
+  });
+
   testWidgets('up and down do nothing — there is no second axis', (
     tester,
   ) async {
@@ -156,7 +187,10 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pumpAndSettle();
 
-    expect(_posterAt(tester, 'Show 0').dx, moreOrLessEquals(cursorX, epsilon: 0.5));
+    expect(
+      _posterAt(tester, 'Show 0').dx,
+      moreOrLessEquals(cursorX, epsilon: 0.5),
+    );
     expect(find.text('Overview of show 0.'), findsOneWidget);
   });
 }
