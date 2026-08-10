@@ -102,7 +102,7 @@ class _OfflineTile extends ConsumerWidget {
             title: record.title,
             subtitle: _duration(record.runTimeTicks),
             heroTag: heroTag,
-            onTap: () => context.go('/detail/${record.itemId}'),
+            onTap: () => context.push('/detail/${record.itemId}'),
           ),
           Positioned(
             top: AppSpacing.sm,

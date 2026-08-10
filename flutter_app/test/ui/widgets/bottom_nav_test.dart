@@ -9,6 +9,7 @@ void main() {
   testWidgets('inactive destinations remain pointer-hit-testable', (
     tester,
   ) async {
+    String? selected;
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark,
@@ -28,7 +29,7 @@ void main() {
                 ),
               ],
               currentRoute: '/movies',
-              onSelect: (_) {},
+              onSelect: (route) => selected = route,
             ),
           ),
         ),
@@ -42,5 +43,12 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
+
+    final tab = find
+        .ancestor(of: find.text('TV'), matching: find.byType(GestureDetector))
+        .first;
+    final rect = tester.getRect(tab);
+    await tester.tapAt(rect.topLeft + const Offset(2, 2));
+    expect(selected, '/tv');
   });
 }

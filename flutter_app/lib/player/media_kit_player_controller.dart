@@ -8,7 +8,7 @@ import 'player_controller.dart';
 
 /// media_kit (libmpv) implementation of the frozen [PlayerController] contract
 /// (PLAN §3.3 / E4.1). Owns a single [mk.Player] + [mkv.VideoController]; the
-/// controller is rendered by `video_view.dart` and driven by the sync engine
+/// controller is rendered by `video_view.dart`
 /// (E5) and player chrome (E4.2).
 ///
 /// Track model mapping: libmpv exposes pseudo-tracks `auto`/`no` in every list;
@@ -120,22 +120,6 @@ class MediaKitPlayerController implements PlayerController {
 
   /// Error text stream. Additive.
   Stream<String> get errors => _errorCtrl.stream;
-
-  /// How far ahead of the start of the media libmpv has decoded and cached —
-  /// mpv's `demuxer-cache-time`, as an absolute timestamp. Additive: the frozen
-  /// [PlayerController] contract has no buffered-range API, which is why the
-  /// seek bar had no buffered indicator at all before #67.
-  ///
-  /// libmpv reports only the FORWARD edge of the demuxer cache, not a list of
-  /// seekable ranges, so this yields exactly one contiguous range (playhead →
-  /// [bufferedTo]) rather than the multiple disjoint ranges an HTML
-  /// `MediaElement.buffered` can expose. The timeline widget renders a list of
-  /// ranges regardless, so a future engine that can report several needs no
-  /// change there.
-  Stream<Duration> get bufferedTo => _player.stream.buffer;
-
-  /// Synchronous twin of [bufferedTo]. Additive.
-  Duration get bufferedToNow => _player.state.buffer;
 
   /// Most recent track list, including events emitted before the chrome mounts.
   PlayerTracks get latestTracks => _latestTracks;
@@ -425,7 +409,7 @@ class MediaKitPlayerController implements PlayerController {
   @override
   Stream<PlayerTracks> get tracks => _tracksCtrl.stream;
 
-  // ── Synchronous snapshots (sync engine's tight loop) ──────────────────────
+  // ── Synchronous snapshots ────────────────────────────────────────────────
   @override
   Duration get positionNow => _player.state.position;
   @override

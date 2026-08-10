@@ -19,11 +19,14 @@
 //
 // Not wired on web/mobile: callers should only invoke this on
 // Platform.isLinux/isMacOS/isWindows.
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart' show Offset, Rect, Size;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 /// Persisted-geometry keys. Public because they are a storage schema — a rename
@@ -42,6 +45,18 @@ const _minSize = Size(960, 600);
 /// screen issues hundreds of read-then-write round trips.
 const _boundsDebounce = Duration(milliseconds: 400);
 
+bool windowBoundsAreVisible(Rect bounds, Iterable<Rect> workAreas) {
+  return workAreas.any((area) {
+    final overlap = bounds.intersect(area);
+    return overlap.width >= 64 && overlap.height >= 64;
+  });
+}
+
+Size clampWindowSize(Size saved, Size available) => Size(
+  saved.width.clamp(_minSize.width, available.width),
+  saved.height.clamp(_minSize.height, available.height),
+);
+
 /// A snapshot of what to persist about the window.
 ///
 /// [normalBounds] is null while the window is maximized: `getBounds()` then
@@ -55,11 +70,13 @@ class WindowGeometry {
   /// arguments so it can be stated and tested on its own: what comes back from
   /// `getBounds()` is only the window's normal geometry when the window is not
   /// maximized.
-  factory WindowGeometry.from({required Rect bounds, required bool maximized}) =>
-      WindowGeometry(
-        normalBounds: maximized ? null : bounds,
-        maximized: maximized,
-      );
+  factory WindowGeometry.from({
+    required Rect bounds,
+    required bool maximized,
+  }) => WindowGeometry(
+    normalBounds: maximized ? null : bounds,
+    maximized: maximized,
+  );
 
   final Rect? normalBounds;
   final bool maximized;
@@ -87,12 +104,8 @@ class WindowGeometryRecorder {
     // Initializing formals would force callers to pass `_read:`/`_write:`,
     // leaking private names into the public API — same trade-off as the other
     // recorders in this codebase.
-  }) :
-       // ignore: prefer_initializing_formals
-       _read = read,
-       // ignore: prefer_initializing_formals
+  }) : _read = read,
        _write = write,
-       // ignore: prefer_initializing_formals
        _debounce = debounce;
 
   final Future<WindowGeometry> Function() _read;
@@ -210,6 +223,8 @@ class DesktopLifecycle with WindowListener {
   Future<void> init() async {
     await windowManager.ensureInitialized();
     final prefs = await SharedPreferences.getInstance();
+    final primaryDisplay = await screenRetriever.getPrimaryDisplay();
+    final restoredSize = _restoredSize(primaryDisplay.visibleSize);
     _prefs = prefs;
     _geometry = WindowGeometryRecorder(
       read: _readGeometry,
@@ -217,11 +232,13 @@ class DesktopLifecycle with WindowListener {
     );
 
     final options = WindowOptions(
-      size: _restoredSize(),
+      size: restoredSize,
       minimumSize: _minSize,
       center: prefs.getDouble(kWindowXPref) == null,
       title: 'Watchparty',
-      titleBarStyle: Platform.isMacOS || Platform.isWindows
+      // Windows owns its caption buttons. The Flutter overlay could lose its
+      // hit target after maximize/restore and leave a grey, inert title strip.
+      titleBarStyle: Platform.isMacOS
           ? TitleBarStyle.hidden
           : TitleBarStyle.normal,
       windowButtonVisibility: Platform.isMacOS,
@@ -231,7 +248,21 @@ class DesktopLifecycle with WindowListener {
       final x = prefs.getDouble(kWindowXPref);
       final y = prefs.getDouble(kWindowYPref);
       if (x != null && y != null) {
-        await windowManager.setPosition(Offset(x, y));
+        final savedBounds = Offset(x, y) & restoredSize;
+        final displays = await screenRetriever.getAllDisplays();
+        final isVisible = windowBoundsAreVisible(
+          savedBounds,
+          displays.map((display) {
+            final position = display.visiblePosition ?? Offset.zero;
+            final size = display.visibleSize ?? display.size;
+            return position & size;
+          }),
+        );
+        if (isVisible) {
+          await windowManager.setPosition(Offset(x, y));
+        } else {
+          await windowManager.center();
+        }
       }
       // Sized and positioned to the stored NORMAL bounds first, then maximized:
       // the stored bounds are what unmaximizing has to give back.
@@ -248,11 +279,12 @@ class DesktopLifecycle with WindowListener {
     await windowManager.setPreventClose(true);
   }
 
-  Size _restoredSize() {
+  Size _restoredSize(Size? available) {
     final w = _prefs?.getDouble(kWindowWPref);
     final h = _prefs?.getDouble(kWindowHPref);
-    if (w != null && h != null) return Size(w, h);
-    return _defaultSize;
+    final saved = w != null && h != null ? Size(w, h) : _defaultSize;
+    if (available == null) return saved;
+    return clampWindowSize(saved, available);
   }
 
   static Future<WindowGeometry> _readGeometry() async => WindowGeometry.from(

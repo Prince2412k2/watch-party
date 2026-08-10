@@ -13,6 +13,7 @@ void main() {
     container = ProviderContainer(
       overrides: [socketClientProvider.overrideWithValue(socket)],
     );
+    container.read(chatProvider.notifier).activate('party-1');
     addTearDown(container.dispose);
   });
 
@@ -33,6 +34,28 @@ void main() {
     expect(messages.single.text, 'hey!');
   });
 
+  test('history arriving before the join ack is applied on activation', () {
+    container.read(chatProvider.notifier).prepareForJoin();
+    socket.inject(ServerEvent.chatHistory, [
+      {'userId': 'u2', 'name': 'Alex', 'text': 'earlier', 'timestamp': 500},
+    ]);
+    container.read(chatProvider.notifier).activate('party-2');
+
+    expect(container.read(chatProvider).single.text, 'earlier');
+  });
+
+  test('messages arriving after party deactivation are ignored', () {
+    container.read(chatProvider.notifier).deactivate();
+    socket.inject(ServerEvent.chatMessage, {
+      'userId': 'u2',
+      'name': 'Alex',
+      'text': 'too late',
+      'timestamp': 1000,
+    });
+
+    expect(container.read(chatProvider), isEmpty);
+  });
+
   test('send() emits chat:message over the socket', () async {
     final error = await container.read(chatProvider.notifier).send('hello');
 
@@ -50,23 +73,26 @@ void main() {
     expect(socket.emitted, isEmpty);
   });
 
-  test('client-side rate limit trips after 5 sends within the window', () async {
-    final notifier = container.read(chatProvider.notifier);
+  test(
+    'client-side rate limit trips after 5 sends within the window',
+    () async {
+      final notifier = container.read(chatProvider.notifier);
 
-    for (var i = 0; i < 5; i++) {
-      final error = await notifier.send('msg $i');
-      expect(error, isNull, reason: 'send #$i should succeed');
-    }
+      for (var i = 0; i < 5; i++) {
+        final error = await notifier.send('msg $i');
+        expect(error, isNull, reason: 'send #$i should succeed');
+      }
 
-    expect(notifier.isRateLimited, isTrue);
+      expect(notifier.isRateLimited, isTrue);
 
-    final blocked = await notifier.send('one too many');
-    expect(blocked, isNotNull);
-    expect(blocked, contains('Rate limited'));
+      final blocked = await notifier.send('one too many');
+      expect(blocked, isNotNull);
+      expect(blocked, contains('Rate limited'));
 
-    // Only the first 5 actually reached the socket.
-    expect(socket.emitted, hasLength(5));
-  });
+      // Only the first 5 actually reached the socket.
+      expect(socket.emitted, hasLength(5));
+    },
+  );
 
   test('surfaces a server-side rate-limit ack as an error', () async {
     socket = _RateLimitingSocketClient();

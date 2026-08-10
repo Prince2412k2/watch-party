@@ -122,25 +122,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
 
   /// Start a room.
   ///
-  /// If something is already playing, the room starts ON it, carrying the live
-  /// position — the "start a party mid-movie" affordance that used to be a
-  /// button floated over the solo player. That button had nowhere to live once
-  /// the player stopped being a screen, and it belongs here anyway: starting a
-  /// room is a popcorn action wherever you are.
-  Future<void> _start() => _guard(() async {
-    final now = ref.read(nowPlayingProvider);
-    final itemId = now.itemId;
-    if (itemId == null) {
-      await _party.create();
-      return;
-    }
-    await _party.createFromCurrentPlayback(
-      mediaItemId: itemId,
-      position: ref.read(playerControllerProvider).positionNow,
-      audioStreamIndex: now.audioStreamIndex,
-      subtitleStreamIndex: now.subtitleStreamIndex,
-    );
-  });
+  Future<void> _start() => _guard(() => _party.create());
 
   Future<void> _join() async {
     setState(() => _error = null);
@@ -238,27 +220,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   /// The listed actions, in the order they were asked for: left to right, with
   /// the destructive one furthest from the handle in every state.
   List<Widget> _actions(PartyState? session, bool isHost, bool pending) {
-    // Back on the film MINIMISES it to a tile — the room keeps running — so
-    // there has to be a non-destructive way back to full screen, or minimising
-    // strands the user next to a live session. It used to navigate to
-    // `/party/:id`; now it just expands the player that is already playing.
-    final minimised =
-        session != null &&
-        session.stage == 'watching' &&
-        ref.watch(nowPlayingProvider).isFloating;
-    final returnAction = minimised
-        ? [
-            const TrayDivider(),
-            TrayButton(
-              key: const Key('returnToPartyButton'),
-              icon: Icons.open_in_full,
-              tooltip: 'Back to full screen',
-              onTap: ref.read(nowPlayingProvider.notifier).expand,
-            ),
-          ]
-        : const <Widget>[];
-
-    // The Watch Party panel — roster, transfer, kick, sync mode, switch movie.
+    // The Watch Party panel — roster, transfer, kick, invite, and A/V repair.
     // It used to open on a right-click over the party route's stage, which
     // means it went unreachable the moment that route did. It belongs here
     // anyway: the popcorn is on every screen, and this is the room's menu.
@@ -332,7 +294,6 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
           ),
         ),
         ...panelAction,
-        ...returnAction,
       ];
     }
 
@@ -349,10 +310,8 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
         onTap: _leave,
       ),
       ...panelAction,
-      ...returnAction,
     ];
   }
-
 }
 
 /// A face in the tray, so approving somebody is approving a person rather than

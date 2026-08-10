@@ -6,12 +6,11 @@ import 'package:watchparty/cache/media_cache_proxy.dart';
 import 'package:watchparty/data/api_client.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
-import 'package:watchparty/models/subtitle_preferences.dart';
+import 'package:watchparty/models/party_state.dart';
 import 'package:watchparty/net/events.dart';
 import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/player/player_controller.dart';
 import 'package:watchparty/state/state.dart';
-import 'package:watchparty/sync/sync_engine_impl.dart';
 
 /// No-op A/V room — real `LiveKitRoomService.connect` drives an actual
 /// `livekit_client` room/network handshake, which these party-lifecycle
@@ -42,8 +41,15 @@ class _ScriptedSocket extends MockSocketClient {
   }
 }
 
-/// Minimal no-op [PlayerController] — the sync engine only needs a `playing`
-/// stream and synchronous position getters to attach without throwing.
+class _NeverAckEndSocket extends MockSocketClient {
+  @override
+  Future<dynamic> emitWithAck(String event, [Object? data]) {
+    if (event == ClientEvent.partyEnd) return Completer<dynamic>().future;
+    return super.emitWithAck(event, data);
+  }
+}
+
+/// Minimal no-op [PlayerController] used to prove party events never touch it.
 class _NoopPlayer implements PlayerController {
   int openCalls = 0;
   int pauseCalls = 0;
@@ -97,57 +103,33 @@ class _NoopPlayer implements PlayerController {
   bool get isBufferingNow => false;
 }
 
-/// A player whose `open` can be held mid-flight, and which logs every call in
-/// completion order. Lets the party-state → player races be forced explicitly:
-/// a second selection, or a leave, arrives while the first open is still
-/// loading, and the log shows which write actually landed last.
-class _GatedPlayer extends _NoopPlayer {
-  final events = <String>[];
-  final _gates = <String, Completer<void>>{};
-
-  /// Holds the open of [mediaId] until [release] is called for it.
-  void gate(String mediaId) => _gates[mediaId] = Completer<void>();
-
-  void release(String mediaId) => _gates.remove(mediaId)?.complete();
-
-  @override
-  Future<void> open(
-    String url, {
-    Duration startAt = Duration.zero,
-    bool autoplay = false,
-  }) async {
-    final mediaId = url.split('/').last.split('?').first;
-    await _gates[mediaId]?.future;
-    events.add('open:$mediaId');
-    return super.open(url, startAt: startAt, autoplay: autoplay);
-  }
-
-  @override
-  Future<void> pause() async {
-    events.add('pause');
-    return super.pause();
-  }
-
-  @override
-  Future<void> seek(Duration position) async => events.add('seek');
-}
-
-/// A cache proxy that mints URLs without binding a real local HTTP server —
-/// only the item id in the path matters to these tests.
-class _StubCacheProxy extends MediaCacheProxy {
-  _StubCacheProxy() : super(apiClient: _StubApiClient());
-
-  @override
-  String urlFor(String itemId, {String? mediaSourceId}) =>
-      'http://127.0.0.1/media/$itemId';
-}
-
 /// An [ApiClient] whose `livekitToken` never resolves usefully (party flows
 /// treat A/V as best-effort), keeping these tests focused on party/host logic.
 class _StubApiClient extends MockApiClient {
   @override
   Future<LiveKitToken> livekitToken(String partyId) async =>
       const LiveKitToken(token: 't', url: 'ws://mock');
+}
+
+class _GatedTokenApi extends _StubApiClient {
+  final token = Completer<LiveKitToken>();
+
+  @override
+  Future<LiveKitToken> livekitToken(String partyId) => token.future;
+}
+
+class _RecordingLiveKitRoomService extends _NoopLiveKitRoomService {
+  int connectCalls = 0;
+
+  @override
+  Future<void> connect(
+    String url,
+    String token, {
+    bool enableMic = true,
+    bool enableCamera = true,
+  }) async {
+    connectCalls++;
+  }
 }
 
 Map<String, dynamic> _session({
@@ -190,149 +172,41 @@ void main() {
     Map<String, dynamic> Function(String, Object?) responder, {
     MediaCacheProxy? proxy,
     _NoopPlayer? withPlayer,
+    ApiClient? api,
+    LiveKitRoomService? livekit,
   }) {
     socket = _ScriptedSocket(responder);
     player = withPlayer ?? _NoopPlayer();
     final c = ProviderContainer(
       overrides: [
         socketClientProvider.overrideWithValue(socket),
-        apiClientProvider.overrideWithValue(_StubApiClient()),
+        apiClientProvider.overrideWithValue(api ?? _StubApiClient()),
         playerControllerProvider.overrideWithValue(player),
         if (proxy != null) mediaCacheProxyProvider.overrideWithValue(proxy),
-        livekitRoomServiceProvider.overrideWithValue(_NoopLiveKitRoomService()),
+        livekitRoomServiceProvider.overrideWithValue(
+          livekit ?? _NoopLiveKitRoomService(),
+        ),
         currentUserIdProvider.overrideWithValue(myUserId),
       ],
     );
-    addTearDown(() async {
-      await c.read(syncEngineProvider).detach();
-      c.dispose();
-    });
+    addTearDown(c.dispose);
     return c;
   }
 
-  test(
-    'session preserves playback indices and exact subtitle preferences contract',
-    () async {
-      final preferences = {
-        'delayMs': -750,
-        'fontScalePercent': 130,
-        // Deliberately the LEGACY key: a party persisted before the
-        // continuous scale, or a peer still running an older build, must not
-        // have its whole preference set rejected over one renamed field.
-        'verticalPosition': 'middle',
-        'fontFamily': 'mono',
-        'textColor': '#7fdbff',
-        'backgroundOpacityPercent': 40,
-      };
-      container = build('guest1', (event, data) {
-        if (event == ClientEvent.partyJoin) {
-          return {
-            'status': 'joined',
-            'session': _session(
-              hostId: 'host1',
-              playback: const {
-                'mediaSourceId': 'source-1',
-                'audioStreams': [],
-                'subtitleStreams': [],
-                'selectedAudioIndex': 3,
-                'selectedSubtitleIndex': -1,
-              },
-              subtitlePreferences: preferences,
-            ),
-          };
-        }
-        return {'ok': true};
-      });
+  test('create() makes the creator host', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+      }
+      return {'ok': true};
+    });
 
-      final notifier = container.read(partyProvider.notifier);
-      await notifier.join('party-1');
+    final notifier = container.read(partyProvider.notifier);
+    final partyId = await notifier.create();
 
-      expect(notifier.playback!.selectedAudioIndex, 3);
-      expect(notifier.playback!.selectedSubtitleIndex, -1);
-      expect(notifier.subtitlePreferences.toJson(), {
-        ...preferences,
-        'textColor': '#7FDBFF',
-        // Read as legacy, re-emitted on the current scale: middle is halfway
-        // up. The old key does not survive into what this client sends.
-        'verticalOffsetPercent': 50,
-      }..remove('verticalPosition'));
-    },
-  );
-
-  test(
-    'only the host emits canonical track and subtitle preference changes',
-    () async {
-      container = build('guest1', (event, data) {
-        if (event == ClientEvent.partyJoin) {
-          return {'status': 'joined', 'session': _session(hostId: 'host1')};
-        }
-        return {'ok': true};
-      });
-      final guest = container.read(partyProvider.notifier);
-      await guest.join('party-1');
-      final before = socket.emitted.length;
-      await guest.setPlaybackTracks(
-        audioStreamIndex: 2,
-        subtitleStreamIndex: -1,
-      );
-      await guest.setSubtitlePreferences(SubtitlePreferences.defaults);
-      expect(socket.emitted.length, before);
-
-      await container.read(syncEngineProvider).detach();
-      container = build('host1', (event, data) {
-        if (event == ClientEvent.partyCreate) {
-          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
-        }
-        return {'ok': true};
-      });
-      final host = container.read(partyProvider.notifier);
-      await host.create();
-      await host.setPlaybackTracks(
-        audioStreamIndex: 2,
-        subtitleStreamIndex: -1,
-      );
-      await host.setSubtitlePreferences(
-        SubtitlePreferences.defaults.copyWith(fontFamily: 'serif'),
-      );
-
-      final tracksEvent = socket.emitted[socket.emitted.length - 2];
-      expect(tracksEvent.$1, ClientEvent.partySetPlaybackTracks);
-      expect(tracksEvent.$2, {
-        'audioStreamIndex': 2,
-        'subtitleStreamIndex': -1,
-      });
-      expect(socket.emitted.last.$1, ClientEvent.partySetSubtitlePreferences);
-      expect(socket.emitted.last.$2, {
-        'preferences': {
-          ...SubtitlePreferences.defaults.toJson(),
-          'fontFamily': 'serif',
-        },
-      });
-    },
-  );
-
-  test(
-    'create() makes the creator host: isHost/canControl true, wired onto the engine',
-    () async {
-      container = build('host1', (event, data) {
-        if (event == ClientEvent.partyCreate) {
-          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
-        }
-        return {'ok': true};
-      });
-
-      final notifier = container.read(partyProvider.notifier);
-      final partyId = await notifier.create();
-
-      expect(partyId, 'party-1');
-      expect(notifier.isHost, isTrue);
-      expect(notifier.canControl, isTrue);
-
-      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-      expect(engine.isHost, isTrue);
-      expect(engine.canControl, isTrue);
-    },
-  );
+    expect(partyId, 'party-1');
+    expect(notifier.isHost, isTrue);
+  });
 
   test('resume restores a host party and its waiting requests', () async {
     container = build('host1', (event, data) {
@@ -407,78 +281,50 @@ void main() {
     },
   );
 
-  test(
-    'solo handoff reuses open episode and preserves track selection',
-    () async {
-      final proxy = MediaCacheProxy(apiClient: _StubApiClient());
-      await proxy.start();
-      addTearDown(proxy.dispose);
-      container = build('host1', (event, data) {
-        if (event == ClientEvent.partyCreate) {
-          return {
-            'partyId': 'party-1',
-            'session': _session(
-              hostId: 'host1',
-              stage: 'watching',
-              mediaItemId: 'episode-1',
-              mediaSourceId: 'source-1',
-            ),
-          };
-        }
-        return {'ok': true};
-      }, proxy: proxy);
-
-      await container
-          .read(partyProvider.notifier)
-          .createFromCurrentPlayback(
+  test('starting a party while watching does not attach the movie', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {
+          'partyId': 'party-1',
+          'session': _session(
+            hostId: 'host1',
+            stage: 'watching',
             mediaItemId: 'episode-1',
-            position: const Duration(minutes: 12),
-            audioStreamIndex: 3,
-            subtitleStreamIndex: -1,
-          );
+            mediaSourceId: 'source-1',
+          ),
+        };
+      }
+      return {'ok': true};
+    });
 
-      expect(player.openCalls, 0);
-      final create = socket.emitted.firstWhere(
-        (entry) => entry.$1 == ClientEvent.partyCreate,
-      );
-      expect(create.$2, {
-        'mediaItemId': 'episode-1',
-        'audioStreamIndex': 3,
-        'subtitleStreamIndex': -1,
-      });
-    },
-  );
+    await container.read(partyProvider.notifier).create();
 
-  test(
-    'join() as a guest with collaborativeControl off: not host, canControl false',
-    () async {
-      container = build('guest1', (event, data) {
-        if (event == ClientEvent.partyJoin) {
-          return {
-            'status': 'joined',
-            'session': _session(hostId: 'host1', collaborativeControl: false),
-          };
-        }
-        return {'ok': true};
-      });
+    expect(player.openCalls, 0);
+    final create = socket.emitted.firstWhere(
+      (entry) => entry.$1 == ClientEvent.partyCreate,
+    );
+    expect(create.$2, isEmpty);
+  });
 
-      final notifier = container.read(partyProvider.notifier);
-      final status = await notifier.join('party-1');
+  test('join() identifies a guest without owning playback', () async {
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {
+          'status': 'joined',
+          'session': _session(hostId: 'host1', collaborativeControl: false),
+        };
+      }
+      return {'ok': true};
+    });
 
-      expect(status, 'joined');
-      expect(notifier.isHost, isFalse);
-      expect(notifier.canControl, isFalse);
+    final notifier = container.read(partyProvider.notifier);
+    final status = await notifier.join('party-1');
 
-      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-      expect(engine.isHost, isFalse);
-      expect(engine.canControl, isFalse);
-    },
-  );
+    expect(status, 'joined');
+    expect(notifier.isHost, isFalse);
+  });
 
-  test('web-host media source reaches the Flutter guest cache proxy', () async {
-    final proxy = MediaCacheProxy(apiClient: _StubApiClient());
-    await proxy.start();
-    addTearDown(proxy.dispose);
+  test('joining a watching room does not open the host movie', () async {
     container = build('guest1', (event, data) {
       if (event == ClientEvent.partyJoin) {
         return {
@@ -492,15 +338,38 @@ void main() {
         };
       }
       return {'ok': true};
-    }, proxy: proxy);
+    });
 
     await container.read(partyProvider.notifier).join('party-1');
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
-    expect(player.openCalls, 1);
-    expect(Uri.parse(player.lastOpenedUrl!).queryParameters, {
-      'mediaSourceId': 'source-4k',
-    });
+    expect(player.openCalls, 0);
+    expect(player.lastOpenedUrl, isNull);
+  });
+
+  test('leaving during token fetch cannot reconnect A/V', () async {
+    final api = _GatedTokenApi();
+    final livekit = _RecordingLiveKitRoomService();
+    container = build(
+      'guest1',
+      (event, data) {
+        if (event == ClientEvent.partyJoin) {
+          return {'status': 'joined', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      },
+      api: api,
+      livekit: livekit,
+    );
+
+    final joining = container.read(partyProvider.notifier).join('party-1');
+    await Future<void>.delayed(Duration.zero);
+    await container.read(partyProvider.notifier).leave();
+    api.token.complete(const LiveKitToken(token: 't', url: 'ws://mock'));
+
+    await expectLater(joining, throwsStateError);
+    expect(container.read(partyProvider), isNull);
+    expect(livekit.connectCalls, 0);
   });
 
   test(
@@ -516,10 +385,6 @@ void main() {
 
       expect(status, 'waiting');
       expect(container.read(partyProvider), isNull);
-      expect(
-        (container.read(syncEngineProvider) as SyncEngineImpl).canControl,
-        isFalse,
-      );
 
       // Host approves — the server pushes party:approved with the session.
       socket.inject(ServerEvent.partyApproved, {
@@ -528,44 +393,10 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       expect(container.read(partyProvider), isNotNull);
-      expect(
-        notifier.canControl,
-        isTrue,
-      ); // collaborative control granted on entry
-      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-      expect(engine.canControl, isTrue);
-      expect(engine.isHost, isFalse);
     },
   );
 
-  test(
-    'setCollaborative(true) flips a guest\'s canControl without a host role',
-    () async {
-      container = build('guest1', (event, data) {
-        if (event == ClientEvent.partyJoin) {
-          return {
-            'status': 'joined',
-            'session': _session(hostId: 'host1', collaborativeControl: false),
-          };
-        }
-        return {'ok': true};
-      });
-
-      final notifier = container.read(partyProvider.notifier);
-      await notifier.join('party-1');
-      expect(notifier.canControl, isFalse);
-
-      await notifier.setCollaborative(true);
-
-      expect(notifier.canControl, isTrue);
-      expect(notifier.isHost, isFalse);
-      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-      expect(engine.canControl, isTrue);
-      expect(engine.isHost, isFalse);
-    },
-  );
-
-  test('host:changed transfers host authority to the engine', () async {
+  test('host:changed updates host authority', () async {
     container = build('guest1', (event, data) {
       if (event == ClientEvent.partyJoin) {
         return {'status': 'joined', 'session': _session(hostId: 'host1')};
@@ -580,39 +411,7 @@ void main() {
     socket.inject(ServerEvent.hostChanged, {'hostId': 'guest1'});
 
     expect(notifier.isHost, isTrue);
-    expect(notifier.canControl, isTrue);
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.isHost, isTrue);
-    expect(engine.canControl, isTrue);
   });
-
-  test(
-    'selectMedia carries detail track choices into the active party',
-    () async {
-      container = build('host1', (event, data) {
-        if (event == ClientEvent.partyCreate) {
-          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
-        }
-        return {'ok': true};
-      });
-
-      final notifier = container.read(partyProvider.notifier);
-      await notifier.create();
-      await notifier.selectMedia(
-        'movie-1',
-        audioStreamIndex: 3,
-        subtitleStreamIndex: 7,
-      );
-
-      final event = socket.emitted.last;
-      expect(event.$1, ClientEvent.partySelectMedia);
-      expect(event.$2, {
-        'mediaItemId': 'movie-1',
-        'audioStreamIndex': 3,
-        'subtitleStreamIndex': 7,
-      });
-    },
-  );
 
   test('session snapshots deduplicate participant identities', () async {
     container = build('host1', (event, data) {
@@ -640,209 +439,67 @@ void main() {
     ]);
   });
 
-  test(
-    'end() (host) detaches the engine and clears local party state',
-    () async {
-      container = build('host1', (event, data) {
-        if (event == ClientEvent.partyCreate) {
-          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
-        }
-        return {'ok': true};
-      });
-
-      final notifier = container.read(partyProvider.notifier);
-      await notifier.create();
-      expect(container.read(partyProvider), isNotNull);
-
-      await notifier.end();
-
-      expect(container.read(partyProvider), isNull);
-      expect(socket.isConnected, isFalse);
-      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-      expect(engine.isHost, isFalse);
-    },
-  );
-
-  // ── Shared-player serialization (audit #61) ─────────────────────────────
-  //
-  // Every one of these forces the interleaving with an explicitly held open
-  // rather than hoping for it: the failure mode is an ordering, so a test that
-  // does not control the ordering proves nothing.
-
-  test('a second media selection lands last even when the first open is '
-      'still loading', () async {
-    final gated = _GatedPlayer()..gate('movie-A');
-    container = build('guest1', (event, data) {
-      if (event == ClientEvent.partyJoin) {
-        return {
-          'status': 'joined',
-          'session': _session(
-            hostId: 'web-host',
-            stage: 'watching',
-            mediaItemId: 'movie-A',
-          ),
-        };
-      }
-      return {'ok': true};
-    }, proxy: _StubCacheProxy(), withPlayer: gated);
-
-    await container.read(partyProvider.notifier).join('party-1');
-    // The host switches titles while A is still opening.
-    socket.inject(
-      ServerEvent.partyState,
-      _session(hostId: 'web-host', stage: 'watching', mediaItemId: 'movie-B'),
-    );
-    await Future<void>.delayed(Duration.zero);
-    gated.release('movie-A');
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-
-    // B is what the room is watching, so B must be the last thing opened —
-    // unserialized, A completed after B and left this client on the old movie.
-    expect(gated.events, ['open:movie-A', 'open:movie-B']);
-    expect(gated.lastOpenedUrl, endsWith('/movie-B'));
-  });
-
-  test('leaving mid-open stops the player after the open, not before', () async {
-    final gated = _GatedPlayer()..gate('movie-A');
-    container = build('guest1', (event, data) {
-      if (event == ClientEvent.partyJoin) {
-        return {
-          'status': 'joined',
-          'session': _session(
-            hostId: 'web-host',
-            stage: 'watching',
-            mediaItemId: 'movie-A',
-          ),
-        };
-      }
-      return {'ok': true};
-    }, proxy: _StubCacheProxy(), withPlayer: gated);
-
-    final notifier = container.read(partyProvider.notifier);
-    await notifier.join('party-1');
-    // Leave while the open is in flight; it can only finish once released.
-    final leaving = notifier.leave();
-    await Future<void>.delayed(Duration.zero);
-    gated.release('movie-A');
-    await leaving;
-
-    // Ordered behind the open. Stopping first left the player to finish loading
-    // afterwards and sit there holding the movie of a party we had left.
-    expect(gated.events, ['open:movie-A', 'pause', 'seek']);
-    expect(container.read(partyProvider), isNull);
-  });
-
-  test('a solo-playback handoff is not torn down by the stop its old session '
-      'had queued', () async {
-    final gated = _GatedPlayer()..gate('movie-A');
+  test('end() clears local party state', () async {
     container = build('host1', (event, data) {
       if (event == ClientEvent.partyCreate) {
-        return {
-          'partyId': 'party-1',
-          'session': _session(
-            hostId: 'host1',
-            stage: 'watching',
-            mediaItemId: 'movie-A',
-          ),
-        };
+        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
       }
       return {'ok': true};
-    }, proxy: _StubCacheProxy(), withPlayer: gated);
+    });
 
     final notifier = container.read(partyProvider.notifier);
     await notifier.create();
-    // Back to the lobby: queues a stop behind the open that is still loading.
-    socket.inject(ServerEvent.partyState, _session(hostId: 'host1'));
-    await Future<void>.delayed(Duration.zero);
-    // …and immediately convert what is playing into a fresh party. This claims
-    // the shared player, so the queued stop must stand down.
-    final handoff = notifier.createFromCurrentPlayback(
-      mediaItemId: 'movie-A',
-      position: const Duration(minutes: 12),
-    );
-    await Future<void>.delayed(Duration.zero);
-    gated.release('movie-A');
-    await handoff;
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(container.read(partyProvider), isNotNull);
 
-    expect(gated.events, ['open:movie-A']);
-    expect(gated.openCalls, 1);
-  });
+    await notifier.end();
 
-  // ── Sync mode propagation (audit #61) ──────────────────────────────────
-
-  test('the room\'s syncMode reaches the engine on join', () async {
-    container = build('guest1', (event, data) {
-      if (event == ClientEvent.partyJoin) {
-        return {
-          'status': 'joined',
-          'session': _session(hostId: 'host1', syncMode: 'dragging'),
-        };
-      }
-      return {'ok': true};
-    });
-
-    await container.read(partyProvider.notifier).join('party-1');
-
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.syncMode, 'dragging');
-  });
-
-  test('the room\'s syncMode is restored by resume()', () async {
-    container = build('host1', (event, data) {
-      if (event == ClientEvent.partyResume) {
-        return {'session': _session(hostId: 'host1', syncMode: 'dragging')};
-      }
-      return {'ok': true};
-    });
-
-    expect(await container.read(partyProvider.notifier).resume(), isTrue);
-
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    expect(engine.syncMode, 'dragging');
-  });
-
-  test('host:changed re-pushes the room\'s syncMode with the new role', () async {
-    container = build('guest1', (event, data) {
-      if (event == ClientEvent.partyJoin) {
-        return {
-          'status': 'joined',
-          'session': _session(hostId: 'host1', syncMode: 'dragging'),
-        };
-      }
-      return {'ok': true};
-    });
-
-    final notifier = container.read(partyProvider.notifier);
-    await notifier.join('party-1');
-    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-    // Force the engine back onto its default so the transfer has something to
-    // correct — the role push and the mode push have to travel together.
-    engine.syncMode = 'hopping';
-
-    socket.inject(ServerEvent.hostChanged, {'hostId': 'guest1'});
-
-    expect(notifier.isHost, isTrue);
-    expect(engine.syncMode, 'dragging');
+    expect(container.read(partyProvider), isNull);
+    expect(socket.isConnected, isFalse);
   });
 
   test(
-    'party:ended stops a Flutter guest player and clears the room',
+    'end() clears local state when the server does not acknowledge',
     () async {
-      container = build('guest1', (event, data) {
-        if (event == ClientEvent.partyJoin) {
-          return {'status': 'joined', 'session': _session(hostId: 'web-host')};
-        }
-        return {'ok': true};
-      });
-      await container.read(partyProvider.notifier).join('party-1');
+      final hangingSocket = _NeverAckEndSocket();
+      final localContainer = ProviderContainer(
+        overrides: [
+          socketClientProvider.overrideWithValue(hangingSocket),
+          livekitRoomServiceProvider.overrideWithValue(
+            _NoopLiveKitRoomService(),
+          ),
+          currentUserIdProvider.overrideWithValue('host1'),
+          partyProvider.overrideWith(
+            (ref) => PartyNotifier(
+              ref,
+              ackTimeout: const Duration(milliseconds: 10),
+            ),
+          ),
+        ],
+      );
+      addTearDown(localContainer.dispose);
+      final notifier = localContainer.read(partyProvider.notifier);
+      notifier.setState(const PartyState(id: 'party-1', hostId: 'host1'));
 
-      socket.inject(ServerEvent.partyEnded, const {});
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await expectLater(notifier.end(), throwsA(isA<TimeoutException>()));
 
-      expect(player.pauseCalls, 1);
-      expect(container.read(partyProvider), isNull);
-      expect(socket.isConnected, isFalse);
+      expect(localContainer.read(partyProvider), isNull);
     },
   );
+
+  test('party:ended clears the room without stopping local playback', () async {
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {'status': 'joined', 'session': _session(hostId: 'web-host')};
+      }
+      return {'ok': true};
+    });
+    await container.read(partyProvider.notifier).join('party-1');
+
+    socket.inject(ServerEvent.partyEnded, const {});
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(player.pauseCalls, 0);
+    expect(container.read(partyProvider), isNull);
+    expect(socket.isConnected, isFalse);
+  });
 }

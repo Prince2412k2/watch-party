@@ -13,6 +13,7 @@
 // the same reason. A route cannot own something that has to outlive routing.
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -26,7 +27,6 @@ import '../party/party_controls.dart';
 import '../state/state.dart';
 import '../data/api_client.dart';
 import '../ui/ui.dart';
-import '../ui/widgets/catch_up_badge.dart';
 import '../ui/widgets/floating_camera_tile.dart';
 import 'open_title.dart';
 import 'player_view.dart';
@@ -45,17 +45,8 @@ class PlayerHost extends ConsumerStatefulWidget {
   ConsumerState<PlayerHost> createState() => _PlayerHostState();
 }
 
-class _PlayerHostState extends ConsumerState<PlayerHost> {
-  /// A GlobalKey, not a ValueKey, and that distinction is the whole file.
-  ///
-  /// Expanded and floating are genuinely different subtrees — one is a bare
-  /// focus scope, the other a Material card with a drag header. A ValueKey only
-  /// matches within a parent's child list, so switching modes REBUILT the
-  /// player, re-attached the video texture and reloaded the media. A GlobalKey
-  /// reparents the existing element instead, which is what keeps playback
-  /// running across the transition.
-  final GlobalKey _playerKey = GlobalKey(debugLabel: 'app-player');
-
+class _PlayerHostState extends ConsumerState<PlayerHost>
+    with WindowListener, WidgetsBindingObserver {
   /// Chrome auto-hide, moved here from PartyScreen. It has to live with the
   /// player, not with a route, for the same reason the player does.
   late final AnalogAutoHideController _autoHide;
@@ -66,11 +57,27 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
   /// party route, which owned it — dropping it here is why the fullscreen
   /// button vanished: the transport bar only draws it when a handler exists.
   bool _isFullscreen = false;
+  StreamSubscription<bool>? _playingSubscription;
 
   Future<void> _toggleFullscreen() async {
-    final next = !_isFullscreen;
+    final next = !await windowManager.isFullScreen();
     await windowManager.setFullScreen(next);
-    if (mounted) setState(() => _isFullscreen = next);
+    if (mounted && _isFullscreen != next) setState(() => _isFullscreen = next);
+  }
+
+  Future<void> _exitFullscreen() async {
+    if (!_isFullscreen) return;
+    await windowManager.setFullScreen(false);
+  }
+
+  @override
+  void onWindowEnterFullScreen() {
+    if (mounted) setState(() => _isFullscreen = true);
+  }
+
+  @override
+  void onWindowLeaveFullScreen() {
+    if (mounted) setState(() => _isFullscreen = false);
   }
 
   /// The Watch Party menu, on right-click or long-press over the picture.
@@ -94,9 +101,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
     if (mounted) _menuOpen = false;
   }
 
-  /// The title this host has opened, so a rebuild does not re-open it. Party
-  /// titles are never recorded here: PartyNotifier owns those opens.
-  String? _openedItemId;
+  int _openedRevision = -1;
   bool _ready = false;
   Object? _error;
   bool _usesCacheProxy = false;
@@ -108,6 +113,10 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
     // A floating tile has no chrome to hide, and an auto-hide clock ticking
     // behind one is a timer that never settles.
     _autoHide.hold(_kFloatingHold);
+    WidgetsBinding.instance.addObserver(this);
+    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
+      windowManager.addListener(this);
+    }
     // A title can already be set before the first build (a resumed party, a
     // deep link), so react on mount as well as on change.
     WidgetsBinding.instance.addPostFrameCallback(
@@ -115,35 +124,44 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
     );
   }
 
-  /// Open a SOLO title when one appears. Party media is opened by
-  /// [PartyNotifier], behind its own generation-guarded queue — opening it here
-  /// too would be the double-open that queue exists to prevent.
   Future<void> _syncOpen(NowPlaying now) async {
-    if (!now.isOpen || now.fromParty) {
-      _openedItemId = null;
+    if (!now.isOpen) {
+      unawaited(_exitFullscreen());
       return;
     }
-    if (now.itemId == _openedItemId) return;
+    if (now.revision == _openedRevision) return;
     final itemId = now.itemId!;
-    _openedItemId = itemId;
+    final revision = now.revision;
+    _openedRevision = revision;
     setState(() {
       _ready = false;
       _error = null;
     });
 
-    final result = await openTitleIntoPlayer(
-      ref,
-      ref.read(playerControllerProvider),
-      itemId: itemId,
-      mediaSourceId: now.mediaSourceId,
-      audioStreamIndex: now.audioStreamIndex,
-      subtitleStreamIndex: now.subtitleStreamIndex,
-      // Stale the moment something else claims the player, so an open that
-      // lands late does not start a title nobody is watching.
-      isStale: () =>
-          !mounted || ref.read(nowPlayingProvider).itemId != itemId,
-    );
-    if (!mounted) return;
+    final controller = ref.read(playerControllerProvider);
+    _playingSubscription ??= controller.playing.listen(_autoHide.setPlaying);
+    _autoHide.setPlaying(controller.isPlayingNow);
+    final result = await ref
+        .read(playbackOperationsProvider)
+        .replace(
+          (isSuperseded) => openTitleIntoPlayer(
+            ref,
+            controller,
+            itemId: itemId,
+            mediaSourceId: now.mediaSourceId,
+            audioStreamIndex: now.audioStreamIndex,
+            subtitleStreamIndex: now.subtitleStreamIndex,
+            isStale: () =>
+                isSuperseded() ||
+                !mounted ||
+                ref.read(nowPlayingProvider).revision != revision,
+          ),
+        );
+    if (!mounted ||
+        result == null ||
+        ref.read(nowPlayingProvider).revision != revision) {
+      return;
+    }
     setState(() {
       _ready = result.ok;
       _error = result.error;
@@ -186,17 +204,30 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _playingSubscription?.cancel();
+    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
+      windowManager.removeListener(this);
+    }
     _autoHide
       ..removeListener(_onAutoHide)
       ..dispose();
     // Never leave the OS window stuck in fullscreen after the film goes away.
-    if (_isFullscreen) unawaited(windowManager.setFullScreen(false));
+    if (_isFullscreen) unawaited(_exitFullscreen());
     super.dispose();
   }
 
   void _retry() {
-    _openedItemId = null;
+    _openedRevision = -1;
     _syncOpen(ref.read(nowPlayingProvider));
+  }
+
+  @override
+  Future<bool> didPopRoute() async {
+    if (!ref.read(nowPlayingProvider).isExpanded) return false;
+    await _exitFullscreen();
+    ref.read(nowPlayingProvider.notifier).minimise();
+    return true;
   }
 
   /// Top-left of the floating tile, in stage coordinates. Null until the first
@@ -219,18 +250,22 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
       aspect: _playerAspect,
     );
     final offset = FloatingTileGeometry.clamp(
-      _offset ?? FloatingTileGeometry.cascadeAnchor(0, size, stage),
+      _offset ??
+          Offset(
+            stage.width - size.width - FloatingTileGeometry.margin,
+            FloatingTileGeometry.margin,
+          ),
       size,
       stage,
     );
     return offset & size;
   }
 
-  void _drag(DragUpdateDetails details, Size stage, Size tile) {
+  void _drag(DragUpdateDetails details, Size stage, Rect rect) {
     setState(() {
       _offset = FloatingTileGeometry.clamp(
-        (_offset ?? Offset.zero) + details.delta,
-        tile,
+        (_offset ?? rect.topLeft) + details.delta,
+        rect.size,
         stage,
       );
     });
@@ -248,7 +283,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 
   void _dragEnd(Size stage, Size tile) {
     setState(() {
-      _offset = FloatingTileGeometry.snapToEdges(
+      _offset = FloatingTileGeometry.snapToNearestCorner(
         FloatingTileGeometry.clamp(_offset ?? Offset.zero, tile, stage),
         tile,
         stage,
@@ -263,8 +298,6 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
     // Party context, when there is one. The player is the same player either
     // way — a room only changes who may drive it and where seeks are authored.
     final party = ref.watch(partyProvider);
-    final partyNotifier = ref.read(partyProvider.notifier);
-    final inParty = party != null && now.fromParty;
     ref.listen<NowPlaying>(nowPlayingProvider, (_, next) {
       _syncOpen(next);
       _syncChromeHold(next);
@@ -299,8 +332,6 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                     // Wrapped OUTSIDE the frame so the whole picture answers,
                     // not just the chrome.
                     AnimatedPositioned(
-                      // The same snap the camera tiles use: a movie tile and
-                      // a person tile should move alike.
                       duration: AppMotion.snap,
                       curve: AppMotion.emphasized,
                       left: rect.left,
@@ -311,122 +342,80 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
                         enabled: party != null,
                         onOpen: _openPartyMenu,
                         child: _PlayerFrame(
-                        expanded: now.isExpanded,
-                        // Only in a room: solo playback has no timeline to be
-                        // behind, so the correction loop never runs and the
-                        // badge would be permanently dead weight.
-                        showCatchUp: inParty,
-                        // No close button on the room's film.
-                        //
-                        // Closing it locally paused the controller and unmounted
-                        // the surface — and then the sync engine, which is still
-                        // attached and still following the room's schedule,
-                        // pressed play again on the next tick. The result was a
-                        // film you could hear but not see, with no way to stop
-                        // it except leaving the party from outside the player.
-                        //
-                        // The room's film is the room's. You can push it down to
-                        // a tile, and you can leave or end the room from the
-                        // popcorn — which now sits above the player, so it is
-                        // reachable without going anywhere. What you cannot do
-                        // is silently desync yourself from the thing everybody
-                        // else is watching.
-                        canClose: !inParty,
-                        onMinimise: notifier.minimise,
-                        onExpand: notifier.expand,
-                        onClose: () => notifier.close(),
-                        onDrag: (details) =>
-                            _drag(details, stage, rect.size),
-                        onDragEnd: () => _dragEnd(stage, rect.size),
-                        onResize: (details) => _resize(details, stage),
-                        // Solo playback reports its own load/failure here,
-                        // because the route that used to show them is gone.
-                        // Party playback has no such state: the sync engine
-                        // reports through the party chrome instead.
-                        error: now.fromParty ? null : _error,
-                        loading: !now.fromParty && !_ready && _error == null,
-                        onRetry: _retry,
-                        child: PlayerView(
-                          key: _playerKey,
-                          controller: ref.watch(playerControllerProvider),
-                          itemId: now.itemId,
-                          mediaSourceId: now.mediaSourceId,
-                          title: now.title,
-                          apiClient: ref.watch(apiClientProvider),
-                          preferredSubtitleStreamIndex:
-                              now.subtitleStreamIndex,
-                          // Party media is always routed through the cache
-                          // proxy, so the "downloaded" indicator is available
-                          // there without the solo path's flag.
-                          cachedSpans:
-                              (inParty || _usesCacheProxy) && now.itemId != null
-                              ? ref
-                                    .watch(mediaCacheProxyProvider)
-                                    .cachedSpansFor(now.itemId!)
-                              : null,
-                          onBack: notifier.minimise,
-                          onToggleFullscreen: _toggleFullscreen,
-                          isFullscreen: _isFullscreen,
-                          // ── party ─────────────────────────────────────────
-                          // A guest may watch without driving. Outside a room
-                          // you always drive yourself.
-                          canControl: !inParty || partyNotifier.canControl,
-                          canManagePartyMedia: !inParty || partyNotifier.isHost,
-                          partyPlayback: inParty ? partyNotifier.playback : null,
-                          subtitlePreferences: inParty
-                              ? partyNotifier.subtitlePreferences
-                              : null,
-                          onSetPlaybackTracks: inParty
-                              ? (audio, subtitle) =>
-                                    partyNotifier.setPlaybackTracks(
-                                      audioStreamIndex: audio,
-                                      subtitleStreamIndex: subtitle,
-                                    )
-                              : null,
-                          onSetSubtitlePreferences: inParty
-                              ? partyNotifier.setSubtitlePreferences
-                              : null,
-                          // A driver's scrub is authored to the sync engine so
-                          // it reaches the server and every other client; solo
-                          // playback just seeks itself.
-                          onSeek: inParty
-                              ? (pos) =>
-                                    ref.read(syncEngineProvider).requestSeek(pos)
-                              : null,
-                          onPushToTalkStart: inParty ? _pttStart : null,
-                          onPushToTalkStop: inParty ? _pttStop : null,
-                          chatOpen: ref.watch(chatDrawerOpenProvider),
-                          chatToasts: party != null
-                              ? [
-                                  for (final message in ref.watch(chatProvider))
-                                    ToastMessage(
-                                      id:
-                                          '${message.userId}:${message.timestamp}:'
-                                          '${message.text.hashCode}',
-                                      sender: message.name,
-                                      preview: message.text,
-                                      // Restamped by the chrome on its own
-                                      // clock; the server timestamp only feeds
-                                      // the id.
-                                      receivedAtMs: message.timestamp,
-                                    ),
-                                ]
-                              : const [],
-                          onToggleChat: party != null
-                              ? () =>
-                                    ref
-                                            .read(
-                                              chatDrawerOpenProvider.notifier,
-                                            )
-                                            .state =
-                                        !ref.read(chatDrawerOpenProvider)
-                              : null,
-                          // Unified chrome visibility: one clock for the
-                          // transport bar and everything floating over it.
-                          visible: now.isExpanded ? _autoHide.visible : false,
-                          onWake: () =>
-                              _autoHide.noteInput(PlayerInputKind.pointer),
-                        ),
+                          expanded: now.isExpanded,
+                          // Only in a room: solo playback has no timeline to be
+                          // behind, so the correction loop never runs and the
+                          // badge would be permanently dead weight.
+                          canClose: true,
+                          onMinimise: () {
+                            unawaited(_exitFullscreen());
+                            notifier.minimise();
+                          },
+                          onExpand: notifier.expand,
+                          onClose: () {
+                            unawaited(_exitFullscreen());
+                            unawaited(notifier.close());
+                          },
+                          onDrag: (details) => _drag(details, stage, rect),
+                          onDragEnd: () => _dragEnd(stage, rect.size),
+                          onResize: (details) => _resize(details, stage),
+                          // Playback reports its own load/failure here because
+                          // the route that used to show them is gone.
+                          error: _error,
+                          loading: !_ready && _error == null,
+                          onRetry: _retry,
+                          child: PlayerView(
+                            controller: ref.watch(playerControllerProvider),
+                            itemId: now.itemId,
+                            mediaSourceId: now.mediaSourceId,
+                            title: now.title,
+                            apiClient: ref.watch(apiClientProvider),
+                            preferredSubtitleStreamIndex:
+                                now.subtitleStreamIndex,
+                            cachedSpans: _usesCacheProxy && now.itemId != null
+                                ? ref
+                                      .watch(mediaCacheProxyProvider)
+                                      .cachedSpansFor(now.itemId!)
+                                : null,
+                            onBack: notifier.minimise,
+                            onToggleFullscreen: _toggleFullscreen,
+                            isFullscreen: _isFullscreen,
+                            canControl: true,
+                            onPushToTalkStart: party != null ? _pttStart : null,
+                            onPushToTalkStop: party != null ? _pttStop : null,
+                            chatOpen: ref.watch(chatDrawerOpenProvider),
+                            chatToasts: party != null
+                                ? [
+                                    for (final message in ref.watch(
+                                      chatProvider,
+                                    ))
+                                      ToastMessage(
+                                        id:
+                                            '${message.userId}:${message.timestamp}:'
+                                            '${message.text.hashCode}',
+                                        sender: message.name,
+                                        preview: message.text,
+                                        // Restamped by the chrome on its own
+                                        // clock; the server timestamp only feeds
+                                        // the id.
+                                        receivedAtMs: message.timestamp,
+                                      ),
+                                  ]
+                                : const [],
+                            onToggleChat: party != null
+                                ? () =>
+                                      ref
+                                          .read(chatDrawerOpenProvider.notifier)
+                                          .state = !ref.read(
+                                        chatDrawerOpenProvider,
+                                      )
+                                : null,
+                            // Unified chrome visibility: one clock for the
+                            // transport bar and everything floating over it.
+                            visible: now.isExpanded ? _autoHide.visible : false,
+                            onWake: () =>
+                                _autoHide.noteInput(PlayerInputKind.pointer),
+                          ),
                         ),
                       ),
                     ),
@@ -445,7 +434,6 @@ class _PlayerHostState extends ConsumerState<PlayerHost> {
 class _PlayerFrame extends StatelessWidget {
   const _PlayerFrame({
     required this.expanded,
-    this.showCatchUp = false,
     this.canClose = true,
     this.error,
     this.loading = false,
@@ -460,7 +448,6 @@ class _PlayerFrame extends StatelessWidget {
   });
 
   final bool expanded;
-  final bool showCatchUp;
   final bool canClose;
   final Object? error;
   final bool loading;
@@ -476,73 +463,56 @@ class _PlayerFrame extends StatelessWidget {
   /// The video, or the reason there isn't one. Kept in ONE place so the
   /// expanded and floating branches below cannot disagree about it.
   Widget _body() {
-    if (error != null) {
-      return Center(
-        child: ErrorState(
-          title: 'Playback failed',
-          message: error is ApiException
-              ? (error! as ApiException).message
-              : 'Could not open this title. Check your connection and try again.',
-          onRetry: onRetry,
-        ),
-      );
-    }
-    if (loading) {
-      return const Center(
-        child: SizedBox(
-          width: 32,
-          height: 32,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: AppColors.text,
-          ),
-        ),
-      );
-    }
-    return child;
-  }
-
-  /// The video with the catch-up badge over it. Top-left, clear of the
-  /// transport bar, and NOT tied to the auto-hide chrome: it reports something
-  /// happening to your playback right now, so it is a notification rather than
-  /// a control, and hiding it three seconds in would defeat the point.
-  Widget _stage() {
-    if (!showCatchUp) return _body();
+    final errorMessage = error is ApiException
+        ? (error! as ApiException).message
+        : 'Could not open this title. Check your connection and try again.';
     return Stack(
+      fit: StackFit.expand,
       children: [
-        Positioned.fill(child: _body()),
-        Positioned(
-          top: expanded ? 18 : 8,
-          left: expanded ? 18 : 8,
-          child: const CatchUpBadge(),
-        ),
+        child,
+        if (error != null)
+          Center(
+            child: expanded
+                ? ErrorState(
+                    title: 'Playback failed',
+                    message: errorMessage,
+                    onRetry: onRetry,
+                  )
+                : Tooltip(
+                    message: errorMessage,
+                    child: TextButton.icon(
+                      onPressed: onRetry,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('Retry playback'),
+                    ),
+                  ),
+          )
+        else if (loading)
+          const Center(
+            child: SizedBox(
+              width: 32,
+              height: 32,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.text,
+              ),
+            ),
+          ),
       ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (expanded) {
-      // Escape minimises rather than closing. Back does the same thing through
-      // the router's PopScope — both routes to "I am done looking at this"
-      // land on the same behaviour, and neither stops playback.
-      return CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.escape): onMinimise,
-        },
-        child: Focus(autofocus: true, child: _stage()),
-      );
-    }
-
     return Material(
       color: Colors.black,
-      elevation: 12,
-      borderRadius: BorderRadius.circular(10),
+      elevation: expanded ? 0 : 12,
+      borderRadius: BorderRadius.circular(expanded ? 0 : 10),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           SizedBox(
-            height: FloatingTileGeometry.headerHeight,
+            height: expanded ? 0 : FloatingTileGeometry.headerHeight,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onPanUpdate: onDrag,
@@ -565,39 +535,57 @@ class _PlayerFrame extends StatelessWidget {
               ),
             ),
           ),
-          // Tapping the video itself expands: the same gesture every phone
-          // video app uses, and cheaper than aiming at a 26px header button.
           Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTap: onExpand,
-                    child: AbsorbPointer(child: _stage()),
-                  ),
-                ),
-                // Bottom-right resize, matching the camera tiles' handle.
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.resizeUpLeftDownRight,
+            child: CallbackShortcuts(
+              bindings: expanded
+                  ? {
+                      const SingleActivator(LogicalKeyboardKey.escape):
+                          onMinimise,
+                    }
+                  : const {},
+              child: Stack(
+                children: [
+                  Positioned.fill(
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onPanUpdate: onResize,
-                      child: const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: Icon(
-                          Icons.drag_handle,
-                          size: 11,
-                          color: Colors.white38,
+                      onTap: expanded ? null : onExpand,
+                      onPanUpdate: expanded ? null : onDrag,
+                      onPanEnd: expanded ? null : (_) => onDragEnd(),
+                      child: AbsorbPointer(
+                        absorbing: !expanded,
+                        child: _body(),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: IgnorePointer(
+                      ignoring: expanded,
+                      child: AnimatedOpacity(
+                        opacity: expanded ? 0 : 1,
+                        duration: AppMotion.hover,
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.resizeUpLeftDownRight,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onPanUpdate: onResize,
+                            child: const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: Icon(
+                                Icons.drag_handle,
+                                size: 11,
+                                color: Colors.white38,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],

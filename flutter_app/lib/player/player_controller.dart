@@ -39,14 +39,16 @@ class PlayerTracks {
   final List<PlayerTrack> subtitle;
 }
 
-/// FROZEN CONTRACT (PLAN §3.3). The playback surface the sync engine (E5) drives
-/// and the player chrome (E4.2) renders. Deliberately duck-types the subset of
-/// HTMLMediaElement the web `useSyncPlay` relied on: position/duration/playing +
-/// play/pause/seek/rate. E4.1 implements this on media_kit.
+/// The playback surface the player chrome renders. E4.1 implements this on
+/// media_kit.
 abstract class PlayerController {
   /// Open a media URL (signed native stream-url or a local file path).
   /// [startAt] seeks before playback; [autoplay] begins immediately.
-  Future<void> open(String url, {Duration startAt = Duration.zero, bool autoplay = false});
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  });
 
   Future<void> play();
   Future<void> pause();
@@ -75,7 +77,7 @@ abstract class PlayerController {
   Stream<bool> get completed;
   Stream<PlayerTracks> get tracks;
 
-  // ── Latest synchronous snapshots (for the sync engine's tight loop) ────
+  // ── Latest synchronous snapshots ───────────────────────────────────────
   Duration get positionNow;
   Duration get durationNow;
   bool get isPlayingNow;

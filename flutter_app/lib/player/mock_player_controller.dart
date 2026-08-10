@@ -3,12 +3,12 @@ import 'dart:async';
 import 'player_controller.dart';
 
 /// A clockless-but-tickable [PlayerController] mock. It advances position with a
-/// real timer while "playing" so the sync engine (E5) and player chrome (E4.2)
+/// real timer while "playing" so the player chrome
 /// can be developed and tested without libmpv.
 class MockPlayerController implements PlayerController {
   MockPlayerController({Duration duration = const Duration(minutes: 90)})
-      // ignore: prefer_initializing_formals
-      : _duration = duration {
+    // ignore: prefer_initializing_formals
+    : _duration = duration {
     _durationCtrl.add(_duration);
   }
 
@@ -28,19 +28,40 @@ class MockPlayerController implements PlayerController {
   bool _disposed = false;
 
   @override
-  Future<void> open(String url,
-      {Duration startAt = Duration.zero, bool autoplay = false}) async {
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {
     _position = startAt;
     _positionCtrl.add(_position);
-    _tracksCtrl.add(const PlayerTracks(
-      audio: [
-        PlayerTrack(id: 'a0', type: 'audio', title: 'English', language: 'eng', isDefault: true),
-        PlayerTrack(id: 'a1', type: 'audio', title: 'Commentary', language: 'eng'),
-      ],
-      subtitle: [
-        PlayerTrack(id: 's0', type: 'subtitle', title: 'English', language: 'eng'),
-      ],
-    ));
+    _tracksCtrl.add(
+      const PlayerTracks(
+        audio: [
+          PlayerTrack(
+            id: 'a0',
+            type: 'audio',
+            title: 'English',
+            language: 'eng',
+            isDefault: true,
+          ),
+          PlayerTrack(
+            id: 'a1',
+            type: 'audio',
+            title: 'Commentary',
+            language: 'eng',
+          ),
+        ],
+        subtitle: [
+          PlayerTrack(
+            id: 's0',
+            type: 'subtitle',
+            title: 'English',
+            language: 'eng',
+          ),
+        ],
+      ),
+    );
     if (autoplay) await play();
   }
 

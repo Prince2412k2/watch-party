@@ -22,7 +22,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 
 import '../analog/chrome/chrome.dart';
 import '../models/models.dart';
@@ -48,6 +47,11 @@ class PartyOverlay extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final party = ref.watch(partyProvider);
     final chatOpen = ref.watch(chatDrawerOpenProvider);
+    final playerExpanded = ref.watch(
+      nowPlayingProvider.select((playing) => playing.isExpanded),
+    );
+    final showDeviceRail =
+        !playerExpanded || ref.watch(playerChromeVisibleProvider);
 
     return Stack(
       children: [
@@ -70,11 +74,21 @@ class PartyOverlay extends ConsumerWidget {
           // NOWHERE — the controls existed, were reachable from no screen, and
           // a room had no way to mute itself. It belongs with the rest of the
           // room's chrome, at the root.
-          const Positioned(
+          Positioned(
             left: 0,
             top: 0,
             bottom: 0,
-            child: Center(child: DeviceRail()),
+            child: Center(
+              child: IgnorePointer(
+                ignoring: !showDeviceRail,
+                child: AnimatedOpacity(
+                  key: const Key('deviceRailVisibility'),
+                  opacity: showDeviceRail ? 1 : 0,
+                  duration: AppMotion.hover,
+                  child: const DeviceRail(),
+                ),
+              ),
+            ),
           ),
           const Positioned(top: 64, right: 12, child: JoinRequestsLayer()),
           const Positioned(
@@ -280,28 +294,9 @@ class _JoinRequestRow extends ConsumerWidget {
   }
 }
 
-/// The room chat: a pane of liquid glass that forms out of the window's right
-/// edge rather than a rectangle that slides in.
-///
-/// The old drawer was a `LiquidGlass` box inside an `AnimatedPositioned` — the
-/// panel existed at full size the whole time and was simply parked off-screen,
-/// so opening it was a translation and nothing about it read as material. This
-/// one is driven by [LiquidGlassJelly] around a [LiquidGlassLens]: the surface
-/// starts as a small rounded blob against the edge, stretches leftwards under a
-/// spring, and settles. The corner radius travels with it, so the shape is a
-/// pill while it is small and a panel once it is wide.
-///
-/// The refraction is live for every frame of that, because the lens is real
-/// glass rather than a picture of it — the film underneath keeps bending
-/// through the surface as it grows.
-///
-/// RENDERING: full refraction on Skia needs an ancestor `LiquidGlassView` to
-/// capture the backdrop; without one the lens degrades to frosted glass and
-/// stays perfectly usable. We deliberately do NOT wrap the app in one: the
-/// backdrop here is playing video, so it would need `realTimeCapture`, and a
-/// full-window realtime capture under a film is exactly the cost the package's
-/// own guidance says to avoid. On Impeller (the Flutter desktop default) the
-/// lens refracts what is already rendered behind it and no view is needed.
+/// A solid, high-contrast room-chat card that grows from the right edge.
+/// Artwork and video never show through it, so messages remain readable and
+/// opening chat does not start a backdrop-capture loop.
 class ChatSlideOver extends StatefulWidget {
   const ChatSlideOver({
     super.key,
@@ -322,25 +317,17 @@ class _ChatSlideOverState extends State<ChatSlideOver>
     with SingleTickerProviderStateMixin {
   final FocusNode _composer = FocusNode(debugLabel: 'chatComposer');
 
-  /// Rest size of the blob the panel grows out of, and the radius it wears
-  /// while it is that small. A pill, so the thing leaving the edge reads as a
-  /// droplet of the same material rather than a tiny window.
-  static const double _blobWidth = 54;
-  static const double _blobRadius = 27;
-  static const double _panelRadius = 26;
+  static const double _collapsedWidth = 34;
 
   late final AnimationController _c = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 460),
-    reverseDuration: const Duration(milliseconds: 320),
+    duration: const Duration(milliseconds: 360),
+    reverseDuration: const Duration(milliseconds: 240),
   );
 
-  /// Restrained overshoot. `easeOutBack` at its default overshoot reads as a
-  /// cartoon bounce at this size; the jelly spring is already supplying most of
-  /// the life, so this only needs to lean past the target and come back.
   late final Animation<double> _extend = CurvedAnimation(
     parent: _c,
-    curve: const Cubic(0.16, 1.02, 0.24, 1.0),
+    curve: const Cubic(0.2, 0.82, 0.2, 1),
     reverseCurve: Curves.easeInCubic,
   );
 
@@ -429,7 +416,8 @@ class _ChatSlideOverState extends State<ChatSlideOver>
     if (event.logicalKey != LogicalKeyboardKey.keyC) {
       return KeyEventResult.ignored;
     }
-    final ctrlOrMeta = HardwareKeyboard.instance.isControlPressed ||
+    final ctrlOrMeta =
+        HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
     if (!ctrlOrMeta) return KeyEventResult.ignored;
     final (_, hasSelection) = _editableFocus;
@@ -446,89 +434,62 @@ class _ChatSlideOverState extends State<ChatSlideOver>
         final t = _extend.value.clamp(0.0, 1.0);
         if (t <= 0.001) return const SizedBox.shrink();
 
-        final width = _blobWidth + (widget.width - _blobWidth) * t;
-        final radius = _blobRadius + (_panelRadius - _blobRadius) * t;
+        final width = _collapsedWidth + (widget.width - _collapsedWidth) * t;
+        final wp = context.wp;
 
         return Positioned(
           // Clear of the window-chrome band. Running to the top edge put the
           // drawer's own header inside the strip macOS uses for dragging the
           // window, so the top-right of the title bar stopped responding
           // whenever chat was open.
-          top: Platform.isMacOS ? integratedDesktopChromeHeight : 0,
-          bottom: 0,
-          right: 0,
+          top: (Platform.isMacOS ? integratedDesktopChromeHeight : 0) + 12,
+          bottom: 12,
+          right: 12,
           width: width,
           child: SafeArea(
             left: false,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final height = constraints.maxHeight;
-                // The jelly's `value` is the driving signal: it reads the
-                // velocity and direction of the extension and deforms along
-                // the horizontal, squashing the cross axis to conserve volume.
-                // This is what makes the surface behave like gel leaving the
-                // edge rather than a box changing width.
-                return LiquidGlassJelly(
-                  value: t,
-                  width: width,
-                  height: height,
-                  axis: Axis.horizontal,
-                  config: const LiquidGlassJellyConfig(
-                    // Softer and better damped than the default: this is a
-                    // 340px panel of chrome, not a toy. It should lean past
-                    // the mark once and settle, not wobble.
-                    stiffness: 260,
-                    damping: 26,
-                    stretchWidth: 18,
-                    squashHeight: 6,
-                    // Anchored at the right, because that edge is where the
-                    // material is attached and does not move.
-                    anchorBias: 1,
-                  ),
-                  child: LiquidGlassLens(
-                    style: LiquidGlassStyle(
-                      shape: LiquidGlassShape.continuousRoundedRectangle(
-                        cornerRadius: radius,
-                      ),
-                      appearance: const LiquidGlassAppearance(
-                        color: Color(0x1FFFFFFF),
-                        saturation: 1.06,
-                        blur: LiquidGlassBlur(sigmaX: 18, sigmaY: 18),
-                      ),
-                      refraction: const LiquidGlassRefraction(
-                        // High at the rim, per the brief: the edge is where
-                        // the glass is thickest and where the picture behind
-                        // visibly bends.
-                        distortion: 0.22,
-                        distortionWidth: 42,
-                        magnification: 1.03,
-                        chromaticAberration: 0.004,
-                      ),
+            child: Transform.translate(
+              offset: Offset(18 * (1 - t), 0),
+              child: DecoratedBox(
+                key: const Key('chatSidebarCard'),
+                decoration: BoxDecoration(
+                  color: wp.surface,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: wp.line2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: wp.shadow.withValues(alpha: 0.72),
+                      blurRadius: 54,
+                      spreadRadius: 2,
+                      offset: const Offset(-14, 20),
                     ),
-                    child: Opacity(
-                      opacity: _contents.value.clamp(0.0, 1.0),
-                      child: Focus(
-                        onKeyEvent: _onKey,
-                        // Escape closes too. With the caret parked in the
-                        // composer the player's keymap sees nothing typed
-                        // here, so without these the drawer would be a place
-                        // you can reach from the keyboard and only leave with
-                        // the mouse.
-                        child: CallbackShortcuts(
-                          bindings: {
-                            const SingleActivator(LogicalKeyboardKey.escape):
-                                widget.onClose,
-                          },
-                          child: _ChatBody(
-                            composer: _composer,
-                            onClose: widget.onClose,
-                          ),
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 14,
+                      offset: const Offset(-4, 6),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(21),
+                  child: Opacity(
+                    opacity: _contents.value.clamp(0.0, 1.0),
+                    child: Focus(
+                      onKeyEvent: _onKey,
+                      child: CallbackShortcuts(
+                        bindings: {
+                          const SingleActivator(LogicalKeyboardKey.escape):
+                              widget.onClose,
+                        },
+                        child: _ChatBody(
+                          composer: _composer,
+                          onClose: widget.onClose,
                         ),
                       ),
                     ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
           ),
         );
@@ -537,9 +498,6 @@ class _ChatSlideOverState extends State<ChatSlideOver>
   }
 }
 
-/// The drawer's contents. No heading: the panel is chat, the messages say so,
-/// and "ROOM CHAT / Conversation" was two labels naming the same obvious thing
-/// while eating the top of a 340px column.
 class _ChatBody extends StatelessWidget {
   const _ChatBody({required this.composer, required this.onClose});
 
@@ -549,17 +507,55 @@ class _ChatBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 10, 14),
+      padding: const EdgeInsets.fromLTRB(18, 16, 14, 16),
       child: Column(
         children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: AnalogIconButton(
-              icon: Icons.close,
-              tooltip: 'Close chat',
-              onPressed: onClose,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: context.wp.surface2,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.forum_outlined,
+                  size: 17,
+                  color: context.wp.text,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Room chat',
+                      style: TextStyle(
+                        color: context.wp.text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      'Messages from this watch party',
+                      style: TextStyle(color: context.wp.faint, fontSize: 11.5),
+                    ),
+                  ],
+                ),
+              ),
+              AnalogIconButton(
+                icon: Icons.close,
+                tooltip: 'Close chat',
+                onPressed: onClose,
+              ),
+            ],
           ),
+          const SizedBox(height: 12),
+          Divider(height: 1, color: context.wp.line),
+          const SizedBox(height: 6),
           Expanded(child: ChatPanel(composerFocus: composer)),
         ],
       ),

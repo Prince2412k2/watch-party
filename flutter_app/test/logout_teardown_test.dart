@@ -15,7 +15,6 @@ import 'package:watchparty/net/events.dart';
 import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/player/player_controller.dart';
 import 'package:watchparty/state/state.dart';
-import 'package:watchparty/sync/sync_engine_impl.dart';
 
 // Session teardown on logout and on an origin switch (issue #59).
 //
@@ -241,16 +240,15 @@ void main() {
           ),
         ],
       );
-      addTearDown(() async {
-        await container.read(syncEngineProvider).detach();
-        container.dispose();
-      });
+      addTearDown(container.dispose);
 
       await container.read(authProvider.notifier).login('root', 'root');
       // Force the chat notifier to exist before any message is delivered — it
       // subscribes to the socket in its constructor.
       expect(container.read(chatProvider), isEmpty);
       await container.read(partyProvider.notifier).join('party-1');
+      container.read(nowPlayingProvider.notifier).open(itemId: 'local-movie');
+      await player.open('https://media.test/local-movie', autoplay: true);
       await container.read(profileProvider.notifier).load();
       await Future<void>.delayed(const Duration(milliseconds: 20));
       return container;
@@ -293,14 +291,6 @@ void main() {
       expect(container.read(serverConfigProvider), isNull);
       // Cached avatar drawings are keyed by this revision.
       expect(container.read(avatarRevisionProvider), 1);
-
-      // The sync engine is detached: local intents no longer reach the socket.
-      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-      expect(engine.isHost, isFalse);
-      final emittedBeforeIntents = socket.emitted.length;
-      await engine.requestPlay();
-      await engine.requestSeek(const Duration(seconds: 30));
-      expect(socket.emitted.length, emittedBeforeIntents);
     });
 
     test('when the server is unreachable, without throwing', () async {

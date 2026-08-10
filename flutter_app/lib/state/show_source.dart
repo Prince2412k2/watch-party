@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api_client.dart';
+import '../ui/widgets/title_logo.dart';
 import 'library_provider.dart';
 import 'providers.dart';
 import 'servarr_provider.dart';
@@ -92,6 +93,7 @@ class ShowStageInfo {
     this.network,
     this.backdropUrl,
     this.posterUrl,
+    this.logoUrl,
     this.year,
     this.runtime,
     this.rating,
@@ -108,6 +110,11 @@ class ShowStageInfo {
   final String? network;
   final String? backdropUrl;
   final String? posterUrl;
+
+  /// The series' logo artwork, which stands in for the title heading. Null when
+  /// the library has no logo for it — and always null for a Discover series,
+  /// which is a Sonarr lookup with no such image to offer.
+  final String? logoUrl;
   final int? year;
   final int? runtime;
   final double? rating;
@@ -251,6 +258,7 @@ Future<ShowStageInfo> _libraryShowInfo(
     certification: item.officialRating,
     backdropUrl: api.imageUrl(seriesId, type: ImageType.backdrop),
     posterUrl: api.imageUrl(seriesId),
+    logoUrl: titleLogoUrl(api, item),
     year: item.productionYear,
     runtime: _runtimeMinutes(item.runTimeTicks),
     rating: item.communityRating,

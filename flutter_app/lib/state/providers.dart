@@ -50,7 +50,7 @@ final catalogPrefetcherProvider = Provider<CatalogPrefetcher>((ref) {
   return prefetcher;
 });
 
-/// The socket.io client for sync/chat. Mock by default.
+/// The socket.io client for parties and chat. Mock by default.
 final socketClientProvider = Provider<SocketClient>(
   (ref) => MockSocketClient(),
 );
