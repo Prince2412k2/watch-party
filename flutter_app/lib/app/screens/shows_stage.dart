@@ -40,6 +40,7 @@ import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/bottom_nav.dart';
 import '../../ui/widgets/title_logo.dart';
+import 'stage_search.dart';
 import 'title_layout.dart';
 
 class ShowsStage extends ConsumerStatefulWidget {
@@ -63,10 +64,26 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
   @override
   void dispose() {
     _copyEntry.dispose();
+    _search.dispose();
     super.dispose();
   }
 
   int _selected = 0;
+
+  /// The search line's text. Held here rather than read back out of the field so
+  /// clearing it from either side — the × or Escape — moves one thing.
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  void _setQuery(String value) {
+    setState(() {
+      _query = value;
+      // The rail is a different list now, so the cursor cannot mean what it
+      // meant a keystroke ago.
+      _selected = 0;
+    });
+    _copyEntry.forward(from: 0);
+  }
 
   void _activate(List<LibraryItem> items, int index) {
     if (index < 0 || index >= items.length) return;
@@ -154,6 +171,14 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
       case LogicalKeyboardKey.select:
         _activate(items, _selected);
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        // Only meaningful while something is typed: this stage has nothing else
+        // to back out of, so an Escape that cleared nothing should fall through
+        // rather than be swallowed.
+        if (_query.isEmpty) return KeyEventResult.ignored;
+        _setQuery('');
+        _search.clear();
+        return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
@@ -163,7 +188,10 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
     final api = ref.watch(apiClientProvider);
     final async = ref.watch(browseByTypeProvider(BrowseTypeFilter.series));
 
-    final items = async.valueOrNull ?? const <LibraryItem>[];
+    final items = searchTitles(
+      async.valueOrNull ?? const <LibraryItem>[],
+      _query,
+    );
     final selected = items.isEmpty
         ? null
         : items[_selected.clamp(0, items.length - 1)];
@@ -197,74 +225,90 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
           // "scrolling anywhere should work" means the whole stage, not the
           // strip of it the posters happen to occupy.
           behavior: HitTestBehavior.opaque,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              TitleLayout.padLeft,
-              TitleLayout.padTop,
-              TitleLayout.padLeft,
-              kBottomNavReservedPx,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        flex: TitleLayout.copyFlex,
-                        child: Center(
-                          child: SingleChildScrollView(
-                            // Never scrollable: the wheel belongs to the rail,
-                            // and a scroll view here would swallow it. It is
-                            // present only so a window too short for the copy
-                            // clips instead of throwing an overflow.
-                            physics: const NeverScrollableScrollPhysics(),
-                            child: _Details(
-                              key: ValueKey(detailed?.id ?? 'empty'),
-                              api: api,
-                              item: detailed,
-                              loading: async.isLoading,
-                              error: async.hasError
-                                  ? 'Could not load this library'
-                                  : null,
-                              entry: _copyEntry,
-                              direction: _stepDirection,
-                              velocity: _velocity,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  TitleLayout.padLeft,
+                  TitleLayout.padTop,
+                  TitleLayout.padLeft,
+                  kBottomNavReservedPx,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            flex: TitleLayout.copyFlex,
+                            child: Center(
+                              child: SingleChildScrollView(
+                                // Never scrollable: the wheel belongs to the rail,
+                                // and a scroll view here would swallow it. It is
+                                // present only so a window too short for the copy
+                                // clips instead of throwing an overflow.
+                                physics: const NeverScrollableScrollPhysics(),
+                                child: _Details(
+                                  key: ValueKey(detailed?.id ?? 'empty'),
+                                  api: api,
+                                  item: detailed,
+                                  loading: async.isLoading,
+                                  error: async.hasError
+                                      ? 'Could not load this library'
+                                      : null,
+                                  entry: _copyEntry,
+                                  direction: _stepDirection,
+                                  velocity: _velocity,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: TitleLayout.columnGap),
+                          // Empty, and held open on purpose — see the note at the
+                          // top of this file. The copy's rectangle is the thing
+                          // being preserved, not the strip that used to sit here.
+                          const Expanded(
+                            flex: TitleLayout.asideFlex,
+                            child: SizedBox.shrink(),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: TitleLayout.columnGap),
-                      // Empty, and held open on purpose — see the note at the
-                      // top of this file. The copy's rectangle is the thing
-                      // being preserved, not the strip that used to sit here.
-                      const Expanded(
-                        flex: TitleLayout.asideFlex,
-                        child: SizedBox.shrink(),
+                    ),
+                    const SizedBox(height: TitleLayout.copyToBandGap),
+                    AnalogRail(
+                      maxHeightPx: railBudget,
+                      items: _railItems(items, api),
+                      selection: _selected.clamp(
+                        0,
+                        items.isEmpty ? 0 : items.length - 1,
                       ),
-                    ],
-                  ),
+                      size: size,
+                      motion: motion,
+                      velocity: _velocity,
+                      onSelect: (i) => setState(() => _selected = i),
+                      onActivate: (i) => _activate(items, i),
+                      emptyLabel: switch ((
+                        async.isLoading,
+                        _query.isNotEmpty,
+                      )) {
+                        (true, _) => 'Loading…',
+                        // The library is not empty — the search is.
+                        (false, true) => 'Nothing matches “$_query”',
+                        (false, false) => 'No shows in this library',
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: TitleLayout.copyToBandGap),
-                AnalogRail(
-                  maxHeightPx: railBudget,
-                  items: _railItems(items, api),
-                  selection: _selected.clamp(
-                    0,
-                    items.isEmpty ? 0 : items.length - 1,
-                  ),
-                  size: size,
-                  motion: motion,
-                  velocity: _velocity,
-                  onSelect: (i) => setState(() => _selected = i),
-                  onActivate: (i) => _activate(items, i),
-                  emptyLabel: async.isLoading
-                      ? 'Loading…'
-                      : 'No shows in this library',
-                ),
-              ],
-            ),
+              ),
+              StageSearchOverlay(
+                hint: 'Search shows',
+                query: _query,
+                controller: _search,
+                onChanged: _setQuery,
+              ),
+            ],
           ),
         ),
       ),

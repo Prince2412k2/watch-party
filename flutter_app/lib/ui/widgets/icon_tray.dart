@@ -44,9 +44,9 @@ class IconTray extends StatelessWidget {
   /// its right; vertical grows upwards from a handle beneath it.
   final Axis axis;
 
-  /// Distance from the pill to the handle. It lives inside the clipped region,
-  /// as the pill's own margin, so it collapses with the tray instead of leaving
-  /// a permanent hole beside the handle when nothing is open.
+  /// Distance from the pill to the handle. Scaled by the reveal, so it collapses
+  /// with the tray instead of leaving a permanent hole beside the handle when
+  /// nothing is open.
   final double gap;
 
   /// Across the tray. Matches the handle so the pill reads as one object with
@@ -65,7 +65,7 @@ class IconTray extends StatelessWidget {
         final t = AnalogMotion.drawerEase.transform(
           animation.value.clamp(0.0, 1.0),
         );
-        return ClipRect(
+        final reveal = ClipRect(
           child: Align(
             alignment: _horizontal
                 ? Alignment.centerRight
@@ -75,6 +75,44 @@ class IconTray extends StatelessWidget {
             // Nothing to hit-test until it is fully out; without this the
             // part-open tray absorbs a click aimed at the artwork behind it.
             child: IgnorePointer(ignoring: t < 1, child: child),
+          ),
+        );
+
+        // The drop shadow is cast from OUT HERE, around the clip, not from the
+        // pill inside it.
+        //
+        // It used to be part of the pill's own decoration, which put it inside
+        // the ClipRect — and a 34px blur clipped to the box that casts it is not
+        // a shadow, it is a grey rectangle with hard edges, which is exactly
+        // what showed up around the tray. The reveal has to clip the pill (that
+        // is what makes it a reveal), so the shadow has to live outside the
+        // thing being clipped.
+        //
+        // The gap to the handle moves out here with it: as the pill's margin it
+        // sat inside the clip, so the shadow was being blurred into that band
+        // and then cut off at its edge. Still scaled by the reveal out here, so
+        // it goes on collapsing with the tray.
+        final lead = gap * t;
+        return Padding(
+          padding: _horizontal
+              ? EdgeInsets.only(right: lead)
+              : EdgeInsets.only(bottom: lead),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AnalogRadius.pillPx),
+              // Nothing is out yet at t == 0, and a zero-height box still casts
+              // a blur — a shadow under a closed tray.
+              boxShadow: t <= 0
+                  ? const []
+                  : [
+                      BoxShadow(
+                        color: wp.shadow,
+                        blurRadius: 34,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+            ),
+            child: reveal,
           ),
         );
       },
@@ -88,20 +126,12 @@ class IconTray extends StatelessWidget {
           padding: _horizontal
               ? const EdgeInsets.symmetric(horizontal: 9, vertical: 3)
               : const EdgeInsets.symmetric(horizontal: 3, vertical: 9),
-          margin: _horizontal
-              ? EdgeInsets.only(right: gap)
-              : EdgeInsets.only(bottom: gap),
+          // The gap to the handle is the builder's padding now — see the note
+          // on the shadow there.
           decoration: BoxDecoration(
             color: wp.surface,
             borderRadius: BorderRadius.circular(AnalogRadius.pillPx),
             border: Border.all(color: wp.line),
-            boxShadow: [
-              BoxShadow(
-                color: wp.shadow,
-                blurRadius: 34,
-                offset: const Offset(0, 10),
-              ),
-            ],
           ),
           child: Flex(
             direction: axis,
@@ -326,11 +356,7 @@ class _TrayButtonState extends State<TrayButton> {
                   // request.
                   WaveDots(color: color, dotSize: 4.5, amplitude: 2.5)
                 else
-                  Icon(
-                    widget.icon,
-                    size: TrayButton.iconSize,
-                    color: color,
-                  ),
+                  Icon(widget.icon, size: TrayButton.iconSize, color: color),
                 if (widget.badge)
                   Positioned(
                     top: 4,

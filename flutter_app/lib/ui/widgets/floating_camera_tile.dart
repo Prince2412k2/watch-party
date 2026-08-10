@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../livekit/livekit_room.dart';
 import '../../state/livekit_provider.dart';
 import '../tokens.dart';
+import 'avatar_view.dart';
 import 'camera_grid.dart';
 
 /// Pure layout math for the floating PiP tiles — kept free of widgets so the
@@ -29,8 +30,17 @@ abstract final class FloatingTileGeometry {
   /// window, and a bound you can see the reason for is not a bound anyone
   /// fights.
 
-  /// Height of a collapsed tile — just its chrome header.
+  /// Height of a tile's chrome header, over the top of its video.
   static const double headerHeight = 26;
+
+  /// A collapsed tile: the person's avatar, and nothing else.
+  ///
+  /// Collapsing used to leave a 26px strip of chrome — a name and an expand
+  /// button, a tile with its picture switched off. What you want back from a
+  /// tile you have put away is the person, so a collapsed tile is their profile
+  /// ball: round, the size of a face at a glance, and the whole thing is the
+  /// button that brings the video back.
+  static const double ballDiameter = 60;
 
   /// Inset from the stage edges for the first-show cascade + edge snap.
   static const double margin = AppSpacing.md;
@@ -41,11 +51,16 @@ abstract final class FloatingTileGeometry {
   static const double defaultWidth = 168;
 
   /// Full pixel size of a tile given its width and collapsed state.
+  ///
+  /// A collapsed tile is a fixed circle, so it ignores the width entirely — the
+  /// width it was expanded to is remembered and comes back with the video.
   static Size tileSize(
     double width, {
     required bool collapsed,
     double aspect = FloatingTileGeometry.aspect,
-  }) => Size(width, collapsed ? headerHeight : headerHeight + width / aspect);
+  }) => collapsed
+      ? const Size.square(ballDiameter)
+      : Size(width, headerHeight + width / aspect);
 
   /// Clamp a width to the min/max, also never wider than the stage allows.
   static double clampWidth(
@@ -302,20 +317,20 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
   Widget build(BuildContext context) {
     final track = widget.track;
     final speaking = track.isSpeaking;
-    final showChrome = _hover || speaking || widget.collapsed;
-    final radius = BorderRadius.circular(AppSpacing.radiusLg);
+    final showChrome = _hover || speaking;
+    // Collapsed, the tile IS a circle — squaring off the corners of a ball is
+    // what would make it read as a shrunken window again.
+    final radius = BorderRadius.circular(
+      widget.collapsed
+          ? FloatingTileGeometry.ballDiameter / 2
+          : AppSpacing.radiusLg,
+    );
 
     final body = widget.collapsed
-        // Collapsed: no video, just a compact strip carrying the chrome
-        // (name + expand toggle). The whole strip still drags.
-        ? ColoredBox(
-            color: AppColors.surface,
-            child: _TopChrome(
-              track: track,
-              collapsed: true,
-              onToggleCollapse: widget.onToggleCollapse,
-            ),
-          )
+        // Put away: the person, not a strip of chrome. Their avatar fills the
+        // ball, and a click anywhere on it brings the video back — the whole
+        // ball is the expand button, so there is no toggle to aim at.
+        ? _AvatarBall(track: track)
         : Stack(
             fit: StackFit.expand,
             children: [
@@ -330,7 +345,6 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
                   duration: AppMotion.hover,
                   child: _TopChrome(
                     track: track,
-                    collapsed: false,
                     onToggleCollapse: widget.onToggleCollapse,
                   ),
                 ),
@@ -355,6 +369,12 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
       behavior: HitTestBehavior.opaque,
       onPanUpdate: (d) => widget.onDrag(d.delta),
       onPanEnd: (_) => widget.onDragEnd(),
+      // A collapsed ball has no controls of its own, so the tap that expands it
+      // belongs to the same detector that drags it — a pan needs movement, so
+      // the two do not compete. Expanded, a tap must stay with the player
+      // underneath: clicking the video to pause is not something a tile should
+      // swallow.
+      onTap: widget.collapsed ? widget.onToggleCollapse : null,
       child: AnimatedContainer(
         duration: AppMotion.hover,
         decoration: BoxDecoration(
@@ -380,7 +400,10 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
     );
 
     return MouseRegion(
-      cursor: SystemMouseCursors.move,
+      // A ball is a button first and a draggable second, so it says click.
+      cursor: widget.collapsed
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.move,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: Stack(
@@ -402,17 +425,63 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
   }
 }
 
-/// The top hover-chrome: a soft gradient scrim carrying a drag affordance, mic/
-/// speaking indicators, the participant name, and the collapse/expand toggle.
-class _TopChrome extends StatelessWidget {
-  const _TopChrome({
-    required this.track,
-    required this.collapsed,
-    required this.onToggleCollapse,
-  });
+/// A tile that has been put away: the participant's profile ball.
+///
+/// Their avatar, at face size, with the mic-off badge kept because a muted
+/// person is a thing you want to know without expanding them again. The
+/// [SpeakingRing] around it comes from the tile, so a collapsed person still
+/// lights up when they talk — which is most of the reason to leave one
+/// collapsed rather than hidden.
+class _AvatarBall extends StatelessWidget {
+  const _AvatarBall({required this.track});
 
   final ParticipantTrack track;
-  final bool collapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = track.isLocal ? '${track.name} (you)' : track.name;
+    return Tooltip(
+      message: 'Expand $label',
+      child: ColoredBox(
+        color: AppColors.surface2,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: AvatarView(
+                userId: track.identity,
+                name: track.name,
+                size: FloatingTileGeometry.ballDiameter,
+              ),
+            ),
+            if (track.audioMuted)
+              Positioned(
+                right: 1,
+                bottom: 1,
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    color: Color(0xCC000000),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.all(3),
+                    child: Icon(Icons.mic_off, size: 11, color: AppColors.dim),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The top hover-chrome: a soft gradient scrim carrying a drag affordance, mic/
+/// speaking indicators, the participant name, and the collapse toggle.
+class _TopChrome extends StatelessWidget {
+  const _TopChrome({required this.track, required this.onToggleCollapse});
+
+  final ParticipantTrack track;
   final VoidCallback onToggleCollapse;
 
   @override
@@ -421,15 +490,13 @@ class _TopChrome extends StatelessWidget {
     return Container(
       height: FloatingTileGeometry.headerHeight,
       padding: const EdgeInsets.only(left: 4, right: 2),
-      decoration: collapsed
-          ? null
-          : const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Color(0xB3000000), Color(0x00000000)],
-              ),
-            ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xB3000000), Color(0x00000000)],
+        ),
+      ),
       child: Row(
         children: [
           const Icon(Icons.drag_indicator, size: 14, color: AppColors.faint),
@@ -461,8 +528,8 @@ class _TopChrome extends StatelessWidget {
             ),
           ),
           _HeaderButton(
-            icon: collapsed ? Icons.open_in_full : Icons.minimize,
-            tooltip: collapsed ? 'Expand tile' : 'Collapse tile',
+            icon: Icons.minimize,
+            tooltip: 'Collapse to their avatar',
             onTap: onToggleCollapse,
           ),
         ],
