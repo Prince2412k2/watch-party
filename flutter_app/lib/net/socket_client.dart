@@ -30,8 +30,8 @@ class SocketConnectFailure implements Exception {
 }
 
 /// FROZEN CONTRACT (PLAN §3.5). A thin, typed wrapper over socket_io_client that
-/// speaks the backend's event vocabulary (see `events.dart`). E5/E7 build the
-/// sync engine, party controls, and chat on top of this. The mock impl lets the
+/// speaks the backend's event vocabulary (see `events.dart`). Party controls
+/// and chat build on top of this. The mock implementation lets the
 /// UI and those engines be developed offline.
 abstract class SocketClient {
   /// Repoint at a new origin before [connect]. Runtime-settable so the app can
@@ -85,10 +85,24 @@ class IoSocketClient implements SocketClient {
   final Future<String?> Function()? cookieHeaderProvider;
 
   io.Socket? _socket;
+  Future<void>? _connecting;
+  Completer<void>? _connectCompleter;
+  final Map<String, Set<void Function(dynamic)>> _handlers = {};
   final _connCtrl = StreamController<bool>.broadcast();
 
   @override
-  Future<void> connect() async {
+  Future<void> connect() {
+    if (isConnected) return Future<void>.value();
+    final connecting = _connecting;
+    if (connecting != null) return connecting;
+    final future = _connect();
+    _connecting = future;
+    return future.whenComplete(() {
+      if (identical(_connecting, future)) _connecting = null;
+    });
+  }
+
+  Future<void> _connect() async {
     final cookie = cookieHeader ?? await cookieHeaderProvider?.call();
     final target = socketUrlFor(_url);
     // Logged on every connect so a failure report identifies the build that
@@ -99,11 +113,19 @@ class IoSocketClient implements SocketClient {
     final socket = io.io(target, socketOptionsFor(_url, cookie));
     _socket = socket;
     final completer = Completer<void>();
+    _connectCompleter = completer;
     socket.onConnect((_) {
       _connCtrl.add(true);
       if (!completer.isCompleted) completer.complete();
     });
-    socket.onDisconnect((_) => _connCtrl.add(false));
+    socket.onDisconnect((_) {
+      _connCtrl.add(false);
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError('socket disconnected while connecting'),
+        );
+      }
+    });
     socket.onConnectError((e) {
       if (!completer.isCompleted) {
         // Carry the resolved target into the error. socket_io_client's own
@@ -113,12 +135,29 @@ class IoSocketClient implements SocketClient {
         completer.completeError(SocketConnectFailure(target, e));
       }
     });
+    for (final entry in _handlers.entries) {
+      for (final handler in entry.value) {
+        socket.on(entry.key, handler);
+      }
+    }
     socket.connect();
-    return completer.future;
+    try {
+      await completer.future;
+    } catch (_) {
+      if (identical(_socket, socket)) _socket = null;
+      socket.dispose();
+      rethrow;
+    } finally {
+      if (identical(_connectCompleter, completer)) _connectCompleter = null;
+    }
   }
 
   @override
   Future<void> disconnect() async {
+    final completer = _connectCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.completeError(StateError('socket connection cancelled'));
+    }
     _socket?.dispose();
     _socket = null;
     _connCtrl.add(false);
@@ -149,8 +188,13 @@ class IoSocketClient implements SocketClient {
 
   @override
   void Function() on(String event, void Function(dynamic data) handler) {
+    (_handlers[event] ??= {}).add(handler);
     _socket?.on(event, handler);
-    return () => _socket?.off(event, handler);
+    return () {
+      _handlers[event]?.remove(handler);
+      if (_handlers[event]?.isEmpty ?? false) _handlers.remove(event);
+      _socket?.off(event, handler);
+    };
   }
 
   @override
@@ -298,7 +342,9 @@ Future<String> _describeFailedUpgrade(
     });
     // RFC 6455's fixed GUID: accept = base64(sha1(key + GUID)).
     const wsGuid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-    final expected = base64.encode(sha1.convert(utf8.encode(key + wsGuid)).bytes);
+    final expected = base64.encode(
+      sha1.convert(utf8.encode(key + wsGuid)).bytes,
+    );
     final actual = response.headers.value('sec-websocket-accept');
     final handshake = response.statusCode != 101
         ? 'not a 101, so the accept was never checked'
@@ -417,7 +463,7 @@ class MockSocketClient implements SocketClient {
 
   /// Test helper: deliver an inbound server event to registered handlers.
   void inject(String event, dynamic data) {
-    for (final h in _handlers[event] ?? const []) {
+    for (final h in List.of(_handlers[event] ?? const [])) {
       h(data);
     }
   }

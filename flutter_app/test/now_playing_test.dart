@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/player/mock_player_controller.dart';
@@ -66,7 +68,11 @@ void main() {
     notifier().minimise();
 
     expect(now().isFloating, isTrue);
-    expect(now().itemId, 'movie-1', reason: 'the title must survive minimising');
+    expect(
+      now().itemId,
+      'movie-1',
+      reason: 'the title must survive minimising',
+    );
     expect(player.pauseCalls, 0);
     expect(player.seeks, isEmpty);
   });
@@ -93,26 +99,35 @@ void main() {
     expect(player.seeks, contains(Duration.zero));
   });
 
-  test('re-opening the same title only changes how it is shown', () {
-    // A party's `party:state` resync repeats the current title on every
-    // heartbeat. Treating each repeat as a fresh open would reset playback
-    // several times a minute.
+  test('re-opening the identical request only changes how it is shown', () {
     notifier().open(itemId: 'movie-1', title: 'Dune', subtitleStreamIndex: 3);
     notifier().minimise();
-    notifier().open(itemId: 'movie-1', title: 'Dune');
+    notifier().open(itemId: 'movie-1', title: 'Dune', subtitleStreamIndex: 3);
 
     expect(now().isExpanded, isTrue);
     expect(now().subtitleStreamIndex, 3, reason: 'the original choice stands');
     expect(player.pauseCalls, 0);
   });
 
+  test('re-opening the same title with new tracks creates a new revision', () {
+    notifier().open(itemId: 'movie-1', subtitleStreamIndex: 3);
+    final revision = now().revision;
+    notifier().open(itemId: 'movie-1', subtitleStreamIndex: 4);
+
+    expect(now().subtitleStreamIndex, 4);
+    expect(now().revision, greaterThan(revision));
+  });
+
   test('opening a different title supersedes the old one wholesale', () {
-    notifier().open(itemId: 'movie-1', subtitleStreamIndex: 3, fromParty: true);
+    notifier().open(itemId: 'movie-1', subtitleStreamIndex: 3);
     notifier().open(itemId: 'movie-2');
 
     expect(now().itemId, 'movie-2');
-    expect(now().subtitleStreamIndex, isNull, reason: 'stale choice must not leak');
-    expect(now().fromParty, isFalse);
+    expect(
+      now().subtitleStreamIndex,
+      isNull,
+      reason: 'stale choice must not leak',
+    );
   });
 
   test('minimise and expand do nothing when nothing is playing', () {
@@ -120,5 +135,23 @@ void main() {
     expect(now().presentation, PlayerPresentation.hidden);
     notifier().expand();
     expect(now().presentation, PlayerPresentation.hidden);
+  });
+
+  test('new playback operations supersede queued stale work', () async {
+    final operations = PlaybackOperations();
+    final gate = Completer<void>();
+    final events = <String>[];
+
+    final first = operations.replace((isSuperseded) async {
+      await gate.future;
+      if (!isSuperseded()) events.add('first');
+    });
+    final second = operations.replace((isSuperseded) async {
+      if (!isSuperseded()) events.add('second');
+    });
+    gate.complete();
+
+    await Future.wait([first, second]);
+    expect(events, ['second']);
   });
 }

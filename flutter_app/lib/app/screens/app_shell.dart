@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../models/models.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/bottom_nav.dart';
@@ -53,18 +52,6 @@ String shellSectionTitle(String location) {
   return 'Watchparty';
 }
 
-/// The title a room is watching, or null if it is not watching one.
-///
-/// This used to return a ROUTE, and the shell used to navigate to it — being in
-/// a room that started a film took your app away and put you on `/party/:id`.
-/// Now it names a title, and the room's film opens in the same player your own
-/// films open in, over whatever screen you happen to be on.
-String? partyWatchingItemId(PartyState? party) {
-  if (party?.stage != 'watching') return null;
-  final itemId = party?.mediaItemId;
-  return (itemId == null || itemId.isEmpty) ? null : itemId;
-}
-
 /// The persistent, edge-to-edge shell that wraps the primary destinations
 /// (`.web-app`/`.web-stage`, styles.css). No top bar, no left rail, no outer
 /// frame: a full-bleed [AmbientWash] backdrop under a translucent stage scrim,
@@ -85,17 +72,10 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
-  String? _shownItemId;
-
   @override
   void initState() {
     super.initState();
-    // The room's film has to be considered on MOUNT, not only on the next
-    // state change: a room can already be watching by the time the shell is
-    // built (a boot-time `party:resume`, or a return from another top-level
-    // route). Deferred a frame so the open happens off the build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showPartyMedia(ref.read(partyProvider));
       _warmCatalog(ref.read(catalogNamespaceProvider));
     });
   }
@@ -118,36 +98,6 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.read(catalogPrefetcherProvider).warmBrowse(namespace);
   }
 
-  /// Show what the room is watching, in place.
-  ///
-  /// Nothing here navigates any more. The film opens in the app's one player,
-  /// over the screen you are already on, and Back minimises it to a tile the
-  /// same way your own films do — so there is no longer any such thing as
-  /// "minimized away from the party surface", and the latch that used to
-  /// track it is gone with it.
-  ///
-  /// The `_shownItemId` guard is what stops a `party:state` heartbeat from
-  /// re-expanding a film you deliberately minimised: the room repeats its
-  /// current title constantly, and only a CHANGE of title should take the
-  /// screen.
-  void _showPartyMedia(PartyState? party) {
-    if (!mounted) return;
-    final itemId = partyWatchingItemId(party);
-    if (itemId == null) {
-      _shownItemId = null;
-      return;
-    }
-    if (_shownItemId == itemId) return;
-    _shownItemId = itemId;
-    ref
-        .read(nowPlayingProvider.notifier)
-        .open(
-          itemId: itemId,
-          mediaSourceId: party!.mediaSourceId,
-          fromParty: true,
-        );
-  }
-
   String _currentOf(List<NavDestination> destinations) {
     for (final d in destinations) {
       if (widget.location.startsWith(d.route)) return d.route;
@@ -157,7 +107,6 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<PartyState?>(partyProvider, (_, party) => _showPartyMedia(party));
     // Signing in is the other "launch": the shell is already up, so the
     // post-frame warm above has been and gone by the time a namespace exists.
     ref.listen<String?>(
@@ -197,8 +146,10 @@ class _AppShellState extends ConsumerState<AppShell> {
             ),
             Positioned(
               top: 20,
-              right: 28 + desktopTrailingControlInset,
-              child: isAuthenticated ? const ProfileMenu() : const _LoginButton(),
+              right: 28,
+              child: isAuthenticated
+                  ? const ProfileMenu()
+                  : const _LoginButton(),
             ),
           ],
         ),

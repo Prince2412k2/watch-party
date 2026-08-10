@@ -4,17 +4,14 @@ import 'package:flutter/material.dart';
 import '../analog/player_core.dart' show ToastMessage;
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
-import '../models/playback_info.dart';
-import '../models/subtitle_preferences.dart';
 import '../ui/tokens.dart';
 import 'player_chrome.dart';
 import 'player_controller.dart';
 import 'video_view.dart';
 
 /// Composes [VideoView] + [PlayerChrome] into the single embeddable playback
-/// widget (PLAN §4 E4.2/E4.3). This is the widget E3 (title detail — solo
-/// play) and E5 (watch party) mount; both open a [PlayerController] ahead of
-/// time and hand it in (party: the controller is shared with `SyncEngine`).
+/// widget (PLAN §4 E4.2/E4.3). The app-wide player host opens a
+/// [PlayerController] ahead of time and hands it in.
 /// The controller's lifecycle stays with the caller — this widget never
 /// disposes one.
 class PlayerView extends StatelessWidget {
@@ -26,16 +23,10 @@ class PlayerView extends StatelessWidget {
     this.onBack,
     this.onToggleFullscreen,
     this.isFullscreen = false,
-    this.onSeek,
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
     this.preferredSubtitleStreamIndex,
-    this.partyPlayback,
-    this.subtitlePreferences,
-    this.canManagePartyMedia = true,
-    this.onSetPlaybackTracks,
-    this.onSetSubtitlePreferences,
     this.cachedSpans,
     this.visible,
     this.onWake,
@@ -46,16 +37,10 @@ class PlayerView extends StatelessWidget {
     this.chatToasts = const [],
   });
 
-  /// Ready-made controller supplied by the caller (party/detail inject one).
+  /// Ready-made controller supplied by the app-wide player host.
   final PlayerController controller;
 
   final int? preferredSubtitleStreamIndex;
-  final PlaybackInfo? partyPlayback;
-  final SubtitlePreferences? subtitlePreferences;
-  final bool canManagePartyMedia;
-  final void Function(int? audioStreamIndex, int subtitleStreamIndex)?
-  onSetPlaybackTracks;
-  final ValueChanged<SubtitlePreferences>? onSetSubtitlePreferences;
 
   /// Read-only transport bar when false — E5 passes this for a guest without
   /// playback-control rights (PLAN §4 E5.2 `canControl` gating).
@@ -72,9 +57,6 @@ class PlayerView extends StatelessWidget {
   final VoidCallback? onToggleFullscreen;
   final bool isFullscreen;
 
-  /// Authors a seek to an external owner (the party's sync engine). Only set on
-  /// the party path; null for solo playback. Passed straight to [PlayerChrome].
-  final ValueChanged<Duration>? onSeek;
   final String? itemId;
   final String? mediaSourceId;
   final ApiClient? apiClient;
@@ -109,7 +91,6 @@ class PlayerView extends StatelessWidget {
           PlayerChrome(
             controller: controller,
             canControl: canControl,
-            onSeek: onSeek,
             title: title,
             onBack: onBack,
             onToggleFullscreen: onToggleFullscreen,
@@ -118,11 +99,6 @@ class PlayerView extends StatelessWidget {
             mediaSourceId: mediaSourceId,
             apiClient: apiClient,
             preferredSubtitleStreamIndex: preferredSubtitleStreamIndex,
-            partyPlayback: partyPlayback,
-            subtitlePreferences: subtitlePreferences,
-            canManagePartyMedia: canManagePartyMedia,
-            onSetPlaybackTracks: onSetPlaybackTracks,
-            onSetSubtitlePreferences: onSetSubtitlePreferences,
             cachedSpans: cachedSpans,
             visible: visible,
             onWake: onWake,

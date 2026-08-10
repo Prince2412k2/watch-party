@@ -48,16 +48,18 @@ void main() {
   tearDown(() => container.dispose());
 
   void joinRoom({String hostId = 'me', List<Participant>? waiting}) {
-    container.read(partyProvider.notifier).setState(
-      PartyState(
-        id: 'ROOM1234',
-        hostId: hostId,
-        participants: [
-          Participant(userId: hostId, name: 'Host', isHost: true),
-          if (hostId != 'me') const Participant(userId: 'me', name: 'Me'),
-        ],
-      ),
-    );
+    container
+        .read(partyProvider.notifier)
+        .setState(
+          PartyState(
+            id: 'ROOM1234',
+            hostId: hostId,
+            participants: [
+              Participant(userId: hostId, name: 'Host', isHost: true),
+              if (hostId != 'me') const Participant(userId: 'me', name: 'Me'),
+            ],
+          ),
+        );
     if (waiting != null) {
       container.read(partyWaitingProvider.notifier).setAll(waiting);
     }
@@ -113,8 +115,31 @@ void main() {
     // nothing and every tile inside it collapses while still being findable —
     // which is exactly how the cameras and the device rail disappeared once
     // this stopped wrapping the app.
-    expect(tester.getSize(find.byType(FloatingCameraLayer)).height,
-        greaterThan(0));
+    expect(
+      tester.getSize(find.byType(FloatingCameraLayer)).height,
+      greaterThan(0),
+    );
+  });
+
+  testWidgets('device controls fade with expanded player chrome', (
+    tester,
+  ) async {
+    joinRoom();
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+    await pumpOverlay(tester);
+
+    AnimatedOpacity rail() => tester.widget<AnimatedOpacity>(
+      find.byKey(const Key('deviceRailVisibility')),
+    );
+
+    expect(rail().opacity, 1);
+    container.read(playerChromeVisibleProvider.notifier).state = false;
+    await tester.pump();
+    expect(rail().opacity, 0);
+
+    container.read(nowPlayingProvider.notifier).minimise();
+    await tester.pump();
+    expect(rail().opacity, 1);
   });
 
   testWidgets('the chat drawer grows out of the right edge when opened', (
@@ -142,13 +167,42 @@ void main() {
     expect(early, lessThan(settled), reason: 'it stretches out, not in');
     expect(settled, closeTo(kChatDrawerWidth, 12));
     expect(find.byType(ChatPanel), findsOneWidget);
+    final card = tester.widget<DecoratedBox>(
+      find.byKey(const Key('chatSidebarCard')),
+    );
+    final decoration = card.decoration as BoxDecoration;
+    expect(decoration.color?.a, 1);
+    expect(decoration.boxShadow, isNotEmpty);
+  });
+
+  testWidgets('the chat composer keeps focus after sending', (tester) async {
+    await pumpOverlay(tester);
+    joinRoom();
+    container.read(chatDrawerOpenProvider.notifier).state = true;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final input = find.byKey(const Key('chatInput'));
+    EditableText editable() => tester.widget<EditableText>(
+      find.descendant(of: input, matching: find.byType(EditableText)),
+    );
+
+    expect(editable().focusNode.hasFocus, isTrue);
+    await tester.enterText(input, 'Still typing');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await tester.pump();
+
+    expect(editable().focusNode.hasFocus, isTrue);
   });
 
   testWidgets('join requests reach the host wherever they are standing', (
     tester,
   ) async {
     await pumpOverlay(tester);
-    joinRoom(waiting: const [Participant(userId: 'gate', name: 'Nadia')]);
+    joinRoom(
+      waiting: const [Participant(userId: 'gate', name: 'Nadia')],
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Nadia'), findsOneWidget);

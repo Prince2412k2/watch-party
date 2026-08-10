@@ -26,7 +26,7 @@ import '../../ui/widgets/authed_image.dart';
 ///
 /// Everything below [child] is wrapped in [IgnorePointer]: the stage is scenery
 /// and must never eat a gesture meant for a shelf.
-class AnalogStage extends StatelessWidget {
+class AnalogStage extends StatefulWidget {
   const AnalogStage({
     super.key,
     required this.child,
@@ -44,11 +44,25 @@ class AnalogStage extends StatelessWidget {
   final bool focused;
 
   @override
+  State<AnalogStage> createState() => _AnalogStageState();
+}
+
+class _AnalogStageState extends State<AnalogStage> {
+  var _backdropRevision = 0;
+
+  @override
+  void didUpdateWidget(AnalogStage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.backdropUrl != widget.backdropUrl) _backdropRevision++;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final grain =
-        (AnalogGrain.opacityPct + (focused ? AnalogGrain.focusedBoostPct : 0)) /
+        (AnalogGrain.opacityPct +
+            (widget.focused ? AnalogGrain.focusedBoostPct : 0)) /
         100;
-    final url = backdropUrl;
+    final url = widget.backdropUrl;
 
     return Stack(
       fit: StackFit.expand,
@@ -70,10 +84,10 @@ class AnalogStage extends StatelessWidget {
                   children: [...previous, ?current],
                 ),
                 child: url == null
-                    ? const SizedBox.expand(key: ValueKey('analog-stage-bare'))
+                    ? SizedBox.expand(key: ValueKey(_backdropRevision))
                     : AuthedNetworkImage(
                         url,
-                        key: ValueKey(url),
+                        key: ValueKey(_backdropRevision),
                         fit: BoxFit.cover,
                         errorBuilder: (_, _, _) => const SizedBox.expand(),
                       ),
@@ -88,7 +102,7 @@ class AnalogStage extends StatelessWidget {
             ],
           ),
         ),
-        child,
+        widget.child,
       ],
     );
   }

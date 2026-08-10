@@ -14,6 +14,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../ui/analog_tokens.dart';
+import '../../ui/palette.dart';
 
 /// A normalised `0..1` span of the timeline.
 @immutable
@@ -87,8 +88,8 @@ List<Rect> timelineSegments(
   return rects;
 }
 
-/// The seek track. Layers weakest to strongest: unloaded hairline, network
-/// buffer, cached/offline spans, played progress — then the handle.
+/// The seek track. Layers weakest to strongest: unloaded hairline,
+/// cached/offline spans, played progress — then the handle.
 ///
 /// Replaces the Material [Slider] the transport used to wrap: a slider cannot
 /// render disjoint ranges, and its thumb collapsed to radius 0 when disabled,
@@ -103,7 +104,6 @@ class AnalogTimeline extends StatefulWidget {
     required this.onCommit,
     required this.onHoverPreview,
     required this.onHoverEnd,
-    this.buffered = const [],
     this.cached = const [],
     this.onScrubbingChanged,
     this.focusNode,
@@ -121,10 +121,7 @@ class AnalogTimeline extends StatefulWidget {
   final void Function(Duration position, double fraction) onHoverPreview;
   final VoidCallback onHoverEnd;
 
-  /// Transient network buffer, as normalised spans. Rendered behind [cached].
-  final List<TimelineRange> buffered;
-
-  /// Cached ("downloaded") spans — durable, distinct from [buffered].
+  /// Cached ("downloaded") spans.
   final List<TimelineRange> cached;
 
   /// Raised for the length of a drag so the caller can pin the chrome open.
@@ -161,8 +158,7 @@ class _AnalogTimelineState extends State<AnalogTimeline> {
     milliseconds: (fraction * widget.duration.inMilliseconds).round(),
   );
 
-  bool get _seekable =>
-      widget.enabled && widget.duration.inMilliseconds > 0;
+  bool get _seekable => widget.enabled && widget.duration.inMilliseconds > 0;
 
   void _setScrubbing(bool value) {
     if (_dragging == value) return;
@@ -235,7 +231,6 @@ class _AnalogTimelineState extends State<AnalogTimeline> {
             child: CustomPaint(
               painter: AnalogTimelinePainter(
                 fraction: _fraction,
-                buffered: widget.buffered,
                 cached: widget.cached,
                 active: active,
                 focused: _focused && !_hovering && !_dragging,
@@ -254,7 +249,6 @@ class _AnalogTimelineState extends State<AnalogTimeline> {
 class AnalogTimelinePainter extends CustomPainter {
   const AnalogTimelinePainter({
     required this.fraction,
-    required this.buffered,
     required this.cached,
     required this.active,
     required this.focused,
@@ -262,7 +256,6 @@ class AnalogTimelinePainter extends CustomPainter {
   });
 
   final double fraction;
-  final List<TimelineRange> buffered;
   final List<TimelineRange> cached;
 
   /// Hover, focus or scrub — the line thickens from idlePx to activePx.
@@ -272,6 +265,8 @@ class AnalogTimelinePainter extends CustomPainter {
   /// handle instead of permanently enlarging it.
   final bool focused;
   final bool showHandle;
+
+  static const Color playedColor = kBrandRed;
 
   static Rect trackRect(Size size, {required bool active}) {
     final height = active ? AnalogHairline.activePx : AnalogHairline.idlePx;
@@ -291,21 +286,13 @@ class AnalogTimelinePainter extends CustomPainter {
       Paint()..color = AnalogColor.line,
     );
 
-    // 2 — transient network buffer.
-    final bufferPaint = Paint()..color = AnalogColor.inkFaint;
-    for (final rect in timelineSegments(buffered, track)) {
-      canvas.drawRect(rect, bufferPaint);
-    }
-
-    // 3 — cached / offline spans, deliberately a step stronger than the
-    // network buffer so "already downloaded" stays distinguishable from
-    // "buffered a moment ago".
+    // 2 — cached / offline spans.
     final cachedPaint = Paint()..color = AnalogColor.inkDim;
     for (final rect in timelineSegments(cached, track)) {
       canvas.drawRect(rect, cachedPaint);
     }
 
-    // 4 — played progress: the strongest segment.
+    // 3 — played progress: the strongest segment.
     final playedWidth = (fraction.clamp(0.0, 1.0)) * track.width;
     if (playedWidth > 0) {
       canvas.drawRRect(
@@ -313,7 +300,7 @@ class AnalogTimelinePainter extends CustomPainter {
           Rect.fromLTWH(track.left, track.top, playedWidth, track.height),
           radius,
         ),
-        Paint()..color = AnalogColor.accent,
+        Paint()..color = playedColor,
       );
     }
 
@@ -322,14 +309,14 @@ class AnalogTimelinePainter extends CustomPainter {
     canvas.drawCircle(
       centre,
       AnalogHairline.handlePx / 2,
-      Paint()..color = AnalogColor.accent,
+      Paint()..color = playedColor,
     );
     if (focused) {
       canvas.drawCircle(
         centre,
         AnalogHairline.handleFocusPx / 2,
         Paint()
-          ..color = AnalogColor.accent
+          ..color = playedColor
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5,
       );
@@ -342,6 +329,5 @@ class AnalogTimelinePainter extends CustomPainter {
       old.active != active ||
       old.focused != focused ||
       old.showHandle != showHandle ||
-      !listEquals(old.buffered, buffered) ||
       !listEquals(old.cached, cached);
 }

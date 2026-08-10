@@ -16,7 +16,11 @@ void main() {
           child: Center(
             child: GestureDetector(
               onTap: () => taps++,
-              child: const SizedBox(width: 200, height: 60, child: Text('Play')),
+              child: const SizedBox(
+                width: 200,
+                height: 60,
+                child: Text('Play'),
+              ),
             ),
           ),
         ),
@@ -31,9 +35,8 @@ void main() {
   testWidgets('a backdrop change cross-fades rather than cutting', (
     tester,
   ) async {
-    Widget stage(String? url) => _host(
-      AnalogStage(backdropUrl: url, child: const SizedBox.shrink()),
-    );
+    Widget stage(String? url) =>
+        _host(AnalogStage(backdropUrl: url, child: const SizedBox.shrink()));
 
     await tester.pumpWidget(stage('/api/image/a?type=Backdrop'));
     await tester.pump();
@@ -49,12 +52,27 @@ void main() {
     expect(find.byType(FadeTransition), findsAtLeast(2));
   });
 
+  testWidgets('rapidly revisiting a backdrop keeps switcher keys unique', (
+    tester,
+  ) async {
+    Widget stage(String url) =>
+        _host(AnalogStage(backdropUrl: url, child: const SizedBox.shrink()));
+
+    await tester.pumpWidget(stage('/api/image/a?type=Backdrop'));
+    await tester.pump();
+    await tester.pumpWidget(stage('/api/image/b?type=Backdrop'));
+    await tester.pump();
+    await tester.pumpWidget(stage('/api/image/a?type=Backdrop'));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(FadeTransition), findsAtLeast(2));
+  });
+
   testWidgets('grain is fine and low-contrast, and lifts on focus', (
     tester,
   ) async {
-    await tester.pumpWidget(
-      _host(const AnalogStage(child: SizedBox.shrink())),
-    );
+    await tester.pumpWidget(_host(const AnalogStage(child: SizedBox.shrink())));
     await tester.pump();
     AnalogGrainPainter painterOf() => tester
         .widgetList<CustomPaint>(find.byType(CustomPaint))

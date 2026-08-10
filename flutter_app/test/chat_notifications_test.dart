@@ -24,7 +24,7 @@ void main() {
       ],
     );
     // Realise the notifier so its socket subscription exists before any inject.
-    container.read(chatProvider);
+    container.read(chatProvider.notifier).activate('party-1');
     addTearDown(container.dispose);
   }
 

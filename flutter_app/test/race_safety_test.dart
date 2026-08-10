@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/cache/cache_fill_controller.dart';
 import 'package:watchparty/cache/catalog_cache_store.dart';
@@ -15,9 +14,7 @@ import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/state/chat_provider.dart';
 import 'package:watchparty/state/downloads_provider.dart';
 import 'package:watchparty/state/offline_provider.dart';
-import 'package:watchparty/state/party_provider.dart';
 import 'package:watchparty/state/servarr_provider.dart';
-import 'package:watchparty/sync/sync_engine_impl.dart';
 
 // Deterministic coverage for the data/offline/polling/download races (audit
 // #64). Every test here drives the real production class and forces the
@@ -130,22 +127,26 @@ void main() {
       expect(emissions.map((items) => items.single.id), ['fresh']);
     });
 
-    test('a failed cache write still emits fresh data over cached data',
-        () async {
-      const namespace = 'server|user';
-      const cached = LibraryItem(id: 'cached', name: 'Cached', type: 'Movie');
-      const fresh = LibraryItem(id: 'fresh', name: 'Fresh', type: 'Movie');
-      await CatalogCacheStore(dir).write(namespace, 'items:', [cached.toJson()]);
+    test(
+      'a failed cache write still emits fresh data over cached data',
+      () async {
+        const namespace = 'server|user';
+        const cached = LibraryItem(id: 'cached', name: 'Cached', type: 'Movie');
+        const fresh = LibraryItem(id: 'fresh', name: 'Fresh', type: 'Movie');
+        await CatalogCacheStore(
+          dir,
+        ).write(namespace, 'items:', [cached.toJson()]);
 
-      final repository = CatalogRepository(
-        api: _ItemsApi(const [fresh]),
-        cache: _UnwritableCatalogCache(dir),
-      );
+        final repository = CatalogRepository(
+          api: _ItemsApi(const [fresh]),
+          cache: _UnwritableCatalogCache(dir),
+        );
 
-      final emissions = await repository.items(namespace).toList();
+        final emissions = await repository.items(namespace).toList();
 
-      expect(emissions.map((items) => items.single.id), ['cached', 'fresh']);
-    });
+        expect(emissions.map((items) => items.single.id), ['cached', 'fresh']);
+      },
+    );
   });
 
   group('offline rehydrate vs. concurrent mutations', () {
@@ -187,8 +188,10 @@ void main() {
       final gate = Completer<void>();
       final notifier = OfflineNotifier(
         proxy,
-        manifestStore:
-            _GatedManifestStore(gate: gate.future, overrideDir: manifestDir),
+        manifestStore: _GatedManifestStore(
+          gate: gate.future,
+          overrideDir: manifestDir,
+        ),
       );
       addTearDown(notifier.dispose);
 
@@ -202,42 +205,49 @@ void main() {
         containsAll(<String>['scanned', 'marked']),
       );
       // And the sidecar reflects both, not just whichever write landed last.
-      final persisted =
-          await OfflineManifestStore(overrideDir: manifestDir).load();
+      final persisted = await OfflineManifestStore(
+        overrideDir: manifestDir,
+      ).load();
       expect(
         persisted.map((r) => r.itemId),
         containsAll(<String>['scanned', 'marked']),
       );
     });
 
-    test('a synchronous upsert during a rehydrate scan is merged, not lost',
-        () async {
-      await completeEntry('scanned');
-      final gate = Completer<void>();
-      final notifier = OfflineNotifier(
-        proxy,
-        manifestStore:
-            _GatedManifestStore(gate: gate.future, overrideDir: manifestDir),
-      );
-      addTearDown(notifier.dispose);
+    test(
+      'a synchronous upsert during a rehydrate scan is merged, not lost',
+      () async {
+        await completeEntry('scanned');
+        final gate = Completer<void>();
+        final notifier = OfflineNotifier(
+          proxy,
+          manifestStore: _GatedManifestStore(
+            gate: gate.future,
+            overrideDir: manifestDir,
+          ),
+        );
+        addTearDown(notifier.dispose);
 
-      notifier.upsert(_record('live'));
-      gate.complete();
+        notifier.upsert(_record('live'));
+        gate.complete();
 
-      final ids = await _waitFor(
-        () => notifier.state.map((r) => r.itemId).toList(),
-        (current) => current.contains('scanned'),
-      );
-      expect(ids, containsAll(<String>['scanned', 'live']));
-    });
+        final ids = await _waitFor(
+          () => notifier.state.map((r) => r.itemId).toList(),
+          (current) => current.contains('scanned'),
+        );
+        expect(ids, containsAll(<String>['scanned', 'live']));
+      },
+    );
 
     test('remove during a rehydrate scan is not resurrected by it', () async {
       await completeEntry('gone');
       final gate = Completer<void>();
       final notifier = OfflineNotifier(
         proxy,
-        manifestStore:
-            _GatedManifestStore(gate: gate.future, overrideDir: manifestDir),
+        manifestStore: _GatedManifestStore(
+          gate: gate.future,
+          overrideDir: manifestDir,
+        ),
       );
       addTearDown(notifier.dispose);
 
@@ -263,25 +273,31 @@ void main() {
       } catch (_) {}
     });
 
-    test('overlapping saves are serialized and leave a parseable manifest',
-        () async {
-      final store = OfflineManifestStore(overrideDir: dir);
+    test(
+      'overlapping saves are serialized and leave a parseable manifest',
+      () async {
+        final store = OfflineManifestStore(overrideDir: dir);
 
-      // 20 saves fired without awaiting: interleaved `writeAsString` calls used
-      // to produce a truncated/mixed file, which `load()` reports as empty.
-      await Future.wait<void>([
-        for (var n = 1; n <= 20; n++)
-          store.save([for (var i = 0; i < n; i++) _record('item-$i')]),
-      ]);
+        // 20 saves fired without awaiting: interleaved `writeAsString` calls used
+        // to produce a truncated/mixed file, which `load()` reports as empty.
+        await Future.wait<void>([
+          for (var n = 1; n <= 20; n++)
+            store.save([for (var i = 0; i < n; i++) _record('item-$i')]),
+        ]);
 
-      final loaded = await OfflineManifestStore(overrideDir: dir).load();
-      expect(loaded, hasLength(20), reason: 'the last queued save is on disk');
-      expect(
-        File('${dir.path}/offline_manifest.json.tmp').existsSync(),
-        isFalse,
-        reason: 'the atomic write renames its temp file away',
-      );
-    });
+        final loaded = await OfflineManifestStore(overrideDir: dir).load();
+        expect(
+          loaded,
+          hasLength(20),
+          reason: 'the last queued save is on disk',
+        );
+        expect(
+          File('${dir.path}/offline_manifest.json.tmp').existsSync(),
+          isFalse,
+          reason: 'the atomic write renames its temp file away',
+        );
+      },
+    );
   });
 
   group('PollSequencer', () {
@@ -355,38 +371,42 @@ void main() {
       expect(applied, isEmpty);
     });
 
-    test('a failed tick reports onError and does not block the next tick',
-        () async {
-      final sequencer = PollSequencer();
-      final applied = <String>[];
+    test(
+      'a failed tick reports onError and does not block the next tick',
+      () async {
+        final sequencer = PollSequencer();
+        final applied = <String>[];
 
-      await sequencer.poll<String>(
-        request: () async => throw StateError('offline'),
-        onData: applied.add,
-        onError: () => applied.add('error'),
-      );
-      await sequencer.poll<String>(
-        request: () async => 'recovered',
-        onData: applied.add,
-        onError: () => applied.add('error'),
-      );
+        await sequencer.poll<String>(
+          request: () async => throw StateError('offline'),
+          onData: applied.add,
+          onError: () => applied.add('error'),
+        );
+        await sequencer.poll<String>(
+          request: () async => 'recovered',
+          onData: applied.add,
+          onError: () => applied.add('error'),
+        );
 
-      expect(applied, ['error', 'recovered']);
-    });
+        expect(applied, ['error', 'recovered']);
+      },
+    );
 
-    test('a payload that fails to parse is reported as a failed tick',
-        () async {
-      final sequencer = PollSequencer();
-      final applied = <String>[];
+    test(
+      'a payload that fails to parse is reported as a failed tick',
+      () async {
+        final sequencer = PollSequencer();
+        final applied = <String>[];
 
-      await sequencer.poll<String>(
-        request: () async => 'raw',
-        onData: (_) => throw StateError('malformed'),
-        onError: () => applied.add('error'),
-      );
+        await sequencer.poll<String>(
+          request: () async => 'raw',
+          onData: (_) => throw StateError('malformed'),
+          onError: () => applied.add('error'),
+        );
 
-      expect(applied, ['error']);
-    });
+        expect(applied, ['error']);
+      },
+    );
   });
 
   group('chat acknowledgements', () {
@@ -412,22 +432,24 @@ void main() {
       expect(error, contains('Could not send'));
     });
 
-    test('a server rate-limit ack blocks further sends until the window drains',
-        () async {
-      final socket = _RateLimitingSocketClient();
-      final notifier = ChatNotifier(socket);
-      addTearDown(notifier.dispose);
+    test(
+      'a server rate-limit ack blocks further sends until the window drains',
+      () async {
+        final socket = _RateLimitingSocketClient();
+        final notifier = ChatNotifier(socket);
+        addTearDown(notifier.dispose);
 
-      final error = await notifier.send('hi');
+        final error = await notifier.send('hi');
 
-      expect(error, contains('Rate limited'));
-      expect(notifier.isRateLimited, isTrue);
+        expect(error, contains('Rate limited'));
+        expect(notifier.isRateLimited, isTrue);
 
-      // The next send is refused locally — no further hammering of a server
-      // that is already saying no.
-      expect(await notifier.send('hi again'), contains('Rate limited'));
-      expect(socket.emitted, hasLength(1));
-    });
+        // The next send is refused locally — no further hammering of a server
+        // that is already saying no.
+        expect(await notifier.send('hi again'), contains('Rate limited'));
+        expect(socket.emitted, hasLength(1));
+      },
+    );
   });
 
   group('cache fills', () {
@@ -461,22 +483,24 @@ void main() {
       } catch (_) {}
     });
 
-    test('a fill that fails on startup becomes a visible failed record',
-        () async {
-      final notifier = DownloadsNotifier(
-        _FailingFillController(proxy: proxy),
-        offlineNotifier,
-      );
-      addTearDown(notifier.dispose);
+    test(
+      'a fill that fails on startup becomes a visible failed record',
+      () async {
+        final notifier = DownloadsNotifier(
+          _FailingFillController(proxy: proxy),
+          offlineNotifier,
+        );
+        addTearDown(notifier.dispose);
 
-      await notifier.start(itemId: 'boom', title: 'Boom');
+        await notifier.start(itemId: 'boom', title: 'Boom');
 
-      final record = await _waitFor(
-        () => notifier.state.firstWhere((r) => r.itemId == 'boom'),
-        (current) => current.status == DownloadStatus.failed,
-      );
-      expect(record.title, 'Boom');
-    });
+        final record = await _waitFor(
+          () => notifier.state.firstWhere((r) => r.itemId == 'boom'),
+          (current) => current.status == DownloadStatus.failed,
+        );
+        expect(record.title, 'Boom');
+      },
+    );
 
     test('a resume that fails on startup is reported, not thrown', () async {
       final notifier = DownloadsNotifier(
@@ -501,10 +525,15 @@ void main() {
 
       final released = Completer<void>();
       final controller = CacheFillController(proxy: proxy, chunkSize: 10);
-      unawaited(controller.start(itemId, fetcher: (entry, start, end) async {
-        await released.future;
-        await entry.write(start, List<int>.filled(end - start, 1));
-      }));
+      unawaited(
+        controller.start(
+          itemId,
+          fetcher: (entry, start, end) async {
+            await released.future;
+            await entry.write(start, List<int>.filled(end - start, 1));
+          },
+        ),
+      );
 
       await _waitFor(
         () => controller.progressFor(itemId).value.state,
@@ -518,19 +547,6 @@ void main() {
         () => controller.progressFor(itemId).value.state,
         (state) => state == FillState.paused,
       );
-    });
-  });
-
-  group('sync engine disposal', () {
-    test('disposing the container disposes the sync engine', () {
-      final container = ProviderContainer();
-      final engine = container.read(syncEngineProvider) as SyncEngineImpl;
-
-      expect(engine.isDisposed, isFalse);
-
-      container.dispose();
-
-      expect(engine.isDisposed, isTrue);
     });
   });
 }
