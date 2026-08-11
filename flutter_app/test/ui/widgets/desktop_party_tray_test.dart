@@ -14,7 +14,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
-          theme: AppTheme.light,
+          theme: AppTheme.dark,
           builder: (context, child) => AnalogToastHost(child: child!),
           home: const MediaQuery(
             data: MediaQueryData(size: Size(640, 480)),
@@ -50,7 +50,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
-          theme: AppTheme.light,
+          theme: AppTheme.dark,
           home: Scaffold(
             body: Align(
               alignment: Alignment.bottomRight,

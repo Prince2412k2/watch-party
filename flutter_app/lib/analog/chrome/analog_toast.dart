@@ -38,19 +38,19 @@ extension on AnalogToastTone {
 /// picture both land here, so there is one toast look in the app rather than
 /// one per caller.
 ///
-/// [opaque] is the reduced-transparency swap: an opaque surface of equivalent
-/// contrast, never a dropped toast.
+/// Always a solid plate. A notice is read at a glance, over whatever the
+/// screen happens to be showing — a bright scene behind a frosted panel put
+/// video luminance straight through the words. The glass look is decoration;
+/// being readable is not.
 class AnalogToastSurface extends StatelessWidget {
   const AnalogToastSurface({
     super.key,
     required this.child,
-    this.opaque = false,
     this.prominent = false,
     this.margin = const EdgeInsets.only(top: AnalogSpace.smPx),
   });
 
   final Widget child;
-  final bool opaque;
 
   /// Sized to be caught out of the corner of your eye.
   ///
@@ -68,7 +68,7 @@ class AnalogToastSurface extends StatelessWidget {
     return Padding(
       padding: margin,
       child: LiquidGlass(
-        opaque: opaque,
+        opaque: true,
         borderRadius: BorderRadius.circular(
           prominent ? AnalogRadius.cardPx + 4 : AnalogRadius.cardPx,
         ),
@@ -81,13 +81,9 @@ class AnalogToastSurface extends StatelessWidget {
                 horizontal: AnalogSpace.mdPx,
                 vertical: AnalogSpace.smPx + 2,
               ),
-        shadow: [
-          BoxShadow(
-            color: AnalogColor.shadowCastStrong,
-            blurRadius: prominent ? 44 : AnalogElevation.focusBlurPx,
-            offset: Offset(0, prominent ? 16 : AnalogElevation.restOffsetYPx),
-          ),
-        ],
+        // No shadow. A solid plate does not need one to separate from what is
+        // behind it, and a 44px cast off a small panel read as a smudge on the
+        // screen rather than as lift.
         child: child,
       ),
     );
@@ -239,26 +235,34 @@ class AnalogToastHostState extends State<AnalogToastHost> {
           Positioned(
             top: 0,
             right: 0,
-            child: SafeArea(
-              child: IgnorePointer(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    top: AnalogSpace.lgPx + widget.topInsetPx,
-                    right: AnalogSpace.lgPx,
-                  ),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 420),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        for (final toast in _live)
-                          _ToastRow(
-                            key: ValueKey(toast.id),
-                            toast: toast,
-                            leaving: _leaving.contains(toast.id),
-                          ),
-                      ],
+            // The rail is a SIBLING of widget.child, so it does not inherit
+            // the Material that the app mounts inside it. Without one, every
+            // line of toast text fell back to the debug style — the yellow
+            // double underline that shows up on text with no Material above
+            // it. This supplies the ink plumbing without painting anything.
+            child: Material(
+              type: MaterialType.transparency,
+              child: SafeArea(
+                child: IgnorePointer(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top: AnalogSpace.lgPx + widget.topInsetPx,
+                      right: AnalogSpace.lgPx,
+                    ),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          for (final toast in _live)
+                            _ToastRow(
+                              key: ValueKey(toast.id),
+                              toast: toast,
+                              leaving: _leaving.contains(toast.id),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -327,7 +331,6 @@ class _ToastRowState extends State<_ToastRow> {
       label: widget.toast.message,
       excludeSemantics: true,
       child: AnalogToastSurface(
-        opaque: media.highContrast,
         prominent: true,
         child: Row(
           mainAxisSize: MainAxisSize.min,

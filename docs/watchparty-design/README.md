@@ -57,29 +57,25 @@ Circular XX Web is the only primary UI family. The supplied files are bundled lo
 
 Keep headings short and text measures constrained. Do not return to extra-bold, oversized 80px hero typography. JetBrains Mono remains acceptable for compact technical metadata such as runtime, resolution, room codes, and episode numbers.
 
-## Themes
+## Theme
 
-The interface always supports three persisted modes:
-
-### Light
-
-- Soft off-white stage, approximately `#f7f7f7`.
-- Dark gray text rather than absolute black where possible.
-- Artwork is washed back enough to preserve calm contrast.
-
-### Balanced
-
-- Selected artwork is the strongest environmental element.
-- Prefer the selected title's backdrop; fall back to its poster.
-- Keep the image soft and cinematic rather than using a loud color gradient.
-
-### Dark
+The desktop client ships **one** theme and no way to change it:
 
 - Near-black stage and near-white text.
 - Artwork remains visible under a stronger legibility wash.
 - Active state comes primarily from brightness and weight.
 
-Theme controls live in the profile menu. They are not a permanent toolbar.
+There is no theme control anywhere in the interface.
+
+Light and Balanced were removed. They were only ever half-implemented: the
+`AppColors` / `AnalogColor` constant sets that much of the widget tree reads are
+dark-only, so a light stage rendered dark cards and dark text on white — and
+`light` was the *default* for a profile with nothing persisted, which is what a
+fresh install got. Completing light mode meant migrating every remaining
+constant call site to `context.wp`; deleting it cost two palettes and a button.
+
+The web client (`app/client/`) still has all three. It is a separate design
+system with its own CSS custom properties and does not share this constraint.
 
 ## Desktop shell
 
@@ -174,7 +170,7 @@ Before finishing a visual change, confirm:
 - [ ] Profile remains top-right.
 - [ ] Popcorn control remains bottom-right outside playback.
 - [ ] Desktop player has no overlapping or duplicate Watch Party control.
-- [ ] All three themes remain readable.
+- [ ] No theme control or light-mode palette has returned to the desktop client.
 - [ ] Player controls still auto-hide after three seconds.
 - [ ] Existing playback, party, and download actions still work.
 
@@ -196,7 +192,7 @@ docker compose up -d --build --no-deps watchparty
 curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:3001/
 ```
 
-Visually inspect at approximately `1393×709`, then at a narrower viewport. Exercise Light, Balanced, and Dark; poster hover; profile themes; Discover; Downloads; movie detail; Watch Party expansion; desktop player right-click; and mobile player controls.
+Visually inspect at approximately `1393×709`, then at a narrower viewport. Exercise poster hover; Discover; Downloads; movie detail; Watch Party expansion; desktop player right-click; and mobile player controls.
 
 ## Image manifest
 

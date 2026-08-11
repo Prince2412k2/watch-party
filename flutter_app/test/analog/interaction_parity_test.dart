@@ -137,6 +137,7 @@ void main() {
               state,
               ToastMessage(
                 id: op['id'] as String,
+                userId: 'u-${op['id']}',
                 sender: op['sender'] as String,
                 preview: op['preview'] as String,
                 receivedAtMs: op['atMs'] as int,

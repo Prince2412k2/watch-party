@@ -1,19 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'palette.dart';
-import 'theme_mode.dart';
 import 'tokens.dart';
 
-/// Builds the Watchparty [ThemeData] for any of the three [WpPalette]s. The
-/// chosen palette is attached as a [ThemeExtension] so widgets read it live via
-/// `context.wp`. The app root swaps `theme:`/`darkTheme:` with the mode from
-/// `state/theme_provider.dart`; switching only rebuilds the theme boundary and
-/// never remounts the functional subtrees (PLAN §global invariants).
+/// Builds the Watchparty [ThemeData] from the [WpPalette], which is attached as
+/// a [ThemeExtension] so widgets read it live via `context.wp`.
 abstract final class AppTheme {
   static ThemeData build(WpPalette p) {
-    final isLight = p.brightness == Brightness.light;
-    final scheme =
-        (isLight ? const ColorScheme.light() : const ColorScheme.dark())
+    final scheme = const ColorScheme.dark()
             .copyWith(
               brightness: p.brightness,
               surface: p.bg,
@@ -83,14 +77,8 @@ abstract final class AppTheme {
     );
   }
 
-  static ThemeData get light => build(kLightPalette);
-  static ThemeData get balanced => build(kBalancedPalette);
-
-  /// The existing dark entry point — preserved so callers that still reference
-  /// `AppTheme.dark` keep compiling.
+  /// The app's only theme.
   static ThemeData get dark => build(kDarkPalette);
-
-  static ThemeData forMode(AppThemeMode mode) => build(WpPalette.of(mode));
 
   // ── Type scale (design guide §Typography) ────────────────────────────────
   // Circular Light (w300) for headings, Book (w400) for body/labels, Bold
