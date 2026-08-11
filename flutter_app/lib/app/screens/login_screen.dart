@@ -3,18 +3,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analog/chrome/analog_button.dart';
 import '../../analog/chrome/analog_dialog.dart';
-import '../../analog/chrome/analog_panel.dart';
 import '../../state/state.dart';
-import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
 
-/// Login (W2b owns). Jellyfin username/password against the real
-/// [DioApiClient]; matches the redesigned web login
-/// (`app/client/src/pages/Login.tsx`): a full-viewport centered stage holding a
-/// single 380 card — reel mark + "Watchparty" wordmark, "Welcome back" / "Sign
-/// in with your Jellyfin account", uppercase-mono field captions, error box,
-/// Sign-in pill.
-/// Theme-aware via `context.wp` so it reads correctly in Light/Balanced/Dark.
+/// Login. Jellyfin username/password against the real [DioApiClient].
+///
+/// Two panes on a grey gradient: the reel turning on the left, the form on the
+/// right. No card — the fields sit directly on the stage. The card was a panel
+/// floating on an empty screen, which is a lot of frame around four controls.
+///
+/// Below [_twoPaneWidth] the reel is dropped rather than stacked. It is
+/// atmosphere, and a narrow window should spend its height on the form.
 ///
 /// Backend-agnostic: a small gear in the top-right corner opens a dialog to
 /// set the backend URL. It's persisted (via [serverConfigProvider]) and stays
@@ -67,134 +66,197 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final auth = ref.watch(authProvider);
     final server = ref.watch(serverConfigProvider);
-    final wp = context.wp;
 
     return Scaffold(
-      backgroundColor: wp.bg,
-      body: Stack(
-        children: [
-          Center(
-            child: SingleChildScrollView(
-              child: SizedBox(
-                width: 380,
-                child: AnalogPanel(
-                  radius: AnalogRadius.sheetPx,
-                  lift: AnalogLift.over,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 36,
-                    vertical: 48,
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Image.asset('assets/logo.png', width: 40, height: 40),
-                      const SizedBox(height: 10),
-                      Text(
-                        'Watchparty',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: wp.text,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.1,
-                        ),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: _stage),
+        child: Stack(
+          children: [
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final form = _LoginForm(
+                  user: _user,
+                  pass: _pass,
+                  loading: auth.loading,
+                  error: auth.error,
+                  onSubmit: _submit,
+                );
+                if (constraints.maxWidth < _twoPaneWidth) {
+                  return Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 32,
+                        vertical: 48,
                       ),
-                      const SizedBox(height: 44),
-                      Text(
-                        'Welcome back',
-                        style: TextStyle(
-                          color: wp.text,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                          height: 1.15,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Sign in with your Jellyfin account',
-                        style: TextStyle(
-                          color: wp.dim,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      _Field(
-                        caption: 'Username',
-                        child: AppTextField(
-                          controller: _user,
-                          autofocus: true,
-                          enabled: !auth.loading,
-                          onSubmitted: (_) => _submit(),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.lg),
-                      _Field(
-                        caption: 'Password',
-                        child: AppTextField(
-                          controller: _pass,
-                          obscureText: true,
-                          enabled: !auth.loading,
-                          onSubmitted: (_) => _submit(),
-                        ),
-                      ),
-                      if (auth.error != null) ...[
-                        const SizedBox(height: AppSpacing.lg),
-                        // Animate the error in each time it appears/changes.
-                        // The tint/stroke are the web's literal danger rgba
-                        // (theme-independent, as in Login.tsx:66).
-                        Reveal(
-                          key: ValueKey(auth.error),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
+                      child: SizedBox(width: _formWidth, child: form),
+                    ),
+                  );
+                }
+                return Row(
+                  children: [
+                    // The reel gets the larger share and is centred in it, so
+                    // it reads as the room rather than as an illustration
+                    // pinned beside a form.
+                    Expanded(
+                      flex: 6,
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(48),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxWidth: 480,
+                              maxHeight: 480,
                             ),
-                            decoration: BoxDecoration(
-                              color: const Color(0x1FE0655E),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: const Color(0x59E0655E),
-                              ),
-                            ),
-                            child: Text(
-                              auth.error!,
-                              style: const TextStyle(
-                                color: AppColors.red,
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w500,
-                              ),
+                            child: const AspectRatio(
+                              aspectRatio: 1,
+                              child: ReelAnimation(),
                             ),
                           ),
                         ),
-                      ],
-                      const SizedBox(height: AppSpacing.xl),
-                      AppButton(
-                        label: auth.loading ? 'Signing in…' : 'Sign in',
-                        variant: AppButtonVariant.primary,
-                        expand: true,
-                        busy: auth.loading,
-                        onPressed: auth.loading ? null : _submit,
                       ),
-                    ],
-                  ),
+                    ),
+                    Expanded(
+                      flex: 5,
+                      child: Center(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 48,
+                            vertical: 48,
+                          ),
+                          child: SizedBox(width: _formWidth, child: form),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            // Corner control to configure the backend URL.
+            Positioned(
+              top: 10,
+              right: 10,
+              child: _ServerConfigButton(
+                host: _hostOf(server),
+                onTap: _configureServer,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Below this the reel is dropped and the form centres on its own.
+const double _twoPaneWidth = 880;
+const double _formWidth = 340;
+
+/// The grey the whole screen sits on. Flat colour looked like a missing
+/// texture behind something as saturated as the reel; this is barely a
+/// gradient, just enough to give the stage a top and a bottom.
+const LinearGradient _stage = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [Color(0xFF2B2C30), Color(0xFF161719)],
+);
+
+/// Everything you type, with no frame around it.
+class _LoginForm extends StatelessWidget {
+  const _LoginForm({
+    required this.user,
+    required this.pass,
+    required this.loading,
+    required this.error,
+    required this.onSubmit,
+  });
+
+  final TextEditingController user;
+  final TextEditingController pass;
+  final bool loading;
+  final String? error;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Welcome back',
+          style: TextStyle(
+            color: wp.text,
+            fontSize: 26,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.4,
+            height: 1.15,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Sign in with your Jellyfin account',
+          style: TextStyle(
+            color: wp.dim,
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 36),
+        _Field(
+          caption: 'Username',
+          child: AppTextField(
+            controller: user,
+            autofocus: true,
+            enabled: !loading,
+            onSubmitted: (_) => onSubmit(),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        _Field(
+          caption: 'Password',
+          child: AppTextField(
+            controller: pass,
+            obscureText: true,
+            enabled: !loading,
+            onSubmitted: (_) => onSubmit(),
+          ),
+        ),
+        if (error != null) ...[
+          const SizedBox(height: AppSpacing.lg),
+          // Animate the error in each time it appears/changes.
+          Reveal(
+            key: ValueKey(error),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 10,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0x1FE0655E),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0x59E0655E)),
+              ),
+              child: Text(
+                error!,
+                style: const TextStyle(
+                  color: AppColors.red,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
           ),
-          // Corner control to configure the backend URL.
-          Positioned(
-            top: 10,
-            right: 10,
-            child: _ServerConfigButton(
-              host: _hostOf(server),
-              onTap: _configureServer,
-            ),
-          ),
         ],
-      ),
+        const SizedBox(height: AppSpacing.xl),
+        AppButton(
+          label: loading ? 'Signing in…' : 'Sign in',
+          variant: AppButtonVariant.primary,
+          expand: true,
+          busy: loading,
+          onPressed: loading ? null : onSubmit,
+        ),
+      ],
     );
   }
 }

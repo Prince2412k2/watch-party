@@ -25,6 +25,7 @@ export 'widgets/icon_tray.dart';
 export 'widgets/loading_skeleton.dart';
 export 'widgets/nav_rail.dart';
 export 'widgets/poster_card.dart';
+export 'widgets/reel_animation.dart';
 export 'widgets/poster_shelf.dart';
 export 'widgets/popcorn_control.dart';
 export 'widgets/scrim.dart';
