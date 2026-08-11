@@ -55,6 +55,7 @@ class PlayerChrome extends StatefulWidget {
     this.onBack,
     this.onToggleFullscreen,
     this.isFullscreen = false,
+    this.onSeekAuthored,
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
@@ -112,6 +113,10 @@ class PlayerChrome extends StatefulWidget {
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
   final bool isFullscreen;
+
+  /// Reports a seek this viewer authored, after it has been applied locally.
+  /// A party publishes it to the room from here.
+  final ValueChanged<Duration>? onSeekAuthored;
 
   @override
   State<PlayerChrome> createState() => _PlayerChromeState();
@@ -625,12 +630,14 @@ class _PlayerChromeState extends State<PlayerChrome>
               ? _duration
               : target);
     await widget.controller.seek(clamped);
+    widget.onSeekAuthored?.call(clamped);
     _wake();
   }
 
   Future<void> _seekTo(Duration position) async {
     if (!widget.canControl) return;
     await widget.controller.seek(position);
+    widget.onSeekAuthored?.call(position);
     _wake();
   }
 

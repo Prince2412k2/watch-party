@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../analog/chrome/analog_button.dart';
+import '../../analog/chrome/analog_toast.dart';
 import '../../models/models.dart';
 import '../../state/offline_provider.dart';
 import '../../state/state.dart';
@@ -135,10 +136,12 @@ class _GuestOfflineDetailBody extends StatelessWidget {
 
 /// Start playing a library item.
 ///
-/// Opens into the app's own player. A watch party is an ambient chat/A/V room
-/// and does not own or replace anyone's local movie. This only sets STATE — [PlayerHost],
+/// Opens into the app's own player. This only sets STATE — [PlayerHost],
 /// mounted above the router, is what renders it. Nothing navigates, which is
 /// the point: the player is no longer a place you go.
+///
+/// In a party the request goes to the ROOM rather than to this player — see
+/// [PartyPlayback]. Solo, it is the same open it always was.
 ///
 /// Public because the show stage launches playback too.
 Future<void> startPlayback(
@@ -148,10 +151,19 @@ Future<void> startPlayback(
   int? audioStreamIndex,
   int? subtitleStreamIndex,
 }) async {
-  final nowPlaying = ref.read(nowPlayingProvider.notifier);
-  nowPlaying.open(
-    itemId: itemId,
-    audioStreamIndex: audioStreamIndex,
-    subtitleStreamIndex: subtitleStreamIndex,
+  final outcome = await ref
+      .read(partyPlaybackProvider)
+      .requestOpen(
+        itemId: itemId,
+        audioStreamIndex: audioStreamIndex,
+        subtitleStreamIndex: subtitleStreamIndex,
+      );
+  if (outcome != OpenOutcome.refusedPassenger || !context.mounted) return;
+  // Told, not silently ignored: pressing Watch and having nothing happen is
+  // indistinguishable from the app being broken.
+  showAnalogToast(
+    context,
+    'Only the host can put a film on in this party',
+    tone: AnalogToastTone.info,
   );
 }

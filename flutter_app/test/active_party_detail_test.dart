@@ -22,7 +22,9 @@ class _TestMediaCacheProxy extends MediaCacheProxy {
 }
 
 void main() {
-  testWidgets('Watch stays local while a party is active', (tester) async {
+  testWidgets('the host\'s Watch goes to the room, not to this player', (
+    tester,
+  ) async {
     final socket = MockSocketClient();
     final container = ProviderContainer(
       overrides: [
@@ -74,17 +76,80 @@ void main() {
     await tester.tap(find.text('Watch now'));
     await tester.pumpAndSettle();
 
-    // Playing NEVER navigates now. The room is told what to play, the local
-    // player state opens, and you stay on the page you were reading.
+    // Playing NEVER navigates. You stay on the page you were reading.
     expect(find.text('Party party-1'), findsNothing);
     expect(find.text('Watch now'), findsOneWidget);
-    final now = container.read(nowPlayingProvider);
-    expect(now.itemId, 'mock-item-0');
-    expect(now.isExpanded, isTrue);
+
+    // The room is told what to play...
+    final selects = socket.emitted
+        .where((event) => event.$1 == ClientEvent.partySelectMedia)
+        .toList();
+    expect(selects, hasLength(1));
+    expect((selects.single.$2! as Map)['mediaItemId'], 'mock-item-0');
+
+    // ...and NOTHING opens here yet. The driver waits for the same
+    // `party:state` the guests wait for, so the room cannot end up watching
+    // two different things because the host took a shortcut.
+    expect(container.read(nowPlayingProvider).isOpen, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a guest cannot put a film on, and is told why', (tester) async {
+    final socket = MockSocketClient();
+    final container = ProviderContainer(
+      overrides: [
+        apiClientProvider.overrideWithValue(MockApiClient()),
+        socketClientProvider.overrideWithValue(socket),
+        authProvider.overrideWith((ref) {
+          final notifier = AuthNotifier(ref);
+          notifier.state = const AuthState(
+            user: User(userId: 'guest', name: 'Guest'),
+            initialized: true,
+          );
+          return notifier;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    // Somebody else's room, and not collaborative.
+    container
+        .read(partyProvider.notifier)
+        .setState(const PartyState(id: 'party-1', hostId: 'host'));
+
+    final router = GoRouter(
+      initialLocation: '/detail/mock-item-0',
+      routes: [
+        GoRoute(
+          path: '/detail/:id',
+          builder: (_, state) =>
+              DetailScreen(itemId: state.pathParameters['id']!),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp.router(
+          theme: AppTheme.dark,
+          routerConfig: router,
+          builder: (context, child) => AnalogToastHost(child: child!),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Watch now'));
+    await tester.pumpAndSettle();
+
     expect(
       socket.emitted.where((event) => event.$1 == ClientEvent.partySelectMedia),
       isEmpty,
     );
+    expect(container.read(nowPlayingProvider).isOpen, isFalse);
+    // Silence would be indistinguishable from a broken button.
+    expect(find.textContaining('Only the host'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

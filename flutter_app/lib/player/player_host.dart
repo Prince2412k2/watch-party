@@ -28,6 +28,7 @@ import '../state/state.dart';
 import '../data/api_client.dart';
 import '../ui/ui.dart';
 import '../ui/widgets/floating_camera_tile.dart';
+import 'now_playing_card.dart';
 import 'open_title.dart';
 import 'player_view.dart';
 
@@ -298,6 +299,19 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
     // Party context, when there is one. The player is the same player either
     // way — a room only changes who may drive it and where seeks are authored.
     final party = ref.watch(partyProvider);
+    final playback = ref.watch(partyPlaybackProvider);
+    // The card holds until its dwell is up AND the file is open, and only for
+    // the title actually being opened — a stale id from an interrupted switch
+    // must never sit over a film that is already playing.
+    final intro = ref.watch(nowPlayingIntroProvider);
+    // Never over an error: the card outlives the load, and a failed open would
+    // sit behind it with its retry button unreachable.
+    final introItemId =
+        _error == null &&
+            now.itemId != null &&
+            (intro == now.itemId || !_ready)
+        ? (intro ?? now.itemId)
+        : null;
     ref.listen<NowPlaying>(nowPlayingProvider, (_, next) {
       _syncOpen(next);
       _syncChromeHold(next);
@@ -343,10 +357,16 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                         onOpen: _openPartyMenu,
                         child: _PlayerFrame(
                           expanded: now.isExpanded,
+                          // Held while the card has the screen OR the file is
+                          // still opening, so a fast open still gets its beat
+                          // and a slow one is never a black rectangle.
+                          introItemId: introItemId,
                           // Only in a room: solo playback has no timeline to be
                           // behind, so the correction loop never runs and the
                           // badge would be permanently dead weight.
-                          canClose: true,
+                          // A guest cannot take the room's film away — see
+                          // [PartyPlayback]. Minimising is always theirs.
+                          canClose: playback.canClose,
                           onMinimise: () {
                             unawaited(_exitFullscreen());
                             notifier.minimise();
@@ -354,7 +374,11 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                           onExpand: notifier.expand,
                           onClose: () {
                             unawaited(_exitFullscreen());
-                            unawaited(notifier.close());
+                            // Through the coordinator, not the notifier: in a
+                            // party this is `party:backToLobby`, which takes
+                            // the film off everyone's screen rather than just
+                            // this one.
+                            unawaited(playback.close());
                           },
                           onDrag: (details) => _drag(details, stage, rect),
                           onDragEnd: () => _dragEnd(stage, rect.size),
@@ -380,7 +404,11 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             onBack: notifier.minimise,
                             onToggleFullscreen: _toggleFullscreen,
                             isFullscreen: _isFullscreen,
-                            canControl: true,
+                            // Dead controls for a passenger rather than
+                            // dishonest ones: their play would be undone by
+                            // the correction loop a tick later.
+                            canControl: playback.canDrive,
+                            onSeekAuthored: playback.reportSeek,
                             onPushToTalkStart: party != null ? _pttStart : null,
                             onPushToTalkStop: party != null ? _pttStop : null,
                             chatOpen: ref.watch(chatDrawerOpenProvider),
@@ -437,6 +465,7 @@ class _PlayerFrame extends StatelessWidget {
     this.canClose = true,
     this.error,
     this.loading = false,
+    this.introItemId,
     required this.onRetry,
     required this.onMinimise,
     required this.onExpand,
@@ -451,6 +480,10 @@ class _PlayerFrame extends StatelessWidget {
   final bool canClose;
   final Object? error;
   final bool loading;
+
+  /// The title being announced by the now-playing card, or null once the card
+  /// has had its beat and playback is ready.
+  final String? introItemId;
   final VoidCallback onRetry;
   final VoidCallback onMinimise;
   final VoidCallback onExpand;
@@ -470,7 +503,19 @@ class _PlayerFrame extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         child,
-        if (error != null)
+        // Over the picture, under nothing: while it is up, the film behind it
+        // is either black or the tail of the last one.
+        if (introItemId != null)
+          Positioned.fill(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 260),
+              child: NowPlayingCard(
+                key: ValueKey(introItemId),
+                itemId: introItemId!,
+              ),
+            ),
+          )
+        else if (error != null)
           Center(
             child: expanded
                 ? ErrorState(

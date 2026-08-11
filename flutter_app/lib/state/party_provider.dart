@@ -508,6 +508,26 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   Future<void> kick(String userId) =>
       _ack(ClientEvent.partyKick, {'userId': userId});
 
+  /// Put a title on the room's timeline.
+  ///
+  /// The driver does NOT open the player itself — it tells the server, and the
+  /// `party:state` that comes back opens it here exactly as it opens it for
+  /// everyone else. One path for the host and the guests means the room cannot
+  /// end up watching two different things because one of them took a shortcut.
+  Future<void> selectMedia({
+    required String mediaItemId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) => _ack(ClientEvent.partySelectMedia, {
+    'mediaItemId': mediaItemId,
+    'audioStreamIndex': ?audioStreamIndex,
+    'subtitleStreamIndex': ?subtitleStreamIndex,
+  });
+
+  /// Take the title off the room's timeline, for everyone. What the host's
+  /// Close means while a party is running.
+  Future<void> backToLobby() => _ack(ClientEvent.partyBackToLobby);
+
   Future<void> transferHost(String userId) =>
       _ack(ClientEvent.partyTransferHost, {'userId': userId});
 
