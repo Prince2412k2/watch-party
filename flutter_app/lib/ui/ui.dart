@@ -4,7 +4,6 @@ library;
 export 'motion.dart';
 export 'palette.dart';
 export 'theme.dart';
-export 'theme_mode.dart';
 export 'tokens.dart';
 export 'widgets/ambient_wash.dart';
 export 'widgets/app_button.dart';

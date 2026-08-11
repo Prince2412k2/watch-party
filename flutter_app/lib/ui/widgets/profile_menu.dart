@@ -4,11 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/router.dart';
 import '../../state/state.dart';
-import '../../state/theme_provider.dart';
 import '../../update/desktop_updater.dart';
 import '../analog_tokens.dart';
 import '../palette.dart';
-import '../theme_mode.dart';
 import '../tokens.dart';
 import 'app_dialog.dart';
 import 'avatar_view.dart';
@@ -94,7 +92,6 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu>
     final name = displayName.isNotEmpty ? displayName : accountName;
 
     final update = ref.watch(desktopUpdateProvider);
-    final mode = ref.watch(themeModeProvider);
 
     return TapRegion(
       onTapOutside: (_) => _close(),
@@ -132,16 +129,6 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu>
                     ? update.progress
                     : null,
                 onTap: _updateAction(ref, update),
-              ),
-              TrayButton(
-                icon: switch (mode) {
-                  AppThemeMode.light => Icons.light_mode_outlined,
-                  AppThemeMode.balanced => Icons.contrast,
-                  AppThemeMode.dark => Icons.dark_mode_outlined,
-                },
-                tooltip: 'Appearance: ${_modeLabel(mode)}',
-                onTap: () =>
-                    ref.read(themeModeProvider.notifier).set(_next(mode)),
               ),
               TrayButton(
                 icon: Icons.tune,
@@ -307,17 +294,3 @@ VoidCallback? _updateAction(WidgetRef ref, UpdateState state) =>
       _ => () => ref.read(desktopUpdateProvider.notifier).check(),
     };
 
-String _modeLabel(AppThemeMode mode) => switch (mode) {
-  AppThemeMode.light => 'Light',
-  AppThemeMode.balanced => 'Balanced',
-  AppThemeMode.dark => 'Dark',
-};
-
-/// One button cycles all three, in the order the old segmented control listed
-/// them. Three states is the most a cycle can carry before you stop being able
-/// to predict where the next tap lands.
-AppThemeMode _next(AppThemeMode mode) => switch (mode) {
-  AppThemeMode.light => AppThemeMode.balanced,
-  AppThemeMode.balanced => AppThemeMode.dark,
-  AppThemeMode.dark => AppThemeMode.light,
-};

@@ -21,12 +21,16 @@ import '../ui/analog_tokens.dart';
 class ToastMessage {
   const ToastMessage({
     required this.id,
+    required this.userId,
     required this.sender,
     required this.preview,
     required this.receivedAtMs,
   });
 
   final String id;
+
+  /// Who sent it — the toast draws their face, same as the app-wide rail.
+  final String userId;
   final String sender;
   final String preview;
   final int receivedAtMs;
