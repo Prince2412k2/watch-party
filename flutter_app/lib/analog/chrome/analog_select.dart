@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../ui/analog_tokens.dart';
-import 'analog_button.dart';
 
 /// One choice in an [showAnalogSelect] list.
 @immutable
@@ -71,8 +70,8 @@ Future<void> showAnalogSelect<T>({
   required T? selected,
   required ValueChanged<T> onSelected,
 
-  /// An optional action pinned under the list — "add one of these". Icon-only;
-  /// its tooltip is its name.
+  /// An optional action pinned under the list — "add one of these". Drawn as
+  /// its own labelled row; [footerTooltip] is the label.
   IconData? footerIcon,
   String? footerTooltip,
   VoidCallback? onFooter,
@@ -118,8 +117,13 @@ Future<void> showAnalogSelect<T>({
         for (final choice in groups[g].choices)
           PopupMenuItem<AnalogChoice<T>>(
             value: choice,
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: AnalogSpace.mdPx),
+            // A row carrying a second line needs the height for it. 40 was one
+            // line's worth for both, which is what crushed the tracks.
+            height: choice.detail == null ? 44 : 56,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AnalogSpace.mdPx,
+              vertical: AnalogSpace.xsPx,
+            ),
             child: _ChoiceRow<T>(
               choice: choice,
               // The group's icon rides the FIRST row of the group and the rest
@@ -132,23 +136,43 @@ Future<void> showAnalogSelect<T>({
             ),
           ),
       ],
-      if (onFooter != null)
+      if (onFooter != null) ...[
+        const PopupMenuDivider(height: 1)
+            as PopupMenuEntry<AnalogChoice<T>>,
+        // Labelled, not a bare glyph. An icon on its own at the foot of a list
+        // of tracks doesn't say whether it adds one or does something to the
+        // list, and this is the one row here that isn't a choice.
         PopupMenuItem<AnalogChoice<T>>(
-          enabled: false,
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: AnalogSpace.smPx),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: AnalogIconButton(
-              icon: footerIcon ?? Icons.add,
-              tooltip: footerTooltip ?? 'Add',
-              onPressed: () {
-                Navigator.of(context).pop();
-                onFooter();
-              },
-            ),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: AnalogSpace.mdPx),
+          onTap: onFooter,
+          child: Row(
+            children: [
+              SizedBox(
+                width: _ChoiceRow._gutter,
+                child: Icon(
+                  footerIcon ?? Icons.add,
+                  size: 15,
+                  color: AnalogColor.inkFaint,
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  footerTooltip ?? 'Add',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: AnalogType.sansFamily,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: AnalogColor.inkDim,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
+      ],
     ],
   );
   if (chosen != null) onSelected(chosen.value);
@@ -179,30 +203,42 @@ class _ChoiceRow<T> extends StatelessWidget {
               ? null
               : Icon(groupIcon, size: 15, color: AnalogColor.inkFaint),
         ),
+        // Label over detail, both left-aligned on the same vertical. The detail
+        // used to sit far right in uppercase mono, which read as a column of
+        // machine codes rather than as a description of the row it belonged to.
         Expanded(
-          child: Text(
-            choice.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontFamily: AnalogType.sansFamily,
-              fontSize: 13,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              color: selected ? AnalogColor.ink : AnalogColor.inkDim,
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                choice.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: AnalogType.sansFamily,
+                  fontSize: 14,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? AnalogColor.ink : AnalogColor.inkDim,
+                ),
+              ),
+              if (choice.detail != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  choice.detail!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: AnalogType.sansFamily,
+                    fontSize: 11.5,
+                    color: AnalogColor.inkFaint,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
-        if (choice.detail != null) ...[
-          const SizedBox(width: AnalogSpace.smPx),
-          Text(
-            choice.detail!,
-            style: const TextStyle(
-              fontFamily: AnalogType.monoFamily,
-              fontSize: 10.5,
-              color: AnalogColor.inkFaint,
-            ),
-          ),
-        ],
         const SizedBox(width: AnalogSpace.smPx),
         if (choice.onDelete != null)
           // Deepest recognizer wins the tap, so this takes the hit rather than

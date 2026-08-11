@@ -328,6 +328,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         next,
         ToastMessage(
           id: message.id,
+          userId: message.userId,
           sender: message.sender,
           preview: message.preview,
           // Stamps are a strictly increasing sequence, not epoch time: the four
@@ -1028,10 +1029,10 @@ class _PlayerChromeState extends State<PlayerChrome>
         AnalogChoiceGroup<String?>(
           icon: Icons.audiotrack,
           choices: [
-            for (final track in _tracks.audio)
+            for (final (index, track) in _tracks.audio.indexed)
               AnalogChoice<String?>(
                 value: track.id,
-                label: _trackName(track),
+                label: _trackName(track, index),
                 detail: _trackDetail(track),
               ),
           ],
@@ -1118,8 +1119,8 @@ class _PlayerChromeState extends State<PlayerChrome>
   }
 
   String? get _audioTrackDetail {
-    for (final track in _tracks.audio) {
-      if (track.id == _selectedAudio) return _trackName(track);
+    for (final (index, track) in _tracks.audio.indexed) {
+      if (track.id == _selectedAudio) return _trackName(track, index);
     }
     return null;
   }
@@ -1188,8 +1189,6 @@ class _PlayerChromeState extends State<PlayerChrome>
                   subtitleAnchor: _subtitleAnchor,
                   settingsAnchor: _settingsAnchor,
                   selectedSubtitle: _selectedSubtitle,
-                  muted: _volume <= 0,
-                  onToggleMute: _toggleMute,
                   isFullscreen: widget.isFullscreen,
                   // Decode + subtitle-styling are additive libmpv features:
                   // only surface them when the live MediaKitPlayerController is
@@ -1226,11 +1225,9 @@ class _PlayerChromeState extends State<PlayerChrome>
                 ),
               ),
 
-              // Volume: a bare VERTICAL hairline on the right edge, centred on
-              // the stage. Its mute glyph moved into the transport row (beside
-              // subtitles and fullscreen, where the reference puts it), so what
-              // is left here is the track and its handle. Fades with the rest
-              // of the chrome.
+              // Volume: a VERTICAL hairline on the right edge, centred on the
+              // stage, with mute directly beneath it so the two audio controls
+              // read as one group. Fades with the rest of the chrome.
               _AnimatedEdge(
                 visible: visible,
                 alignment: Alignment.centerRight,
@@ -1240,7 +1237,7 @@ class _PlayerChromeState extends State<PlayerChrome>
                     volume: _volume,
                     trackKey: const Key('volumeSlider'),
                     trackLength: 132,
-                    showMuteButton: false,
+                    showMuteButton: true,
                     onChanged: _setVolume,
                     onToggleMute: _toggleMute,
                     onAdjustingChanged: (adjusting) =>
@@ -1416,8 +1413,6 @@ class _TransportBar extends StatelessWidget {
     required this.subtitleAnchor,
     required this.settingsAnchor,
     required this.selectedSubtitle,
-    required this.muted,
-    required this.onToggleMute,
     required this.isFullscreen,
     required this.settings,
     required this.onSettingsOpenChanged,
@@ -1451,10 +1446,6 @@ class _TransportBar extends StatelessWidget {
   final GlobalKey settingsAnchor;
   final String? selectedSubtitle;
 
-  /// Mute lives in this row (reference: subtitle, mute, settings, fullscreen at
-  /// the lower right), NOT under the right-edge volume hairline.
-  final bool muted;
-  final VoidCallback onToggleMute;
   final bool isFullscreen;
 
   /// Rows of the upward settings stack. Empty hides the gear entirely.
@@ -1575,8 +1566,9 @@ class _TransportBar extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              // Lower-right cluster, in the reference's order: subtitle, mute,
-              // settings, fullscreen.
+              // Lower-right cluster: subtitle, settings, fullscreen. Mute is
+              // NOT here — it rides under the right-edge volume hairline, with
+              // the control it belongs to.
               if (onAddSubtitle != null || subtitleTracks.isNotEmpty)
                 _SubtitleControl(
                   key: subtitleAnchor,
@@ -1587,11 +1579,6 @@ class _TransportBar extends StatelessWidget {
                   onAddFile: onAddSubtitle,
                   onMenuChanged: onSubtitleMenuChanged,
                 ),
-              _ChromeIconButton(
-                icon: muted ? Icons.volume_off : Icons.volume_up,
-                tooltip: muted ? 'Unmute' : 'Mute',
-                onPressed: onToggleMute,
-              ),
               if (settings.isNotEmpty)
                 AnalogSettingsStack(
                   key: settingsAnchor,
@@ -2130,10 +2117,10 @@ class _SubtitleControl extends StatelessWidget {
           icon: Icons.subtitles,
           choices: [
             const AnalogChoice<String?>(value: null, label: 'Off'),
-            for (final track in tracks)
+            for (final (index, track) in tracks.indexed)
               AnalogChoice<String?>(
                 value: track.id,
-                label: _trackName(track),
+                label: _trackName(track, index),
                 detail: _trackDetail(track),
               ),
           ],
@@ -2163,39 +2150,119 @@ class _SubtitleControl extends StatelessWidget {
   }
 }
 
-String _trackName(PlayerTrack track) {
-  final title = track.title?.trim();
-  if (title != null && title.isNotEmpty) return title;
-  final language = track.language?.trim().toLowerCase();
-  return const {
-        'eng': 'English',
-        'spa': 'Spanish',
-        'fra': 'French',
-        'fre': 'French',
-        'deu': 'German',
-        'ger': 'German',
-        'ita': 'Italian',
-        'por': 'Portuguese',
-        'jpn': 'Japanese',
-        'kor': 'Korean',
-        'zho': 'Chinese',
-        'chi': 'Chinese',
-        'tha': 'Thai',
-      }[language] ??
-      track.language ??
-      track.id;
+/// ISO-639 to something a viewer recognises. Both the two- and three-letter
+/// codes are here because the demuxer hands over whichever the container used.
+const Map<String, String> _languageNames = {
+  'en': 'English', 'eng': 'English',
+  'es': 'Spanish', 'spa': 'Spanish',
+  'fr': 'French', 'fra': 'French', 'fre': 'French',
+  'de': 'German', 'deu': 'German', 'ger': 'German',
+  'it': 'Italian', 'ita': 'Italian',
+  'pt': 'Portuguese', 'por': 'Portuguese',
+  'ja': 'Japanese', 'jpn': 'Japanese',
+  'ko': 'Korean', 'kor': 'Korean',
+  'zh': 'Chinese', 'zho': 'Chinese', 'chi': 'Chinese',
+  'th': 'Thai', 'tha': 'Thai',
+  'hi': 'Hindi', 'hin': 'Hindi',
+  'ar': 'Arabic', 'ara': 'Arabic',
+  'ru': 'Russian', 'rus': 'Russian',
+  'nl': 'Dutch', 'nld': 'Dutch', 'dut': 'Dutch',
+  'pl': 'Polish', 'pol': 'Polish',
+  'sv': 'Swedish', 'swe': 'Swedish',
+  'da': 'Danish', 'dan': 'Danish',
+  'no': 'Norwegian', 'nor': 'Norwegian',
+  'fi': 'Finnish', 'fin': 'Finnish',
+  'tr': 'Turkish', 'tur': 'Turkish',
+  'he': 'Hebrew', 'heb': 'Hebrew',
+  'id': 'Indonesian', 'ind': 'Indonesian',
+  'vi': 'Vietnamese', 'vie': 'Vietnamese',
+  'cs': 'Czech', 'ces': 'Czech', 'cze': 'Czech',
+  'el': 'Greek', 'ell': 'Greek', 'gre': 'Greek',
+  'uk': 'Ukrainian', 'ukr': 'Ukrainian',
+  'ro': 'Romanian', 'ron': 'Romanian', 'rum': 'Romanian',
+  'hu': 'Hungarian', 'hun': 'Hungarian',
+};
+
+String? _languageName(String? raw) {
+  final code = raw?.trim().toLowerCase();
+  if (code == null || code.isEmpty) return null;
+  // Strip a region suffix — "pt-BR" and "pt_BR" both key off "pt".
+  final base = code.split(RegExp('[-_]')).first;
+  return _languageNames[code] ?? _languageNames[base];
 }
 
+/// What the format means to someone choosing a track, not what libmpv calls it.
+///
+/// The picker used to print the codec verbatim, so a perfectly ordinary
+/// Blu-ray subtitle announced itself as HDMV_PGS_SUBTITLE. Unknown codecs
+/// return null and the row simply doesn't mention a format — a string nobody
+/// can act on is worse than no string.
+///
+/// Audio tracks come through here too. Their format is worth keeping (picking
+/// between DTS and stereo AAC is a real choice), it just gets spelled the way
+/// a sleeve would spell it.
+String? _formatName(String? raw) {
+  final codec = raw?.trim().toLowerCase();
+  if (codec == null || codec.isEmpty) return null;
+
+  // Subtitles. Image-based ones are the whole reason this function exists:
+  // they can't be restyled or scaled, which is the one thing worth knowing.
+  if (codec.contains('pgs') ||
+      codec.contains('dvdsub') ||
+      codec.contains('dvd_sub') ||
+      codec.contains('dvb') ||
+      codec.contains('vobsub')) {
+    return 'Image';
+  }
+  if (codec.contains('subrip') || codec.contains('srt')) return 'SRT';
+  if (codec.contains('ass') || codec.contains('ssa')) return 'Styled';
+  if (codec.contains('vtt')) return 'VTT';
+  if (codec.contains('mov_text')) return 'Text';
+
+  // Audio. Order matters: eac3 contains ac3, truehd contains hd.
+  if (codec.contains('truehd')) return 'TrueHD';
+  if (codec.contains('eac3') || codec.contains('e-ac-3')) return 'Dolby Digital+';
+  if (codec.contains('ac3')) return 'Dolby Digital';
+  if (codec.contains('dts')) return 'DTS';
+  if (codec.contains('aac')) return 'AAC';
+  if (codec.contains('opus')) return 'Opus';
+  if (codec.contains('flac')) return 'FLAC';
+  if (codec.contains('vorbis')) return 'Vorbis';
+  if (codec.contains('mp3')) return 'MP3';
+  if (codec.contains('pcm')) return 'PCM';
+  return null;
+}
+
+/// The row's headline: what the file called the track, else its language, else
+/// its position in the list. Never a raw track id.
+String _trackName(PlayerTrack track, int index) {
+  final title = track.title?.trim();
+  if (title != null && title.isNotEmpty) return title;
+  return _languageName(track.language) ??
+      track.language?.trim().nullIfEmpty ??
+      'Track ${index + 1}';
+}
+
+/// The quiet second line. Only carries what the headline didn't already say.
 String? _trackDetail(PlayerTrack track) {
+  final title = track.title?.trim().toLowerCase();
+  final language = _languageName(track.language);
+  final format = _formatName(track.codec);
   final details = <String>[
-    if (track.title != null &&
-        track.language != null &&
-        !track.title!.toLowerCase().contains(track.language!.toLowerCase()))
-      track.language!.toUpperCase(),
-    if (track.codec?.trim().isNotEmpty ?? false) track.codec!.toUpperCase(),
-    if (track.isDefault) 'DEFAULT',
+    // Skip the language when the title already names it.
+    if (language != null &&
+        (title == null ||
+            title.isEmpty ||
+            !title.contains(language.toLowerCase())))
+      language,
+    ?format,
+    if (track.isDefault) 'Default',
   ];
   return details.isEmpty ? null : details.join(' · ');
+}
+
+extension on String {
+  String? get nullIfEmpty => isEmpty ? null : this;
 }
 
 /// Normalise picked subtitle bytes to UTF-8 text for side-loading: pass valid

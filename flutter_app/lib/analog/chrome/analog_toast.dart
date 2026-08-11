@@ -38,19 +38,19 @@ extension on AnalogToastTone {
 /// picture both land here, so there is one toast look in the app rather than
 /// one per caller.
 ///
-/// [opaque] is the reduced-transparency swap: an opaque surface of equivalent
-/// contrast, never a dropped toast.
+/// Always a solid plate. A notice is read at a glance, over whatever the
+/// screen happens to be showing — a bright scene behind a frosted panel put
+/// video luminance straight through the words. The glass look is decoration;
+/// being readable is not.
 class AnalogToastSurface extends StatelessWidget {
   const AnalogToastSurface({
     super.key,
     required this.child,
-    this.opaque = false,
     this.prominent = false,
     this.margin = const EdgeInsets.only(top: AnalogSpace.smPx),
   });
 
   final Widget child;
-  final bool opaque;
 
   /// Sized to be caught out of the corner of your eye.
   ///
@@ -68,7 +68,7 @@ class AnalogToastSurface extends StatelessWidget {
     return Padding(
       padding: margin,
       child: LiquidGlass(
-        opaque: opaque,
+        opaque: true,
         borderRadius: BorderRadius.circular(
           prominent ? AnalogRadius.cardPx + 4 : AnalogRadius.cardPx,
         ),
@@ -327,7 +327,6 @@ class _ToastRowState extends State<_ToastRow> {
       label: widget.toast.message,
       excludeSemantics: true,
       child: AnalogToastSurface(
-        opaque: media.highContrast,
         prominent: true,
         child: Row(
           mainAxisSize: MainAxisSize.min,

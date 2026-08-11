@@ -10,7 +10,6 @@ import '../analog/chrome/analog_toast.dart';
 import '../party/party_overlay.dart';
 import '../player/player_host.dart';
 import '../state/state.dart';
-import '../state/theme_provider.dart';
 import '../ui/ui.dart';
 import 'router.dart';
 
@@ -65,19 +64,17 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
 
   @override
   Widget build(BuildContext context) {
-    // The persisted theme drives the Material theme. Switching modes rebuilds
-    // only the theme boundary + ambient wash — it never remounts the functional
-    // subtrees (PLAN §global invariants).
-    final mode = ref.watch(themeModeProvider);
-    final theme = AppTheme.forMode(mode);
-    final isLight = theme.brightness == Brightness.light;
+    // One theme, pinned. The OS light/dark setting is deliberately ignored:
+    // much of the tree reads the dark-only AppColors/AnalogColor constants, so
+    // a light stage produced dark cards on white and unreadable text.
+    final theme = AppTheme.dark;
 
     return MaterialApp.router(
       title: 'Watchparty',
       debugShowCheckedModeBanner: false,
       theme: theme,
       darkTheme: theme,
-      themeMode: isLight ? ThemeMode.light : ThemeMode.dark,
+      themeMode: ThemeMode.dark,
       // Supplied directly now that no component library is contributing its own
       // delegates. The app ships one locale; these are the framework strings
       // (semantics, text selection, the date pickers Material builds).

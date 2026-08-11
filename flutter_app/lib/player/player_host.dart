@@ -421,6 +421,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                                         id:
                                             '${message.userId}:${message.timestamp}:'
                                             '${message.text.hashCode}',
+                                        userId: message.userId,
                                         sender: message.name,
                                         preview: message.text,
                                         // Restamped by the chrome on its own
