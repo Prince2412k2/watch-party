@@ -47,10 +47,8 @@ class AnalogVolume extends StatefulWidget {
 
   /// Whether the mute glyph rides under the track.
   ///
-  /// False when the caller already carries mute somewhere else — the player's
-  /// transport row does, beside subtitles and fullscreen, which leaves this
-  /// control as a bare hairline on the right edge. [onToggleMute] stays
-  /// required either way: the keyboard and the caller both still use it.
+  /// Set false only when the caller carries mute somewhere else.
+  /// [onToggleMute] stays required either way: the keyboard still uses it.
   final bool showMuteButton;
 
   @override

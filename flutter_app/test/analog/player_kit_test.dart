@@ -270,6 +270,7 @@ void main() {
   group('AnalogToastStack', () {
     ToastMessage message(int index) => ToastMessage(
       id: 'm$index',
+      userId: 'u$index',
       sender: 'Sender $index',
       preview: 'Message $index',
       receivedAtMs: index,
