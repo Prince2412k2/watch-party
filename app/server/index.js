@@ -208,10 +208,32 @@ app.use('/jellyfin', requireAuth, createProxyMiddleware({
   },
 }))
 
+// NO `ws: true`. That option is what broke every Socket.IO connection.
+//
+// http-proxy-middleware's `ws: true` makes the middleware subscribe ITSELF to
+// the server's 'upgrade' event, lazily, on the first HTTP request that passes
+// through it — i.e. the moment the LiveKit SDK hits /livekit/rtc/validate.
+// From then on, for the life of the process:
+//
+//   * Its listener claims EVERY upgrade, because it matches on the middleware's
+//     `pathFilter`, which is unset here and therefore defaults to '/'. Express's
+//     `app.use('/livekit', …)` mount does not scope it — that only scopes the
+//     HTTP path. So a client's `/socket.io/?EIO=4&transport=websocket` was being
+//     proxied to LiveKit, which is written in Go and answers `404 page not
+//     found` — arriving on the socket immediately after engine.io's own OPEN
+//     frame and killing it. Sockets died ~10ms after connecting, every time,
+//     until the server was restarted.
+//   * `middleware.upgrade()` becomes a no-op (`if (!this.wsInternalSubscribed)`),
+//     so the authorizing handler below silently stopped proxying anything — and
+//     LiveKit upgrades were served by the internal listener instead, which
+//     performs no authorization at all.
+//
+// Both problems go away by leaving the subscription off and keeping the explicit
+// `httpServer.on('upgrade')` handler below as the only route in: it verifies the
+// session or the signed room token FIRST, then calls `livekitProxy.upgrade`.
 const livekitProxy = createProxyMiddleware({
   target: LIVEKIT_TARGET,
   changeOrigin: true,
-  ws: true,
   pathRewrite: { '^/livekit': '' },
 })
 // NOT plain requireAuth. The LiveKit SDKs make an ordinary HTTPS GET to

@@ -242,6 +242,34 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     nonMemberToken.addGrant({ roomJoin: true, room: firstParty.partyId })
     const nonMemberJwt = await nonMemberToken.toJwt()
     assert.equal(await upgradeStatus(port, `/livekit/rtc?access_token=${encodeURIComponent(nonMemberJwt)}`), 401)
+
+    // A Socket.IO connection must still be possible AFTER LiveKit traffic has
+    // gone through its proxy. It was not: `ws: true` made the proxy middleware
+    // subscribe itself to the server's 'upgrade' event on its first HTTP
+    // request, with a path filter defaulting to '/', so every subsequent
+    // websocket upgrade — Socket.IO's included — was forwarded to LiveKit,
+    // whose 404 arrived on the socket right after engine.io's OPEN frame and
+    // closed it. Native clients (websocket-only, no polling fallback) could not
+    // start or join a party at all until the server was restarted.
+    //
+    // The trigger has to be an ORDINARY HTTP request through the proxy
+    // middleware, which is what the LiveKit SDK sends before opening its socket.
+    // Upgrades alone never reach the middleware (they are handled by the
+    // server's own 'upgrade' listener), so without this line the subscription
+    // never happens and this test passes with the bug present — as it did.
+    const preflight = await fetch(`${baseUrl}/livekit/rtc/validate`, {
+      headers: { Cookie: hostCookie },
+    })
+    assert.equal(preflight.status, 200)
+
+    const afterLiveKit = await connect(baseUrl, hostCookie)
+    sockets.push(afterLiveKit)
+    assert.equal(afterLiveKit.connected, true)
+    // Not just connected — usable. A socket the server is about to hang up on
+    // still reports `connected` for a moment.
+    assert.equal((await emitAck(afterLiveKit, 'party:resume')).session.id, firstParty.partyId)
+    await delay(150)
+    assert.equal(afterLiveKit.connected, true)
   } finally {
     for (const socket of sockets) socket.disconnect()
     child.kill('SIGTERM')

@@ -142,6 +142,28 @@ void main() {
       await socket.close();
     });
 
+    test('a socket closed after the upgrade reports the close code', () async {
+      // The fact that separates "something in the path killed it" (1006, no
+      // close frame) from "the peer closed politely" (1000/1001) — socket.io
+      // says 'transport close' for both.
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        await socket.close(1011, 'nope');
+      });
+
+      final probe = SocketDialProbe();
+      final socket = await connectSocketWebSocket(
+        Uri.parse('ws://127.0.0.1:${server.port}/socket.io/'),
+        probe: probe,
+      );
+      // Drain, so the close frame is delivered before the code is read.
+      await socket.events.drain<void>();
+
+      expect(probe.closeDescription, 'ws close 1011 "nope"');
+    });
+
     test('a server that never upgrades still fails, and says what it said',
         () async {
       // The retry must not turn a genuinely broken endpoint into a hang or an

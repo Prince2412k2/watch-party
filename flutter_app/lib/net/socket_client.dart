@@ -29,6 +29,58 @@ class SocketConnectFailure implements Exception {
   String toString() => 'Could not reach $target — $cause';
 }
 
+/// The connection came up and went away again before it was usable.
+///
+/// Distinct from [SocketConnectFailure] (never reached the server, or the
+/// server refused the handshake) because the two mean opposite things about
+/// where to look: this one says the server or the path to it accepted a
+/// WebSocket and then dropped it mid-handshake.
+class SocketClosedDuringConnect implements Exception {
+  const SocketClosedDuringConnect(
+    this.reason, {
+    this.attempts = 1,
+    this.cookieBytes,
+    this.close,
+    this.engineOpened = false,
+  });
+
+  /// Whether the Engine.IO handshake completed before the connection died.
+  /// See [SocketDialProbe.engineOpened] — this is the line between a transport
+  /// fault and a Socket.IO one.
+  final bool engineOpened;
+
+  /// How the underlying WebSocket closed — see [SocketDialProbe]. Null when it
+  /// never opened, or closed without a code.
+  final String? close;
+
+  /// Length of the `Cookie:` header the handshake carried, or null if it
+  /// carried none.
+  ///
+  /// The VALUE is never reported — it is the session — but its presence is the
+  /// first thing worth knowing when a connection is accepted and then dropped.
+  /// The server closes a client that never completes the Socket.IO handshake
+  /// (`Client.connectTimeout`), and a handshake with no cookie is the ordinary
+  /// way to end up there. Same reasoning as [_describeFailedUpgrade], which
+  /// reports the length and nothing else.
+  final int? cookieBytes;
+
+  /// socket.io's own disconnect reason — 'io server disconnect',
+  /// 'transport close', 'ping timeout', 'transport error'. The one fact worth
+  /// having, and the one that used to be discarded.
+  final Object? reason;
+
+  /// How many dials were made before giving up.
+  final int attempts;
+
+  @override
+  String toString() =>
+      'socket disconnected while connecting (${reason ?? 'no reason given'}'
+      '${attempts > 1 ? ', $attempts attempts' : ''}, '
+      '${cookieBytes == null ? 'NO session cookie' : 'cookie $cookieBytes bytes'}'
+      '${close == null ? '' : ', $close'}'
+      ', engine open: ${engineOpened ? 'yes' : 'NO'})';
+}
+
 /// FROZEN CONTRACT (PLAN §3.5). A thin, typed wrapper over socket_io_client that
 /// speaks the backend's event vocabulary (see `events.dart`). Party controls
 /// and chat build on top of this. The mock implementation lets the
@@ -110,7 +162,47 @@ class IoSocketClient implements SocketClient {
     // means the binary predates socketUrlFor — the same symptom as a broken
     // fix, and previously indistinguishable from one.
     debugPrint('socket.io connecting to $target (from $_url)');
-    final socket = io.io(target, socketOptionsFor(_url, cookie));
+
+    // Retried, for the same reason the WebSocket dial below is.
+    //
+    // [connectSocketWebSocket] retries an upgrade the edge answers badly; this
+    // covers a socket that comes up and is torn down mid-handshake, which was
+    // fatal on the first occurrence.
+    //
+    // MEASURED, because the obvious theory is wrong: a clean 101 followed by an
+    // immediate close does NOT arrive here. socket_io_client reports that as
+    // `connect_error` with reason 'timeout' (a fake server doing exactly that
+    // was the check), so it surfaces as [SocketConnectFailure] instead. What
+    // reaches this path is a disconnect on a socket that had already subscribed
+    // — 'io server disconnect', 'transport close', 'ping timeout' — and which
+    // of those it is now travels in the error.
+    //
+    // Deliberately narrow: an auth rejection arrives as `connect_error` and a
+    // local teardown as a plain cancellation. Both still fail immediately,
+    // because retrying either is just doing the wrong thing three times.
+    const attempts = 3;
+    const backoff = [Duration(milliseconds: 250), Duration(milliseconds: 750)];
+    SocketClosedDuringConnect? lastError;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) await Future<void>.delayed(backoff[attempt - 1]);
+      try {
+        return await _dial(target, cookie);
+      } on SocketClosedDuringConnect catch (e) {
+        lastError = e;
+      }
+    }
+    throw SocketClosedDuringConnect(
+      lastError!.reason,
+      attempts: attempts,
+      cookieBytes: cookie?.length,
+      close: lastError.close,
+      engineOpened: lastError.engineOpened,
+    );
+  }
+
+  Future<void> _dial(String target, String? cookie) async {
+    final probe = SocketDialProbe();
+    final socket = io.io(target, socketOptionsFor(_url, cookie, probe: probe));
     _socket = socket;
     final completer = Completer<void>();
     _connectCompleter = completer;
@@ -118,11 +210,25 @@ class IoSocketClient implements SocketClient {
       _connCtrl.add(true);
       if (!completer.isCompleted) completer.complete();
     });
-    socket.onDisconnect((_) {
+    socket.onDisconnect((reason) {
       _connCtrl.add(false);
       if (!completer.isCompleted) {
+        // The reason is the entire diagnosis and it used to be dropped on the
+        // floor: 'io server disconnect' means the server hung up on us,
+        // 'transport close' means the link or something in front of it did,
+        // 'ping timeout' means heartbeats stopped landing. Three different
+        // faults that all read as one unexplained failure without it.
         completer.completeError(
-          StateError('socket disconnected while connecting'),
+          SocketClosedDuringConnect(
+            reason,
+            cookieBytes: cookie?.length,
+            // Read on the way out: by the time socket.io says 'transport
+            // close', dart:io already knows the code the peer closed with —
+            // or that there was no close frame at all, which is itself the
+            // answer.
+            close: probe.closeDescription,
+            engineOpened: probe.engineOpened,
+          ),
         );
       }
     });
@@ -141,6 +247,19 @@ class IoSocketClient implements SocketClient {
       }
     }
     socket.connect();
+
+    // Where the handshake got to, which is the question the reason string
+    // cannot answer.
+    //
+    // The Engine.IO layer emits 'open' only once the SERVER's OPEN packet has
+    // arrived and been parsed. So:
+    //   engine open: no  → the server (or the path) never delivered it, and
+    //                      nothing above the transport is implicated;
+    //   engine open: yes → the transport worked and the Socket.IO CONNECT
+    //                      exchange on top of it is what failed.
+    // Attached after connect(), which is where the Manager builds the engine.
+    probe.engine = socket.io.engine;
+
     try {
       await completer.future;
     } catch (_) {
@@ -228,10 +347,37 @@ class IoSocketClient implements SocketClient {
 /// [headers] carries `setExtraHeaders`, i.e. the session cookie, and must be
 /// forwarded — the package's default connector does the same, and dropping it
 /// would trade a connection failure for an authentication one.
+/// Remembers the raw socket of the dial in flight, so a connection that dies
+/// during the handshake can be asked HOW it died.
+///
+/// The WebSocket close code is the difference between "something in the path
+/// killed the connection" (1006, no close frame), "the peer closed it politely"
+/// (1000/1001) and "one side could not parse the other's frames" (1002/1003).
+/// socket.io only ever says 'transport close' for all three.
+class SocketDialProbe {
+  io_net.WebSocket? raw;
+
+  /// The Engine.IO socket for this dial, once the manager has built one.
+  dynamic engine;
+
+  /// Whether the server's Engine.IO handshake packet ever arrived.
+  bool get engineOpened => engine?.readyState == 'open';
+
+  /// Null while the socket is open or was never dialled.
+  String? get closeDescription {
+    final code = raw?.closeCode;
+    if (code == null) return null;
+    final reason = raw?.closeReason;
+    return 'ws close $code'
+        '${reason == null || reason.isEmpty ? '' : ' "$reason"'}';
+  }
+}
+
 Future<ws.WebSocket> connectSocketWebSocket(
   Uri uri, {
   Iterable<String>? protocols,
   Map<String, String>? headers,
+  SocketDialProbe? probe,
 }) async {
   // `Uri.replace(port:)` normalises a DEFAULT port back out of the string —
   // the trap that made an earlier attempt at this a silent no-op. It is safe
@@ -270,6 +416,7 @@ Future<ws.WebSocket> connectSocketWebSocket(
         protocols: protocols,
         headers: headers,
       );
+      probe?.raw = socket;
       return IOWebSocket.fromWebSocket(socket);
     } on io_net.WebSocketException catch (e) {
       lastError = e;
@@ -396,7 +543,11 @@ String socketUrlFor(String url) {
   return '${uri.scheme}://${uri.host}:$port$path';
 }
 
-Map<String, dynamic> socketOptionsFor(String url, String? cookie) {
+Map<String, dynamic> socketOptionsFor(
+  String url,
+  String? cookie, {
+  SocketDialProbe? probe,
+}) {
   final uri = Uri.parse(url);
   final builder = io.OptionBuilder()
       // Native Dart only implements the WebSocket transport. Listing polling
@@ -409,7 +560,17 @@ Map<String, dynamic> socketOptionsFor(String url, String? cookie) {
   final options = Map<String, dynamic>.from(builder.build());
   // The dial itself, so the port survives into dart:io. See
   // [connectSocketWebSocket] for why nothing earlier in the chain can do this.
-  options['webSocketConnector'] = connectSocketWebSocket;
+  options['webSocketConnector'] =
+      (
+        Uri uri, {
+        Iterable<String>? protocols,
+        Map<String, String>? headers,
+      }) => connectSocketWebSocket(
+        uri,
+        protocols: protocols,
+        headers: headers,
+        probe: probe,
+      );
   // socket_io_client <=3.1.3 parsed multi-label HTTPS hosts as port 0. Keep an
   // explicit default in our own options so persisted origins remain safe even
   // if dependency resolution or an older packaged binary regresses.
