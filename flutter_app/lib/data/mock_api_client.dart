@@ -54,6 +54,10 @@ class MockApiClient implements ApiClient {
   @override
   Future<User> me() async => _user;
 
+  /// Accepts anything. The mock has no password to be wrong about.
+  @override
+  Future<void> changePassword(String current, String next) async {}
+
   @override
   Future<void> logout() async {}
 

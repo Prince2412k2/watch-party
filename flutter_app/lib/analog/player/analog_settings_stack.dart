@@ -7,8 +7,6 @@
 // The direct subtitle action deliberately stays OUTSIDE this stack — fast track
 // selection and Off must not cost two taps.
 
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../../ui/analog_tokens.dart';
@@ -42,11 +40,17 @@ class AnalogSettingsStack extends StatefulWidget {
     required this.entries,
     this.enabled = true,
     this.onOpenChanged,
+    this.liftAbove,
     this.tooltip = 'Settings',
   });
 
   final List<AnalogSettingsEntry> entries;
   final bool enabled;
+
+  /// Something the panel must not cover — the player's timeline. The gear sits
+  /// in the row BELOW the scrubber, so opening straight off the gear put the
+  /// panel over it. Given this, the panel clears its top edge instead.
+  final GlobalKey? liftAbove;
 
   /// Raised while the stack is expanded so the caller can pin the chrome open —
   /// without it the menu vanishes under the cursor after three seconds.
@@ -91,6 +95,23 @@ class _AnalogSettingsStackState extends State<AnalogSettingsStack> {
     setState(() {});
   }
 
+  /// How far this control sits below the thing it must not cover. Zero when no
+  /// anchor was given, or when either box has gone away.
+  double _lift() {
+    final ceiling = widget.liftAbove?.currentContext?.findRenderObject();
+    final self = context.findRenderObject();
+    if (ceiling is! RenderBox ||
+        self is! RenderBox ||
+        !ceiling.hasSize ||
+        !self.hasSize) {
+      return 0;
+    }
+    final gap =
+        self.localToGlobal(Offset.zero).dy -
+        ceiling.localToGlobal(Offset.zero).dy;
+    return gap > 0 ? gap : 0;
+  }
+
   Widget _buildOverlay(BuildContext context) {
     final animate = !MediaQuery.of(context).disableAnimations;
     return Stack(
@@ -105,26 +126,20 @@ class _AnalogSettingsStackState extends State<AnalogSettingsStack> {
         CompositedTransformFollower(
           link: _link,
           showWhenUnlinked: false,
-          // The stack's BOTTOM edge is pinned to the gear's TOP edge, so it
-          // grows upward out of the lower-right control area.
+          // The panel's BOTTOM edge is pinned to the gear's TOP edge, so it
+          // grows upward out of the lower-right control area — lifted further
+          // by however far the gear sits below the timeline.
           targetAnchor: Alignment.topRight,
           followerAnchor: Alignment.bottomRight,
-          offset: const Offset(0, -AnalogSpace.xsPx),
+          offset: Offset(0, -AnalogSpace.smPx - _lift()),
           child: Material(
             color: Colors.transparent,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: _SettingsPanel(
+              animate: animate,
               children: [
                 for (var i = 0; i < widget.entries.length; i++)
                   _SettingsRow(
                     entry: widget.entries[i],
-                    // Rows settle from the bottom up, one short detent apart.
-                    delay: animate
-                        ? AnalogMotion.detentMs *
-                              (widget.entries.length - 1 - i)
-                        : Duration.zero,
-                    animate: animate,
                     onTap: !widget.entries[i].enabled
                         ? null
                         : () {
@@ -161,84 +176,48 @@ class _AnalogSettingsStackState extends State<AnalogSettingsStack> {
   }
 }
 
-class _SettingsRow extends StatelessWidget {
-  const _SettingsRow({
-    required this.entry,
-    required this.delay,
-    required this.animate,
-    required this.onTap,
-  });
+/// The one plate the rows sit in.
+///
+/// They used to be separate floating pills, one per setting, each with its own
+/// fill and corners and a gap between them. That reads as a column of
+/// unrelated buttons; a settings menu is one object with rows in it.
+class _SettingsPanel extends StatelessWidget {
+  const _SettingsPanel({required this.children, required this.animate});
 
-  final AnalogSettingsEntry entry;
-  final Duration delay;
+  final List<Widget> children;
   final bool animate;
-  final VoidCallback? onTap;
+
+  /// Fixed, so every value lands on the same right edge instead of the panel
+  /// resizing itself around whichever setting has the longest current value.
+  /// Matches the track picker's width — they are the same kind of object and
+  /// open a few pixels apart.
+  static const double _width = 260;
 
   @override
   Widget build(BuildContext context) {
-    final row = Padding(
-      padding: const EdgeInsets.only(bottom: AnalogSpace.xsPx),
+    final panel = SizedBox(
+      width: _width,
       child: Material(
-        color: AnalogColor.stageSurface2,
-        borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-          hoverColor: AnalogColor.stageSurface3,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AnalogSpace.mdPx,
-              vertical: AnalogSpace.smPx,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  entry.icon,
-                  size: 16,
-                  color: entry.enabled
-                      ? AnalogColor.inkDim
-                      : AnalogColor.inkFaint,
-                ),
-                const SizedBox(width: AnalogSpace.smPx),
-                Text(
-                  entry.label,
-                  style: TextStyle(
-                    color: entry.enabled
-                        ? AnalogColor.ink
-                        : AnalogColor.inkFaint,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if (entry.detail != null) ...[
-                  const SizedBox(width: AnalogSpace.mdPx),
-                  Text(
-                    entry.detail!,
-                    style: const TextStyle(
-                      color: AnalogColor.inkFaint,
-                      fontSize: 11,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+        color: AnalogColor.stageSurface,
+        clipBehavior: Clip.antiAlias,
+        // shape, not borderRadius — Material asserts if given both, and the
+        // hairline has to come from the shape's side.
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AnalogColor.line),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AnalogSpace.smPx),
+          child: Column(mainAxisSize: MainAxisSize.min, children: children),
         ),
       ),
     );
-    if (!animate) return row;
-    // Short travel, no overshoot: the row rises a few px into place.
+    if (!animate) return panel;
+    // Short travel, no overshoot: the panel rises a few px into place.
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: AnalogMotion.detentMs + delay,
-      curve: Interval(
-        delay.inMicroseconds /
-            math.max(1, (AnalogMotion.detentMs + delay).inMicroseconds),
-        1,
-        curve: AnalogMotion.detentEase,
-      ),
+      duration: AnalogMotion.detentMs,
+      curve: AnalogMotion.detentEase,
       builder: (context, value, child) => Opacity(
         opacity: value,
         child: Transform.translate(
@@ -246,7 +225,72 @@ class _SettingsRow extends StatelessWidget {
           child: child,
         ),
       ),
-      child: row,
+      child: panel,
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({required this.entry, required this.onTap});
+
+  final AnalogSettingsEntry entry;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = entry.enabled ? AnalogColor.ink : AnalogColor.inkFaint;
+    return InkWell(
+      onTap: onTap,
+      hoverColor: AnalogColor.stageSurface2,
+      child: Container(
+        height: 42,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        alignment: Alignment.centerLeft,
+        child: Row(
+          children: [
+            Icon(entry.icon, size: 17, color: ink),
+            const SizedBox(width: AnalogSpace.mdPx - 2),
+            Expanded(
+              child: Text(
+                entry.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: ink,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            // The current value sits against the chevron, quieter than the
+            // label — you scan the labels to find the setting, then read one
+            // value.
+            if (entry.detail != null)
+              // Capped, so a long value truncates instead of eating the label.
+              Container(
+                constraints: const BoxConstraints(maxWidth: 124),
+                padding: const EdgeInsets.only(left: AnalogSpace.smPx),
+                child: Text(
+                  entry.detail!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AnalogColor.inkFaint,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            const Padding(
+              padding: EdgeInsets.only(left: AnalogSpace.xsPx),
+              child: Icon(
+                Icons.chevron_right,
+                size: 17,
+                color: AnalogColor.inkFaint,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

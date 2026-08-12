@@ -137,11 +137,19 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
           _clearQuery();
         });
       case PlayActivation(:final itemId):
-        // Straight to the detail page. The poster carries a Hero tag matching
-        // the one that page already uses, so the artwork flies across the
-        // route rather than cutting — the shared element does the work a
-        // hand-rolled morph was doing badly.
-        context.push('/detail/$itemId');
+        // Straight to the detail page. The poster and the title's mark both
+        // carry Hero tags matching the ones that page uses, so the artwork
+        // flies across the route rather than cutting.
+        //
+        // The RECORD goes with it, not the rail's row. The library listing
+        // asks for Primary, Backdrop and Thumb only, so a row carries no Logo
+        // tag at all — seeding the page with one left it with a text heading
+        // and nothing for the mark to fly into. The record is already in hand:
+        // the aside beside this rail is drawing its logo from it.
+        context.push(
+          '/detail/$itemId',
+          extra: ref.read(itemDetailProvider(item.id)).valueOrNull ?? item,
+        );
       case NoActivation():
         break;
     }
@@ -355,14 +363,32 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                           const SizedBox(width: TitleLayout.columnGap),
                           Expanded(
                             flex: TitleLayout.asideFlex,
-                            child: _collection == null
-                                ? Align(
-                                    alignment: Alignment.centerRight,
-                                    // Same reason as the copy: on a window short
-                                    // enough that the two positions do not fit
-                                    // beside the rail, this clips rather than
-                                    // throwing. Not scrollable — the wheel drives
-                                    // the rail.
+                            // Stacked rather than stapled into a Column. The
+                            // strip is taller than the aside on a short window
+                            // and has always relied on getting the full box to
+                            // clip inside; a Column handed it a share instead,
+                            // and it overflowed the moment the rail grew.
+                            child: Stack(
+                              children: [
+                                // Level with the heading it belongs to.
+                                Center(
+                                  child: AsideTitleLogo(
+                                    itemId: detailed?.id,
+                                    url: detailed == null
+                                        ? null
+                                        : titleLogoUrl(api, detailed),
+                                    maxHeightPx: TitleLayout.asideLogoHeight,
+                                    widthPx: TitleLayout.logoBoxWidth,
+                                  ),
+                                ),
+                                if (_collection == null)
+                                  Align(
+                                    alignment: Alignment.topRight,
+                                    // Same reason as the copy: on a window
+                                    // short enough that this does not fit
+                                    // beside the rail, it clips rather than
+                                    // throwing. Not scrollable — the wheel
+                                    // drives the rail.
                                     child: SingleChildScrollView(
                                       physics:
                                           const NeverScrollableScrollPhysics(),
@@ -371,8 +397,9 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                                         onChanged: _setMode,
                                       ),
                                     ),
-                                  )
-                                : const SizedBox.shrink(),
+                                  ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -553,15 +580,15 @@ class _Details extends StatelessWidget {
             direction: direction,
             velocity: velocity,
             fontSizePx: TitleType.heading.fontSize ?? 52,
-            child: TitleLogo(
-              url: current == null ? null : titleLogoUrl(api, current),
-              maxHeightPx: TitleLayout.logoMaxHeight,
-              child: Text(
-                current?.name ?? (loading ? '' : 'Nothing here'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TitleType.heading.copyWith(color: AnalogColor.ink),
-              ),
+            // The written title, in the app's own face. The logo used to take
+            // this slot; it now stands in the aside, where there was nothing
+            // but empty stage, and flies from there into the detail page's
+            // heading when you open the title.
+            child: Text(
+              current?.name ?? (loading ? '' : 'Nothing here'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TitleType.heading.copyWith(color: AnalogColor.ink),
             ),
           ),
 
