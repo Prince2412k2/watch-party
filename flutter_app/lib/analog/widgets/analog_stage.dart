@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/authed_image.dart';
+import '../../ui/widgets/textured_artwork.dart';
 
 /// The full-stage backdrop the whole browsing model hangs off.
 ///
@@ -32,12 +33,18 @@ class AnalogStage extends StatefulWidget {
     required this.child,
     this.backdropUrl,
     this.focused = false,
+    this.textured = true,
   });
 
   final Widget child;
 
   /// Same-origin backdrop URL for the focused item, or null for bare ground.
   final String? backdropUrl;
+
+  /// Print the backdrop on aged stock. Off restores the plain artwork, which is
+  /// what the layout tests measure and what a caller wants when the treatment
+  /// is being judged side by side.
+  final bool textured;
 
   /// Whether something on the stage currently owns focus. Raises the grain by
   /// [AnalogGrain.focusedBoostPct], which is the whole of that token's job.
@@ -85,11 +92,15 @@ class _AnalogStageState extends State<AnalogStage> {
                 ),
                 child: url == null
                     ? SizedBox.expand(key: ValueKey(_backdropRevision))
-                    : AuthedNetworkImage(
-                        url,
+                    : TexturedArtwork(
                         key: ValueKey(_backdropRevision),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => const SizedBox.expand(),
+                        texture: ArtworkTexture.backdrop,
+                        enabled: widget.textured,
+                        child: AuthedNetworkImage(
+                          url,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => const SizedBox.expand(),
+                        ),
                       ),
               ),
               const _StageScrim(),

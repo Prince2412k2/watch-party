@@ -24,6 +24,7 @@ class AuthedNetworkImage extends ConsumerStatefulWidget {
     this.cacheHeight,
     this.errorBuilder,
     this.loadingBuilder,
+    this.onBytes,
   });
 
   final String url;
@@ -33,6 +34,12 @@ class AuthedNetworkImage extends ConsumerStatefulWidget {
   final int? cacheHeight;
   final ImageErrorWidgetBuilder? errorBuilder;
   final ImageLoadingBuilder? loadingBuilder;
+
+  /// The decoded-from bytes, once they exist. This widget is the only place
+  /// that holds artwork bytes, so anything wanting to look *at* the artwork
+  /// rather than just show it — a dominant colour, say — has to be handed them
+  /// here rather than fetching the image a second time.
+  final ValueChanged<Uint8List>? onBytes;
 
   @override
   ConsumerState<AuthedNetworkImage> createState() => _AuthedNetworkImageState();
@@ -62,6 +69,9 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
     final cache = ref.read(artworkCacheProvider);
     _bytes = cache?.peek(widget.url);
     _error = null;
+    // Deferred: _load runs from initState, and a listener that moves provider
+    // or parent state during a build is exactly the sort of thing that throws.
+    if (_bytes != null) _announce(_bytes!);
     if (cache == null) return;
     _subscription = cache
         .load(widget.url)
@@ -69,6 +79,7 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
           (bytes) {
             if (mounted && generation == _generation) {
               setState(() => _bytes = bytes);
+              _announce(bytes);
             }
           },
           onError: (Object error, StackTrace stack) {
@@ -77,6 +88,14 @@ class _AuthedNetworkImageState extends ConsumerState<AuthedNetworkImage> {
             }
           },
         );
+  }
+
+  void _announce(Uint8List bytes) {
+    final onBytes = widget.onBytes;
+    if (onBytes == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) onBytes(bytes);
+    });
   }
 
   @override

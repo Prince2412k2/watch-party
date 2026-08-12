@@ -1,10 +1,12 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/widgets.dart';
 
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/authed_image.dart';
+import '../../ui/widgets/textured_artwork.dart';
 import '../browse_core.dart';
 
 /// A single piece of poster artwork on the analog stage.
@@ -26,6 +28,16 @@ import '../browse_core.dart';
 ///   darkening.** No perspective tilt, no bounce — every easing curve in
 ///   `AnalogMotion` keeps its control points inside 0..1.
 ///
+/// [textured] deliberately suspends the first two. Artwork printed on torn
+/// stock is not a rectangle, so the frame, the edge light and the box-shaped
+/// cast shadow all describe a shape that is no longer there — a pristine
+/// rectangle drawn around ragged paper reads as a sticker on a card. The frame
+/// and edge light are dropped; the cast shadow moves into [TexturedArtwork] and
+/// is thrown from the torn silhouette instead. What survives untouched is the
+/// third invariant: focus is still scale, lift, stronger shadow and local
+/// backdrop darkening, and the artwork is still square-cornered *as a box* —
+/// the tear is in the paper, not a `borderRadius`.
+///
 /// Focus is *given*, not owned: [AnalogShelf] holds the selection model so it
 /// can be remembered and restored across navigation.
 class AnalogPosterTile extends StatelessWidget {
@@ -41,7 +53,12 @@ class AnalogPosterTile extends StatelessWidget {
     this.heroTag,
     this.progress,
     this.aspectRatio = posterAspect,
+    this.textured = true,
   });
+
+  /// Print the artwork on aged stock. Off restores the framed, edge-lit tile
+  /// this widget's invariants were written for.
+  final bool textured;
 
   /// Poster artwork, width ÷ height. The canonical 2:3 from the tokens.
   static const double posterAspect =
@@ -125,6 +142,7 @@ class AnalogPosterTile extends StatelessWidget {
       focused: focused,
       progress: progress,
       aspectRatio: aspectRatio,
+      textured: textured,
     );
 
     final caption = title;
@@ -158,7 +176,7 @@ class AnalogPosterTile extends StatelessWidget {
 }
 
 /// The artwork box: frame, edge light, cast shadow and focus response.
-class _PosterArt extends StatelessWidget {
+class _PosterArt extends StatefulWidget {
   const _PosterArt({
     required this.imageUrl,
     required this.placeholderLabel,
@@ -166,6 +184,7 @@ class _PosterArt extends StatelessWidget {
     required this.focused,
     required this.progress,
     required this.aspectRatio,
+    required this.textured,
   });
 
   final String? imageUrl;
@@ -174,17 +193,71 @@ class _PosterArt extends StatelessWidget {
   final bool focused;
   final double? progress;
   final double aspectRatio;
+  final bool textured;
+
+  @override
+  State<_PosterArt> createState() => _PosterArtState();
+
+  /// The cast shadow at focus progress [t]. Shared, because the same shadow is
+  /// thrown either by the artwork box or — when textured — by the torn
+  /// silhouette, and the two must not drift apart.
+  static BoxShadow _castShadow(double t) => BoxShadow(
+    color: Color.lerp(
+      AnalogColor.shadowCast,
+      AnalogColor.shadowCastStrong,
+      t,
+    )!,
+    blurRadius: lerpDouble(
+      AnalogElevation.restBlurPx,
+      AnalogElevation.focusBlurPx,
+      t,
+    )!,
+    offset: Offset(
+      lerpDouble(
+        AnalogElevation.restOffsetXPx,
+        AnalogElevation.focusOffsetXPx,
+        t,
+      )!,
+      lerpDouble(
+        AnalogElevation.restOffsetYPx,
+        AnalogElevation.focusOffsetYPx,
+        t,
+      )!,
+    ),
+  );
+
+}
+
+class _PosterArtState extends State<_PosterArt> {
+  /// The stock this title's artwork calls for. Null until the bytes land, and
+  /// null forever for artwork with no hue worth borrowing.
+  Color? _paper;
 
   /// Decode the source at the largest size it is ever painted: the artwork
   /// fills its box, so `cover` needs exactly the box width, times the focus
   /// scale, times the device pixel ratio.
   int _decodeWidth(BuildContext context) =>
-      (width * AnalogSelection.focusScale * MediaQuery.devicePixelRatioOf(context))
+      (widget.width *
+              AnalogSelection.focusScale *
+              MediaQuery.devicePixelRatioOf(context))
           .ceil();
+
+  /// Reads the artwork's dominant colour once its bytes exist, so the stock can
+  /// agree with what is printed on it. Cheap after the first tile: the palette
+  /// is held against the URL.
+  Future<void> _readPalette(String url, Uint8List bytes) async {
+    if (!widget.textured) return;
+    final dominant = await ArtworkPalette.dominant(url, bytes);
+    final paper = TexturedArtwork.paperFor(dominant);
+    if (mounted && paper != _paper) setState(() => _paper = paper);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final url = imageUrl;
+    final url = widget.imageUrl;
+    final focused = widget.focused;
+    final textured = widget.textured;
+    final progress = widget.progress;
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(end: focused ? 1 : 0),
       duration: AnalogMotion.focusStepMs,
@@ -203,66 +276,67 @@ class _PosterArt extends StatelessWidget {
               decoration: BoxDecoration(
                 // Square by construction: there is deliberately no
                 // `borderRadius` on this decoration, and none below it.
-                color: AnalogColor.stageSurface,
-                border: Border.all(
-                  color: Color.lerp(
-                    AnalogColor.line,
-                    AnalogColor.lineStrong,
-                    t,
-                  )!,
-                  width: AnalogPoster.framePx,
-                ),
+                color: textured ? null : AnalogColor.stageSurface,
+                // A torn sheet has no frame. Keeping one would draw a pristine
+                // rectangle around ragged artwork, which reads as a sticker on
+                // a card rather than as paper — and the fill behind it would
+                // show as a hard square through the tear.
+                border: textured
+                    ? null
+                    : Border.all(
+                        color: Color.lerp(
+                          AnalogColor.line,
+                          AnalogColor.lineStrong,
+                          t,
+                        )!,
+                        width: AnalogPoster.framePx,
+                      ),
                 boxShadow: [
                   // Local backdrop shading under the focused item — the
                   // reference's "darker local backdrop shading", painted as a
                   // wide soft spread behind the artwork rather than a glow
-                  // around it.
+                  // around it. This one survives the texture: it is shading on
+                  // the stage, not an edge on the artwork, so it has no
+                  // rectangle to give away.
                   if (darken > 0)
                     BoxShadow(
                       color: AnalogColor.stageVoid.withValues(alpha: darken),
                       blurRadius: AnalogElevation.focusBlurPx * 2,
                       spreadRadius: AnalogSpace.xlPx,
                     ),
-                  BoxShadow(
-                    color: Color.lerp(
-                      AnalogColor.shadowCast,
-                      AnalogColor.shadowCastStrong,
-                      t,
-                    )!,
-                    blurRadius: lerpDouble(
-                      AnalogElevation.restBlurPx,
-                      AnalogElevation.focusBlurPx,
-                      t,
-                    )!,
-                    offset: Offset(
-                      lerpDouble(
-                        AnalogElevation.restOffsetXPx,
-                        AnalogElevation.focusOffsetXPx,
-                        t,
-                      )!,
-                      lerpDouble(
-                        AnalogElevation.restOffsetYPx,
-                        AnalogElevation.focusOffsetYPx,
-                        t,
-                      )!,
-                    ),
-                  ),
+                  // The cast shadow moves inside TexturedArtwork when textured,
+                  // so it can be thrown from the torn silhouette instead of
+                  // from this box.
+                  if (!textured) _PosterArt._castShadow(t),
                 ],
               ),
-              child: CustomPaint(
-                foregroundPainter: EdgeLightPainter(
-                  angleDeg: AnalogSelection.sceneLightAngleDeg,
-                  intensity: lerpDouble(0.7, 1, t)!,
-                ),
-                child: child,
-              ),
+              // The edge light lights four straight edges. On a torn sheet
+              // there are none, so it would trace a rectangle the artwork no
+              // longer occupies.
+              child: textured
+                  ? TexturedArtwork(
+                      texture: ArtworkTexture.poster,
+                      paper: _paper ?? TexturedArtwork.kWarmPaper,
+                      shadow: _PosterArt._castShadow(t),
+                      child: child!,
+                    )
+                  : CustomPaint(
+                      foregroundPainter: EdgeLightPainter(
+                        angleDeg: AnalogSelection.sceneLightAngleDeg,
+                        intensity: lerpDouble(0.7, 1, t)!,
+                      ),
+                      child: child,
+                    ),
             ),
           ),
         );
       },
       child: SizedBox(
-        width: width,
-        height: AnalogPosterTile.artHeightFor(width, aspectRatio: aspectRatio),
+        width: widget.width,
+        height: AnalogPosterTile.artHeightFor(
+          widget.width,
+          aspectRatio: widget.aspectRatio,
+        ),
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -272,16 +346,17 @@ class _PosterArt extends StatelessWidget {
                 fit: BoxFit.cover,
                 filterQuality: FilterQuality.medium,
                 cacheWidth: _decodeWidth(context),
+                onBytes: (bytes) => _readPalette(url, bytes),
                 errorBuilder: (_, _, _) =>
-                    AnalogPosterPlaceholder(label: placeholderLabel),
+                    AnalogPosterPlaceholder(label: widget.placeholderLabel),
               )
             else
-              AnalogPosterPlaceholder(label: placeholderLabel),
-            if (progress != null && progress! > 0)
+              AnalogPosterPlaceholder(label: widget.placeholderLabel),
+            if (progress != null && progress > 0)
               Align(
                 alignment: Alignment.bottomLeft,
                 child: FractionallySizedBox(
-                  widthFactor: progress!.clamp(0, 1),
+                  widthFactor: progress.clamp(0, 1),
                   child: Container(
                     height: AnalogHairline.idlePx,
                     color: AnalogColor.accent,

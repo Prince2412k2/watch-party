@@ -4,6 +4,17 @@ import 'dart:ui' as ui;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/widgets.dart';
 
+/// The stock sheets, by the surface each was cut for.
+///
+/// Two rather than one because the sheets are not tiles: each is a framed piece
+/// of paper with its own worn border, sized to the shape it prints on. Feeding
+/// the square backdrop sheet to a 2:3 poster would crop that border off two
+/// sides and leave the tear looking sawn rather than torn.
+abstract final class ArtworkTexture {
+  static const String backdrop = 'assets/textures/backdrop.png';
+  static const String poster = 'assets/textures/poster.png';
+}
+
 /// Artwork printed on aged stock: fibre in the image, a warm sheet behind it,
 /// and torn edges that genuinely remove pixels rather than paint over them.
 ///
@@ -41,6 +52,7 @@ class TexturedArtwork extends StatefulWidget {
     required this.child,
     this.paper = kWarmPaper,
     this.enabled = true,
+    this.shadow,
   });
 
   /// The baked greyscale+alpha sheet, e.g. `assets/textures/poster.png`.
@@ -55,6 +67,14 @@ class TexturedArtwork extends StatefulWidget {
   /// Off returns [child] untouched, so a caller can A/B the treatment without
   /// restructuring its tree — and so existing layout tests keep their shape.
   final bool enabled;
+
+  /// Cast shadow, thrown from the **torn silhouette** rather than from the
+  /// widget's box. A rectangular shadow under ragged paper is the tell that
+  /// gives the whole effect away: the eye reads the shadow's corners as the
+  /// object's corners, and the tear stops being a shape and becomes a pattern
+  /// printed on a square. Drawn from the sheet's own alpha, so it costs one
+  /// masked fill rather than a second pass over the artwork.
+  final BoxShadow? shadow;
 
   /// The base stock: warm, low-chroma, lighter than the stage so a torn edge
   /// reads as paper catching light rather than as a hole punched in the screen.
@@ -155,10 +175,38 @@ class _TexturedArtworkState extends State<TexturedArtwork> {
 
     // The outer tear, last, so it cuts ink and paper together and nothing can
     // hang past the torn edge.
-    return ShaderMask(
+    out = ShaderMask(
       blendMode: BlendMode.dstIn,
       shaderCallback: sheet.stock,
       child: out,
+    );
+
+    final shadow = widget.shadow;
+    if (shadow == null) return out;
+    return Stack(
+      // The shadow is offset and blurred, so it necessarily falls outside the
+      // artwork box. Clipping it back to that box would restore the straight
+      // edge the tear exists to destroy.
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          child: Transform.translate(
+            offset: shadow.offset,
+            child: ImageFiltered(
+              imageFilter: ui.ImageFilter.blur(
+                sigmaX: shadow.blurRadius / 2,
+                sigmaY: shadow.blurRadius / 2,
+              ),
+              child: ShaderMask(
+                blendMode: BlendMode.dstIn,
+                shaderCallback: sheet.stock,
+                child: ColoredBox(color: shadow.color),
+              ),
+            ),
+          ),
+        ),
+        out,
+      ],
     );
   }
 }
