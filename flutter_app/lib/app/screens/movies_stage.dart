@@ -141,10 +141,15 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
         // carry Hero tags matching the ones that page uses, so the artwork
         // flies across the route rather than cutting.
         //
-        // The item goes with it. That page fetches its own copy, and until
-        // that lands it has nothing to draw — no heading for the mark to fly
-        // into, on the FIRST open of every title.
-        context.push('/detail/$itemId', extra: item);
+        // The RECORD goes with it, not the rail's row. The library listing
+        // asks for Primary, Backdrop and Thumb only, so a row carries no Logo
+        // tag at all — seeding the page with one left it with a text heading
+        // and nothing for the mark to fly into. The record is already in hand:
+        // the aside beside this rail is drawing its logo from it.
+        context.push(
+          '/detail/$itemId',
+          extra: ref.read(itemDetailProvider(item.id)).valueOrNull ?? item,
+        );
       case NoActivation():
         break;
     }
