@@ -261,10 +261,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           SafeArea(
             child: Column(
               children: [
-                _Header(
-                  saving: _saving,
-                  onBack: _back,
-                  onSave: _loading ? null : _save,
+                SizedBox(
+                  height: profileHeaderHeight,
+                  child: _Header(
+                    saving: _saving,
+                    onBack: _back,
+                    onSave: _loading ? null : _save,
+                  ),
                 ),
                 Expanded(
                   child: _loading
@@ -784,6 +787,20 @@ class _Notice extends StatelessWidget {
   }
 }
 
+/// The tag the face flies on between settings and this editor. One face, one
+/// tag — there is only ever the signed-in user's own on screen.
+const String profileAvatarHeroTag = 'profile-avatar';
+
+/// The height this editor's header takes above the face.
+///
+/// Settings holds the same room so the two pages put the face in the same
+/// place — it flies between them, and a shared element that lands 100px from
+/// where it started reads as a mistake rather than as motion.
+///
+/// Pinned rather than measured, and the header is held TO it, so the two
+/// pages agree by construction instead of by coincidence.
+const double profileHeaderHeight = 88;
+
 class _Preview extends StatelessWidget {
   const _Preview({required this.svg, required this.name, required this.size});
 
@@ -794,35 +811,38 @@ class _Preview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    return Container(
-      key: const ValueKey('profile-avatar-stage'),
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: const Color(0xFF101216),
-        border: Border.all(color: wp.line2),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: svg == null
-          ? Center(
-              child: Text(
-                initialsOf(name),
-                style: TextStyle(
-                  fontFamily: AppFonts.sans,
-                  fontSize: size * 0.28,
-                  fontWeight: FontWeight.w700,
-                  color: wp.dim,
+    return Hero(
+      tag: profileAvatarHeroTag,
+      child: Container(
+        key: const ValueKey('profile-avatar-stage'),
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF101216),
+          border: Border.all(color: wp.line2),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: svg == null
+            ? Center(
+                child: Text(
+                  initialsOf(name),
+                  style: TextStyle(
+                    fontFamily: AppFonts.sans,
+                    fontSize: size * 0.28,
+                    fontWeight: FontWeight.w700,
+                    color: wp.dim,
+                  ),
                 ),
+              )
+            : SvgPicture.string(
+                svg!,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                semanticsLabel: name,
               ),
-            )
-          : SvgPicture.string(
-              svg!,
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
-              semanticsLabel: name,
-            ),
+      ),
     );
   }
 }
