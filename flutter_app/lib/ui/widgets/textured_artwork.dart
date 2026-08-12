@@ -106,6 +106,17 @@ class TexturedArtwork extends StatefulWidget {
     return base.withHue((base.hue + delta * kHuePush + 360) % 360).toColor();
   }
 
+  /// Drops the decoded sheets.
+  ///
+  /// Only tests need this, and they need it badly: the cache holds *Futures*,
+  /// and a Future created inside one `testWidgets` fake-async zone can never
+  /// complete inside another. A second test asking for a sheet a first test
+  /// already loaded would hang on it forever, silently fall back to the plain
+  /// artwork, and pass — which is exactly how a regression test for the
+  /// infinite-height bug came to pass against the broken code.
+  @visibleForTesting
+  static void debugClearSheetCache() => _Sheet.clearCache();
+
   /// Print wash: desaturated, blacks lifted off true black, so the image reads
   /// as absorbed into stock rather than emitted by a screen.
   static const ColorFilter wash = ColorFilter.matrix(<double>[
@@ -161,13 +172,23 @@ class _TexturedArtworkState extends State<TexturedArtwork> {
     );
 
     // Paper behind it, carrying the same fibre so the two read as one object.
+    //
+    // `passthrough`, not `expand`. This widget wraps two very differently
+    // shaped callers: the backdrop arrives with tight constraints and must
+    // fill them, while a poster sits in a Column and arrives with unbounded
+    // height, which `expand` turns into an infinite-height assertion. Passing
+    // the incoming constraints straight through satisfies both — the artwork
+    // itself is what decides the size, exactly as it did before the stock was
+    // wrapped around it.
     out = Stack(
-      fit: StackFit.expand,
+      fit: StackFit.passthrough,
       children: [
-        ShaderMask(
-          blendMode: BlendMode.softLight,
-          shaderCallback: sheet.grain,
-          child: ColoredBox(color: widget.paper),
+        Positioned.fill(
+          child: ShaderMask(
+            blendMode: BlendMode.softLight,
+            shaderCallback: sheet.grain,
+            child: ColoredBox(color: widget.paper),
+          ),
         ),
         out,
       ],
@@ -188,6 +209,7 @@ class _TexturedArtworkState extends State<TexturedArtwork> {
       // artwork box. Clipping it back to that box would restore the straight
       // edge the tear exists to destroy.
       clipBehavior: Clip.none,
+      fit: StackFit.passthrough,
       children: [
         Positioned.fill(
           child: Transform.translate(
@@ -228,6 +250,8 @@ class _Sheet {
 
   static Future<_Sheet> load(String key) =>
       _cache.putIfAbsent(key, () => _decode(key));
+
+  static void clearCache() => _cache.clear();
 
   static Future<_Sheet> _decode(String key) async {
     final data = await rootBundle.load(key);

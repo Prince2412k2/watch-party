@@ -7,6 +7,25 @@ import 'package:watchparty/ui/widgets/textured_artwork.dart';
 /// distinguishes "soft-light applied" from "soft-light silently skipped
 /// because nothing shared a layer", which is the exact bug this guards.
 void main() {
+  // Sheets are cached process-wide as Futures, and a Future from a previous
+  // test's zone never completes in this one. Without this every test after the
+  // first would render plain artwork and assert nothing.
+  setUp(TexturedArtwork.debugClearSheetCache);
+
+  /// The sheet decodes off the test's fake async, so it needs real time to
+  /// land — and more than one turn of it: the first decode in a file is not
+  /// finished after a single round, which quietly leaves the plain artwork on
+  /// screen and makes any assertion about the treatment vacuous.
+  Future<void> settleSheet(WidgetTester tester) async {
+    for (var i = 0; i < 3; i++) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+  }
+
   Future<void> pumpSheet(WidgetTester tester, Widget child, Size size) async {
     await tester.pumpWidget(
       Directionality(
@@ -23,11 +42,7 @@ void main() {
         ),
       ),
     );
-    // Image.asset decodes off the test's fake async, so let it actually run.
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    });
-    await tester.pumpAndSettle();
+    await settleSheet(tester);
   }
 
   testWidgets('poster stock prints artwork with worn edges', (tester) async {
@@ -79,6 +94,67 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('survives an unbounded parent', (tester) async {
+    // A poster tile puts its artwork in a Column, which hands down unbounded
+    // height. StackFit.expand turned that into "BoxConstraints forces an
+    // infinite height" and took the whole rail down with it. The sheet has to
+    // pass its constraints through and let the artwork decide the size.
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            SizedBox(
+              width: 229.1,
+              child: TexturedArtwork(
+                texture: 'assets/textures/poster.png',
+                child: SizedBox(
+                  width: 229.1,
+                  height: 343,
+                  child: ColoredBox(color: Color(0xFF1663EB)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    await settleSheet(tester);
+
+    expect(tester.takeException(), isNull);
+    // Proves the stock actually rendered. Without this the test passes when
+    // the sheet fails to decode and TexturedArtwork quietly returns its child,
+    // which is exactly how it passed against the infinite-height bug.
+    expect(find.byType(ShaderMask), findsWidgets);
+    expect(tester.getSize(find.byType(TexturedArtwork)).height, 343);
+  });
+
+  testWidgets('fills a tight parent, as the backdrop needs', (tester) async {
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        // Centred, because pumpWidget hands the root tight view constraints
+        // and a bare SizedBox cannot shrink inside them.
+        child: Center(
+          child: SizedBox(
+            width: 800,
+            height: 450,
+            child: TexturedArtwork(
+              texture: 'assets/textures/backdrop.png',
+              child: const ColoredBox(color: Color(0xFF1663EB)),
+            ),
+          ),
+        ),
+      ),
+    );
+    await settleSheet(tester);
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ShaderMask), findsWidgets);
+    expect(tester.getSize(find.byType(TexturedArtwork)), const Size(800, 450));
   });
 
   test('the hue push keeps paper as paper', () {
