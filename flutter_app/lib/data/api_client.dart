@@ -83,6 +83,14 @@ abstract class ApiClient {
   Future<User> login(String username, String password);
   Future<User> me();
 
+  /// Change the signed-in account's own password.
+  ///
+  /// [current] is the authorisation: the server hands it to Jellyfin, which
+  /// rejects the change itself when it is wrong. Nothing here can set anyone
+  /// else's — whose password it is comes from the session, never from a
+  /// parameter.
+  Future<void> changePassword(String current, String next);
+
   /// End the server-side session, then drop the local one via [clearSession]
   /// whether or not the round trip succeeded. Throws on a non-200 response —
   /// the caller learns the server may still consider the session live, but the
@@ -314,6 +322,15 @@ class DioApiClient implements ApiClient {
     if (res.statusCode != 200) _fail(res, 'login');
     await _refreshCookieHeader();
     return User.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<void> changePassword(String current, String next) async {
+    final res = await _dio.post(
+      '/api/auth/password',
+      data: {'currentPassword': current, 'newPassword': next},
+    );
+    if (res.statusCode != 200) _fail(res, 'changePassword');
   }
 
   @override

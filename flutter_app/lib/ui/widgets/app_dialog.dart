@@ -57,6 +57,16 @@ const TextStyle kDialogTitleStyle = TextStyle(
 );
 
 /// A tiny confirm helper many epics reuse.
+///
+/// The buttons pop the DIALOG's navigator, not the caller's. These two are not
+/// the same one: the dialog goes up on the root navigator, while a caller
+/// inside the shell sits under the router's nested one. Popping the caller's
+/// therefore took the top route off the PAGE stack instead — answering "yes,
+/// delete it" removed the downloads screen and left the bare shell behind, and
+/// go_router asserted on the way out because there was nothing left to show.
+///
+/// So the actions are built from the dialog's own context rather than closed
+/// over the one that opened it.
 Future<bool> showConfirm(
   BuildContext context, {
   required String title,
@@ -64,22 +74,24 @@ Future<bool> showConfirm(
   String confirmLabel = 'Confirm',
   bool danger = false,
 }) async {
-  final result = await AppDialog.show<bool>(
-    context,
-    title: title,
-    body: body,
-    actions: [
-      AppButton(
-        label: 'Cancel',
-        variant: AppButtonVariant.ghost,
-        onPressed: () => Navigator.of(context).pop(false),
-      ),
-      AppButton(
-        label: confirmLabel,
-        variant: danger ? AppButtonVariant.danger : AppButtonVariant.primary,
-        onPressed: () => Navigator.of(context).pop(true),
-      ),
-    ],
+  final result = await showAnalogDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AppDialog(
+      title: title,
+      body: body,
+      actions: [
+        AppButton(
+          label: 'Cancel',
+          variant: AppButtonVariant.ghost,
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+        ),
+        AppButton(
+          label: confirmLabel,
+          variant: danger ? AppButtonVariant.danger : AppButtonVariant.primary,
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+        ),
+      ],
+    ),
   );
   return result ?? false;
 }

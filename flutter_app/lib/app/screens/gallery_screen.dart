@@ -228,16 +228,24 @@ class _GalleryScreenState extends State<GalleryScreen> {
                     title: 'Leave party?',
                     body:
                         'Playback will stop for everyone if you are the host.',
+                    // Builders, so these pop the DIALOG's navigator. Closing
+                    // over the context that opened it pops the page instead —
+                    // the dialog is on the root navigator and this screen is
+                    // under the router's nested one.
                     actions: [
-                      AppButton(
-                        label: 'Cancel',
-                        variant: AppButtonVariant.ghost,
-                        onPressed: () => Navigator.of(context).pop(),
+                      Builder(
+                        builder: (ctx) => AppButton(
+                          label: 'Cancel',
+                          variant: AppButtonVariant.ghost,
+                          onPressed: () => Navigator.of(ctx).pop(),
+                        ),
                       ),
-                      AppButton(
-                        label: 'Leave',
-                        variant: AppButtonVariant.danger,
-                        onPressed: () => Navigator.of(context).pop(),
+                      Builder(
+                        builder: (ctx) => AppButton(
+                          label: 'Leave',
+                          variant: AppButtonVariant.danger,
+                          onPressed: () => Navigator.of(ctx).pop(),
+                        ),
                       ),
                     ],
                   ),

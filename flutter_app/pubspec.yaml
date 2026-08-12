@@ -97,3 +97,25 @@ flutter:
           weight: 800
         - asset: assets/fonts/CircularXX-Bold.ttf
           weight: 900
+    # Subtitles only. Circular is a display face — lovely for headings, and
+    # tiring over two lines of dialogue held for three seconds at a time.
+    # Clear Sans was drawn for exactly this: open apertures, unambiguous
+    # I/l/1, and it keeps its shape under the outline subtitles need.
+    # Apache 2.0, see assets/fonts/ClearSans-LICENSE.txt.
+    - family: ClearSans
+      fonts:
+        - asset: assets/fonts/ClearSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/ClearSans-Italic.ttf
+          weight: 400
+          style: italic
+        - asset: assets/fonts/ClearSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/ClearSans-MediumItalic.ttf
+          weight: 500
+          style: italic
+        - asset: assets/fonts/ClearSans-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/ClearSans-BoldItalic.ttf
+          weight: 700
+          style: italic

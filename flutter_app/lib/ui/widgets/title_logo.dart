@@ -15,6 +15,57 @@ String? titleLogoUrl(ApiClient api, LibraryItem item) {
   return api.imageUrl(item.id, type: ImageType.logo, tag: tag);
 }
 
+/// The tag that carries a title's logo between the browse stage and the detail
+/// page. One per item, so the two ends find each other and nothing else.
+String titleLogoHeroTag(String itemId) => 'logo-$itemId';
+
+/// The logo where it stands on its own beside the copy, rather than inside it.
+///
+/// Renders NOTHING when the item has no logo. The written title in the copy
+/// column is already saying the name; a second copy of it in the app's own
+/// face, off to one side, would just be the same words twice.
+///
+/// Tagged, so that opening the title flies this artwork into the heading slot
+/// on the detail page instead of cutting to it.
+class AsideTitleLogo extends StatelessWidget {
+  const AsideTitleLogo({
+    super.key,
+    required this.itemId,
+    required this.url,
+    required this.maxHeightPx,
+    required this.widthPx,
+  });
+
+  final String? itemId;
+  final String? url;
+  final double maxHeightPx;
+
+  /// The flying box's width. Same at the other end — see the note there.
+  final double widthPx;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url == null || itemId == null) return const SizedBox.shrink();
+    // A definite box from the first frame, loaded or not. A hero takes the
+    // rect it flies FROM by measuring this, and the mark is contained inside
+    // rather than sizing it, so a slot whose artwork has not arrived is still
+    // the same rectangle as one whose has.
+    return SizedBox(
+      width: widthPx,
+      height: maxHeightPx,
+      child: Hero(
+        tag: titleLogoHeroTag(itemId!),
+        child: TitleLogo(
+          url: url,
+          maxHeightPx: maxHeightPx,
+          alignment: Alignment.center,
+          child: const SizedBox.shrink(),
+        ),
+      ),
+    );
+  }
+}
+
 /// A title's logo artwork, standing in for the text heading.
 ///
 /// A film's logo is its name as the film itself sets it — the typeface, the
@@ -32,6 +83,7 @@ class TitleLogo extends StatelessWidget {
     required this.url,
     required this.maxHeightPx,
     required this.child,
+    this.alignment = AlignmentDirectional.centerStart,
   });
 
   /// Logo artwork, or null to render [child] without asking the network.
@@ -44,6 +96,10 @@ class TitleLogo extends StatelessWidget {
   /// The text heading, shown when there is no logo.
   final Widget child;
 
+  /// Where the artwork sits in the width it is given. Start where it stands in
+  /// for a heading; centred where it stands on its own beside the copy.
+  final AlignmentGeometry alignment;
+
   @override
   Widget build(BuildContext context) {
     if (url == null) return child;
@@ -52,8 +108,8 @@ class TitleLogo extends StatelessWidget {
     // image its intrinsic size for free: it lays out at maxHeightPx tall, and
     // narrower than the column unless the artwork is extremely wide, in which
     // case `contain` scales it down instead of overflowing.
-    final decodeHeight =
-        (maxHeightPx * MediaQuery.devicePixelRatioOf(context)).round();
+    final decodeHeight = (maxHeightPx * MediaQuery.devicePixelRatioOf(context))
+        .round();
 
     // The align is load-bearing, not cosmetic. Some of these headings sit in an
     // `Expanded`, which hands down a TIGHT width — an image told exactly how
@@ -63,7 +119,7 @@ class TitleLogo extends StatelessWidget {
     // `heightFactor` shrink-wraps the height so this still works inside a
     // vertically unbounded column.
     return Align(
-      alignment: AlignmentDirectional.centerStart,
+      alignment: alignment,
       heightFactor: 1,
       child: AuthedNetworkImage(
         url!,

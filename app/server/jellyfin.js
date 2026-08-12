@@ -76,6 +76,17 @@ export function authenticate(username, password, deviceId = 'watchparty-server')
   })
 }
 
+// Change a user's own password. Jellyfin verifies CurrentPw itself and 401s
+// when it is wrong, which is what lets this run on the user's own token
+// rather than needing an admin one.
+export function changePassword(token, userId, currentPassword, newPassword) {
+  return jfetch(`/Users/${userId}/Password`, {
+    method: 'POST',
+    token,
+    body: { CurrentPw: currentPassword, NewPw: newPassword },
+  })
+}
+
 export function getItems(token, userId, params = {}) {
   const qs = new URLSearchParams({
     IncludeItemTypes: 'Movie,Series',

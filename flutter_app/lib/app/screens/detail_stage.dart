@@ -47,9 +47,20 @@ class DetailStage extends ConsumerStatefulWidget {
     required this.itemId,
     required this.onWatch,
     required this.onBack,
+    this.seed,
   });
 
   final String itemId;
+
+  /// The title as the surface that opened it already knew it.
+  ///
+  /// Without this the page has nothing to draw until its own fetch lands, so
+  /// the FIRST open of any title rendered a skeleton — and a skeleton has no
+  /// heading, which means the mark flying in from the browse stage had no
+  /// destination to fly to. It arrived at nothing and then appeared once the
+  /// fetch returned. Opening the same title again looked right only because
+  /// the fetch was cached by then.
+  final LibraryItem? seed;
   final void Function(LibraryItem playItem, DetailTrackSelection tracks)
   onWatch;
   final VoidCallback onBack;
@@ -67,10 +78,14 @@ class _DetailStageState extends ConsumerState<DetailStage>
   /// on a Hero from the rail — so this is for the furniture that has nowhere
   /// to fly from: the cast rises from beneath, the actions come in from the
   /// side, each on its own slice of the clock.
-  late final AnimationController _enter = AnimationController(
-    vsync: this,
-    duration: AnalogMotion.enterMs + AnalogMotion.copySwapMs,
-  )..forward();
+  ///
+  /// Built in [initState] rather than as a `late final` initialiser, for the
+  /// reason the profile menu's controller carries the same note: a lazy field
+  /// is only created when something reads it, and `dispose` reads it. Leave
+  /// this page before its fetch lands — so nothing has drawn, so nothing has
+  /// touched this — and unmounting CREATES a ticker, which asserts on the way
+  /// out with "looking up a deactivated widget's ancestor is unsafe".
+  late final AnimationController _enter;
 
   /// The copy block's re-arrival when the episode cursor moves.
   ///
@@ -79,14 +94,24 @@ class _DetailStageState extends ConsumerState<DetailStage>
   /// same rule as movies do on the movies tab", and on that tab the text
   /// swaps with the same weighted travel the rail settles with. Starts
   /// settled so the first paint is not an animation from nothing.
-  late final AnimationController _copySwap = AnimationController(
-    vsync: this,
-    duration: AnalogMotion.copySwapMs,
-    value: 1,
-  );
+  late final AnimationController _copySwap;
 
   /// Which way the cursor last moved, so the copy comes in from that side.
   int _stepDirection = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _enter = AnimationController(
+      vsync: this,
+      duration: AnalogMotion.enterMs + AnalogMotion.copySwapMs,
+    )..forward();
+    _copySwap = AnimationController(
+      vsync: this,
+      duration: AnalogMotion.copySwapMs,
+      value: 1,
+    );
+  }
 
   @override
   void dispose() {
@@ -96,7 +121,7 @@ class _DetailStageState extends ConsumerState<DetailStage>
   }
 
   late String _activeId = widget.itemId;
-  LibraryItem? _activeFallback;
+  late LibraryItem? _activeFallback = widget.seed;
   int? _selAudio;
   int? _selSubtitle;
 
@@ -716,6 +741,10 @@ class _CopyColumn extends StatelessWidget {
     // changed the page — the opposite of the movies rule.
     final subject = rootIsSeries && isEpisode ? active : hero;
 
+    // Null for an episode even when the series has a logo: this heading is the
+    // episode's name, and borrowing the series' mark would say the wrong one.
+    final logoUrl = isEpisode ? null : titleLogoUrl(api, subject);
+
     // An episode carries no genres of its own; they belong to the series and
     // are the same for every episode in it.
     final genres = (subject.genres.isNotEmpty ? subject : hero).genres
@@ -805,22 +834,58 @@ class _CopyColumn extends StatelessWidget {
             // control you have to scroll to reach is worse than a heading two
             // sizes smaller.
             // The logo is the title as the film sets it, so it takes the
-            // heading's slot when there is one. Episodes have no logo of their
-            // own and must not borrow the series' — the heading here is the
-            // episode's name — so they keep the text and its step-down.
-            TitleLogo(
-              url: isEpisode ? null : titleLogoUrl(api, subject),
-              maxHeightPx: TitleLayout.logoMaxHeight,
-              child: Text(
-                subject.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TitleType.heading.copyWith(
-                  color: wp.text,
-                  fontSize: _headingSizeFor(subject.name),
-                ),
-              ),
-            ),
+            // heading's slot when there is one, and it is tagged to match the
+            // browse stage's aside — opening a title flies its mark across
+            // into here rather than cutting to it.
+            //
+            // Episodes have no logo of their own and must not borrow the
+            // series' (the heading here is the episode's name), so they keep
+            // the text and its step-down.
+            logoUrl == null
+                ? Text(
+                    subject.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TitleType.heading.copyWith(
+                      color: wp.text,
+                      fontSize: _headingSizeFor(subject.name),
+                    ),
+                  )
+                // The slot holds its full height from the first frame,
+                // whatever is or is not in it.
+                //
+                // Without this the page opened with the heading collapsed to
+                // nothing — genre sat straight on top of the synopsis — and
+                // then shoved the whole column down when the mark landed.
+                //
+                // The Hero IS the box, with nothing loose between them. Put an
+                // Align in here and the hero sizes to its contents again,
+                // which is the whole failure: mid-flight the contents are the
+                // text standing in for artwork that has not arrived, so the
+                // mark dives into a line of type and springs back out of it.
+                : SizedBox(
+                    width: TitleLayout.logoBoxWidth,
+                    height: TitleLayout.logoDetailHeight,
+                    child: Hero(
+                      tag: titleLogoHeroTag(subject.id),
+                      child: TitleLogo(
+                        url: logoUrl,
+                        maxHeightPx: TitleLayout.logoDetailHeight,
+                        // Still the text underneath. This is the ERROR path
+                        // now rather than the no-logo one, but artwork that
+                        // fails to decode must not leave the page headless.
+                        child: Text(
+                          subject.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TitleType.heading.copyWith(
+                            color: wp.text,
+                            fontSize: _headingSizeFor(subject.name),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
           ),
           // An episode without its own synopsis falls back to the series', so
           // the block never collapses to a bare title mid-rail.
@@ -1030,11 +1095,14 @@ class _RightPoster extends StatelessWidget {
     return Align(
       // Nudged below centre. Dead centre put the poster's top edge above the
       // copy's, which read as it floating away from the block it belongs to.
-      alignment: const Alignment(1, 0.18),
+      //
+      // Pulled in off the right edge as well: hard against it, the artwork
+      // read as pinned to the window rather than as part of the composition.
+      alignment: const Alignment(0.35, 0.14),
       child: Padding(
-        padding: const EdgeInsets.only(right: 40),
+        padding: const EdgeInsets.only(right: 24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 280),
+          constraints: const BoxConstraints(maxWidth: 340),
           child: Hero(
             tag: 'poster-${item.id}',
             // The poster arrives with the same elasticity the rail settles

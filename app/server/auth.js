@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { authenticate } from './jellyfin.js'
+import { authenticate, changePassword } from './jellyfin.js'
 
 export const ADMIN_REVALIDATION_MS = 5 * 60 * 1000
 export const ADMIN_REVALIDATION_TIMEOUT_MS = 3_000
@@ -56,6 +56,42 @@ export function testLogin(req, res) {
   }
   const { accessToken: _, deviceId: __, adminCheckedAt: ___, ...safe } = req.session.jellyfin
   res.json(safe)
+}
+
+/// Change your own password.
+///
+/// Runs on the caller's OWN Jellyfin token, not an admin one: Jellyfin checks
+/// `CurrentPw` itself and 401s when it is wrong, so the current password is
+/// the authorisation. That also means this cannot be used to change anyone
+/// else's — the session decides whose password is being set, never the body.
+export async function password(req, res) {
+  const session = req.session.jellyfin
+  if (!session) return res.status(401).json({ error: 'not authenticated' })
+
+  const { currentPassword, newPassword } = req.body || {}
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'currentPassword and newPassword required' })
+  }
+  if (newPassword === currentPassword) {
+    return res.status(400).json({ error: 'New password matches the old one' })
+  }
+  if (newPassword.length < 4) {
+    return res.status(400).json({ error: 'New password is too short' })
+  }
+
+  try {
+    await changePassword(session.accessToken, session.userId, currentPassword, newPassword)
+    res.json({ ok: true })
+  } catch (err) {
+    // Jellyfin answers 401 to a wrong current password. Said plainly rather
+    // than as a generic failure: "that did not work" on a password form is
+    // indistinguishable from the server being down.
+    if (err.status === 401 || err.status === 403) {
+      return res.status(401).json({ error: 'Current password is incorrect' })
+    }
+    console.error('password change error', err.message)
+    res.status(502).json({ error: 'Could not reach media server' })
+  }
 }
 
 export function me(req, res) {

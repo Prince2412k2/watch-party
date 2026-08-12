@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../models/models.dart';
 import '../state/state.dart';
 import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
@@ -18,6 +19,7 @@ import 'screens/offline_screen.dart';
 import 'screens/servarr_screen.dart';
 import 'screens/servarr_queue_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/settings_screen.dart';
 
 /// The root Navigator's key. Exposed because some app-wide affordances resolve a
 /// below-router context via `rootNavigatorKey.currentContext` (e.g. the party
@@ -43,8 +45,12 @@ abstract final class Routes {
   static const offline = '/offline';
   static const servarrQueue = '/servarr/queue';
 
-  /// The profile editor — reachable from the account menu on any screen.
+  /// The avatar editor. A step in from [settings] now, behind the pencil on
+  /// the face, rather than what the account menu opens directly.
   static const profile = '/profile';
+
+  /// Settings — what the account menu's tune button opens.
+  static const settings = '/settings';
 
   /// Top-level immersive routes.
   static const detail = '/detail'; // /detail/:id
@@ -115,6 +121,15 @@ GoRouter buildRouter(WidgetRef ref) {
       GoRoute(path: Routes.login, builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/gallery', builder: (_, _) => const GalleryScreen()),
       GoRoute(path: Routes.profile, builder: (_, _) => const ProfileScreen()),
+      // The same fade-through every other full-window surface arrives on, so
+      // opening settings from a stage reads like the rest of the app.
+      GoRoute(
+        path: Routes.settings,
+        pageBuilder: (_, state) => fadeThroughPage(
+          key: state.pageKey,
+          child: const SettingsScreen(),
+        ),
+      ),
 
       // Title detail is full-window too (leads into the player) — same
       // fade-through. Every library title, of every type, renders
@@ -130,7 +145,14 @@ GoRouter buildRouter(WidgetRef ref) {
           // Back to the library is much quicker: the poster is going home, not
           // being introduced.
           reverseDuration: AnalogMotion.heroReturnMs,
-          child: DetailScreen(itemId: state.pathParameters['id']!),
+          child: DetailScreen(
+            itemId: state.pathParameters['id']!,
+            // Whatever the opening surface handed over, if anything. A
+            // deep link carries no extra and simply waits for the fetch.
+            seed: state.extra is LibraryItem
+                ? state.extra! as LibraryItem
+                : null,
+          ),
         ),
       ),
 
@@ -163,10 +185,8 @@ GoRouter buildRouter(WidgetRef ref) {
           ),
           GoRoute(
             path: Routes.series,
-            pageBuilder: (_, state) => NoTransitionPage(
-              key: state.pageKey,
-              child: const ShowsStage(),
-            ),
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const ShowsStage()),
           ),
           GoRoute(
             path: Routes.discover,

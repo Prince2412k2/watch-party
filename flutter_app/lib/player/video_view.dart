@@ -12,7 +12,11 @@ import 'player_controller.dart';
 /// centered near the bottom with a comfortable margin that keeps them clear of
 /// the transport controls. We emulate that here:
 ///
-/// * The bundled Circular XX family keeps subtitles consistent with the app.
+/// * Clear Sans, NOT the app's Circular. Subtitles are the one text here that
+///   is read continuously, at distance, over moving picture — and Circular is
+///   a display face whose round closed shapes blur together under those
+///   conditions, with an I, an l and a 1 you cannot tell apart. See
+///   [AppFonts.subtitle].
 /// * `backgroundColor: transparent` removes media_kit's default `0xAA000000`
 ///   box; legibility comes from the shadow stack instead.
 /// * The four diagonal 1px black shadows fake a thin outline; the two larger
@@ -21,8 +25,10 @@ import 'player_controller.dart';
 const _netflixSubtitleStyle = TextStyle(
   color: Color(0xFFFFFFFF),
   fontSize: 34,
-  fontWeight: FontWeight.w600,
-  fontFamily: AppFonts.sans,
+  // 500 rather than 600: Clear Sans carries more weight than Circular at the
+  // same number, and semibold under a 1px outline closes up the counters.
+  fontWeight: FontWeight.w500,
+  fontFamily: AppFonts.subtitle,
   height: 1.3,
   letterSpacing: 0.2,
   backgroundColor: Color(0x00000000),

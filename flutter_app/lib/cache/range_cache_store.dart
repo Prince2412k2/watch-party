@@ -573,6 +573,40 @@ class RangeCacheStore {
     return result;
   }
 
+  /// Every itemId with something on disk, complete or not.
+  ///
+  /// [completedItemIds] answers a different question — what is watchable
+  /// offline. This one is everything the cache is holding, which is what
+  /// "clear the cache" has to enumerate.
+  Future<List<String>> allItemIds() async {
+    final dir = await _cacheDir();
+    if (!await dir.exists()) return const [];
+    final result = <String>[];
+    for (final entity in await _listSafely(dir)) {
+      if (entity is! File || !entity.path.endsWith('.meta.json')) continue;
+      final name = entity.path.split(Platform.pathSeparator).last;
+      result.add(name.substring(0, name.length - '.meta.json'.length));
+    }
+    return result;
+  }
+
+  /// Drops everything the cache is holding except [protected].
+  ///
+  /// Unconditional, unlike [evict]: no size cap, no age. This is the user
+  /// asking for the space back, and the only thing that survives is what they
+  /// asked to keep — the titles they downloaded on purpose.
+  ///
+  /// Returns how many entries went, so the caller can say so.
+  Future<int> clear({Set<String> protected = const {}}) async {
+    var removed = 0;
+    for (final itemId in await allItemIds()) {
+      if (protected.contains(itemId)) continue;
+      await delete(itemId);
+      removed++;
+    }
+    return removed;
+  }
+
   /// Deletes [itemId]'s cache entirely (data + sidecar), closing an open
   /// handle first if there is one. Used when the user removes an offline
   /// title — unlike [evict], this is an explicit, unconditional delete of one
