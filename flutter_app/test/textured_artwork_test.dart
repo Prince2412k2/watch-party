@@ -108,11 +108,11 @@ void main() {
 
   group('sheet choice', () {
     test('is stable for a title', () {
-      // A poster that re-folds itself whenever it scrolls back into view is
-      // worse than no texture at all.
+      // A poster that re-creases whenever it scrolls back into view is worse
+      // than no texture at all.
       expect(
-        ArtworkTexture.creaseFor('the-darjeeling-limited'),
-        ArtworkTexture.creaseFor('the-darjeeling-limited'),
+        ArtworkTexture.sheetFor('the-darjeeling-limited', portrait: true),
+        ArtworkTexture.sheetFor('the-darjeeling-limited', portrait: true),
       );
     });
 
@@ -120,15 +120,34 @@ void main() {
       // One sheet on twenty tiles reads as a filter, not as paper. This is the
       // property that buys the variety, so it is worth pinning.
       final used = <String>{};
-      for (var i = 0; i < 200; i++) {
-        used.add(ArtworkTexture.creaseFor('title-$i'));
+      for (var i = 0; i < 300; i++) {
+        used.add(ArtworkTexture.sheetFor('title-$i', portrait: true));
       }
-      expect(used.length, ArtworkTexture.creases.length);
+      expect(used.length, ArtworkTexture.count);
+    });
+
+    test('paper is cut to the shape it prints on', () {
+      // A tall sheet stretched across a backdrop drags its grain and edge wear
+      // along one axis, which reads as a filter rather than as paper.
+      expect(
+        ArtworkTexture.sheetFor('x', portrait: true),
+        contains('portrait-'),
+      );
+      expect(
+        ArtworkTexture.sheetFor('x', portrait: false),
+        contains('landscape-'),
+      );
     });
 
     test('an absent id falls on one sheet rather than flickering', () {
-      expect(ArtworkTexture.creaseFor(null), ArtworkTexture.creases.first);
-      expect(ArtworkTexture.creaseFor(''), ArtworkTexture.creases.first);
+      expect(
+        ArtworkTexture.sheetFor(null, portrait: true),
+        ArtworkTexture.sheetFor('', portrait: true),
+      );
+      expect(
+        ArtworkTexture.sheetFor(null, portrait: true),
+        contains('portrait-00'),
+      );
     });
   });
 }

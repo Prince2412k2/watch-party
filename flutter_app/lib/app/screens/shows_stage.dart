@@ -219,6 +219,9 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
     final railBudget = media.size.height * TitleLayout.railStageShare;
 
     return AnalogStage(
+      // The room this library lives in. A name, not the backdrop URL: the
+      // wall must not redecorate every time the selection moves.
+      wallSeed: 'shows',
       backdropUrl: selected == null
           ? null
           : api.imageUrl(selected.id, type: ImageType.backdrop),

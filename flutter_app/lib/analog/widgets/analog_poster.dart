@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/authed_image.dart';
+import '../../ui/widgets/artwork_wall.dart';
 import '../../ui/widgets/textured_artwork.dart';
 import '../browse_core.dart';
 
@@ -287,8 +288,8 @@ class _PosterArt extends StatelessWidget {
           children: [
             // The sheet creases the print, and only the print. Everything the
             // interface draws on top of the artwork stays out of it.
-            TexturedArtwork(
-              enabled: textured,
+            _Printed(
+              textured: textured ?? ArtworkTextureScope.of(context),
               seed: textureSeed,
               child: url != null
                   ? AuthedNetworkImage(
@@ -314,6 +315,41 @@ class _PosterArt extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A poster as it sits on the stage: printed on paper, then taking the shape of
+/// the wall it is stuck to.
+///
+/// The wall relief is sampled from the window rather than from this tile, so
+/// the brick courses continue straight through the poster and out onto the
+/// wall either side. That continuity is the whole of the effect — a tile that
+/// sampled the wall from its own corner would be a little wall of its own, and
+/// twenty of them in a rail all showing the same brick in the same place read
+/// as a repeated pattern rather than as a room.
+class _Printed extends StatelessWidget {
+  const _Printed({
+    required this.textured,
+    required this.seed,
+    required this.child,
+  });
+
+  final bool textured;
+  final String? seed;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!textured) return child;
+    return WallLayer(
+      index: ArtworkWall.indexFor(ArtworkTextureScope.wallSeedOf(context)),
+      strength: ArtworkWall.kPasteStrength,
+      builder: (context, depth, _) => WallRelief(
+        depth: depth,
+        strength: ArtworkWall.kPasteStrength,
+        child: TexturedArtwork(seed: seed, enabled: true, child: child),
       ),
     );
   }

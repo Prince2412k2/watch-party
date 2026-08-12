@@ -253,8 +253,10 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
     final api = ref.watch(apiClientProvider);
 
     return items.when(
-      loading: () => const AnalogStage(child: _BrowseSkeleton()),
+      loading: () =>
+          const AnalogStage(wallSeed: 'browse', child: _BrowseSkeleton()),
       error: (e, _) => AnalogStage(
+        wallSeed: 'browse',
         child: ErrorState(
           title: 'Failed to load library',
           message: '$e',
@@ -264,6 +266,7 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
       data: (list) {
         if (list.isEmpty) {
           return const AnalogStage(
+            wallSeed: 'browse',
             child: EmptyState(
               title: 'No titles here yet',
               message: 'Add something from Discover.',
@@ -277,6 +280,7 @@ class _BrowseScreenState extends ConsumerState<BrowseScreen> {
         final focused = _focusedItem(shelves);
 
         return AnalogStage(
+          wallSeed: 'browse',
           backdropUrl: focused == null
               ? null
               : api.imageUrl(focused.id, type: ImageType.backdrop),

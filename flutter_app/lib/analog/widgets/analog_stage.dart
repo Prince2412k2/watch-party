@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/authed_image.dart';
+import '../../ui/widgets/artwork_wall.dart';
 import '../../ui/widgets/textured_artwork.dart';
 
 /// The full-stage backdrop the whole browsing model hangs off.
@@ -34,6 +35,7 @@ class AnalogStage extends StatefulWidget {
     this.backdropUrl,
     this.focused = false,
     this.textured,
+    this.wallSeed,
   });
 
   final Widget child;
@@ -44,6 +46,15 @@ class AnalogStage extends StatefulWidget {
   /// Crease the backdrop. Null defers to the ambient [ArtworkTextureScope], and
   /// so to the user's setting; pass it to force one stage either way.
   final bool? textured;
+
+  /// Which wall this room is papered with. A library name, not the backdrop
+  /// URL: the wall is the room, and a room that redecorates every time the
+  /// selection moves is a strobe, not a stage.
+  final String? wallSeed;
+
+  /// How much wall shows around the pasted backdrop. Without a margin the sheet
+  /// covers the room and there is no wall left to be pasted onto.
+  static const double kPasteInset = 0.045;
 
   /// Whether something on the stage currently owns focus. Raises the grain by
   /// [AnalogGrain.focusedBoostPct], which is the whole of that token's job.
@@ -69,6 +80,7 @@ class _AnalogStageState extends State<AnalogStage> {
             (widget.focused ? AnalogGrain.focusedBoostPct : 0)) /
         100;
     final url = widget.backdropUrl;
+    final textured = widget.textured ?? ArtworkTextureScope.of(context);
 
     return Stack(
       fit: StackFit.expand,
@@ -78,6 +90,27 @@ class _AnalogStageState extends State<AnalogStage> {
             fit: StackFit.expand,
             children: [
               const ColoredBox(color: AnalogColor.stageGround),
+              if (textured)
+                WallLayer(
+                  index: ArtworkWall.indexFor(widget.wallSeed),
+                  withTint: true,
+                  strength: ArtworkWall.kReliefStrength,
+                  builder: (context, depth, tint) => Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      WallRelief(
+                        depth: depth,
+                        strength: ArtworkWall.kReliefStrength,
+                        child: const ColoredBox(color: AnalogColor.stageGround),
+                      ),
+                      if (tint != null)
+                        Opacity(
+                          opacity: ArtworkWall.kTintOpacity,
+                          child: RawImage(image: tint, fit: BoxFit.cover),
+                        ),
+                    ],
+                  ),
+                ),
               AnimatedSwitcher(
                 duration: AnalogMotion.backdropCrossMs,
                 switchInCurve: AnalogMotion.backdropCrossEase,
@@ -91,18 +124,11 @@ class _AnalogStageState extends State<AnalogStage> {
                 ),
                 child: url == null
                     ? SizedBox.expand(key: ValueKey(_backdropRevision))
-                    : TexturedArtwork(
+                    : _PastedBackdrop(
                         key: ValueKey(_backdropRevision),
-                        // Seeded by the URL, so the stage does not re-crease
-                        // itself on every focus step — only when the backdrop
-                        // behind it actually changes.
-                        seed: url,
-                        enabled: widget.textured,
-                        child: AuthedNetworkImage(
-                          url,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => const SizedBox.expand(),
-                        ),
+                        url: url,
+                        textured: textured,
+                        wallSeed: widget.wallSeed,
                       ),
               ),
               const _StageScrim(),
@@ -115,8 +141,68 @@ class _AnalogStageState extends State<AnalogStage> {
             ],
           ),
         ),
-        widget.child,
+        // The stage is what decides which room this is, so it publishes its
+        // wall to everything standing in it. Without this the posters would
+        // read the app-level scope, land on a different wall from the stage
+        // behind them, and the courses would stop dead at every poster edge —
+        // which is the one thing the whole effect depends on not happening.
+        ArtworkTextureScope(
+          enabled: textured,
+          wallSeed: widget.wallSeed,
+          child: widget.child,
+        ),
       ],
+    );
+  }
+}
+
+/// The selected title's backdrop, pasted on the wall as a large sheet.
+///
+/// Inset rather than full-bleed, because a sheet that reaches every edge is
+/// indistinguishable from a background — the wall has to show around it for the
+/// paste to read at all. It takes the wall's relief at the same strength a
+/// poster does, so the courses run through it and out onto the brick.
+class _PastedBackdrop extends StatelessWidget {
+  const _PastedBackdrop({
+    super.key,
+    required this.url,
+    required this.textured,
+    required this.wallSeed,
+  });
+
+  final String url;
+  final bool textured;
+  final String? wallSeed;
+
+  @override
+  Widget build(BuildContext context) {
+    final art = AuthedNetworkImage(
+      url,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => const SizedBox.expand(),
+    );
+    if (!textured) return art;
+
+    final inset = MediaQuery.sizeOf(context).shortestSide *
+        AnalogStage.kPasteInset;
+    return Padding(
+      padding: EdgeInsets.all(inset),
+      child: WallLayer(
+        index: ArtworkWall.indexFor(wallSeed),
+        strength: ArtworkWall.kPasteStrength,
+        builder: (context, depth, _) => WallRelief(
+          depth: depth,
+          strength: ArtworkWall.kPasteStrength,
+          // Seeded by the URL so the paper changes with the title rather than
+          // on every rebuild.
+          child: TexturedArtwork(
+            seed: url,
+            portrait: false,
+            enabled: true,
+            child: art,
+          ),
+        ),
+      ),
     );
   }
 }

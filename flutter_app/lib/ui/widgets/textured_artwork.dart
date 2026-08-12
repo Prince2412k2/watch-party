@@ -7,29 +7,29 @@ import 'package:flutter/widgets.dart';
 /// reading as a filter — the eye finds the repeat immediately when the same
 /// fold lands in the same place on every tile.
 abstract final class ArtworkTexture {
-  static const List<String> creases = <String>[
-    'assets/textures/crease/1.png',
-    'assets/textures/crease/2.png',
-    'assets/textures/crease/3.png',
-    'assets/textures/crease/4.png',
-    'assets/textures/crease/5.png',
-    'assets/textures/crease/6.png',
-    'assets/textures/crease/7.png',
-  ];
+  static const int count = 10;
 
-  /// The sheet for [seed], chosen so a given title always creases the same way.
-  ///
-  /// Stable on purpose: a poster that re-folds itself every time it scrolls
-  /// back into view is more distracting than no texture at all. A null or empty
-  /// seed takes the first sheet rather than a random one, for the same reason —
-  /// a tile must not flicker between sheets while its id is still arriving.
-  static String creaseFor(String? seed) {
-    if (seed == null || seed.isEmpty) return creases.first;
+  /// Paper cut to the shape it is printed on: tall sheets for posters, wide
+  /// ones for the backdrop. Using one for both would stretch a sheet's grain
+  /// and edge wear along whichever axis it was scaled on, which is exactly the
+  /// sort of thing the eye reads as "filter" rather than "paper".
+  static String sheetFor(String? seed, {required bool portrait}) {
+    final kind = portrait ? 'portrait' : 'landscape';
+    final i = _index(seed).toString().padLeft(2, '0');
+    return 'assets/textures/paper/$kind-$i.png';
+  }
+
+  /// Stable on purpose: a poster that re-creases every time it scrolls back
+  /// into view is more distracting than no texture at all. A null or empty seed
+  /// takes the first sheet rather than a random one, for the same reason — a
+  /// tile must not flicker between sheets while its id is still arriving.
+  static int _index(String? seed) {
+    if (seed == null || seed.isEmpty) return 0;
     var hash = 0;
     for (var i = 0; i < seed.length; i++) {
       hash = (hash * 31 + seed.codeUnitAt(i)) & 0x7fffffff;
     }
-    return creases[hash % creases.length];
+    return hash % count;
   }
 }
 
@@ -48,18 +48,27 @@ class ArtworkTextureScope extends InheritedWidget {
     super.key,
     required this.enabled,
     required super.child,
+    this.wallSeed,
   });
 
   final bool enabled;
 
-  static bool of(BuildContext context) =>
-      context
-          .dependOnInheritedWidgetOfExactType<ArtworkTextureScope>()
-          ?.enabled ??
-      true;
+  /// Which wall this room is papered with. Carried here rather than passed down
+  /// because every poster needs it and none of them are near the screen that
+  /// knows it — and because a poster on a different wall from the stage behind
+  /// it would break the continuity the whole effect rests on.
+  final String? wallSeed;
+
+  static ArtworkTextureScope? _of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ArtworkTextureScope>();
+
+  static bool of(BuildContext context) => _of(context)?.enabled ?? true;
+
+  static String? wallSeedOf(BuildContext context) => _of(context)?.wallSeed;
 
   @override
-  bool updateShouldNotify(ArtworkTextureScope old) => old.enabled != enabled;
+  bool updateShouldNotify(ArtworkTextureScope old) =>
+      old.enabled != enabled || old.wallSeed != wallSeed;
 }
 
 /// Artwork on crumpled stock: a photographed sheet — folds, creases and all —
@@ -85,14 +94,18 @@ class TexturedArtwork extends StatelessWidget {
     required this.child,
     this.seed,
     this.enabled,
+    this.portrait = true,
   });
 
   /// The artwork to print.
   final Widget child;
 
   /// Picks which sheet this artwork gets — an item id, typically. See
-  /// [ArtworkTexture.creaseFor] for why it is stable rather than random.
+  /// [ArtworkTexture.sheetFor] for why it is stable rather than random.
   final String? seed;
+
+  /// Tall paper for a poster, wide paper for a backdrop.
+  final bool portrait;
 
   /// Off returns [child] untouched. Null — the usual case — defers to the
   /// nearest [ArtworkTextureScope], and so to the user's setting; pass it
@@ -124,7 +137,7 @@ class TexturedArtwork extends StatelessWidget {
         ColorFiltered(colorFilter: wash, child: child),
         Positioned.fill(
           child: Image.asset(
-            ArtworkTexture.creaseFor(seed),
+            ArtworkTexture.sheetFor(seed, portrait: portrait),
             fit: BoxFit.cover,
             excludeFromSemantics: true,
             gaplessPlayback: true,
