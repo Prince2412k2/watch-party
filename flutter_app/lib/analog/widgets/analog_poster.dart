@@ -42,14 +42,15 @@ class AnalogPosterTile extends StatelessWidget {
     this.heroTag,
     this.progress,
     this.aspectRatio = posterAspect,
-    this.textured = true,
+    this.textured,
     this.textureSeed,
   });
 
   /// Lay a crumpled-paper sheet over the artwork. The tile's frame, edge light
   /// and cast shadow are untouched by it: the sheet creases the print, it does
-  /// not change the poster's shape.
-  final bool textured;
+  /// not change the poster's shape. Null defers to the ambient
+  /// [ArtworkTextureScope], and so to the user's setting.
+  final bool? textured;
 
   /// Picks which of the seven sheets this tile gets. An item id, so a title
   /// always creases the same way; see [ArtworkTexture.creaseFor].
@@ -190,7 +191,7 @@ class _PosterArt extends StatelessWidget {
   final bool focused;
   final double? progress;
   final double aspectRatio;
-  final bool textured;
+  final bool? textured;
   final String? textureSeed;
 
   /// Decode the source at the largest size it is ever painted: the artwork

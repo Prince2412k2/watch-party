@@ -33,6 +33,35 @@ abstract final class ArtworkTexture {
   }
 }
 
+/// Switches the paper off for everything beneath it.
+///
+/// An inherited scope rather than a parameter threaded down from the screens,
+/// because the widgets that draw artwork live in `analog/`, which is kept free
+/// of providers on purpose — a rail, a shelf and a stage would each have to
+/// carry a flag they have no other use for, through call sites that only exist
+/// to pass it on. One wrap at the root reaches all of them.
+///
+/// Absent, artwork keeps its texture: the default belongs with the treatment,
+/// not with whoever remembered to install the scope.
+class ArtworkTextureScope extends InheritedWidget {
+  const ArtworkTextureScope({
+    super.key,
+    required this.enabled,
+    required super.child,
+  });
+
+  final bool enabled;
+
+  static bool of(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<ArtworkTextureScope>()
+          ?.enabled ??
+      true;
+
+  @override
+  bool updateShouldNotify(ArtworkTextureScope old) => old.enabled != enabled;
+}
+
 /// Artwork on crumpled stock: a photographed sheet — folds, creases and all —
 /// laid over the image, with the print slightly washed so the two read as one
 /// object rather than as a picture with a filter on top.
@@ -55,7 +84,7 @@ class TexturedArtwork extends StatelessWidget {
     super.key,
     required this.child,
     this.seed,
-    this.enabled = true,
+    this.enabled,
   });
 
   /// The artwork to print.
@@ -65,9 +94,10 @@ class TexturedArtwork extends StatelessWidget {
   /// [ArtworkTexture.creaseFor] for why it is stable rather than random.
   final String? seed;
 
-  /// Off returns [child] untouched, so a caller can A/B the treatment without
-  /// restructuring its tree.
-  final bool enabled;
+  /// Off returns [child] untouched. Null — the usual case — defers to the
+  /// nearest [ArtworkTextureScope], and so to the user's setting; pass it
+  /// explicitly only to force one surface against that.
+  final bool? enabled;
 
   /// Print wash: slightly desaturated with the blacks lifted off true black, so
   /// the image sits *in* the paper rather than glowing through it. Gentle on
@@ -83,7 +113,7 @@ class TexturedArtwork extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!enabled) return child;
+    if (!(enabled ?? ArtworkTextureScope.of(context))) return child;
     return Stack(
       // `passthrough`, not `expand`. This wraps two very differently shaped
       // callers: the backdrop arrives with tight constraints and must fill

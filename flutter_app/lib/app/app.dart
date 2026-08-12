@@ -117,9 +117,16 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
           ),
         );
         final focusedContent = Focus(onKeyEvent: _onKeyEvent, child: content);
+        // Above the router, so every route's artwork sees it — and above the
+        // toast host, so a poster in a notification creases like the ones on
+        // the stage behind it.
+        final textured = ArtworkTextureScope(
+          enabled: ref.watch(artworkTextureProvider),
+          child: focusedContent,
+        );
         return widget.enableWindowFrame
-            ? DesktopWindowChrome(child: focusedContent)
-            : focusedContent;
+            ? DesktopWindowChrome(child: textured)
+            : textured;
       },
     );
   }

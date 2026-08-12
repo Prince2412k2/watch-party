@@ -33,7 +33,7 @@ class AnalogStage extends StatefulWidget {
     required this.child,
     this.backdropUrl,
     this.focused = false,
-    this.textured = true,
+    this.textured,
   });
 
   final Widget child;
@@ -41,10 +41,9 @@ class AnalogStage extends StatefulWidget {
   /// Same-origin backdrop URL for the focused item, or null for bare ground.
   final String? backdropUrl;
 
-  /// Print the backdrop on aged stock. Off restores the plain artwork, which is
-  /// what the layout tests measure and what a caller wants when the treatment
-  /// is being judged side by side.
-  final bool textured;
+  /// Crease the backdrop. Null defers to the ambient [ArtworkTextureScope], and
+  /// so to the user's setting; pass it to force one stage either way.
+  final bool? textured;
 
   /// Whether something on the stage currently owns focus. Raises the grain by
   /// [AnalogGrain.focusedBoostPct], which is the whole of that token's job.

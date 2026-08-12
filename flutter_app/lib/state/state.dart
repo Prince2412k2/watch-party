@@ -12,4 +12,5 @@ export 'now_playing_provider.dart';
 export 'player_provider.dart';
 export 'profile_provider.dart';
 export 'providers.dart';
+export 'appearance_provider.dart';
 export 'server_provider.dart';

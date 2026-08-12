@@ -229,6 +229,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   savingUrl: _savingUrl,
                                   savingPassword: _savingPassword,
                                   clearing: _clearing,
+                                  textured: ref.watch(artworkTextureProvider),
+                                  onTextured: (v) => ref
+                                      .read(artworkTextureProvider.notifier)
+                                      .set(v),
                                   onSaveUrl: _saveUrl,
                                   onSavePassword: _savePassword,
                                   onClearCache: _clearCache,
@@ -405,6 +409,8 @@ class _Connection extends StatelessWidget {
     required this.savingUrl,
     required this.savingPassword,
     required this.clearing,
+    required this.textured,
+    required this.onTextured,
     required this.onSaveUrl,
     required this.onSavePassword,
     required this.onClearCache,
@@ -417,6 +423,8 @@ class _Connection extends StatelessWidget {
   final bool savingUrl;
   final bool savingPassword;
   final bool clearing;
+  final bool textured;
+  final ValueChanged<bool> onTextured;
   final VoidCallback onSaveUrl;
   final VoidCallback onSavePassword;
   final VoidCallback onClearCache;
@@ -495,6 +503,16 @@ class _Connection extends StatelessWidget {
         ),
 
         const SizedBox(height: AppSpacing.xxl),
+        _Caption('Appearance'),
+        const SizedBox(height: AppSpacing.sm),
+        _ToggleRow(
+          label: 'Paper texture',
+          hint: 'Prints posters and backdrops on crumpled stock.',
+          value: textured,
+          onChanged: onTextured,
+        ),
+
+        const SizedBox(height: AppSpacing.xxl),
         _Caption('Storage'),
         const SizedBox(height: AppSpacing.sm),
         Text(
@@ -515,6 +533,79 @@ class _Connection extends StatelessWidget {
           onPressed: clearing ? null : onClearCache,
         ),
       ],
+    );
+  }
+}
+
+/// A labelled switch, matching the servarr options dialog's row.
+class _ToggleRow extends StatelessWidget {
+  const _ToggleRow({
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String hint;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final wp = context.wp;
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppSpacing.radius),
+      onTap: () => onChanged(!value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.md,
+        ),
+        decoration: BoxDecoration(
+          color: wp.surface2,
+          borderRadius: BorderRadius.circular(AppSpacing.radius),
+          border: Border.all(color: wp.line),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: AppFonts.sans,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: wp.text,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      hint,
+                      style: TextStyle(
+                        fontFamily: AppFonts.sans,
+                        fontSize: 12,
+                        color: wp.faint,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeThumbColor: wp.onAccent,
+              activeTrackColor: wp.text,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
