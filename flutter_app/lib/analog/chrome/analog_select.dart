@@ -117,9 +117,7 @@ Future<void> showAnalogSelect<T>({
         for (final choice in groups[g].choices)
           PopupMenuItem<AnalogChoice<T>>(
             value: choice,
-            // A row carrying a second line needs the height for it. 40 was one
-            // line's worth for both, which is what crushed the tracks.
-            height: choice.detail == null ? 44 : 56,
+            height: 46,
             padding: const EdgeInsets.symmetric(
               horizontal: AnalogSpace.mdPx,
               vertical: AnalogSpace.xsPx,
@@ -137,8 +135,7 @@ Future<void> showAnalogSelect<T>({
           ),
       ],
       if (onFooter != null) ...[
-        const PopupMenuDivider(height: 1)
-            as PopupMenuEntry<AnalogChoice<T>>,
+        const PopupMenuDivider(height: 1) as PopupMenuEntry<AnalogChoice<T>>,
         // Labelled, not a bare glyph. An icon on its own at the foot of a list
         // of tracks doesn't say whether it adds one or does something to the
         // list, and this is the one row here that isn't a choice.
@@ -203,42 +200,36 @@ class _ChoiceRow<T> extends StatelessWidget {
               ? null
               : Icon(groupIcon, size: 15, color: AnalogColor.inkFaint),
         ),
-        // Label over detail, both left-aligned on the same vertical. The detail
-        // used to sit far right in uppercase mono, which read as a column of
-        // machine codes rather than as a description of the row it belonged to.
         Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                choice.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontFamily: AnalogType.sansFamily,
-                  fontSize: 14,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? AnalogColor.ink : AnalogColor.inkDim,
-                ),
-              ),
-              if (choice.detail != null) ...[
-                const SizedBox(height: 2),
-                Text(
-                  choice.detail!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: AnalogType.sansFamily,
-                    fontSize: 11.5,
-                    color: AnalogColor.inkFaint,
-                  ),
-                ),
-              ],
-            ],
+          child: Text(
+            choice.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: AnalogType.sansFamily,
+              fontSize: 14,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected ? AnalogColor.ink : AnalogColor.inkDim,
+            ),
           ),
         ),
+        // The value sits at the right, quieter than the label. It used to be
+        // uppercase mono, which read as a machine code rather than as a
+        // description of the row it belonged to.
+        if (choice.detail != null)
+          Padding(
+            padding: const EdgeInsets.only(left: AnalogSpace.smPx),
+            child: Text(
+              choice.detail!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontFamily: AnalogType.sansFamily,
+                fontSize: 13.5,
+                color: AnalogColor.inkDim,
+              ),
+            ),
+          ),
         const SizedBox(width: AnalogSpace.smPx),
         if (choice.onDelete != null)
           // Deepest recognizer wins the tap, so this takes the hit rather than
