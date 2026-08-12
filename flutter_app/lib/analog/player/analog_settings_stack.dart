@@ -7,7 +7,6 @@
 // The direct subtitle action deliberately stays OUTSIDE this stack — fast track
 // selection and Off must not cost two taps.
 
-
 import 'package:flutter/material.dart';
 
 import '../../ui/analog_tokens.dart';
@@ -166,7 +165,9 @@ class _SettingsPanel extends StatelessWidget {
 
   /// Fixed, so every value lands on the same right edge instead of the panel
   /// resizing itself around whichever setting has the longest current value.
-  static const double _width = 264;
+  /// Matches the track picker's width — they are the same kind of object and
+  /// open a few pixels apart.
+  static const double _width = 260;
 
   @override
   Widget build(BuildContext context) {
@@ -174,9 +175,17 @@ class _SettingsPanel extends StatelessWidget {
       width: _width,
       child: Material(
         color: AnalogColor.stageSurface,
-        borderRadius: BorderRadius.circular(AnalogRadius.cardPx),
         clipBehavior: Clip.antiAlias,
-        child: Column(mainAxisSize: MainAxisSize.min, children: children),
+        // shape, not borderRadius — Material asserts if given both, and the
+        // hairline has to come from the shape's side.
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AnalogColor.line),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AnalogSpace.smPx),
+          child: Column(mainAxisSize: MainAxisSize.min, children: children),
+        ),
       ),
     );
     if (!animate) return panel;
@@ -209,15 +218,14 @@ class _SettingsRow extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       hoverColor: AnalogColor.stageSurface2,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AnalogSpace.mdPx,
-          vertical: AnalogSpace.smPx + 3,
-        ),
+      child: Container(
+        height: 42,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        alignment: Alignment.centerLeft,
         child: Row(
           children: [
-            Icon(entry.icon, size: 18, color: ink),
-            const SizedBox(width: AnalogSpace.smPx + 2),
+            Icon(entry.icon, size: 17, color: ink),
+            const SizedBox(width: AnalogSpace.mdPx - 2),
             Expanded(
               child: Text(
                 entry.label,
@@ -234,25 +242,27 @@ class _SettingsRow extends StatelessWidget {
             // label — you scan the labels to find the setting, then read one
             // value.
             if (entry.detail != null)
-              Padding(
+              // Capped, so a long value truncates instead of eating the label.
+              Container(
+                constraints: const BoxConstraints(maxWidth: 124),
                 padding: const EdgeInsets.only(left: AnalogSpace.smPx),
                 child: Text(
                   entry.detail!,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    color: AnalogColor.inkDim,
-                    fontSize: 13.5,
+                    color: AnalogColor.inkFaint,
+                    fontSize: 13,
                   ),
                 ),
               ),
-            const SizedBox(width: AnalogSpace.xsPx),
-            Icon(
-              Icons.chevron_right,
-              size: 18,
-              color: entry.enabled
-                  ? AnalogColor.inkFaint
-                  : AnalogColor.inkFaint,
+            const Padding(
+              padding: EdgeInsets.only(left: AnalogSpace.xsPx),
+              child: Icon(
+                Icons.chevron_right,
+                size: 17,
+                color: AnalogColor.inkFaint,
+              ),
             ),
           ],
         ),
