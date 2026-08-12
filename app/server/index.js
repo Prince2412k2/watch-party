@@ -39,7 +39,7 @@ import FileStoreFactory from 'session-file-store'
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { createProxyMiddleware } from 'http-proxy-middleware'
-import { login, me, logout, testLogin, requireAuth } from './auth.js'
+import { login, me, logout, password, testLogin, requireAuth } from './auth.js'
 import { registerLibraryRoutes } from './library.js'
 import { registerNativeRoutes } from './native.js'
 import { registerSubtitleRoutes } from './subtitles.js'
@@ -361,6 +361,9 @@ if (TEST_ENDPOINTS_ENABLED) {
 }
 app.get('/api/auth/me', me)
 app.post('/api/auth/logout', logout)
+// Rate-limited like login: it takes the current password, so it is a place
+// someone can guess one.
+app.post('/api/auth/password', loginRateLimit, requireAuth, password)
 registerLibraryRoutes(app)
 registerSubtitleRoutes(app, io)
 registerLiveKitRoutes(app)
