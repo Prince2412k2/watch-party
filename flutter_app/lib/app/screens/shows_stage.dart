@@ -266,12 +266,21 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
                             ),
                           ),
                           const SizedBox(width: TitleLayout.columnGap),
-                          // Empty, and held open on purpose — see the note at the
-                          // top of this file. The copy's rectangle is the thing
-                          // being preserved, not the strip that used to sit here.
-                          const Expanded(
+                          // Held open on purpose — see the note at the top of
+                          // this file. The copy's rectangle is the thing being
+                          // preserved, not the strip that used to sit here.
+                          // The logo stands in it now, level with the heading.
+                          Expanded(
                             flex: TitleLayout.asideFlex,
-                            child: SizedBox.shrink(),
+                            child: Center(
+                              child: AsideTitleLogo(
+                                itemId: detailed?.id,
+                                url: detailed == null
+                                    ? null
+                                    : titleLogoUrl(api, detailed),
+                                maxHeightPx: TitleLayout.asideLogoHeight,
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -414,15 +423,13 @@ class _Details extends StatelessWidget {
             direction: direction,
             velocity: velocity,
             fontSizePx: TitleType.heading.fontSize ?? 52,
-            child: TitleLogo(
-              url: current == null ? null : titleLogoUrl(api, current),
-              maxHeightPx: TitleLayout.logoMaxHeight,
-              child: Text(
-                current?.name ?? (loading ? '' : 'Nothing here'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TitleType.heading.copyWith(color: AnalogColor.ink),
-              ),
+            // The written title. The logo stands in the aside now and flies
+            // from there into the detail page's heading.
+            child: Text(
+              current?.name ?? (loading ? '' : 'Nothing here'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TitleType.heading.copyWith(color: AnalogColor.ink),
             ),
           ),
 

@@ -50,6 +50,19 @@ abstract final class TitleLayout {
   /// room the text heading it replaces was already allowed.
   static const double logoMaxHeight = 92;
 
+  /// The logo where it stands beside the copy on a browse stage.
+  ///
+  /// It no longer has to match [logoMaxHeight]: the two are different places
+  /// now, not the same slot on two screens, and the flight between them
+  /// interpolates whatever sizes they happen to be. It gets the aside's full
+  /// width, so it can afford to be taller than the heading it used to sit in.
+  static const double asideLogoHeight = 128;
+
+  /// The logo in the detail page's heading slot. Larger than the browse
+  /// stage's: this is the page about that one title, and the mark is the
+  /// biggest thing on it.
+  static const double logoDetailHeight = 132;
+
   /// Measures the copy is held to. Prose wants a readable line length far
   /// short of a desktop stage's width.
   static const double copyMaxWidth = 650;
