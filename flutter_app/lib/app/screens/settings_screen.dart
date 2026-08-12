@@ -8,7 +8,7 @@ import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../router.dart';
-import 'title_layout.dart';
+import 'profile_screen.dart' show profileAvatarHeroTag, profileHeaderHeight;
 
 /// Settings.
 ///
@@ -177,45 +177,68 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       backgroundColor: wp.bg,
       body: Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              TitleLayout.padLeft,
-              TitleLayout.padTop,
-              TitleLayout.padLeft,
-              48,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          SafeArea(
+            // The editor's geometry, to the pixel: same header room, same
+            // padding, same 4/6 split, same alignment, same size formula. The
+            // pencil leads there, so the face must not jump when you follow
+            // it. Structured the same way too — the alignment resolves
+            // against the box it is given, so matching only the numbers and
+            // not the nesting still lands somewhere else.
+            child: Column(
               children: [
+                const SizedBox(height: profileHeaderHeight),
                 Expanded(
-                  flex: TitleLayout.copyFlex,
-                  child: _Identity(
-                    userId: auth.user?.userId,
-                    name: _name.text.isEmpty
-                        ? (auth.user?.name ?? 'Profile')
-                        : _name.text,
-                    controller: _name,
-                    busy: _savingName,
-                    onSave: _saveName,
-                    onEditAvatar: () => context.push(Routes.profile),
-                  ),
-                ),
-                const SizedBox(width: TitleLayout.columnGap),
-                Expanded(
-                  flex: TitleLayout.asideFlex,
-                  child: SingleChildScrollView(
-                    child: _Connection(
-                      url: _url,
-                      current: _current,
-                      next: _next,
-                      username: auth.user?.name ?? '',
-                      savingUrl: _savingUrl,
-                      savingPassword: _savingPassword,
-                      clearing: _clearing,
-                      onSaveUrl: _saveUrl,
-                      onSavePassword: _savePassword,
-                      onClearCache: _clearCache,
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final face = (constraints.maxWidth * 0.25).clamp(
+                        300.0,
+                        420.0,
+                      );
+                      return Padding(
+                        // The header's room, held open. Settings has no header of
+                        // its own, but the editor does, and without this the face
+                        // would sit a header's height higher than the one it flies
+                        // into.
+                        padding: const EdgeInsets.fromLTRB(44, 12, 52, 36),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 4,
+                              child: _Identity(
+                                userId: auth.user?.userId,
+                                face: face,
+                                name: _name.text.isEmpty
+                                    ? (auth.user?.name ?? 'Profile')
+                                    : _name.text,
+                                controller: _name,
+                                busy: _savingName,
+                                onSave: _saveName,
+                                onEditAvatar: () =>
+                                    context.push(Routes.profile),
+                              ),
+                            ),
+                            const SizedBox(width: 48),
+                            Expanded(
+                              flex: 6,
+                              child: SingleChildScrollView(
+                                child: _Connection(
+                                  url: _url,
+                                  current: _current,
+                                  next: _next,
+                                  username: auth.user?.name ?? '',
+                                  savingUrl: _savingUrl,
+                                  savingPassword: _savingPassword,
+                                  clearing: _clearing,
+                                  onSaveUrl: _saveUrl,
+                                  onSavePassword: _savePassword,
+                                  onClearCache: _clearCache,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -235,6 +258,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 class _Identity extends StatelessWidget {
   const _Identity({
     required this.userId,
+    required this.face,
     required this.name,
     required this.controller,
     required this.busy,
@@ -243,78 +267,127 @@ class _Identity extends StatelessWidget {
   });
 
   final String? userId;
+  final double face;
   final String name;
   final TextEditingController controller;
   final bool busy;
   final VoidCallback onSave;
   final VoidCallback onEditAvatar;
 
-  static const double _face = 172;
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The editor puts the face at Alignment(0, -0.18) of this same box.
+        // Resolved by hand rather than with an Align so the name can sit
+        // under it WITHOUT moving it: inside a Column the name's height would
+        // push the face up by half of it, and the whole point is that the two
+        // pages agree on where the face is.
+        // Align resolves as (box - child) * (1 + a) / 2. Writing it as
+        // box * (1 + a) / 2 - child / 2 is a different number — they differ
+        // by child * (1 - (1 + a) / 2), which for this face is 31.5px, and
+        // that is exactly how far the two pages disagreed by.
+        const a = -0.18;
+        final top = (constraints.maxHeight - face) * (1 + a) / 2;
+        final left = (constraints.maxWidth - face) / 2;
+
+        return Stack(
+          children: [
+            Positioned(
+              left: left,
+              top: top,
+              width: face,
+              height: face,
+              child: _Face(
+                userId: userId,
+                name: name,
+                face: face,
+                onEdit: onEditAvatar,
+              ),
+            ),
+            Positioned(
+              left: left,
+              top: top + face + AppSpacing.xl,
+              width: face,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const _Caption('Name'),
+                  const SizedBox(height: AppSpacing.sm),
+                  AppTextField(
+                    controller: controller,
+                    enabled: !busy,
+                    onSubmitted: (_) => onSave(),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  AppButton(
+                    label: busy ? 'Saving…' : 'Save name',
+                    variant: AppButtonVariant.primary,
+                    busy: busy,
+                    onPressed: busy ? null : onSave,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// The face, with the pencil that leads to the editor sitting on it.
+class _Face extends StatelessWidget {
+  const _Face({
+    required this.userId,
+    required this.name,
+    required this.face,
+    required this.onEdit,
+  });
+
+  final String? userId;
+  final String name;
+  final double face;
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    return Stack(
       children: [
-        // The pencil sits ON the face rather than beside it: the thing it
-        // edits is the thing it is attached to, and there is no label to write.
-        SizedBox(
-          width: _face,
-          height: _face,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: userId == null
-                    ? const SizedBox.shrink()
-                    : ClipOval(
-                        child: AvatarView(
-                          userId: userId!,
-                          name: name,
-                          size: _face,
-                        ),
-                      ),
-              ),
-              Positioned(
-                right: 2,
-                bottom: 2,
-                child: Tooltip(
-                  message: 'Edit avatar',
-                  child: Material(
-                    color: wp.surface2,
-                    shape: CircleBorder(side: BorderSide(color: wp.line2)),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: onEditAvatar,
-                      child: Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Icon(Icons.edit, size: 18, color: wp.text),
-                      ),
-                    ),
+        // Tagged so the face flies to the editor rather than cutting to it —
+        // the same shared element the posters use.
+        Positioned.fill(
+          child: Hero(
+            tag: profileAvatarHeroTag,
+            child: userId == null
+                ? const SizedBox.shrink()
+                : ClipOval(
+                    child: AvatarView(userId: userId!, name: name, size: face),
                   ),
+          ),
+        ),
+        // On the face, not beside it: the thing it edits is the thing it is
+        // attached to, so there is no label to write.
+        Positioned(
+          right: face * 0.04,
+          bottom: face * 0.04,
+          child: Tooltip(
+            message: 'Edit avatar',
+            child: Material(
+              color: wp.surface2,
+              shape: CircleBorder(side: BorderSide(color: wp.line2)),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onEdit,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Icon(Icons.edit, size: 20, color: wp.text),
                 ),
               ),
-            ],
+            ),
           ),
-        ),
-        const SizedBox(height: AppSpacing.xl),
-        _Caption('Name'),
-        const SizedBox(height: AppSpacing.sm),
-        SizedBox(
-          width: 320,
-          child: AppTextField(
-            controller: controller,
-            enabled: !busy,
-            onSubmitted: (_) => onSave(),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        AppButton(
-          label: busy ? 'Saving…' : 'Save name',
-          variant: AppButtonVariant.primary,
-          busy: busy,
-          onPressed: busy ? null : onSave,
         ),
       ],
     );
