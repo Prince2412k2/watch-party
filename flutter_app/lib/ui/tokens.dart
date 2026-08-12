@@ -63,6 +63,16 @@ abstract final class AppFonts {
 
   /// Compact technical metadata (runtime, resolution, room codes, episodes).
   static const mono = 'JetBrains Mono';
+
+  /// Subtitles, and nothing else (bundled `assets/fonts/ClearSans-*.ttf`).
+  ///
+  /// Not [sans]: Circular is a display face. It is right for a title you read
+  /// once and wrong for two lines of dialogue you read for three seconds,
+  /// every few seconds, for two hours — its round, closed shapes blur into
+  /// each other at distance and its capital I, lowercase l and figure 1 are
+  /// near enough identical to trip on. Clear Sans was drawn for legibility at
+  /// a glance and holds its shape under the outline subtitles are drawn with.
+  static const subtitle = 'ClearSans';
 }
 
 /// Motion system (PLAN PKG-0 §Motion). Durations/curves the redesign reads for
