@@ -40,11 +40,17 @@ class AnalogSettingsStack extends StatefulWidget {
     required this.entries,
     this.enabled = true,
     this.onOpenChanged,
+    this.liftAbove,
     this.tooltip = 'Settings',
   });
 
   final List<AnalogSettingsEntry> entries;
   final bool enabled;
+
+  /// Something the panel must not cover — the player's timeline. The gear sits
+  /// in the row BELOW the scrubber, so opening straight off the gear put the
+  /// panel over it. Given this, the panel clears its top edge instead.
+  final GlobalKey? liftAbove;
 
   /// Raised while the stack is expanded so the caller can pin the chrome open —
   /// without it the menu vanishes under the cursor after three seconds.
@@ -89,6 +95,23 @@ class _AnalogSettingsStackState extends State<AnalogSettingsStack> {
     setState(() {});
   }
 
+  /// How far this control sits below the thing it must not cover. Zero when no
+  /// anchor was given, or when either box has gone away.
+  double _lift() {
+    final ceiling = widget.liftAbove?.currentContext?.findRenderObject();
+    final self = context.findRenderObject();
+    if (ceiling is! RenderBox ||
+        self is! RenderBox ||
+        !ceiling.hasSize ||
+        !self.hasSize) {
+      return 0;
+    }
+    final gap =
+        self.localToGlobal(Offset.zero).dy -
+        ceiling.localToGlobal(Offset.zero).dy;
+    return gap > 0 ? gap : 0;
+  }
+
   Widget _buildOverlay(BuildContext context) {
     final animate = !MediaQuery.of(context).disableAnimations;
     return Stack(
@@ -103,11 +126,12 @@ class _AnalogSettingsStackState extends State<AnalogSettingsStack> {
         CompositedTransformFollower(
           link: _link,
           showWhenUnlinked: false,
-          // The stack's BOTTOM edge is pinned to the gear's TOP edge, so it
-          // grows upward out of the lower-right control area.
+          // The panel's BOTTOM edge is pinned to the gear's TOP edge, so it
+          // grows upward out of the lower-right control area — lifted further
+          // by however far the gear sits below the timeline.
           targetAnchor: Alignment.topRight,
           followerAnchor: Alignment.bottomRight,
-          offset: const Offset(0, -AnalogSpace.xsPx),
+          offset: Offset(0, -AnalogSpace.smPx - _lift()),
           child: Material(
             color: Colors.transparent,
             child: _SettingsPanel(

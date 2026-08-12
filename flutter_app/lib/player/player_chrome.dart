@@ -168,6 +168,11 @@ class _PlayerChromeState extends State<PlayerChrome>
   final _subtitleAnchor = GlobalKey(debugLabel: 'subtitleControl');
   final _settingsAnchor = GlobalKey(debugLabel: 'settingsStack');
 
+  /// The scrubber. Menus opened from the transport row sit above it rather
+  /// than over it — the controls are BELOW the timeline, so hanging a menu off
+  /// a control put it straight on top of the bar you were about to drag.
+  final _timelineAnchor = GlobalKey(debugLabel: 'timeline');
+
   // Decode + subtitle-appearance state — only meaningful for the concrete
   // MediaKitPlayerController (seeded in initState when it's the live player).
   bool _hwDecoding = true;
@@ -1024,6 +1029,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     await showAnalogSelect<String?>(
       context: context,
       anchor: _settingsAnchor,
+      liftAbove: _timelineAnchor,
       selected: _selectedAudio,
       groups: [
         AnalogChoiceGroup<String?>(
@@ -1048,6 +1054,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     await showAnalogSelect<double>(
       context: context,
       anchor: _settingsAnchor,
+      liftAbove: _timelineAnchor,
       selected: _rate,
       width: 200,
       groups: [
@@ -1188,6 +1195,7 @@ class _PlayerChromeState extends State<PlayerChrome>
                   subtitleTracks: _visibleSubtitleTracks,
                   subtitleAnchor: _subtitleAnchor,
                   settingsAnchor: _settingsAnchor,
+                  timelineAnchor: _timelineAnchor,
                   selectedSubtitle: _selectedSubtitle,
                   isFullscreen: widget.isFullscreen,
                   // Decode + subtitle-styling are additive libmpv features:
@@ -1412,6 +1420,7 @@ class _TransportBar extends StatelessWidget {
     required this.subtitleTracks,
     required this.subtitleAnchor,
     required this.settingsAnchor,
+    required this.timelineAnchor,
     required this.selectedSubtitle,
     required this.isFullscreen,
     required this.settings,
@@ -1444,6 +1453,9 @@ class _TransportBar extends StatelessWidget {
   final List<PlayerTrack> subtitleTracks;
   final GlobalKey subtitleAnchor;
   final GlobalKey settingsAnchor;
+
+  /// The scrubber, so menus can open clear of it.
+  final GlobalKey timelineAnchor;
   final String? selectedSubtitle;
 
   final bool isFullscreen;
@@ -1500,6 +1512,7 @@ class _TransportBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           LayoutBuilder(
+            key: timelineAnchor,
             builder: (context, constraints) => Stack(
               clipBehavior: Clip.none,
               children: [
@@ -1572,6 +1585,7 @@ class _TransportBar extends StatelessWidget {
               if (onAddSubtitle != null || subtitleTracks.isNotEmpty)
                 _SubtitleControl(
                   key: subtitleAnchor,
+                  liftAbove: timelineAnchor,
                   tracks: subtitleTracks,
                   selected: selectedSubtitle,
                   enabled: canManageTracks,
@@ -1582,6 +1596,7 @@ class _TransportBar extends StatelessWidget {
               if (settings.isNotEmpty)
                 AnalogSettingsStack(
                   key: settingsAnchor,
+                  liftAbove: timelineAnchor,
                   entries: settings,
                   onOpenChanged: onSettingsOpenChanged,
                 ),
@@ -2087,6 +2102,7 @@ class _FontFieldState extends State<_FontField> {
 class _SubtitleControl extends StatelessWidget {
   const _SubtitleControl({
     super.key,
+    required this.liftAbove,
     required this.tracks,
     required this.selected,
     required this.enabled,
@@ -2094,6 +2110,9 @@ class _SubtitleControl extends StatelessWidget {
     required this.onAddFile,
     required this.onMenuChanged,
   });
+
+  /// The scrubber, which the picker opens clear of.
+  final GlobalKey liftAbove;
 
   final List<PlayerTrack> tracks;
   final String? selected;
@@ -2111,6 +2130,7 @@ class _SubtitleControl extends StatelessWidget {
     await showAnalogSelect<String?>(
       context: context,
       anchor: anchor,
+      liftAbove: liftAbove,
       selected: selected,
       groups: [
         AnalogChoiceGroup<String?>(
@@ -2153,34 +2173,69 @@ class _SubtitleControl extends StatelessWidget {
 /// ISO-639 to something a viewer recognises. Both the two- and three-letter
 /// codes are here because the demuxer hands over whichever the container used.
 const Map<String, String> _languageNames = {
-  'en': 'English', 'eng': 'English',
-  'es': 'Spanish', 'spa': 'Spanish',
-  'fr': 'French', 'fra': 'French', 'fre': 'French',
-  'de': 'German', 'deu': 'German', 'ger': 'German',
-  'it': 'Italian', 'ita': 'Italian',
-  'pt': 'Portuguese', 'por': 'Portuguese',
-  'ja': 'Japanese', 'jpn': 'Japanese',
-  'ko': 'Korean', 'kor': 'Korean',
-  'zh': 'Chinese', 'zho': 'Chinese', 'chi': 'Chinese',
-  'th': 'Thai', 'tha': 'Thai',
-  'hi': 'Hindi', 'hin': 'Hindi',
-  'ar': 'Arabic', 'ara': 'Arabic',
-  'ru': 'Russian', 'rus': 'Russian',
-  'nl': 'Dutch', 'nld': 'Dutch', 'dut': 'Dutch',
-  'pl': 'Polish', 'pol': 'Polish',
-  'sv': 'Swedish', 'swe': 'Swedish',
-  'da': 'Danish', 'dan': 'Danish',
-  'no': 'Norwegian', 'nor': 'Norwegian',
-  'fi': 'Finnish', 'fin': 'Finnish',
-  'tr': 'Turkish', 'tur': 'Turkish',
-  'he': 'Hebrew', 'heb': 'Hebrew',
-  'id': 'Indonesian', 'ind': 'Indonesian',
-  'vi': 'Vietnamese', 'vie': 'Vietnamese',
-  'cs': 'Czech', 'ces': 'Czech', 'cze': 'Czech',
-  'el': 'Greek', 'ell': 'Greek', 'gre': 'Greek',
-  'uk': 'Ukrainian', 'ukr': 'Ukrainian',
-  'ro': 'Romanian', 'ron': 'Romanian', 'rum': 'Romanian',
-  'hu': 'Hungarian', 'hun': 'Hungarian',
+  'en': 'English',
+  'eng': 'English',
+  'es': 'Spanish',
+  'spa': 'Spanish',
+  'fr': 'French',
+  'fra': 'French',
+  'fre': 'French',
+  'de': 'German',
+  'deu': 'German',
+  'ger': 'German',
+  'it': 'Italian',
+  'ita': 'Italian',
+  'pt': 'Portuguese',
+  'por': 'Portuguese',
+  'ja': 'Japanese',
+  'jpn': 'Japanese',
+  'ko': 'Korean',
+  'kor': 'Korean',
+  'zh': 'Chinese',
+  'zho': 'Chinese',
+  'chi': 'Chinese',
+  'th': 'Thai',
+  'tha': 'Thai',
+  'hi': 'Hindi',
+  'hin': 'Hindi',
+  'ar': 'Arabic',
+  'ara': 'Arabic',
+  'ru': 'Russian',
+  'rus': 'Russian',
+  'nl': 'Dutch',
+  'nld': 'Dutch',
+  'dut': 'Dutch',
+  'pl': 'Polish',
+  'pol': 'Polish',
+  'sv': 'Swedish',
+  'swe': 'Swedish',
+  'da': 'Danish',
+  'dan': 'Danish',
+  'no': 'Norwegian',
+  'nor': 'Norwegian',
+  'fi': 'Finnish',
+  'fin': 'Finnish',
+  'tr': 'Turkish',
+  'tur': 'Turkish',
+  'he': 'Hebrew',
+  'heb': 'Hebrew',
+  'id': 'Indonesian',
+  'ind': 'Indonesian',
+  'vi': 'Vietnamese',
+  'vie': 'Vietnamese',
+  'cs': 'Czech',
+  'ces': 'Czech',
+  'cze': 'Czech',
+  'el': 'Greek',
+  'ell': 'Greek',
+  'gre': 'Greek',
+  'uk': 'Ukrainian',
+  'ukr': 'Ukrainian',
+  'ro': 'Romanian',
+  'ron': 'Romanian',
+  'rum': 'Romanian',
+  'hu': 'Hungarian',
+  'hun': 'Hungarian',
 };
 
 String? _languageName(String? raw) {
@@ -2221,7 +2276,9 @@ String? _formatName(String? raw) {
 
   // Audio. Order matters: eac3 contains ac3, truehd contains hd.
   if (codec.contains('truehd')) return 'TrueHD';
-  if (codec.contains('eac3') || codec.contains('e-ac-3')) return 'Dolby Digital+';
+  if (codec.contains('eac3') || codec.contains('e-ac-3')) {
+    return 'Dolby Digital+';
+  }
   if (codec.contains('ac3')) return 'Dolby Digital';
   if (codec.contains('dts')) return 'DTS';
   if (codec.contains('aac')) return 'AAC';
