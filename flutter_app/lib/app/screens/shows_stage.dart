@@ -286,6 +286,7 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
                                     ? null
                                     : titleLogoUrl(api, detailed),
                                 maxHeightPx: TitleLayout.asideLogoHeight,
+                                widthPx: TitleLayout.logoBoxWidth,
                               ),
                             ),
                           ),

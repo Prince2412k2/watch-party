@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/app/screens/title_layout.dart';
 import 'package:watchparty/ui/widgets/title_logo.dart';
 
-/// Mirrors the detail page's heading slot: the reserved box the logo lands in.
+/// Mirrors the detail page's heading slot: the fixed box the mark lands in,
+/// with the Hero as the box itself and nothing loose in between.
 Widget _slot(String? url) => ProviderScope(
   child: MaterialApp(
     home: Scaffold(
@@ -13,17 +14,14 @@ Widget _slot(String? url) => ProviderScope(
         children: [
           const Text('GENRES'),
           SizedBox(
+            width: TitleLayout.logoBoxWidth,
             height: TitleLayout.logoDetailHeight,
-            child: Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: Hero(
-                tag: 'logo-x',
-                child: TitleLogo(
-                  url: url,
-                  maxHeightPx: TitleLayout.logoDetailHeight,
-                  hugArtwork: true,
-                  child: const Text('Fallback title'),
-                ),
+            child: Hero(
+              tag: 'logo-x',
+              child: TitleLogo(
+                url: url,
+                maxHeightPx: TitleLayout.logoDetailHeight,
+                child: const Text('Fallback title'),
               ),
             ),
           ),
@@ -35,16 +33,18 @@ Widget _slot(String? url) => ProviderScope(
 );
 
 void main() {
+  // An unreachable URL stands in for "the bytes have not arrived yet", which
+  // is what every FIRST open of a title looks like.
+  const absent = 'https://example.invalid/logo.png';
+
   testWidgets('the heading slot is the same height loaded or not', (
     tester,
   ) async {
-    // An unreachable URL stands in for "the bytes have not arrived yet".
-    await tester.pumpWidget(_slot('https://example.invalid/logo.png'));
+    await tester.pumpWidget(_slot(absent));
     await tester.pump();
-    final genre = tester.getRect(find.text('GENRES'));
-    final synopsis = tester.getRect(find.text('SYNOPSIS'));
-    final gap = synopsis.top - genre.bottom;
-
+    final gap =
+        tester.getRect(find.text('SYNOPSIS')).top -
+        tester.getRect(find.text('GENRES')).bottom;
     expect(
       gap,
       TitleLayout.logoDetailHeight,
@@ -52,25 +52,24 @@ void main() {
     );
   });
 
-  testWidgets('the flying box hugs the mark, not the column', (tester) async {
-    await tester.pumpWidget(_slot('https://example.invalid/logo.png'));
+  testWidgets('the flying box is the same rect whatever is inside it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_slot(absent));
     await tester.pump();
 
-    // A hero interpolates its BOX. Letting this one take the column's width
-    // made the two ends wildly different rectangles, so the mark scaled down
-    // on the way in and sprang back at the end — the arrival everyone reads
-    // as "it broke, then fixed itself".
-    final hero = tester.getRect(find.byType(Hero));
-    final column = tester.getRect(find.byType(Scaffold));
+    // A hero interpolates its BOX. Sizing that box to its contents is what
+    // made the mark dive and spring back: mid-flight the contents are a line
+    // of text standing in for artwork that has not downloaded, so the mark
+    // flew into the rect of a line of type.
     expect(
-      hero.width,
-      lessThan(column.width),
-      reason: 'the hero must not span the whole copy column',
+      tester.getSize(find.byType(Hero)),
+      const Size(TitleLayout.logoBoxWidth, TitleLayout.logoDetailHeight),
+      reason: 'the box must not follow whatever happens to be rendered in it',
     );
-    expect(hero.width, greaterThan(0), reason: 'nor collapse to nothing');
   });
 
-  testWidgets('the aside reserves its height too', (tester) async {
+  testWidgets('the aside end is a fixed box too', (tester) async {
     await tester.pumpWidget(
       const ProviderScope(
         child: MaterialApp(
@@ -78,8 +77,9 @@ void main() {
             body: Center(
               child: AsideTitleLogo(
                 itemId: 'x',
-                url: 'https://example.invalid/logo.png',
+                url: absent,
                 maxHeightPx: TitleLayout.asideLogoHeight,
+                widthPx: TitleLayout.logoBoxWidth,
               ),
             ),
           ),
@@ -87,9 +87,11 @@ void main() {
       ),
     );
     await tester.pump();
+    // Both ends definite means the flight is one rect into another, rather
+    // than into whichever of them has finished loading.
     expect(
-      tester.getSize(find.byType(AsideTitleLogo)).height,
-      TitleLayout.asideLogoHeight,
+      tester.getSize(find.byType(AsideTitleLogo)),
+      const Size(TitleLayout.logoBoxWidth, TitleLayout.asideLogoHeight),
     );
   });
 }

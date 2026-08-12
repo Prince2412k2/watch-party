@@ -63,6 +63,20 @@ abstract final class TitleLayout {
   /// biggest thing on it.
   static const double logoDetailHeight = 132;
 
+  /// The width of the box the logo flies between, at BOTH ends.
+  ///
+  /// Fixed, and that is the entire point. A hero interpolates its box, so the
+  /// box must not depend on what is inside it — and this one's contents change
+  /// underneath it constantly: artwork that has not downloaded, artwork that
+  /// failed, the text heading standing in. Sized to the box and the mark is
+  /// contained within it, so every one of those states is the same rectangle
+  /// and the flight is the same flight.
+  ///
+  /// Letting it shrink-wrap instead is what made the mark dive to nothing and
+  /// spring back: mid-flight the destination was still showing text, so the
+  /// box it was flying into was a line of type.
+  static const double logoBoxWidth = 380;
+
   /// Measures the copy is held to. Prose wants a readable line length far
   /// short of a desktop stage's width.
   static const double copyMaxWidth = 650;

@@ -378,6 +378,7 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                                         ? null
                                         : titleLogoUrl(api, detailed),
                                     maxHeightPx: TitleLayout.asideLogoHeight,
+                                    widthPx: TitleLayout.logoBoxWidth,
                                   ),
                                 ),
                                 if (_collection == null)
