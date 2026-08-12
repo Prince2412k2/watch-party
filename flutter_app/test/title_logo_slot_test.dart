@@ -21,6 +21,7 @@ Widget _slot(String? url) => ProviderScope(
                 child: TitleLogo(
                   url: url,
                   maxHeightPx: TitleLayout.logoDetailHeight,
+                  hugArtwork: true,
                   child: const Text('Fallback title'),
                 ),
               ),
@@ -44,13 +45,29 @@ void main() {
     final synopsis = tester.getRect(find.text('SYNOPSIS'));
     final gap = synopsis.top - genre.bottom;
 
-    // ignore: avoid_print
-    print('gap while the logo is absent: $gap');
     expect(
       gap,
       TitleLayout.logoDetailHeight,
       reason: 'the slot must hold its room before the artwork lands',
     );
+  });
+
+  testWidgets('the flying box hugs the mark, not the column', (tester) async {
+    await tester.pumpWidget(_slot('https://example.invalid/logo.png'));
+    await tester.pump();
+
+    // A hero interpolates its BOX. Letting this one take the column's width
+    // made the two ends wildly different rectangles, so the mark scaled down
+    // on the way in and sprang back at the end — the arrival everyone reads
+    // as "it broke, then fixed itself".
+    final hero = tester.getRect(find.byType(Hero));
+    final column = tester.getRect(find.byType(Scaffold));
+    expect(
+      hero.width,
+      lessThan(column.width),
+      reason: 'the hero must not span the whole copy column',
+    );
+    expect(hero.width, greaterThan(0), reason: 'nor collapse to nothing');
   });
 
   testWidgets('the aside reserves its height too', (tester) async {
