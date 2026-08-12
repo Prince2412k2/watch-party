@@ -1,6 +1,17 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../ui/analog_tokens.dart';
+
+/// The top edge of [key]'s box in [overlay]'s space, or null when it is not
+/// mounted — a caller that passes an anchor the layout has since dropped gets
+/// the default placement rather than an exception.
+double? _topOf(GlobalKey? key, RenderBox overlay) {
+  final box = key?.currentContext?.findRenderObject();
+  if (box is! RenderBox || !box.hasSize) return null;
+  return box.localToGlobal(Offset.zero, ancestor: overlay).dy;
+}
 
 /// One choice in an [showAnalogSelect] list.
 @immutable
@@ -75,6 +86,12 @@ Future<void> showAnalogSelect<T>({
   IconData? footerIcon,
   String? footerTooltip,
   VoidCallback? onFooter,
+
+  /// Something the menu must not cover — the player's timeline. When given,
+  /// the menu's BOTTOM edge is placed just above this widget's top edge
+  /// instead of hanging off [anchor], so a control sitting under the scrubber
+  /// still opens clear of it.
+  GlobalKey? liftAbove,
   double width = 260,
 }) async {
   final box = anchor.currentContext?.findRenderObject();
@@ -88,17 +105,34 @@ Future<void> showAnalogSelect<T>({
   final topLeft = box.localToGlobal(Offset.zero, ancestor: overlay);
   final anchorRect = topLeft & box.size;
 
+  // Right-aligned to the control, so a menu opened from the lower-right
+  // cluster does not sprawl across the middle of the picture.
+  final left = (anchorRect.right - width)
+      .clamp(
+        AnalogSpace.smPx,
+        math.max(
+          AnalogSpace.smPx,
+          overlay.size.width - width - AnalogSpace.smPx,
+        ),
+      )
+      .toDouble();
+
+  // Every row is the same fixed height, so the menu's height is known before
+  // it is built — which is what makes placing its BOTTOM edge possible at all.
+  final rows =
+      groups.fold<int>(0, (n, g) => n + g.choices.length) +
+      (onFooter != null ? 1 : 0);
+  final height = rows * _rowHeight + _menuPad * 2;
+
+  final ceiling = _topOf(liftAbove, overlay);
+  final top = ceiling == null
+      ? anchorRect.bottom + AnalogSpace.smPx
+      : math.max(AnalogSpace.smPx, ceiling - AnalogSpace.smPx - height);
+
   final chosen = await showMenu<AnalogChoice<T>>(
     context: context,
-    // Hangs off the control that opened it, growing downwards, and flips
-    // itself when there is no room below.
     position: RelativeRect.fromRect(
-      Rect.fromLTWH(
-        anchorRect.left,
-        anchorRect.bottom + AnalogSpace.smPx,
-        anchorRect.width,
-        0,
-      ),
+      Rect.fromLTWH(left, top, width, 0),
       Offset.zero & overlay.size,
     ),
     constraints: BoxConstraints(minWidth: width, maxWidth: width),
@@ -156,6 +190,9 @@ const double _rowPad = 14;
 
 /// The most a trailing value may take before it starts truncating.
 const double _detailWidth = 124;
+
+/// [PopupMenuButton]'s own list padding, which the height maths has to match.
+const double _menuPad = 8;
 
 class _ChoiceRow<T> extends StatelessWidget {
   const _ChoiceRow({
