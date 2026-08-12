@@ -78,7 +78,7 @@ flutter:
     - assets/popcorn.png
     - assets/watch_party.lottie
     - assets/logo.png
-    - assets/textures/
+    - assets/textures/crease/
     - assets/fonts/
 
   fonts:

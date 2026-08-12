@@ -94,7 +94,10 @@ class _AnalogStageState extends State<AnalogStage> {
                     ? SizedBox.expand(key: ValueKey(_backdropRevision))
                     : TexturedArtwork(
                         key: ValueKey(_backdropRevision),
-                        texture: ArtworkTexture.backdrop,
+                        // Seeded by the URL, so the stage does not re-crease
+                        // itself on every focus step — only when the backdrop
+                        // behind it actually changes.
+                        seed: url,
                         enabled: widget.textured,
                         child: AuthedNetworkImage(
                           url,

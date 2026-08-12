@@ -1,394 +1,106 @@
-import 'dart:typed_data';
-import 'dart:ui' as ui;
-
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/widgets.dart';
 
-/// The stock sheets, by the surface each was cut for.
+/// The crumpled-paper sheets, one of which is laid over each piece of artwork.
 ///
-/// Two rather than one because the sheets are not tiles: each is a framed piece
-/// of paper with its own worn border, sized to the shape it prints on. Feeding
-/// the square backdrop sheet to a 2:3 poster would crop that border off two
-/// sides and leave the tear looking sawn rather than torn.
+/// Seven rather than one because a rail shows twenty posters at once, and a
+/// single sheet repeated across all of them stops reading as paper and starts
+/// reading as a filter — the eye finds the repeat immediately when the same
+/// fold lands in the same place on every tile.
 abstract final class ArtworkTexture {
-  static const String backdrop = 'assets/textures/backdrop.png';
-  static const String poster = 'assets/textures/poster.png';
+  static const List<String> creases = <String>[
+    'assets/textures/crease/1.png',
+    'assets/textures/crease/2.png',
+    'assets/textures/crease/3.png',
+    'assets/textures/crease/4.png',
+    'assets/textures/crease/5.png',
+    'assets/textures/crease/6.png',
+    'assets/textures/crease/7.png',
+  ];
+
+  /// The sheet for [seed], chosen so a given title always creases the same way.
+  ///
+  /// Stable on purpose: a poster that re-folds itself every time it scrolls
+  /// back into view is more distracting than no texture at all. A null or empty
+  /// seed takes the first sheet rather than a random one, for the same reason —
+  /// a tile must not flicker between sheets while its id is still arriving.
+  static String creaseFor(String? seed) {
+    if (seed == null || seed.isEmpty) return creases.first;
+    var hash = 0;
+    for (var i = 0; i < seed.length; i++) {
+      hash = (hash * 31 + seed.codeUnitAt(i)) & 0x7fffffff;
+    }
+    return creases[hash % creases.length];
+  }
 }
 
-/// Artwork printed on aged stock: fibre in the image and torn edges that
-/// genuinely remove pixels rather than paint over them, so a worn corner shows
-/// the stage behind the artwork.
+/// Artwork on crumpled stock: a photographed sheet — folds, creases and all —
+/// laid over the image, with the print slightly washed so the two read as one
+/// object rather than as a picture with a filter on top.
 ///
-/// ## One asset, two jobs
+/// ## What this deliberately is not
 ///
-/// `assets/textures/*.png` is greyscale-plus-alpha. The **RGB** is the paper
-/// fibre, soft-lit into both the sheet and the artwork. The **alpha** is the
-/// wear: opaque where the stock is intact, transparent where it has worn
-/// through. Both were baked from the same luminance, so the grain and the tear
-/// always agree about where the sheet is thin — which is what stops the tear
-/// reading as a shape cut out of an otherwise pristine picture.
+/// An earlier version tore the artwork's edges away with a mask baked from a
+/// grunge texture's luminance. It worked and it looked wrong. The source tear
+/// was a halftone dot screen, so at rail size the ragged edge read as a printed
+/// pattern rather than a rip; and the paper behind it survived the tear as a
+/// hard pale rectangle, which the eye took for the poster's real edge. These
+/// sheets are photographs of actual crumpled paper carrying their own alpha, so
+/// nothing is derived, masked or thresholded — the sheet is simply laid on top.
 ///
-/// ## Why the worn edge is transparent and not paper
-///
-/// Backing the artwork with a sheet is what a real torn poster has, and it was
-/// the first thing built here. On screen it works against the effect: stock is
-/// opaque, so it survives the tear as a hard pale rectangle, and the eye takes
-/// that rectangle for the object's real edge — the tear stops being an edge and
-/// becomes a pattern printed inside a border. Letting the wear go all the way
-/// to transparent is what makes it read as a torn edge.
-///
-/// [paper] still offers the sheet for callers that want the printed-card look.
-/// When it is set the ink has to wear away *sooner* than the stock, or the
-/// paper would be cut away everywhere the ink is and never show at all; the
-/// baked alpha is the ink wear, and [_Sheet._stock] widens that same channel
-/// toward opaque for the larger sheet shape.
-///
-/// ## Why ShaderMask and not a hand-rolled saveLayer
-///
-/// The obvious implementation — a `RenderProxyBox` that calls
-/// `canvas.saveLayer`, paints its child, then `restore`s — is broken, and
-/// quietly. A descendant that pushes its own compositing layer (`ColorFiltered`
-/// does) makes `PaintingContext` stop the current recording and continue on a
-/// *different* canvas, so the `restore` lands on a canvas that was never saved,
-/// the pairs go unbalanced, and the whole subtree is dropped. It renders as the
-/// bare texture with the artwork and paper colour silently missing.
-/// [ShaderMask] pushes a real `ShaderMaskLayer` and composes correctly.
-class TexturedArtwork extends StatefulWidget {
+/// Because nothing is torn, the artwork is still a rectangle, so the frame,
+/// edge light and cast shadow drawn around it all still describe the shape that
+/// is really there.
+class TexturedArtwork extends StatelessWidget {
   const TexturedArtwork({
     super.key,
-    required this.texture,
     required this.child,
-    this.paper,
+    this.seed,
     this.enabled = true,
-    this.shadow,
   });
-
-  /// The baked greyscale+alpha sheet, e.g. `assets/textures/poster.png`.
-  final String texture;
 
   /// The artwork to print.
   final Widget child;
 
-  /// Stock behind the artwork, or null — the default — for none, leaving the
-  /// worn edge transparent so the stage shows through it.
-  ///
-  /// A sheet is what a torn poster would really have, but on screen it works
-  /// against the effect: the stock is opaque, so it survives the tear as a
-  /// hard pale rectangle, and the eye reads that rectangle as the object's
-  /// real edge. The tear then looks like a pattern printed inside a border
-  /// rather than the border itself. [paperFor] is still here for callers that
-  /// want the printed-card look deliberately.
-  final Color? paper;
+  /// Picks which sheet this artwork gets — an item id, typically. See
+  /// [ArtworkTexture.creaseFor] for why it is stable rather than random.
+  final String? seed;
 
   /// Off returns [child] untouched, so a caller can A/B the treatment without
-  /// restructuring its tree — and so existing layout tests keep their shape.
+  /// restructuring its tree.
   final bool enabled;
 
-  /// Cast shadow, thrown from the **torn silhouette** rather than from the
-  /// widget's box. A rectangular shadow under ragged paper is the tell that
-  /// gives the whole effect away: the eye reads the shadow's corners as the
-  /// object's corners, and the tear stops being a shape and becomes a pattern
-  /// printed on a square. Drawn from the sheet's own alpha, so it costs one
-  /// masked fill rather than a second pass over the artwork.
-  final BoxShadow? shadow;
-
-  /// The base stock: warm, low-chroma, lighter than the stage so a torn edge
-  /// reads as paper catching light rather than as a hole punched in the screen.
-  static const Color kWarmPaper = Color(0xFFD8C3A0);
-
-  /// How far the artwork's own colour may pull the stock. Deliberately small:
-  /// poster art is vivid, and at full strength the sheet stops reading as paper
-  /// and starts reading as coloured card.
-  static const double kHuePush = 0.15;
-
-  /// Stock for a title, nudged toward its artwork so the sheet agrees with what
-  /// is printed on it without a rail turning into twenty different colours.
-  ///
-  /// The push moves **hue only**. Mixing cream and artwork colour as RGB was the
-  /// obvious implementation and the wrong one: complementary colours cancel on
-  /// the way past grey, so a blue poster did not tint the stock, it bleached it
-  /// — 0.22 of saturation gone, paper turned to card. Holding saturation and
-  /// lightness at the warm stock's own values keeps it recognisably one paper.
-  static Color paperFor(Color? dominant) {
-    if (dominant == null) return kWarmPaper;
-    final art = HSLColor.fromColor(dominant);
-    // Near-neutral artwork has no hue worth borrowing, and asking for one
-    // yields whatever rounding noise the decoder left behind.
-    if (art.saturation < 0.15) return kWarmPaper;
-    final base = HSLColor.fromColor(kWarmPaper);
-    // Shortest way round the wheel, so cream never travels through green to
-    // reach a magenta poster.
-    final delta = ((art.hue - base.hue + 540) % 360) - 180;
-    return base.withHue((base.hue + delta * kHuePush + 360) % 360).toColor();
-  }
-
-  /// Drops the decoded sheets.
-  ///
-  /// Only tests need this, and they need it badly: the cache holds *Futures*,
-  /// and a Future created inside one `testWidgets` fake-async zone can never
-  /// complete inside another. A second test asking for a sheet a first test
-  /// already loaded would hang on it forever, silently fall back to the plain
-  /// artwork, and pass — which is exactly how a regression test for the
-  /// infinite-height bug came to pass against the broken code.
-  @visibleForTesting
-  static void debugClearSheetCache() => _Sheet.clearCache();
-
-  /// Print wash: desaturated, blacks lifted off true black, so the image reads
-  /// as absorbed into stock rather than emitted by a screen.
+  /// Print wash: slightly desaturated with the blacks lifted off true black, so
+  /// the image sits *in* the paper rather than glowing through it. Gentle on
+  /// purpose — the poster is the one thing on the stage whose job is to sell
+  /// the title, and a heavy wash costs more in legibility than it buys in
+  /// atmosphere.
   static const ColorFilter wash = ColorFilter.matrix(<double>[
-    0.72, 0.20, 0.05, 0, 18, //
-    0.10, 0.78, 0.09, 0, 16, //
-    0.08, 0.18, 0.71, 0, 12, //
+    0.86, 0.11, 0.03, 0, 6, //
+    0.05, 0.90, 0.05, 0, 5, //
+    0.04, 0.09, 0.87, 0, 4, //
     0, 0, 0, 1, 0, //
   ]);
 
   @override
-  State<TexturedArtwork> createState() => _TexturedArtworkState();
-}
-
-class _TexturedArtworkState extends State<TexturedArtwork> {
-  _Sheet? _sheet;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolve();
-  }
-
-  @override
-  void didUpdateWidget(TexturedArtwork old) {
-    super.didUpdateWidget(old);
-    if (old.texture != widget.texture) _resolve();
-  }
-
-  Future<void> _resolve() async {
-    final sheet = await _Sheet.load(widget.texture);
-    if (mounted) setState(() => _sheet = sheet);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final sheet = _sheet;
-    // Until the stock is decoded the artwork prints plain. Showing nothing
-    // would flash a hole in the rail on every cold start.
-    if (!widget.enabled || sheet == null) return widget.child;
-
-    // Washed, grained, then cut by the wear — and the cut goes all the way to
-    // transparent, so what shows through a worn corner is the stage behind the
-    // artwork, not more artwork and not a sheet of paper.
-    Widget out = ShaderMask(
-      blendMode: BlendMode.dstIn,
-      shaderCallback: sheet.ink,
-      child: ShaderMask(
-        blendMode: BlendMode.softLight,
-        shaderCallback: sheet.grain,
-        child: ColorFiltered(
-          colorFilter: TexturedArtwork.wash,
-          child: widget.child,
-        ),
-      ),
-    );
-
-    final paper = widget.paper;
-    if (paper != null) {
-      // Stock behind the ink, for the printed-on-card look. Off by default:
-      // an opaque sheet survives the tear as a hard pale rectangle, and a
-      // crisp rectangle framing a ragged edge is precisely what makes the
-      // tear read as printed decoration instead of a real edge.
-      //
-      // `passthrough`, not `expand`. This widget wraps two very differently
-      // shaped callers: the backdrop arrives with tight constraints and must
-      // fill them, while a poster sits in a Column and arrives with unbounded
-      // height, which `expand` turns into an infinite-height assertion.
-      out = Stack(
-        fit: StackFit.passthrough,
-        children: [
-          Positioned.fill(
-            child: ShaderMask(
-              blendMode: BlendMode.softLight,
-              shaderCallback: sheet.grain,
-              child: ColoredBox(color: paper),
-            ),
-          ),
-          out,
-        ],
-      );
-      // Only now is an outer cut needed, to take the sheet back off the
-      // rectangle the ink has already left.
-      out = ShaderMask(
-        blendMode: BlendMode.dstIn,
-        shaderCallback: sheet.stock,
-        child: out,
-      );
-    }
-
-    final shadow = widget.shadow;
-    if (shadow == null) return out;
+    if (!enabled) return child;
     return Stack(
-      // The shadow is offset and blurred, so it necessarily falls outside the
-      // artwork box. Clipping it back to that box would restore the straight
-      // edge the tear exists to destroy.
-      clipBehavior: Clip.none,
+      // `passthrough`, not `expand`. This wraps two very differently shaped
+      // callers: the backdrop arrives with tight constraints and must fill
+      // them, while a poster sits in a Column and arrives with unbounded
+      // height, which `expand` turns into an infinite-height assertion.
       fit: StackFit.passthrough,
       children: [
+        ColorFiltered(colorFilter: wash, child: child),
         Positioned.fill(
-          child: Transform.translate(
-            offset: shadow.offset,
-            child: ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(
-                sigmaX: shadow.blurRadius / 2,
-                sigmaY: shadow.blurRadius / 2,
-              ),
-              child: ShaderMask(
-                blendMode: BlendMode.dstIn,
-                shaderCallback: paper == null ? sheet.ink : sheet.stock,
-                child: ColoredBox(color: shadow.color),
-              ),
-            ),
+          child: Image.asset(
+            ArtworkTexture.creaseFor(seed),
+            fit: BoxFit.cover,
+            excludeFromSemantics: true,
+            gaplessPlayback: true,
           ),
         ),
-        out,
       ],
     );
-  }
-}
-
-/// A decoded stock sheet plus the shaders drawn from it.
-///
-/// Decoding is shared across every tile using the same texture — a rail asks
-/// for this once per poster, and decoding a 800x1200 sheet twenty times over
-/// would cost more than the effect is worth.
-class _Sheet {
-  _Sheet(this._grain, this._stock);
-
-  final ui.Image _grain;
-
-  /// [_grain] with its alpha widened, so the sheet outlives the ink.
-  final ui.Image _stock;
-
-  static final Map<String, Future<_Sheet>> _cache = <String, Future<_Sheet>>{};
-
-  static Future<_Sheet> load(String key) =>
-      _cache.putIfAbsent(key, () => _decode(key));
-
-  static void clearCache() => _cache.clear();
-
-  static Future<_Sheet> _decode(String key) async {
-    final data = await rootBundle.load(key);
-    final image = await _image(data.buffer.asUint8List());
-    return _Sheet(image, await _widenAlpha(image));
-  }
-
-  static Future<ui.Image> _image(Uint8List bytes) async {
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    codec.dispose();
-    return frame.image;
-  }
-
-  /// Pushes alpha toward opaque so partly-worn stock counts as intact. 2.2 is
-  /// the ratio between the ink and sheet thresholds the assets were baked at.
-  static Future<ui.Image> _widenAlpha(ui.Image src) async {
-    final recorder = ui.PictureRecorder();
-    ui.Canvas(recorder).drawImage(
-      src,
-      Offset.zero,
-      Paint()
-        ..colorFilter = const ColorFilter.matrix(<double>[
-          1, 0, 0, 0, 0, //
-          0, 1, 0, 0, 0, //
-          0, 0, 1, 0, 0, //
-          0, 0, 0, 2.2, 0, //
-        ]),
-    );
-    final picture = recorder.endRecording();
-    final out = await picture.toImage(src.width, src.height);
-    picture.dispose();
-    return out;
-  }
-
-  Shader grain(Rect bounds) => _shader(_grain, bounds);
-  Shader ink(Rect bounds) => _shader(_grain, bounds);
-  Shader stock(Rect bounds) => _shader(_stock, bounds);
-
-  /// Covers [bounds] with one copy of the sheet, centred. These textures are
-  /// framed sheets with a worn border, not tiles — repeating one would stamp
-  /// that border across the surface in a grid.
-  Shader _shader(ui.Image image, Rect bounds) {
-    final scale = (bounds.width / image.width) > (bounds.height / image.height)
-        ? bounds.width / image.width
-        : bounds.height / image.height;
-    final matrix = Matrix4.identity()
-      ..translateByDouble(
-        bounds.left + (bounds.width - image.width * scale) / 2,
-        bounds.top + (bounds.height - image.height * scale) / 2,
-        0,
-        1,
-      )
-      ..scaleByDouble(scale, scale, 1, 1);
-    return ui.ImageShader(
-      image,
-      TileMode.clamp,
-      TileMode.clamp,
-      matrix.storage,
-    );
-  }
-}
-
-/// The dominant colour of artwork, for [TexturedArtwork.paperFor].
-///
-/// Decoded at 16x16 because that is all a dominant colour needs, and because a
-/// rail asks this of every tile at once. Held against the URL so scrolling back
-/// to a title does not decode it twice.
-class ArtworkPalette {
-  ArtworkPalette._();
-
-  static final Map<String, Color?> _cache = <String, Color?>{};
-
-  static Color? cached(String url) => _cache[url];
-
-  static Future<Color?> dominant(String url, Uint8List bytes) async {
-    if (_cache.containsKey(url)) return _cache[url];
-    Color? result;
-    try {
-      final codec = await ui.instantiateImageCodec(
-        bytes,
-        targetWidth: 16,
-        targetHeight: 16,
-      );
-      final frame = await codec.getNextFrame();
-      final data = await frame.image.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      );
-      frame.image.dispose();
-      codec.dispose();
-      if (data != null) result = _pick(data.buffer.asUint8List());
-    } catch (_) {
-      // A palette is a nicety; artwork that will not decode still prints on the
-      // default stock rather than taking the tile down with it.
-      result = null;
-    }
-    _cache[url] = result;
-    return result;
-  }
-
-  /// The most saturated band, not the mean. Averaging poster art reliably
-  /// produces mud, because complementary colours cancel; the point is to find
-  /// what the artwork is *about*.
-  static Color? _pick(Uint8List rgba) {
-    var bestScore = -1.0;
-    Color? best;
-    for (var i = 0; i + 3 < rgba.length; i += 4) {
-      if (rgba[i + 3] < 128) continue;
-      final c = Color.fromARGB(255, rgba[i], rgba[i + 1], rgba[i + 2]);
-      final hsl = HSLColor.fromColor(c);
-      // Mid lightness scores highest: near-black and near-white carry no hue.
-      final score = hsl.saturation * (1 - (hsl.lightness - 0.5).abs() * 2);
-      if (score > bestScore) {
-        bestScore = score;
-        best = c;
-      }
-    }
-    return best;
   }
 }
