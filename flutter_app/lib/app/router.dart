@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../models/models.dart';
 import '../state/state.dart';
 import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
@@ -130,7 +131,14 @@ GoRouter buildRouter(WidgetRef ref) {
           // Back to the library is much quicker: the poster is going home, not
           // being introduced.
           reverseDuration: AnalogMotion.heroReturnMs,
-          child: DetailScreen(itemId: state.pathParameters['id']!),
+          child: DetailScreen(
+            itemId: state.pathParameters['id']!,
+            // Whatever the opening surface handed over, if anything. A
+            // deep link carries no extra and simply waits for the fetch.
+            seed: state.extra is LibraryItem
+                ? state.extra! as LibraryItem
+                : null,
+          ),
         ),
       ),
 
@@ -163,10 +171,8 @@ GoRouter buildRouter(WidgetRef ref) {
           ),
           GoRoute(
             path: Routes.series,
-            pageBuilder: (_, state) => NoTransitionPage(
-              key: state.pageKey,
-              child: const ShowsStage(),
-            ),
+            pageBuilder: (_, state) =>
+                NoTransitionPage(key: state.pageKey, child: const ShowsStage()),
           ),
           GoRoute(
             path: Routes.discover,

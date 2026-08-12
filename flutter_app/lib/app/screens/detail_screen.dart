@@ -18,8 +18,12 @@ import 'detail_stage.dart';
 /// hands the play target + selected audio/subtitle indices into the solo player
 /// route; the mid-movie "Start party" affordance stays wired over playback.
 class DetailScreen extends ConsumerWidget {
-  const DetailScreen({super.key, required this.itemId});
+  const DetailScreen({super.key, required this.itemId, this.seed});
   final String itemId;
+
+  /// The title as the surface that opened it already knew it — see
+  /// [DetailStage.seed].
+  final LibraryItem? seed;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -63,6 +67,7 @@ class DetailScreen extends ConsumerWidget {
           Positioned.fill(
             child: DetailStage(
               itemId: itemId,
+              seed: seed,
               onBack: () =>
                   context.canPop() ? context.pop() : context.go('/movies'),
               onWatch: (playItem, tracks) => startPlayback(

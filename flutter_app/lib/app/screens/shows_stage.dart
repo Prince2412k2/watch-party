@@ -92,7 +92,9 @@ class _ShowsStageState extends ConsumerState<ShowsStage>
     // Straight to the detail page. The poster carries a Hero tag matching the
     // one that page uses, so the artwork flies across the route rather than
     // cutting.
-    context.push('/detail/${item.id}');
+    // The item travels with the route so the page has a heading to fly
+    // the title's mark into before its own fetch lands.
+    context.push('/detail/${item.id}', extra: item);
   }
 
   /// Shared with the web through app/shared/design/interaction.json: a
