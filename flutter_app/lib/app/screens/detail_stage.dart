@@ -856,32 +856,31 @@ class _CopyColumn extends StatelessWidget {
                 //
                 // Without this the page opened with the heading collapsed to
                 // nothing — genre sat straight on top of the synopsis — and
-                // then shoved the whole column down when the mark landed. Two
-                // things were emptying the slot at once: the artwork had not
-                // arrived yet on a first open, and a Hero in flight leaves
-                // behind a placeholder sized from what it measured, which is
-                // zero when the thing it measured had not loaded.
+                // then shoved the whole column down when the mark landed.
+                //
+                // The Hero IS the box, with nothing loose between them. Put an
+                // Align in here and the hero sizes to its contents again,
+                // which is the whole failure: mid-flight the contents are the
+                // text standing in for artwork that has not arrived, so the
+                // mark dives into a line of type and springs back out of it.
                 : SizedBox(
+                    width: TitleLayout.logoBoxWidth,
                     height: TitleLayout.logoDetailHeight,
-                    child: Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Hero(
-                        tag: titleLogoHeroTag(subject.id),
-                        child: TitleLogo(
-                          url: logoUrl,
-                          maxHeightPx: TitleLayout.logoDetailHeight,
-                          hugArtwork: true,
-                          // Still the text underneath. This is the ERROR path now
-                          // rather than the no-logo one, but artwork that fails to
-                          // decode must not leave the page with no heading at all.
-                          child: Text(
-                            subject.name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TitleType.heading.copyWith(
-                              color: wp.text,
-                              fontSize: _headingSizeFor(subject.name),
-                            ),
+                    child: Hero(
+                      tag: titleLogoHeroTag(subject.id),
+                      child: TitleLogo(
+                        url: logoUrl,
+                        maxHeightPx: TitleLayout.logoDetailHeight,
+                        // Still the text underneath. This is the ERROR path
+                        // now rather than the no-logo one, but artwork that
+                        // fails to decode must not leave the page headless.
+                        child: Text(
+                          subject.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TitleType.heading.copyWith(
+                            color: wp.text,
+                            fontSize: _headingSizeFor(subject.name),
                           ),
                         ),
                       ),

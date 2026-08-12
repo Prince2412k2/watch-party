@@ -33,19 +33,25 @@ class AsideTitleLogo extends StatelessWidget {
     required this.itemId,
     required this.url,
     required this.maxHeightPx,
+    required this.widthPx,
   });
 
   final String? itemId;
   final String? url;
   final double maxHeightPx;
 
+  /// The flying box's width. Same at the other end — see the note there.
+  final double widthPx;
+
   @override
   Widget build(BuildContext context) {
     if (url == null || itemId == null) return const SizedBox.shrink();
-    // Full height from the first frame, loaded or not. A hero takes the rect
-    // it flies FROM by measuring this, so a slot that is still empty when you
-    // press enter sends the mark off from a box of nothing.
+    // A definite box from the first frame, loaded or not. A hero takes the
+    // rect it flies FROM by measuring this, and the mark is contained inside
+    // rather than sizing it, so a slot whose artwork has not arrived is still
+    // the same rectangle as one whose has.
     return SizedBox(
+      width: widthPx,
       height: maxHeightPx,
       child: Hero(
         tag: titleLogoHeroTag(itemId!),
@@ -53,7 +59,6 @@ class AsideTitleLogo extends StatelessWidget {
           url: url,
           maxHeightPx: maxHeightPx,
           alignment: Alignment.center,
-          hugArtwork: true,
           child: const SizedBox.shrink(),
         ),
       ),
@@ -79,7 +84,6 @@ class TitleLogo extends StatelessWidget {
     required this.maxHeightPx,
     required this.child,
     this.alignment = AlignmentDirectional.centerStart,
-    this.hugArtwork = false,
   });
 
   /// Logo artwork, or null to render [child] without asking the network.
@@ -96,16 +100,6 @@ class TitleLogo extends StatelessWidget {
   /// for a heading; centred where it stands on its own beside the copy.
   final AlignmentGeometry alignment;
 
-  /// Shrink the box to the artwork instead of taking the width on offer.
-  ///
-  /// Set on both ends of the flight, and only there. A hero interpolates the
-  /// BOX, so a box that is 800 wide on one screen and 300 on the other scales
-  /// its contents by the difference — the mark collapsed on arrival and sprang
-  /// back at the end, even though the artwork itself was the same size all
-  /// along. Hugging it makes the two rects the artwork's own, and the flight a
-  /// plain scale between them.
-  final bool hugArtwork;
-
   @override
   Widget build(BuildContext context) {
     if (url == null) return child;
@@ -114,8 +108,8 @@ class TitleLogo extends StatelessWidget {
     // image its intrinsic size for free: it lays out at maxHeightPx tall, and
     // narrower than the column unless the artwork is extremely wide, in which
     // case `contain` scales it down instead of overflowing.
-    final decodeHeight =
-        (maxHeightPx * MediaQuery.devicePixelRatioOf(context)).round();
+    final decodeHeight = (maxHeightPx * MediaQuery.devicePixelRatioOf(context))
+        .round();
 
     // The align is load-bearing, not cosmetic. Some of these headings sit in an
     // `Expanded`, which hands down a TIGHT width — an image told exactly how
@@ -127,7 +121,6 @@ class TitleLogo extends StatelessWidget {
     return Align(
       alignment: alignment,
       heightFactor: 1,
-      widthFactor: hugArtwork ? 1 : null,
       child: AuthedNetworkImage(
         url!,
         fit: BoxFit.contain,
@@ -136,17 +129,7 @@ class TitleLogo extends StatelessWidget {
         // Holds the heading's room while the bytes arrive, so the copy below
         // does not jump once they land. Not `SizedBox.expand`: nothing here
         // bounds the height.
-        //
-        // The width matters just as much once the box hugs the artwork: with
-        // only a height this is zero wide, and a hero flying into a zero-wide
-        // box scales the mark to nothing on the way in. Logos run wide, so a
-        // placeholder three times its height is closer to the truth than
-        // nothing is — and in practice it is rarely seen, because the aside
-        // has already pulled the same bytes into the shared artwork cache.
-        loadingBuilder: (_, _, _) => SizedBox(
-          height: maxHeightPx,
-          width: hugArtwork ? maxHeightPx * 3 : null,
-        ),
+        loadingBuilder: (_, _, _) => SizedBox(height: maxHeightPx),
       ),
     );
   }
