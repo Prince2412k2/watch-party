@@ -151,6 +151,11 @@ class MediaCacheProxy {
   Future<void> evict({Set<String> protected = const {}}) =>
       _store.evict(protected: protected);
 
+  /// Drops every cached title except [protected], regardless of size or age.
+  /// The user asking for their disk back — see [RangeCacheStore.clear].
+  Future<int> clear({Set<String> protected = const {}}) =>
+      _store.clear(protected: protected);
+
   // ── Request handling ──────────────────────────────────────────────────
 
   Future<void> _handleRequest(HttpRequest request) async {
