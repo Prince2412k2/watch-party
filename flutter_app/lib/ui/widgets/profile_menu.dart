@@ -132,10 +132,13 @@ class _ProfileMenuState extends ConsumerState<ProfileMenu>
               ),
               TrayButton(
                 icon: Icons.tune,
-                tooltip: 'Edit profile',
+                tooltip: 'Settings',
                 onTap: () {
                   _close();
-                  context.push(Routes.profile);
+                  // Settings, not the avatar editor. Editing your face is one
+                  // of the things you might want from here rather than the
+                  // thing; it is a step in, behind the pencil.
+                  context.push(Routes.settings);
                 },
               ),
               TrayButton(
