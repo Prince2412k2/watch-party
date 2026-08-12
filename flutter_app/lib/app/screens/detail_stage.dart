@@ -826,21 +826,37 @@ class _CopyColumn extends StatelessWidget {
                       fontSize: _headingSizeFor(subject.name),
                     ),
                   )
-                : Hero(
-                    tag: titleLogoHeroTag(subject.id),
-                    child: TitleLogo(
-                      url: logoUrl,
-                      maxHeightPx: TitleLayout.logoDetailHeight,
-                      // Still the text underneath. This is the ERROR path now
-                      // rather than the no-logo one, but artwork that fails to
-                      // decode must not leave the page with no heading at all.
-                      child: Text(
-                        subject.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TitleType.heading.copyWith(
-                          color: wp.text,
-                          fontSize: _headingSizeFor(subject.name),
+                // The slot holds its full height from the first frame,
+                // whatever is or is not in it.
+                //
+                // Without this the page opened with the heading collapsed to
+                // nothing — genre sat straight on top of the synopsis — and
+                // then shoved the whole column down when the mark landed. Two
+                // things were emptying the slot at once: the artwork had not
+                // arrived yet on a first open, and a Hero in flight leaves
+                // behind a placeholder sized from what it measured, which is
+                // zero when the thing it measured had not loaded.
+                : SizedBox(
+                    height: TitleLayout.logoDetailHeight,
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Hero(
+                        tag: titleLogoHeroTag(subject.id),
+                        child: TitleLogo(
+                          url: logoUrl,
+                          maxHeightPx: TitleLayout.logoDetailHeight,
+                          // Still the text underneath. This is the ERROR path now
+                          // rather than the no-logo one, but artwork that fails to
+                          // decode must not leave the page with no heading at all.
+                          child: Text(
+                            subject.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TitleType.heading.copyWith(
+                              color: wp.text,
+                              fontSize: _headingSizeFor(subject.name),
+                            ),
+                          ),
                         ),
                       ),
                     ),
