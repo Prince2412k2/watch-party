@@ -15,8 +15,9 @@ abstract final class ArtworkTexture {
   static const String poster = 'assets/textures/poster.png';
 }
 
-/// Artwork printed on aged stock: fibre in the image, a warm sheet behind it,
-/// and torn edges that genuinely remove pixels rather than paint over them.
+/// Artwork printed on aged stock: fibre in the image and torn edges that
+/// genuinely remove pixels rather than paint over them, so a worn corner shows
+/// the stage behind the artwork.
 ///
 /// ## One asset, two jobs
 ///
@@ -27,13 +28,20 @@ abstract final class ArtworkTexture {
 /// always agree about where the sheet is thin — which is what stops the tear
 /// reading as a shape cut out of an otherwise pristine picture.
 ///
-/// ## Why the ink wears away sooner than the sheet
+/// ## Why the worn edge is transparent and not paper
 ///
-/// If one mask cut both, the paper would be removed everywhere the ink is and
-/// [paper] would never show — the treatment would be an expensive way to draw
-/// a grey rectangle. So the baked alpha is the **ink** wear, and [_stockOf]
-/// widens that same channel toward opaque to get the larger **sheet** shape.
-/// Between the two you see bare paper, which is the entire point.
+/// Backing the artwork with a sheet is what a real torn poster has, and it was
+/// the first thing built here. On screen it works against the effect: stock is
+/// opaque, so it survives the tear as a hard pale rectangle, and the eye takes
+/// that rectangle for the object's real edge — the tear stops being an edge and
+/// becomes a pattern printed inside a border. Letting the wear go all the way
+/// to transparent is what makes it read as a torn edge.
+///
+/// [paper] still offers the sheet for callers that want the printed-card look.
+/// When it is set the ink has to wear away *sooner* than the stock, or the
+/// paper would be cut away everywhere the ink is and never show at all; the
+/// baked alpha is the ink wear, and [_Sheet._stock] widens that same channel
+/// toward opaque for the larger sheet shape.
 ///
 /// ## Why ShaderMask and not a hand-rolled saveLayer
 ///
@@ -50,7 +58,7 @@ class TexturedArtwork extends StatefulWidget {
     super.key,
     required this.texture,
     required this.child,
-    this.paper = kWarmPaper,
+    this.paper,
     this.enabled = true,
     this.shadow,
   });
@@ -61,8 +69,16 @@ class TexturedArtwork extends StatefulWidget {
   /// The artwork to print.
   final Widget child;
 
-  /// Stock colour. [paperFor] mixes this from [kWarmPaper] and the artwork.
-  final Color paper;
+  /// Stock behind the artwork, or null — the default — for none, leaving the
+  /// worn edge transparent so the stage shows through it.
+  ///
+  /// A sheet is what a torn poster would really have, but on screen it works
+  /// against the effect: the stock is opaque, so it survives the tear as a
+  /// hard pale rectangle, and the eye reads that rectangle as the object's
+  /// real edge. The tear then looks like a pattern printed inside a border
+  /// rather than the border itself. [paperFor] is still here for callers that
+  /// want the printed-card look deliberately.
+  final Color? paper;
 
   /// Off returns [child] untouched, so a caller can A/B the treatment without
   /// restructuring its tree — and so existing layout tests keep their shape.
@@ -157,7 +173,9 @@ class _TexturedArtworkState extends State<TexturedArtwork> {
     // would flash a hole in the rail on every cold start.
     if (!widget.enabled || sheet == null) return widget.child;
 
-    // The ink: washed, grained, then gnawed back so paper shows around it.
+    // Washed, grained, then cut by the wear — and the cut goes all the way to
+    // transparent, so what shows through a worn corner is the stage behind the
+    // artwork, not more artwork and not a sheet of paper.
     Widget out = ShaderMask(
       blendMode: BlendMode.dstIn,
       shaderCallback: sheet.ink,
@@ -171,36 +189,38 @@ class _TexturedArtworkState extends State<TexturedArtwork> {
       ),
     );
 
-    // Paper behind it, carrying the same fibre so the two read as one object.
-    //
-    // `passthrough`, not `expand`. This widget wraps two very differently
-    // shaped callers: the backdrop arrives with tight constraints and must
-    // fill them, while a poster sits in a Column and arrives with unbounded
-    // height, which `expand` turns into an infinite-height assertion. Passing
-    // the incoming constraints straight through satisfies both — the artwork
-    // itself is what decides the size, exactly as it did before the stock was
-    // wrapped around it.
-    out = Stack(
-      fit: StackFit.passthrough,
-      children: [
-        Positioned.fill(
-          child: ShaderMask(
-            blendMode: BlendMode.softLight,
-            shaderCallback: sheet.grain,
-            child: ColoredBox(color: widget.paper),
+    final paper = widget.paper;
+    if (paper != null) {
+      // Stock behind the ink, for the printed-on-card look. Off by default:
+      // an opaque sheet survives the tear as a hard pale rectangle, and a
+      // crisp rectangle framing a ragged edge is precisely what makes the
+      // tear read as printed decoration instead of a real edge.
+      //
+      // `passthrough`, not `expand`. This widget wraps two very differently
+      // shaped callers: the backdrop arrives with tight constraints and must
+      // fill them, while a poster sits in a Column and arrives with unbounded
+      // height, which `expand` turns into an infinite-height assertion.
+      out = Stack(
+        fit: StackFit.passthrough,
+        children: [
+          Positioned.fill(
+            child: ShaderMask(
+              blendMode: BlendMode.softLight,
+              shaderCallback: sheet.grain,
+              child: ColoredBox(color: paper),
+            ),
           ),
-        ),
-        out,
-      ],
-    );
-
-    // The outer tear, last, so it cuts ink and paper together and nothing can
-    // hang past the torn edge.
-    out = ShaderMask(
-      blendMode: BlendMode.dstIn,
-      shaderCallback: sheet.stock,
-      child: out,
-    );
+          out,
+        ],
+      );
+      // Only now is an outer cut needed, to take the sheet back off the
+      // rectangle the ink has already left.
+      out = ShaderMask(
+        blendMode: BlendMode.dstIn,
+        shaderCallback: sheet.stock,
+        child: out,
+      );
+    }
 
     final shadow = widget.shadow;
     if (shadow == null) return out;
@@ -221,7 +241,7 @@ class _TexturedArtworkState extends State<TexturedArtwork> {
               ),
               child: ShaderMask(
                 blendMode: BlendMode.dstIn,
-                shaderCallback: sheet.stock,
+                shaderCallback: paper == null ? sheet.ink : sheet.stock,
                 child: ColoredBox(color: shadow.color),
               ),
             ),

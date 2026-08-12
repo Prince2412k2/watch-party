@@ -54,11 +54,19 @@ class AnalogPosterTile extends StatelessWidget {
     this.progress,
     this.aspectRatio = posterAspect,
     this.textured = true,
+    this.paperStock = false,
   });
 
   /// Print the artwork on aged stock. Off restores the framed, edge-lit tile
   /// this widget's invariants were written for.
   final bool textured;
+
+  /// Back the artwork with an opaque sheet, tinted from its own dominant
+  /// colour. Off by default: the sheet survives the tear as a hard pale
+  /// rectangle, and a crisp rectangle around a ragged edge is what makes the
+  /// tear read as decoration printed inside a border rather than as the border
+  /// itself. Transparent worn edges show the stage and read as a real edge.
+  final bool paperStock;
 
   /// Poster artwork, width ÷ height. The canonical 2:3 from the tokens.
   static const double posterAspect =
@@ -143,6 +151,7 @@ class AnalogPosterTile extends StatelessWidget {
       progress: progress,
       aspectRatio: aspectRatio,
       textured: textured,
+      paperStock: paperStock,
     );
 
     final caption = title;
@@ -185,6 +194,7 @@ class _PosterArt extends StatefulWidget {
     required this.progress,
     required this.aspectRatio,
     required this.textured,
+    required this.paperStock,
   });
 
   final String? imageUrl;
@@ -194,6 +204,7 @@ class _PosterArt extends StatefulWidget {
   final double? progress;
   final double aspectRatio;
   final bool textured;
+  final bool paperStock;
 
   @override
   State<_PosterArt> createState() => _PosterArtState();
@@ -246,7 +257,7 @@ class _PosterArtState extends State<_PosterArt> {
   /// agree with what is printed on it. Cheap after the first tile: the palette
   /// is held against the URL.
   Future<void> _readPalette(String url, Uint8List bytes) async {
-    if (!widget.textured) return;
+    if (!widget.textured || !widget.paperStock) return;
     final dominant = await ArtworkPalette.dominant(url, bytes);
     final paper = TexturedArtwork.paperFor(dominant);
     if (mounted && paper != _paper) setState(() => _paper = paper);
@@ -316,7 +327,7 @@ class _PosterArtState extends State<_PosterArt> {
               child: textured
                   ? TexturedArtwork(
                       texture: ArtworkTexture.poster,
-                      paper: _paper ?? TexturedArtwork.kWarmPaper,
+                      paper: _paper,
                       shadow: _PosterArt._castShadow(t),
                       child: child!,
                     )
