@@ -7,7 +7,6 @@
 // The direct subtitle action deliberately stays OUTSIDE this stack — fast track
 // selection and Off must not cost two taps.
 
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -112,19 +111,12 @@ class _AnalogSettingsStackState extends State<AnalogSettingsStack> {
           offset: const Offset(0, -AnalogSpace.xsPx),
           child: Material(
             color: Colors.transparent,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: _SettingsPanel(
+              animate: animate,
               children: [
                 for (var i = 0; i < widget.entries.length; i++)
                   _SettingsRow(
                     entry: widget.entries[i],
-                    // Rows settle from the bottom up, one short detent apart.
-                    delay: animate
-                        ? AnalogMotion.detentMs *
-                              (widget.entries.length - 1 - i)
-                        : Duration.zero,
-                    animate: animate,
                     onTap: !widget.entries[i].enabled
                         ? null
                         : () {
@@ -161,84 +153,38 @@ class _AnalogSettingsStackState extends State<AnalogSettingsStack> {
   }
 }
 
-class _SettingsRow extends StatelessWidget {
-  const _SettingsRow({
-    required this.entry,
-    required this.delay,
-    required this.animate,
-    required this.onTap,
-  });
+/// The one plate the rows sit in.
+///
+/// They used to be separate floating pills, one per setting, each with its own
+/// fill and corners and a gap between them. That reads as a column of
+/// unrelated buttons; a settings menu is one object with rows in it.
+class _SettingsPanel extends StatelessWidget {
+  const _SettingsPanel({required this.children, required this.animate});
 
-  final AnalogSettingsEntry entry;
-  final Duration delay;
+  final List<Widget> children;
   final bool animate;
-  final VoidCallback? onTap;
+
+  /// Fixed, so every value lands on the same right edge instead of the panel
+  /// resizing itself around whichever setting has the longest current value.
+  static const double _width = 264;
 
   @override
   Widget build(BuildContext context) {
-    final row = Padding(
-      padding: const EdgeInsets.only(bottom: AnalogSpace.xsPx),
+    final panel = SizedBox(
+      width: _width,
       child: Material(
-        color: AnalogColor.stageSurface2,
-        borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
-          hoverColor: AnalogColor.stageSurface3,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AnalogSpace.mdPx,
-              vertical: AnalogSpace.smPx,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  entry.icon,
-                  size: 16,
-                  color: entry.enabled
-                      ? AnalogColor.inkDim
-                      : AnalogColor.inkFaint,
-                ),
-                const SizedBox(width: AnalogSpace.smPx),
-                Text(
-                  entry.label,
-                  style: TextStyle(
-                    color: entry.enabled
-                        ? AnalogColor.ink
-                        : AnalogColor.inkFaint,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if (entry.detail != null) ...[
-                  const SizedBox(width: AnalogSpace.mdPx),
-                  Text(
-                    entry.detail!,
-                    style: const TextStyle(
-                      color: AnalogColor.inkFaint,
-                      fontSize: 11,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
+        color: AnalogColor.stageSurface,
+        borderRadius: BorderRadius.circular(AnalogRadius.cardPx),
+        clipBehavior: Clip.antiAlias,
+        child: Column(mainAxisSize: MainAxisSize.min, children: children),
       ),
     );
-    if (!animate) return row;
-    // Short travel, no overshoot: the row rises a few px into place.
+    if (!animate) return panel;
+    // Short travel, no overshoot: the panel rises a few px into place.
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: AnalogMotion.detentMs + delay,
-      curve: Interval(
-        delay.inMicroseconds /
-            math.max(1, (AnalogMotion.detentMs + delay).inMicroseconds),
-        1,
-        curve: AnalogMotion.detentEase,
-      ),
+      duration: AnalogMotion.detentMs,
+      curve: AnalogMotion.detentEase,
       builder: (context, value, child) => Opacity(
         opacity: value,
         child: Transform.translate(
@@ -246,7 +192,71 @@ class _SettingsRow extends StatelessWidget {
           child: child,
         ),
       ),
-      child: row,
+      child: panel,
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({required this.entry, required this.onTap});
+
+  final AnalogSettingsEntry entry;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = entry.enabled ? AnalogColor.ink : AnalogColor.inkFaint;
+    return InkWell(
+      onTap: onTap,
+      hoverColor: AnalogColor.stageSurface2,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AnalogSpace.mdPx,
+          vertical: AnalogSpace.smPx + 3,
+        ),
+        child: Row(
+          children: [
+            Icon(entry.icon, size: 18, color: ink),
+            const SizedBox(width: AnalogSpace.smPx + 2),
+            Expanded(
+              child: Text(
+                entry.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: ink,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            // The current value sits against the chevron, quieter than the
+            // label — you scan the labels to find the setting, then read one
+            // value.
+            if (entry.detail != null)
+              Padding(
+                padding: const EdgeInsets.only(left: AnalogSpace.smPx),
+                child: Text(
+                  entry.detail!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AnalogColor.inkDim,
+                    fontSize: 13.5,
+                  ),
+                ),
+              ),
+            const SizedBox(width: AnalogSpace.xsPx),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: entry.enabled
+                  ? AnalogColor.inkFaint
+                  : AnalogColor.inkFaint,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
