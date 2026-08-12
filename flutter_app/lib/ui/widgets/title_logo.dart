@@ -42,13 +42,19 @@ class AsideTitleLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (url == null || itemId == null) return const SizedBox.shrink();
-    return Hero(
-      tag: titleLogoHeroTag(itemId!),
-      child: TitleLogo(
-        url: url,
-        maxHeightPx: maxHeightPx,
-        alignment: Alignment.center,
-        child: const SizedBox.shrink(),
+    // Full height from the first frame, loaded or not. A hero takes the rect
+    // it flies FROM by measuring this, so a slot that is still empty when you
+    // press enter sends the mark off from a box of nothing.
+    return SizedBox(
+      height: maxHeightPx,
+      child: Hero(
+        tag: titleLogoHeroTag(itemId!),
+        child: TitleLogo(
+          url: url,
+          maxHeightPx: maxHeightPx,
+          alignment: Alignment.center,
+          child: const SizedBox.shrink(),
+        ),
       ),
     );
   }
