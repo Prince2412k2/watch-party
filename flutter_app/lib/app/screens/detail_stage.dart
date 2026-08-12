@@ -716,6 +716,10 @@ class _CopyColumn extends StatelessWidget {
     // changed the page — the opposite of the movies rule.
     final subject = rootIsSeries && isEpisode ? active : hero;
 
+    // Null for an episode even when the series has a logo: this heading is the
+    // episode's name, and borrowing the series' mark would say the wrong one.
+    final logoUrl = isEpisode ? null : titleLogoUrl(api, subject);
+
     // An episode carries no genres of its own; they belong to the series and
     // are the same for every episode in it.
     final genres = (subject.genres.isNotEmpty ? subject : hero).genres
@@ -805,22 +809,42 @@ class _CopyColumn extends StatelessWidget {
             // control you have to scroll to reach is worse than a heading two
             // sizes smaller.
             // The logo is the title as the film sets it, so it takes the
-            // heading's slot when there is one. Episodes have no logo of their
-            // own and must not borrow the series' — the heading here is the
-            // episode's name — so they keep the text and its step-down.
-            TitleLogo(
-              url: isEpisode ? null : titleLogoUrl(api, subject),
-              maxHeightPx: TitleLayout.logoMaxHeight,
-              child: Text(
-                subject.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TitleType.heading.copyWith(
-                  color: wp.text,
-                  fontSize: _headingSizeFor(subject.name),
-                ),
-              ),
-            ),
+            // heading's slot when there is one, and it is tagged to match the
+            // browse stage's aside — opening a title flies its mark across
+            // into here rather than cutting to it.
+            //
+            // Episodes have no logo of their own and must not borrow the
+            // series' (the heading here is the episode's name), so they keep
+            // the text and its step-down.
+            logoUrl == null
+                ? Text(
+                    subject.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TitleType.heading.copyWith(
+                      color: wp.text,
+                      fontSize: _headingSizeFor(subject.name),
+                    ),
+                  )
+                : Hero(
+                    tag: titleLogoHeroTag(subject.id),
+                    child: TitleLogo(
+                      url: logoUrl,
+                      maxHeightPx: TitleLayout.logoDetailHeight,
+                      // Still the text underneath. This is the ERROR path now
+                      // rather than the no-logo one, but artwork that fails to
+                      // decode must not leave the page with no heading at all.
+                      child: Text(
+                        subject.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TitleType.heading.copyWith(
+                          color: wp.text,
+                          fontSize: _headingSizeFor(subject.name),
+                        ),
+                      ),
+                    ),
+                  ),
           ),
           // An episode without its own synopsis falls back to the series', so
           // the block never collapses to a bare title mid-rail.
@@ -1030,11 +1054,14 @@ class _RightPoster extends StatelessWidget {
     return Align(
       // Nudged below centre. Dead centre put the poster's top edge above the
       // copy's, which read as it floating away from the block it belongs to.
-      alignment: const Alignment(1, 0.18),
+      //
+      // Pulled in off the right edge as well: hard against it, the artwork
+      // read as pinned to the window rather than as part of the composition.
+      alignment: const Alignment(0.35, 0.14),
       child: Padding(
-        padding: const EdgeInsets.only(right: 40),
+        padding: const EdgeInsets.only(right: 24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 280),
+          constraints: const BoxConstraints(maxWidth: 340),
           child: Hero(
             tag: 'poster-${item.id}',
             // The poster arrives with the same elasticity the rail settles
