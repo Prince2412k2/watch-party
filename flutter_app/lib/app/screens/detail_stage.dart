@@ -47,9 +47,20 @@ class DetailStage extends ConsumerStatefulWidget {
     required this.itemId,
     required this.onWatch,
     required this.onBack,
+    this.seed,
   });
 
   final String itemId;
+
+  /// The title as the surface that opened it already knew it.
+  ///
+  /// Without this the page has nothing to draw until its own fetch lands, so
+  /// the FIRST open of any title rendered a skeleton — and a skeleton has no
+  /// heading, which means the mark flying in from the browse stage had no
+  /// destination to fly to. It arrived at nothing and then appeared once the
+  /// fetch returned. Opening the same title again looked right only because
+  /// the fetch was cached by then.
+  final LibraryItem? seed;
   final void Function(LibraryItem playItem, DetailTrackSelection tracks)
   onWatch;
   final VoidCallback onBack;
@@ -67,10 +78,14 @@ class _DetailStageState extends ConsumerState<DetailStage>
   /// on a Hero from the rail — so this is for the furniture that has nowhere
   /// to fly from: the cast rises from beneath, the actions come in from the
   /// side, each on its own slice of the clock.
-  late final AnimationController _enter = AnimationController(
-    vsync: this,
-    duration: AnalogMotion.enterMs + AnalogMotion.copySwapMs,
-  )..forward();
+  ///
+  /// Built in [initState] rather than as a `late final` initialiser, for the
+  /// reason the profile menu's controller carries the same note: a lazy field
+  /// is only created when something reads it, and `dispose` reads it. Leave
+  /// this page before its fetch lands — so nothing has drawn, so nothing has
+  /// touched this — and unmounting CREATES a ticker, which asserts on the way
+  /// out with "looking up a deactivated widget's ancestor is unsafe".
+  late final AnimationController _enter;
 
   /// The copy block's re-arrival when the episode cursor moves.
   ///
@@ -79,14 +94,24 @@ class _DetailStageState extends ConsumerState<DetailStage>
   /// same rule as movies do on the movies tab", and on that tab the text
   /// swaps with the same weighted travel the rail settles with. Starts
   /// settled so the first paint is not an animation from nothing.
-  late final AnimationController _copySwap = AnimationController(
-    vsync: this,
-    duration: AnalogMotion.copySwapMs,
-    value: 1,
-  );
+  late final AnimationController _copySwap;
 
   /// Which way the cursor last moved, so the copy comes in from that side.
   int _stepDirection = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _enter = AnimationController(
+      vsync: this,
+      duration: AnalogMotion.enterMs + AnalogMotion.copySwapMs,
+    )..forward();
+    _copySwap = AnimationController(
+      vsync: this,
+      duration: AnalogMotion.copySwapMs,
+      value: 1,
+    );
+  }
 
   @override
   void dispose() {
@@ -96,7 +121,7 @@ class _DetailStageState extends ConsumerState<DetailStage>
   }
 
   late String _activeId = widget.itemId;
-  LibraryItem? _activeFallback;
+  late LibraryItem? _activeFallback = widget.seed;
   int? _selAudio;
   int? _selSubtitle;
 

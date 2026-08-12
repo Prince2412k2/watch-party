@@ -137,11 +137,14 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
           _clearQuery();
         });
       case PlayActivation(:final itemId):
-        // Straight to the detail page. The poster carries a Hero tag matching
-        // the one that page already uses, so the artwork flies across the
-        // route rather than cutting — the shared element does the work a
-        // hand-rolled morph was doing badly.
-        context.push('/detail/$itemId');
+        // Straight to the detail page. The poster and the title's mark both
+        // carry Hero tags matching the ones that page uses, so the artwork
+        // flies across the route rather than cutting.
+        //
+        // The item goes with it. That page fetches its own copy, and until
+        // that lands it has nothing to draw — no heading for the mark to fly
+        // into, on the FIRST open of every title.
+        context.push('/detail/$itemId', extra: item);
       case NoActivation():
         break;
     }
