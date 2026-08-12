@@ -148,6 +148,9 @@ void main() {
   ) async {
     await _pump(tester);
 
+    // Search is a glyph until asked for — open the tray, then type.
+    await tester.tap(find.byIcon(Icons.search));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'Show 1');
     await tester.pumpAndSettle();
 
@@ -169,6 +172,8 @@ void main() {
   testWidgets('a search that matches nothing says so', (tester) async {
     await _pump(tester);
 
+    await tester.tap(find.byIcon(Icons.search));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'zzz');
     await tester.pumpAndSettle();
 
