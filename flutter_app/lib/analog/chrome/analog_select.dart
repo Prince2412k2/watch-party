@@ -75,7 +75,7 @@ Future<void> showAnalogSelect<T>({
   IconData? footerIcon,
   String? footerTooltip,
   VoidCallback? onFooter,
-  double width = 300,
+  double width = 260,
 }) async {
   final box = anchor.currentContext?.findRenderObject();
   final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
@@ -107,131 +107,113 @@ Future<void> showAnalogSelect<T>({
     shadowColor: AnalogColor.shadowCastStrong,
     elevation: 0,
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(AnalogRadius.cardPx),
+      borderRadius: BorderRadius.circular(_radius),
       side: const BorderSide(color: AnalogColor.line),
     ),
     items: [
-      for (var g = 0; g < groups.length; g++) ...[
-        if (g > 0)
-          const PopupMenuDivider(height: 1) as PopupMenuEntry<AnalogChoice<T>>,
-        for (final choice in groups[g].choices)
+      for (final group in groups)
+        for (final choice in group.choices)
           PopupMenuItem<AnalogChoice<T>>(
             value: choice,
-            height: 46,
-            padding: const EdgeInsets.symmetric(
-              horizontal: AnalogSpace.mdPx,
-              vertical: AnalogSpace.xsPx,
-            ),
+            height: _rowHeight,
+            padding: const EdgeInsets.symmetric(horizontal: _rowPad),
             child: _ChoiceRow<T>(
-              choice: choice,
-              // The group's icon rides the FIRST row of the group and the rest
-              // indent past it, so the section is marked without spending a
-              // whole row on a heading.
-              groupIcon: choice == groups[g].choices.first
-                  ? groups[g].icon
-                  : null,
+              // Every row carries a glyph. Marking only the first of a group
+              // left the rest sitting in an empty gutter, which read as
+              // ragged rather than as a section.
+              icon: choice.icon ?? group.icon,
+              label: choice.label,
+              detail: choice.detail,
               selected: choice.value == selected,
+              onDelete: choice.onDelete,
             ),
           ),
-      ],
-      if (onFooter != null) ...[
-        const PopupMenuDivider(height: 1) as PopupMenuEntry<AnalogChoice<T>>,
-        // Labelled, not a bare glyph. An icon on its own at the foot of a list
-        // of tracks doesn't say whether it adds one or does something to the
-        // list, and this is the one row here that isn't a choice.
+      // No divider above this. The rule was the loudest thing in the menu,
+      // and the row already reads as a different kind of thing: it is the
+      // only one that never carries a tick.
+      if (onFooter != null)
         PopupMenuItem<AnalogChoice<T>>(
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: AnalogSpace.mdPx),
+          height: _rowHeight,
+          padding: const EdgeInsets.symmetric(horizontal: _rowPad),
           onTap: onFooter,
-          child: Row(
-            children: [
-              SizedBox(
-                width: _ChoiceRow._gutter,
-                child: Icon(
-                  footerIcon ?? Icons.add,
-                  size: 15,
-                  color: AnalogColor.inkFaint,
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  footerTooltip ?? 'Add',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: AnalogType.sansFamily,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: AnalogColor.inkDim,
-                  ),
-                ),
-              ),
-            ],
+          child: _ChoiceRow<T>(
+            icon: footerIcon ?? Icons.add,
+            label: footerTooltip ?? 'Add',
+            detail: null,
+            selected: false,
+            onDelete: null,
           ),
         ),
-      ],
     ],
   );
   if (chosen != null) onSelected(chosen.value);
 }
 
+/// Row geometry, shared by the choices and the footer so they cannot drift.
+const double _radius = 16;
+const double _rowHeight = 42;
+const double _rowPad = 14;
+
+/// The most a trailing value may take before it starts truncating.
+const double _detailWidth = 124;
+
 class _ChoiceRow<T> extends StatelessWidget {
   const _ChoiceRow({
-    required this.choice,
-    required this.groupIcon,
+    required this.icon,
+    required this.label,
+    required this.detail,
     required this.selected,
+    required this.onDelete,
   });
 
-  final AnalogChoice<T> choice;
-  final IconData? groupIcon;
+  final IconData icon;
+  final String label;
+  final String? detail;
   final bool selected;
-
-  /// The gutter the group icon lives in. Rows without one indent past it so
-  /// every label in a group starts on the same vertical.
-  static const double _gutter = 26;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
+    final ink = selected ? AnalogColor.ink : AnalogColor.inkDim;
     return Row(
       children: [
-        SizedBox(
-          width: _gutter,
-          child: groupIcon == null
-              ? null
-              : Icon(groupIcon, size: 15, color: AnalogColor.inkFaint),
-        ),
+        Icon(icon, size: 17, color: ink),
+        const SizedBox(width: AnalogSpace.mdPx - 2),
         Expanded(
           child: Text(
-            choice.label,
+            label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontFamily: AnalogType.sansFamily,
               fontSize: 14,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              color: selected ? AnalogColor.ink : AnalogColor.inkDim,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              color: ink,
             ),
           ),
         ),
         // The value sits at the right, quieter than the label. It used to be
         // uppercase mono, which read as a machine code rather than as a
         // description of the row it belonged to.
-        if (choice.detail != null)
-          Padding(
+        if (detail != null)
+          // Capped, so a long value truncates instead of eating the label. The
+          // label is what you are looking for; the value is what you check
+          // once you have found it.
+          Container(
+            constraints: const BoxConstraints(maxWidth: _detailWidth),
             padding: const EdgeInsets.only(left: AnalogSpace.smPx),
             child: Text(
-              choice.detail!,
+              detail!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontFamily: AnalogType.sansFamily,
-                fontSize: 13.5,
-                color: AnalogColor.inkDim,
+                fontSize: 13,
+                color: AnalogColor.inkFaint,
               ),
             ),
           ),
-        const SizedBox(width: AnalogSpace.smPx),
-        if (choice.onDelete != null)
+        if (onDelete != null)
           // Deepest recognizer wins the tap, so this takes the hit rather than
           // the PopupMenuItem's own InkWell underneath it. Pops first: calling
           // onDelete with the menu still open would leave a route showing a
@@ -240,10 +222,10 @@ class _ChoiceRow<T> extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             onTap: () {
               Navigator.of(context).pop();
-              choice.onDelete!();
+              onDelete!();
             },
             child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: AnalogSpace.xsPx),
+              padding: EdgeInsets.only(left: AnalogSpace.smPx),
               child: Icon(
                 Icons.close,
                 size: 14,
@@ -254,10 +236,15 @@ class _ChoiceRow<T> extends StatelessWidget {
         // The tick is the only state marker, and it is a shape rather than a
         // colour — the reference forbids selection that relies on colour
         // alone, and a menu is exactly where that rule earns its keep.
+        //
+        // Its slot is always reserved, even when nothing is in it: appending
+        // the tick only to the selected row shunted that row's value left, so
+        // the column of values stopped lining up the moment you picked one.
+        const SizedBox(width: AnalogSpace.smPx),
         SizedBox(
-          width: 18,
+          width: 16,
           child: selected
-              ? const Icon(Icons.check, size: 15, color: AnalogColor.ink)
+              ? const Icon(Icons.check, size: 16, color: AnalogColor.ink)
               : null,
         ),
       ],
