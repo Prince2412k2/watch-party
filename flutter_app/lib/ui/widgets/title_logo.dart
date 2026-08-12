@@ -53,6 +53,7 @@ class AsideTitleLogo extends StatelessWidget {
           url: url,
           maxHeightPx: maxHeightPx,
           alignment: Alignment.center,
+          hugArtwork: true,
           child: const SizedBox.shrink(),
         ),
       ),
@@ -78,6 +79,7 @@ class TitleLogo extends StatelessWidget {
     required this.maxHeightPx,
     required this.child,
     this.alignment = AlignmentDirectional.centerStart,
+    this.hugArtwork = false,
   });
 
   /// Logo artwork, or null to render [child] without asking the network.
@@ -93,6 +95,16 @@ class TitleLogo extends StatelessWidget {
   /// Where the artwork sits in the width it is given. Start where it stands in
   /// for a heading; centred where it stands on its own beside the copy.
   final AlignmentGeometry alignment;
+
+  /// Shrink the box to the artwork instead of taking the width on offer.
+  ///
+  /// Set on both ends of the flight, and only there. A hero interpolates the
+  /// BOX, so a box that is 800 wide on one screen and 300 on the other scales
+  /// its contents by the difference — the mark collapsed on arrival and sprang
+  /// back at the end, even though the artwork itself was the same size all
+  /// along. Hugging it makes the two rects the artwork's own, and the flight a
+  /// plain scale between them.
+  final bool hugArtwork;
 
   @override
   Widget build(BuildContext context) {
@@ -115,6 +127,7 @@ class TitleLogo extends StatelessWidget {
     return Align(
       alignment: alignment,
       heightFactor: 1,
+      widthFactor: hugArtwork ? 1 : null,
       child: AuthedNetworkImage(
         url!,
         fit: BoxFit.contain,
@@ -123,7 +136,17 @@ class TitleLogo extends StatelessWidget {
         // Holds the heading's room while the bytes arrive, so the copy below
         // does not jump once they land. Not `SizedBox.expand`: nothing here
         // bounds the height.
-        loadingBuilder: (_, _, _) => SizedBox(height: maxHeightPx),
+        //
+        // The width matters just as much once the box hugs the artwork: with
+        // only a height this is zero wide, and a hero flying into a zero-wide
+        // box scales the mark to nothing on the way in. Logos run wide, so a
+        // placeholder three times its height is closer to the truth than
+        // nothing is — and in practice it is rarely seen, because the aside
+        // has already pulled the same bytes into the shared artwork cache.
+        loadingBuilder: (_, _, _) => SizedBox(
+          height: maxHeightPx,
+          width: hugArtwork ? maxHeightPx * 3 : null,
+        ),
       ),
     );
   }

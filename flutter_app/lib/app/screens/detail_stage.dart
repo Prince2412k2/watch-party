@@ -845,6 +845,7 @@ class _CopyColumn extends StatelessWidget {
                         child: TitleLogo(
                           url: logoUrl,
                           maxHeightPx: TitleLayout.logoDetailHeight,
+                          hugArtwork: true,
                           // Still the text underneath. This is the ERROR path now
                           // rather than the no-logo one, but artwork that fails to
                           // decode must not leave the page with no heading at all.
