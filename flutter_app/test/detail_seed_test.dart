@@ -6,12 +6,21 @@ import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
 
-/// A title as the browse rail already knows it, logo tag included.
+/// The fetched record: everything, logo included.
 const _item = LibraryItem(
   id: 'film-1',
   name: 'A Seeded Title',
   type: 'Movie',
   imageTags: {'Primary': 'p', 'Logo': 'l'},
+);
+
+/// The same title as a RAIL ROW. The library listing asks Jellyfin for
+/// `Primary,Backdrop,Thumb` and nothing else, so a row has no logo to give.
+const _row = LibraryItem(
+  id: 'film-1',
+  name: 'A Seeded Title',
+  type: 'Movie',
+  imageTags: {'Primary': 'p'},
 );
 
 /// The page's own fetch, still in flight — which is what every FIRST open of a
@@ -45,7 +54,21 @@ void main() {
     );
   });
 
-  testWidgets('seeded, the heading is there on the first frame', (
+  testWidgets('seeded with a rail row, there is still nothing to land in', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_stage(seed: _row));
+    await tester.pump();
+    expect(
+      find.byType(TitleLogo),
+      findsNothing,
+      reason:
+          'a row has no Logo tag, so the page falls back to a text '
+          'heading — which is why the RECORD is what travels',
+    );
+  });
+
+  testWidgets('seeded with the record, the heading is there on frame one', (
     tester,
   ) async {
     await tester.pumpWidget(_stage(seed: _item));
