@@ -7,6 +7,7 @@ import '../../data/api_client.dart';
 import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
+import '../config.dart';
 import '../router.dart';
 import 'profile_screen.dart' show profileAvatarHeroTag, profileHeaderHeight;
 
@@ -428,23 +429,28 @@ class _Connection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        _Caption('Server'),
-        const SizedBox(height: AppSpacing.sm),
-        AppTextField(
-          controller: url,
-          enabled: !savingUrl,
-          hint: 'e.g. watch.example.tech',
-          onSubmitted: (_) => onSaveUrl(),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        AppButton(
-          label: savingUrl ? 'Saving…' : 'Save server',
-          variant: AppButtonVariant.secondary,
-          busy: savingUrl,
-          onPressed: savingUrl ? null : onSaveUrl,
-        ),
-
-        const SizedBox(height: AppSpacing.xxl),
+        // Only a build that does NOT know its backend asks for one. With an
+        // origin baked in there is exactly one right answer and the app already
+        // has it — offering the field would only let someone break their own
+        // install by editing it.
+        if (!AppConfig.hasBakedServer) ...[
+          _Caption('Server'),
+          const SizedBox(height: AppSpacing.sm),
+          AppTextField(
+            controller: url,
+            enabled: !savingUrl,
+            hint: 'e.g. watch.example.tech',
+            onSubmitted: (_) => onSaveUrl(),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          AppButton(
+            label: savingUrl ? 'Saving…' : 'Save server',
+            variant: AppButtonVariant.secondary,
+            busy: savingUrl,
+            onPressed: savingUrl ? null : onSaveUrl,
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+        ],
         _Caption('Username'),
         const SizedBox(height: AppSpacing.sm),
         // Shown, not editable. The account name belongs to the media server

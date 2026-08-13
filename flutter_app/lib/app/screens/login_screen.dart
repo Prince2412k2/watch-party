@@ -5,6 +5,7 @@ import '../../analog/chrome/analog_button.dart';
 import '../../analog/chrome/analog_dialog.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
+import '../config.dart';
 
 /// Login. Jellyfin username/password against the real [DioApiClient].
 ///
@@ -131,15 +132,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 );
               },
             ),
-            // Corner control to configure the backend URL.
-            Positioned(
-              top: 10,
-              right: 10,
-              child: _ServerConfigButton(
-                host: _hostOf(server),
-                onTap: _configureServer,
+            // Corner control to configure the backend URL — absent when the
+            // build already knows its backend. There is nothing to answer, and
+            // a field asking anyway invites someone to type a wrong one.
+            if (!AppConfig.hasBakedServer)
+              Positioned(
+                top: 10,
+                right: 10,
+                child: _ServerConfigButton(
+                  host: _hostOf(server),
+                  onTap: _configureServer,
+                ),
               ),
-            ),
           ],
         ),
       ),
