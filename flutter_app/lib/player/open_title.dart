@@ -105,13 +105,20 @@ Future<OpenTitleResult> openTitleIntoPlayer(
 /// jump the film to a scene nobody else is on, for the moment it takes sync to
 /// pull it back.
 ///
+/// Fetched STRAIGHT from the API rather than through [itemDetailProvider],
+/// and that is the whole point. The catalog repository yields its disk cache
+/// first and the fresh copy second, so awaiting its future hands back the
+/// snapshot taken BEFORE this title was ever watched — reliably zero, because
+/// the browse that led here is what cached it. A resume point is the one value
+/// that must not come from a copy older than the thing it describes.
+///
 /// Best-effort in every direction: an unreachable detail fetch means starting
 /// from the beginning, which is worse than resuming but far better than failing
 /// to open the film.
 Future<Duration> _resumePoint(WidgetRef ref, String itemId) async {
   if (ref.read(partyProvider) != null) return Duration.zero;
   try {
-    final item = await ref.read(itemDetailProvider(itemId).future);
+    final item = await ref.read(apiClientProvider).item(itemId);
     final ticks = item.userData?.playbackPositionTicks ?? 0;
     return ticks > 0 ? PlaybackReport.durationOf(ticks) : Duration.zero;
   } catch (_) {
