@@ -5,7 +5,8 @@ import 'package:flutter/widgets.dart';
 
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/authed_image.dart';
-import '../../ui/widgets/artwork_wall.dart';
+import '../../ui/widgets/pasted_artwork.dart';
+import '../../ui/widgets/shaded_artwork.dart';
 import '../../ui/widgets/textured_artwork.dart';
 import '../browse_core.dart';
 
@@ -288,20 +289,29 @@ class _PosterArt extends StatelessWidget {
           children: [
             // The sheet creases the print, and only the print. Everything the
             // interface draws on top of the artwork stays out of it.
-            _Printed(
-              textured: textured ?? ArtworkTextureScope.of(context),
-              seed: textureSeed,
-              child: url != null
-                  ? AuthedNetworkImage(
-                      url,
-                      fit: BoxFit.cover,
-                      filterQuality: FilterQuality.medium,
-                      cacheWidth: _decodeWidth(context),
-                      errorBuilder: (_, _, _) =>
-                          AnalogPosterPlaceholder(label: placeholderLabel),
-                    )
-                  : AnalogPosterPlaceholder(label: placeholderLabel),
-            ),
+            if (url == null)
+              AnalogPosterPlaceholder(label: placeholderLabel)
+            else if (textured ?? ArtworkTextureScope.of(context))
+              // Pasted: the wall's relief lights it, the print bends over the
+              // brick, and its own sheet of paper carries the grunge. One of
+              // ten sheets, chosen from the title, so a rail shows all ten.
+              ShadedArtwork(
+                url: url,
+                settings: ArtworkPaste.poster,
+                wallSeed: ArtworkTextureScope.wallSeedOf(context),
+                paperSeed: textureSeed,
+                errorBuilder: (_) =>
+                    AnalogPosterPlaceholder(label: placeholderLabel),
+              )
+            else
+              AuthedNetworkImage(
+                url,
+                fit: BoxFit.cover,
+                filterQuality: FilterQuality.medium,
+                cacheWidth: _decodeWidth(context),
+                errorBuilder: (_, _, _) =>
+                    AnalogPosterPlaceholder(label: placeholderLabel),
+              ),
             if (progress != null && progress! > 0)
               Align(
                 alignment: Alignment.bottomLeft,
@@ -314,48 +324,6 @@ class _PosterArt extends StatelessWidget {
                 ),
               ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// A poster as it sits on the stage: printed on paper, then taking the shape of
-/// the wall it is stuck to.
-///
-/// The wall relief is sampled from the window rather than from this tile, so
-/// the brick courses continue straight through the poster and out onto the
-/// wall either side. That continuity is the whole of the effect — a tile that
-/// sampled the wall from its own corner would be a little wall of its own, and
-/// twenty of them in a rail all showing the same brick in the same place read
-/// as a repeated pattern rather than as a room.
-class _Printed extends StatelessWidget {
-  const _Printed({
-    required this.textured,
-    required this.seed,
-    required this.child,
-  });
-
-  final bool textured;
-  final String? seed;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!textured) return child;
-    return WallLayer(
-      index: ArtworkWall.indexFor(ArtworkTextureScope.wallSeedOf(context)),
-      strength: ArtworkWall.kPasteStrength,
-      brightness: ArtworkWall.kReliefBrightness,
-      contrast: ArtworkWall.kReliefContrast,
-      builder: (context, depth, _) => WallRelief(
-        depth: depth,
-        strength: ArtworkWall.kPasteStrength,
-        child: TexturedArtwork(
-          seed: seed,
-          enabled: true,
-          opacity: ArtworkTexture.kPosterPaperOpacity,
-          child: child,
         ),
       ),
     );

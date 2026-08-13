@@ -16,14 +16,14 @@ abstract final class ArtworkTexture {
   /// where the grain is most of what says "paper", while the backdrop is
   /// scenery already carrying the wall's relief and a scrim on top of that.
   /// One shared number could only ever be wrong for one of them.
-  static const double kPosterPaperOpacity = 0.901;
+  static const double kPosterPaperOpacity = 1.000;
 
   /// The same for the backdrop, off by default — the grunge is wanted on the
   /// posters, not on the sheet behind them.
   static const double kBackdropPaperOpacity = 0.0;
 
   /// How far the print wash is dialled in, 0 = none, 1 = the full matrix.
-  static const double kWashAmount = 0.706;
+  static const double kWashAmount = 1.000;
 
   /// The nth sheet of a kind, for a caller that wants to name one directly
   /// rather than derive it from a title.

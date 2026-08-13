@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:watchparty/playground/pasted_poster_shader.dart';
+import 'package:watchparty/ui/widgets/pasted_artwork.dart';
 import 'package:watchparty/playground/texture_playground.dart';
 import 'package:watchparty/ui/widgets/artwork_wall.dart';
 import 'package:watchparty/ui/widgets/textured_artwork.dart';

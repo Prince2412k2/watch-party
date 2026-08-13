@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../ui/widgets/artwork_wall.dart';
 import '../ui/widgets/textured_artwork.dart';
-import 'pasted_poster_shader.dart';
+import '../ui/widgets/pasted_artwork.dart';
 
 /// How the paste is rendered.
 ///

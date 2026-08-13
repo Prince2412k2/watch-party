@@ -2,12 +2,38 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 
-import '../ui/widgets/textured_artwork.dart';
+import 'textured_artwork.dart';
 
-/// The shipped paper values, so the shader opens where the app already sits.
-abstract final class ArtworkTextureDefaults {
+/// The tuned uniforms the app paints with.
+///
+/// The soft-light path these replace is now a no-op — every one of its
+/// strengths tuned to zero — so this is the treatment, not an alternative to
+/// it. The wall is never drawn directly any more: it exists only inside this
+/// shader, as the surface whose relief lights the artwork lying on it.
+abstract final class ArtworkPaste {
+  static const double displacement = 0.012;
+  static const double textureStrength = 0.564;
+  static const double bumpStrength = 5.054;
+  static const double lightAngle = 3.002;
+  static const double lightDepth = 1.195;
+  static const double ambient = 0.655;
+  static const double gain = 1.038;
+  static const double sampleSpread = 0.5;
+
+  /// Paper on a poster, and on the backdrop — the backdrop takes none, so the
+  /// grunge lands on the posters and not on the sheet behind them.
   static const double posterPaper = ArtworkTexture.kPosterPaperOpacity;
+  static const double backdropPaper = ArtworkTexture.kBackdropPaperOpacity;
+
   static const double wash = ArtworkTexture.kWashAmount;
+
+  static const PasteShaderSettings poster = PasteShaderSettings(
+    paperStrength: posterPaper,
+  );
+
+  static const PasteShaderSettings backdrop = PasteShaderSettings(
+    paperStrength: backdropPaper,
+  );
 }
 
 /// Everything `shaders/pasted_poster.frag` takes, in declaration order.
@@ -19,16 +45,16 @@ abstract final class ArtworkTextureDefaults {
 @immutable
 class PasteShaderSettings {
   const PasteShaderSettings({
-    this.displacement = 0.015,
-    this.textureStrength = 0.12,
-    this.bumpStrength = 8,
-    this.lightAngle = 3.66,
-    this.lightDepth = 1,
-    this.ambient = 0.82,
-    this.gain = 1.12,
-    this.sampleSpread = 1,
-    this.paperStrength = ArtworkTextureDefaults.posterPaper,
-    this.wash = ArtworkTextureDefaults.wash,
+    this.displacement = ArtworkPaste.displacement,
+    this.textureStrength = ArtworkPaste.textureStrength,
+    this.bumpStrength = ArtworkPaste.bumpStrength,
+    this.lightAngle = ArtworkPaste.lightAngle,
+    this.lightDepth = ArtworkPaste.lightDepth,
+    this.ambient = ArtworkPaste.ambient,
+    this.gain = ArtworkPaste.gain,
+    this.sampleSpread = ArtworkPaste.sampleSpread,
+    this.paperStrength = ArtworkPaste.posterPaper,
+    this.wash = ArtworkPaste.wash,
   });
 
   /// How far the print slides down a slope, as a fraction of the quad.

@@ -7,6 +7,8 @@ import 'package:flutter/widgets.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/widgets/authed_image.dart';
 import '../../ui/widgets/artwork_wall.dart';
+import '../../ui/widgets/pasted_artwork.dart';
+import '../../ui/widgets/shaded_artwork.dart';
 import '../../ui/widgets/textured_artwork.dart';
 
 /// The full-stage backdrop the whole browsing model hangs off.
@@ -90,7 +92,9 @@ class _AnalogStageState extends State<AnalogStage> {
             fit: StackFit.expand,
             children: [
               const ColoredBox(color: AnalogColor.stageGround),
-              if (textured)
+              if (textured &&
+                  (ArtworkWall.kReliefStrength > 0 ||
+                      ArtworkWall.kTintOpacity > 0))
                 WallLayer(
                   index: ArtworkWall.indexFor(widget.wallSeed),
                   withTint: ArtworkWall.kTintOpacity > 0,
@@ -178,36 +182,25 @@ class _PastedBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final art = AuthedNetworkImage(
-      url,
-      fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => const SizedBox.expand(),
-    );
-    if (!textured) return art;
-
-    final inset = MediaQuery.sizeOf(context).shortestSide *
-        AnalogStage.kPasteInset;
-    return Padding(
-      padding: EdgeInsets.all(inset),
-      child: WallLayer(
-        index: ArtworkWall.indexFor(wallSeed),
-        strength: ArtworkWall.kBackdropPasteStrength,
-        brightness: ArtworkWall.kReliefBrightness,
-        contrast: ArtworkWall.kReliefContrast,
-        builder: (context, depth, _) => WallRelief(
-          depth: depth,
-          strength: ArtworkWall.kBackdropPasteStrength,
-          // Seeded by the URL so the paper changes with the title rather than
-          // on every rebuild.
-          child: TexturedArtwork(
-            seed: url,
-            portrait: false,
-            enabled: true,
-            opacity: ArtworkTexture.kBackdropPaperOpacity,
-            child: art,
-          ),
-        ),
-      ),
+    if (!textured) {
+      return AuthedNetworkImage(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => const SizedBox.expand(),
+      );
+    }
+    // Full-bleed, as the inset is zero — so the wall is not seen around the
+    // backdrop but through it, in the relief and the light falling across it.
+    return ShadedArtwork(
+      url: url,
+      settings: ArtworkPaste.backdrop,
+      wallSeed: wallSeed,
+      // Seeded by the URL so the paper changes with the title rather than on
+      // every rebuild. It carries no paper at present, but the seed costs
+      // nothing and keeps the two surfaces consistent if it ever does.
+      paperSeed: url,
+      portrait: false,
+      errorBuilder: (_) => const SizedBox.expand(),
     );
   }
 }

@@ -4,6 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/ui/widgets/artwork_wall.dart';
 
+/// Explicit strengths throughout, not the shipped constants.
+///
+/// Those are all zero now: the app paints the paste with a fragment shader and
+/// the soft-light path is no longer used on any real surface. Reading them here
+/// would render flat grey and assert nothing, while still passing. The
+/// mechanism is kept — the playground compares against it, and it is the
+/// fallback if the shader is ever unavailable — so it is still worth a golden.
+const _wallStrength = 0.9;
+const _pasteStrength = 0.3;
+
 void main() {
   setUp(WallImages.debugClear);
 
@@ -32,14 +42,14 @@ void main() {
         home: WallLayer(
           index: 3,
           withTint: true,
-          strength: ArtworkWall.kReliefStrength,
+          strength: _wallStrength,
           builder: (context, depth, tint) => Stack(
             fit: StackFit.expand,
             children: [
               // The wall itself.
               WallRelief(
                 depth: depth,
-                strength: ArtworkWall.kReliefStrength,
+                strength: _wallStrength,
                 child: const ColoredBox(color: Color(0xFF2A211C)),
               ),
               if (tint != null)
@@ -60,10 +70,10 @@ void main() {
                   height: 330,
                   child: WallLayer(
                     index: 3,
-                    strength: ArtworkWall.kPasteStrength,
+                    strength: _pasteStrength,
                     builder: (context, paste, _) => WallRelief(
                       depth: paste,
-                      strength: ArtworkWall.kPasteStrength,
+                      strength: _pasteStrength,
                       child: const ColoredBox(color: Color(0xFF9C8F7A)),
                     ),
                   ),

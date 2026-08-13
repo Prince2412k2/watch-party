@@ -29,21 +29,26 @@ abstract final class ArtworkWall {
   /// dropped at bake time — this puts it back.
   static const double kTintOpacity = 0.0;
 
-  /// How hard the relief is pressed into the bare wall. This one is brick seen
-  /// directly, with nothing over it, so it can take the map close to full.
-  static const double kReliefStrength = 0.735;
+  /// How hard the relief is pressed into the bare wall.
+  ///
+  /// Zero: the wall is no longer drawn as a surface of its own. It exists only
+  /// inside `shaders/pasted_poster.frag`, as the thing whose relief lights the
+  /// artwork lying on it — so there is nothing left for a soft-light pass over
+  /// bare ground to do. Raise it and the bare stage grows visible brick again,
+  /// which is only ever seen when no title is selected.
+  static const double kReliefStrength = 0.0;
 
   /// The relief through the backdrop sheet. Deeper than a poster's, because the
   /// backdrop is the largest thing on the stage and reads as scenery — it is
   /// what has to sell the room — and because the scrim and vignette over it eat
   /// a good deal of the relief before it reaches the eye.
-  static const double kBackdropPasteStrength = 0.599;
+  static const double kBackdropPasteStrength = 0.0;
 
   /// The relief through a poster. Kept well back: a poster is a small sheet of
   /// paper over the brick, not the brick itself, so it takes the shape of what
   /// it is stuck to without taking its full texture — and unlike the backdrop
   /// it is artwork someone is trying to read at rail size.
-  static const double kPasteStrength = 0.230;
+  static const double kPasteStrength = 0.0;
 
   /// Relief tuning, baked into the map alongside strength and taken about
   /// mid-grey — which is soft-light's no-op, so "no relief" and "no adjustment"
@@ -52,8 +57,8 @@ abstract final class ArtworkWall {
   /// The contrast is well above 1 because the sources span only ~0.40-0.74 even
   /// after the bake normalises them; without it the brick reads as a smudge
   /// rather than as courses.
-  static const double kReliefBrightness = 0.275;
-  static const double kReliefContrast = 2.564;
+  static const double kReliefBrightness = -0.500;
+  static const double kReliefContrast = 0.200;
 
   static String _two(int i) => (i % count).abs().toString().padLeft(2, '0');
 
