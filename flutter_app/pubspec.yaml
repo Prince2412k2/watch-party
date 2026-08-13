@@ -1,7 +1,7 @@
 name: watchparty
 description: "Watchparty — Flutter desktop client (all-codec playback, watch-party sync, LiveKit A/V, chat, offline, servarr)."
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+1
 
 environment:
   sdk: ^3.12.2
