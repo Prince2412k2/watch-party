@@ -1,10 +1,21 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../ui/widgets/artwork_wall.dart';
 import '../ui/widgets/textured_artwork.dart';
+import 'pasted_poster_shader.dart';
+
+/// How the paste is rendered.
+///
+/// Both are kept so they can be compared directly. The soft-light path is what
+/// the app ships: cheap, but it can only shade — it has no way to bend the
+/// print over a bump, because a blend mode moves colour and never samples
+/// anywhere but straight down. The shader derives a normal from the depth
+/// gradient and can displace, light and stain in one pass.
+enum PasteMode { shader, softLight }
 
 /// Every number the texture treatment has, in one object.
 ///
@@ -26,6 +37,8 @@ class TextureSettings {
     this.paperOpacity = 1,
     this.washAmount = 1,
     this.backdropInset = 0.045,
+    this.mode = PasteMode.shader,
+    this.shader = const PasteShaderSettings(),
   });
 
   final int wall;
@@ -39,6 +52,8 @@ class TextureSettings {
   final double paperOpacity;
   final double washAmount;
   final double backdropInset;
+  final PasteMode mode;
+  final PasteShaderSettings shader;
 
   TextureSettings copyWith({
     int? wall,
@@ -52,6 +67,8 @@ class TextureSettings {
     double? paperOpacity,
     double? washAmount,
     double? backdropInset,
+    PasteMode? mode,
+    PasteShaderSettings? shader,
   }) => TextureSettings(
     wall: wall ?? this.wall,
     sheet: sheet ?? this.sheet,
@@ -64,6 +81,8 @@ class TextureSettings {
     paperOpacity: paperOpacity ?? this.paperOpacity,
     washAmount: washAmount ?? this.washAmount,
     backdropInset: backdropInset ?? this.backdropInset,
+    mode: mode ?? this.mode,
+    shader: shader ?? this.shader,
   );
 
   /// The wash, dialled between "no wash at all" and the shipped matrix, so the
@@ -113,8 +132,9 @@ static const double kPasteInset = ${_n(backdropInset)};
 //   opacity: ${_n(paperOpacity)}
 //   wash amount: ${_n(washAmount)}  (1.0 = the shipped matrix, 0 = none)
 
-// Previewed on wall $wall, sheet $sheet.
-''';
+// Previewed on wall $wall, sheet $sheet, mode ${mode.name}.
+
+${mode == PasteMode.shader ? shader.asDart() : ''}''';
 }
 
 /// A stage built out of the real widgets, so what is tuned here is what ships.
@@ -171,41 +191,148 @@ class _TexturePlaygroundState extends State<TexturePlayground> {
 
 /// Wall, pasted backdrop, and a rail of posters — the three surfaces the
 /// treatment lands on, at roughly the sizes they land at.
-class _Preview extends StatelessWidget {
+///
+/// Stateful because the shader path needs decoded [ui.Image]s rather than
+/// widgets: a fragment shader takes samplers, so the artwork has to exist as an
+/// image before it can be pasted, not as a subtree that paints one.
+class _Preview extends StatefulWidget {
   const _Preview({required this.settings, required this.artPath});
 
   final TextureSettings settings;
   final String? artPath;
 
-  Widget _art(int i) {
-    final path = artPath;
-    if (path != null && File(path).existsSync()) {
-      return Image.file(File(path), fit: BoxFit.cover);
+  @override
+  State<_Preview> createState() => _PreviewState();
+}
+
+class _PreviewState extends State<_Preview> {
+  ui.FragmentProgram? _program;
+  ui.Image? _wall;
+  ui.Image? _depth;
+  final _art = <int, ui.Image>{};
+  String? _artFor;
+
+  static const _colours = [
+    Color(0xFF1663EB),
+    Color(0xFFB3402A),
+    Color(0xFF2F6B4F),
+    Color(0xFFD9A521),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_Preview old) {
+    super.didUpdateWidget(old);
+    if (old.settings.wall != widget.settings.wall) _loadWall();
+    if (old.artPath != widget.artPath) _loadArt();
+  }
+
+  Future<void> _load() async {
+    _program = await PasteShader.load();
+    await _loadWall();
+    await _loadArt();
+  }
+
+  Future<void> _loadWall() async {
+    final i = widget.settings.wall;
+    // Raw, not eased: the shader does its own arithmetic on the depth and
+    // pre-flattening it would leave nothing for the gradient to find.
+    final depth = await WallImages.load(ArtworkWall.depth(i));
+    final wall = await WallImages.load(ArtworkWall.tint(i));
+    if (!mounted || i != widget.settings.wall) return;
+    setState(() {
+      _depth = depth;
+      _wall = wall;
+    });
+  }
+
+  Future<void> _loadArt() async {
+    final path = widget.artPath;
+    _art.clear();
+    _artFor = path;
+    if (path == null || !File(path).existsSync()) {
+      if (mounted) setState(() {});
+      return;
     }
-    // Something with strong flat colour and a hard edge, so the relief and the
-    // paper are both obvious. Real artwork hides a lot of what is being tuned.
-    const colours = [
-      Color(0xFF1663EB),
-      Color(0xFFB3402A),
-      Color(0xFF2F6B4F),
-      Color(0xFFD9A521),
-    ];
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [colours[i % colours.length], const Color(0xFF15151A)],
-        ),
-      ),
-      child: Center(
-        child: Text(
-          '${i + 1}',
-          style: const TextStyle(
-            fontSize: 64,
-            fontWeight: FontWeight.w900,
-            color: Color(0x33FFFFFF),
-          ),
+    final bytes = await File(path).readAsBytes();
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    codec.dispose();
+    if (!mounted || path != _artFor) return;
+    setState(() {
+      for (var i = 0; i < 10; i++) {
+        _art[i] = frame.image;
+      }
+    });
+  }
+
+  /// A stand-in poster, drawn once. Strong flat colour and a hard edge, because
+  /// real artwork hides most of what is being tuned.
+  ui.Image _synthetic(int i, Size size) {
+    final cached = _art[i];
+    if (cached != null) return cached;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final rect = Offset.zero & size;
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = ui.Gradient.linear(rect.topLeft, rect.bottomRight, [
+          _colours[i % _colours.length],
+          const Color(0xFF15151A),
+        ]),
+    );
+    final para =
+        (ui.ParagraphBuilder(ui.ParagraphStyle(fontSize: size.width * 0.4))
+              ..pushStyle(ui.TextStyle(color: const Color(0x44FFFFFF)))
+              ..addText('${i + 1}'))
+            .build()
+          ..layout(ui.ParagraphConstraints(width: size.width));
+    canvas.drawParagraph(para, Offset(0, size.height * 0.3));
+    final image = recorder.endRecording().toImageSync(
+      size.width.round(),
+      size.height.round(),
+    );
+    _art[i] = image;
+    return image;
+  }
+
+  Widget _paste({
+    required int i,
+    required Size size,
+    required double softStrength,
+    required bool portrait,
+  }) {
+    final s = widget.settings;
+    if (s.mode == PasteMode.shader) {
+      return PastedPoster(
+        program: _program,
+        poster: _synthetic(i, size),
+        wall: _wall,
+        depth: _depth,
+        settings: s.shader,
+      );
+    }
+    // The shipped path, for comparison.
+    return WallLayer(
+      index: s.wall,
+      strength: softStrength,
+      brightness: s.brightness,
+      contrast: s.contrast,
+      builder: (context, depth, _) => WallRelief(
+        depth: depth,
+        strength: softStrength,
+        child: TexturedArtwork(
+          portrait: portrait,
+          sheet: ArtworkTexture.sheetAt(s.sheet + i, portrait: portrait),
+          opacity: s.paperOpacity,
+          wash: s.wash,
+          child: RawImage(image: _synthetic(i, size), fit: BoxFit.cover),
         ),
       ),
     );
@@ -213,61 +340,46 @@ class _Preview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = widget.settings;
     return LayoutBuilder(
       builder: (context, box) {
-        final inset = box.biggest.shortestSide * settings.backdropInset;
+        final inset = box.biggest.shortestSide * s.backdropInset;
         return Stack(
           fit: StackFit.expand,
           children: [
-            // The wall.
+            // The wall. Always the soft-light path: it is the surface itself,
+            // not something pasted to it, so there is nothing to displace.
             WallLayer(
-              index: settings.wall,
+              index: s.wall,
               withTint: true,
-              strength: settings.reliefStrength,
-              brightness: settings.brightness,
-              contrast: settings.contrast,
+              strength: s.reliefStrength,
+              brightness: s.brightness,
+              contrast: s.contrast,
               builder: (context, depth, tint) => Stack(
                 fit: StackFit.expand,
                 children: [
                   WallRelief(
                     depth: depth,
-                    strength: settings.reliefStrength,
+                    strength: s.reliefStrength,
                     child: const ColoredBox(color: Color(0xFF17120F)),
                   ),
                   if (tint != null)
                     Opacity(
-                      opacity: settings.tintOpacity,
+                      opacity: s.tintOpacity,
                       child: RawImage(image: tint, fit: BoxFit.cover),
                     ),
                 ],
               ),
             ),
-            // The backdrop, pasted.
             Padding(
               padding: EdgeInsets.all(inset),
-              child: WallLayer(
-                index: settings.wall,
-                strength: settings.backdropStrength,
-                brightness: settings.brightness,
-                contrast: settings.contrast,
-                builder: (context, depth, _) => WallRelief(
-                  depth: depth,
-                  strength: settings.backdropStrength,
-                  child: TexturedArtwork(
-                    portrait: false,
-                    sheet: ArtworkTexture.sheetAt(
-                      settings.sheet,
-                      portrait: false,
-                    ),
-                    opacity: settings.paperOpacity,
-                    wash: settings.wash,
-                    child: _art(0),
-                  ),
-                ),
+              child: _paste(
+                i: 0,
+                size: const Size(1280, 720),
+                softStrength: s.backdropStrength,
+                portrait: false,
               ),
             ),
-            // A rail of posters across it, so the courses can be checked for
-            // continuity from one tile to the next.
             Positioned(
               left: 0,
               right: 0,
@@ -280,24 +392,11 @@ class _Preview extends StatelessWidget {
                 separatorBuilder: (_, _) => const SizedBox(width: 22),
                 itemBuilder: (context, i) => SizedBox(
                   width: 200,
-                  child: WallLayer(
-                    index: settings.wall,
-                    strength: settings.posterStrength,
-                    brightness: settings.brightness,
-                    contrast: settings.contrast,
-                    builder: (context, depth, _) => WallRelief(
-                      depth: depth,
-                      strength: settings.posterStrength,
-                      child: TexturedArtwork(
-                        sheet: ArtworkTexture.sheetAt(
-                          settings.sheet + i,
-                          portrait: true,
-                        ),
-                        opacity: settings.paperOpacity,
-                        wash: settings.wash,
-                        child: _art(i + 1),
-                      ),
-                    ),
+                  child: _paste(
+                    i: i + 1,
+                    size: const Size(400, 600),
+                    softStrength: s.posterStrength,
+                    portrait: true,
                   ),
                 ),
               ),
@@ -367,6 +466,100 @@ class _Panel extends StatelessWidget {
                     ),
                   ),
                 ),
+
+                const _Head('Mode'),
+                // Scaled down rather than left to overflow: the panel is a
+                // fixed 340 and the two labels do not fit at default metrics.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: SegmentedButton<PasteMode>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: PasteMode.shader,
+                        label: Text('Shader'),
+                      ),
+                      ButtonSegment(
+                        value: PasteMode.softLight,
+                        label: Text('Soft-light'),
+                      ),
+                    ],
+                    selected: {s.mode},
+                    onSelectionChanged: (v) =>
+                        onChanged(s.copyWith(mode: v.first)),
+                  ),
+                ),
+
+                if (s.mode == PasteMode.shader) ...[
+                  const _Head('Shader'),
+                  _Slide(
+                    label: 'Displacement',
+                    value: s.shader.displacement,
+                    max: 0.08,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(displacement: v)),
+                    ),
+                  ),
+                  _Slide(
+                    label: 'Wall grain through paper',
+                    value: s.shader.textureStrength,
+                    max: 0.6,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(textureStrength: v)),
+                    ),
+                  ),
+                  _Slide(
+                    label: 'Bump strength',
+                    value: s.shader.bumpStrength,
+                    max: 40,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(bumpStrength: v)),
+                    ),
+                  ),
+                  _Slide(
+                    label: 'Light angle',
+                    value: s.shader.lightAngle,
+                    max: 6.283,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(lightAngle: v)),
+                    ),
+                  ),
+                  _Slide(
+                    label: 'Light depth',
+                    value: s.shader.lightDepth,
+                    min: 0.1,
+                    max: 4,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(lightDepth: v)),
+                    ),
+                  ),
+                  _Slide(
+                    label: 'Ambient',
+                    value: s.shader.ambient,
+                    max: 1.5,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(ambient: v)),
+                    ),
+                  ),
+                  _Slide(
+                    label: 'Gain',
+                    value: s.shader.gain,
+                    max: 2,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(gain: v)),
+                    ),
+                  ),
+                  _Slide(
+                    label: 'Sample spread',
+                    value: s.shader.sampleSpread,
+                    min: 0.5,
+                    max: 8,
+                    onChanged: (v) => onChanged(
+                      s.copyWith(shader: s.shader.copyWith(sampleSpread: v)),
+                    ),
+                  ),
+                ],
 
                 const _Head('Relief'),
                 _Slide(
@@ -491,12 +684,18 @@ class _Slide extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          // Flexed and ellipsised: 'Wall grain through paper' plus its value
+          // does not fit a fixed 340 panel, and an unflexed Row overflows
+          // rather than wrapping.
+          Expanded(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
           ),
+          const SizedBox(width: 8),
           Text(
             value.toStringAsFixed(3),
             style: const TextStyle(

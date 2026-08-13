@@ -82,6 +82,9 @@ flutter:
     - assets/textures/paper/
     - assets/fonts/
 
+  shaders:
+    - shaders/pasted_poster.frag
+
   fonts:
     - family: CircularXX
       fonts:

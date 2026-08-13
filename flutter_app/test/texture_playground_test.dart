@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:watchparty/playground/pasted_poster_shader.dart';
 import 'package:watchparty/playground/texture_playground.dart';
 import 'package:watchparty/ui/widgets/artwork_wall.dart';
 import 'package:watchparty/ui/widgets/textured_artwork.dart';
@@ -48,6 +49,23 @@ void main() {
       );
     });
 
+    test('the shader uniforms come out named', () {
+      // The uniform block is positional — setFloat indexes a flat list — so a
+      // bare column of decimals is unusable. The names have to travel with it.
+      final out = const TextureSettings(
+        shader: PasteShaderSettings(displacement: 0.02, bumpStrength: 12),
+      ).asDart();
+      expect(out, contains('displacement:    0.020'));
+      expect(out, contains('bumpStrength:    12.000'));
+      expect(out, contains('pasted_poster.frag'));
+    });
+
+    test('soft-light mode leaves the shader block out', () {
+      final out = const TextureSettings(mode: PasteMode.softLight).asDart();
+      expect(out, isNot(contains('pasted_poster.frag')));
+      expect(out, contains('mode softLight'));
+    });
+
     test('copyWith moves one knob and leaves the rest', () {
       const base = TextureSettings();
       final moved = base.copyWith(contrast: 2.5);
@@ -57,31 +75,41 @@ void main() {
     });
   });
 
-  testWidgets('it builds, and the sliders move the preview', (tester) async {
+  testWidgets('it builds, and each mode renders its own path', (tester) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(
-      const MaterialApp(home: TexturePlayground()),
-    );
-    for (var i = 0; i < 3; i++) {
-      await tester.runAsync(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      await tester.pump();
+    Future<void> settle() async {
+      for (var i = 0; i < 3; i++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await tester.pump();
+      }
     }
 
+    await tester.pumpWidget(const MaterialApp(home: TexturePlayground()));
+    await settle();
     expect(tester.takeException(), isNull);
-    // Wall, backdrop and a rail of posters — the three surfaces the treatment
-    // lands on. Fewer than that and the tool cannot show continuity between
-    // them, which is the thing most worth looking at.
+
+    // Shader is the default. The wall itself still goes through WallRelief —
+    // it is the surface, not something pasted to it, so there is nothing to
+    // displace — but the pasted artwork goes through the shader instead, and
+    // so TexturedArtwork is deliberately absent.
     expect(find.byType(WallRelief), findsWidgets);
-    expect(find.byType(TexturedArtwork), findsWidgets);
-    expect(find.byType(Slider), findsWidgets);
+    expect(find.byType(PastedPoster), findsWidgets);
+    expect(find.byType(TexturedArtwork), findsNothing);
 
     await tester.drag(find.byType(Slider).first, const Offset(-60, 0));
     await tester.pump();
     expect(tester.takeException(), isNull);
+
+    // Soft-light is the shipped path, kept for comparison.
+    await tester.tap(find.text('Soft-light'));
+    await settle();
+    expect(tester.takeException(), isNull);
+    expect(find.byType(TexturedArtwork), findsWidgets);
+    expect(find.byType(PastedPoster), findsNothing);
   });
 }
