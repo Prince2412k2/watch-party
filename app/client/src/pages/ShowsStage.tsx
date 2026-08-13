@@ -545,6 +545,7 @@ export default function ShowsStage() {
           <AnalogNav
             active="shows"
             onNavigate={navigate}
+            canAcquire={!!user?.isAdmin}
             downloadCount={hub.activeCount}
             failingCount={hub.failingCount}
             compact={layout.size === 'phone'}

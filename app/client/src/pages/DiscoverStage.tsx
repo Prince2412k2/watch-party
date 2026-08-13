@@ -584,6 +584,7 @@ export default function DiscoverStage() {
           <AnalogNav
             active="discover"
             onNavigate={navigate}
+            canAcquire={!!user?.isAdmin}
             downloadCount={hub.activeCount}
             failingCount={hub.failingCount}
             compact={layout.size === 'phone'}

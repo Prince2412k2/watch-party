@@ -109,11 +109,18 @@ export function requireAuth(req, res, next) {
   next()
 }
 
-// Destructive servarr operations — deleting a title and its files, wiping the
-// download client — are gated on the Jellyfin account's own administrator flag,
-// which login already captures. Adding, searching, and downloading stay open to
-// every signed-in member: the point of the app is that anyone in the house can
-// ask for a title. Only the irreversible half is restricted.
+// Acquisition and destruction are both gated on the Jellyfin account's own
+// administrator flag, which login already captures: adding a title, requesting
+// or grabbing a release, submitting a magnet, pausing/resuming/deleting in the
+// download client, and removing a title with its files. The Discover feeds
+// (`*/discover`, `*/popular`) are gated too — that surface exists only to start
+// a download, and the clients hide the tab outright for a member.
+//
+// This used to be the other way round: anyone signed in could ask for a title
+// and only the irreversible half was restricted. It is now the admin who owns
+// what lands on the server's disk. Everything a member needs in order to WATCH
+// stays open — the library, the queue and download views, artwork, episode
+// listings, catalog lookups used to identify a library title.
 async function fetchAdminStatus({ accessToken, userId }, { signal } = {}) {
   const baseUrl = process.env.JELLYFIN_URL || 'http://localhost:8096'
   const response = await fetch(`${baseUrl}/Users/${encodeURIComponent(userId)}`, {

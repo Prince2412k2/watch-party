@@ -32,11 +32,14 @@ Widget _analog(BuildContext context, Widget? child) => Theme(
 /// A bare `ProviderScope` defaults `authProvider` to its un-initialized,
 /// logged-out `AuthState()`. Signed-in tests need an authenticated override to
 /// exercise the full four-tab nav.
-List<Override> _signedIn() => [
+///
+/// [isAdmin] decides whether Discover is one of those tabs: acquiring a title
+/// is the administrator's, so a plain member's nav is the same list without it.
+List<Override> _signedIn({bool isAdmin = true}) => [
   authProvider.overrideWith((ref) {
     final notifier = AuthNotifier(ref);
-    notifier.state = const AuthState(
-      user: User(userId: 'u1', name: 'Test User'),
+    notifier.state = AuthState(
+      user: User(userId: 'u1', name: 'Test User', isAdmin: isAdmin),
       initialized: true,
     );
     return notifier;
@@ -56,7 +59,7 @@ Widget _shell({
 );
 
 void main() {
-  testWidgets('AppShell shows the four web nav tabs when signed in', (
+  testWidgets('AppShell shows the four web nav tabs to an admin', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -70,12 +73,32 @@ void main() {
     expect(find.text('Downloads'), findsOneWidget);
   });
 
+  testWidgets('a signed-in member gets every tab except Discover', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    await tester.pumpWidget(_shell(overrides: _signedIn(isAdmin: false)));
+    await tester.pump();
+
+    // Everything about watching stays; only the surface whose every action
+    // downloads something to the server is gone. Absent, not disabled.
+    expect(find.text('Movies'), findsOneWidget);
+    expect(find.text('Shows'), findsOneWidget);
+    expect(find.text('Downloads'), findsOneWidget);
+    expect(find.text('Discover'), findsNothing);
+  });
+
   testWidgets('AppShell shows the guest tabs + login when logged out', (
     tester,
   ) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.binding.setSurfaceSize(const Size(1200, 800));
-    await tester.pumpWidget(_shell(overrides: const []));
+    // Anywhere but `/movies`: there the page IS the login form, and the shell
+    // stands down (below).
+    await tester.pumpWidget(
+      _shell(overrides: const [], location: '/offline'),
+    );
     await tester.pump();
 
     // Guest nav is just browse + downloaded; no Shows/Discover tabs.
@@ -85,6 +108,23 @@ void main() {
     expect(find.text('Discover'), findsNothing);
     // Top-right chrome is the login control, not the profile avatar.
     expect(find.byIcon(Icons.login), findsOneWidget);
+  });
+
+  testWidgets('the shell leaves the corner alone on the inline login page', (
+    tester,
+  ) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    // `/movies` renders the login form itself for a guest, and that page owns
+    // the top-right corner with its "set server" chip. The shell's round login
+    // button was landing on top of it — and pointing at the page it was
+    // already on.
+    await tester.pumpWidget(_shell(overrides: const [], location: '/movies'));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.login), findsNothing);
+    // The nav is still there; only the corner stands down.
+    expect(find.text('Downloaded'), findsOneWidget);
   });
 
   group('catalog warm on launch', () {

@@ -1,5 +1,10 @@
-// Server-side proxy layer for the media-acquisition stack. Every route is gated
-// by requireAuth and talks to the upstream service with the api key / session
+// Server-side proxy layer for the media-acquisition stack. Every route is gated:
+// requireAuth for the read-only surfaces a member needs in order to watch, and
+// requireAdmin for anything that puts something on (or takes something off) the
+// server's disk — add/request/releases/grab, the manual magnet+torrent path,
+// the qBittorrent controls, the deletes, and the Discover feeds that exist only
+// to start a download. See the note above `fetchAdminStatus` in ../auth.js.
+// Each route talks to the upstream service with the api key / session
 // held ONLY on the server — no key or cookie ever reaches the client, in a
 // response body or an error. Missing config degrades to a clean 503; a down or
 // slow service maps to a 502/504 (bounded by the fetch timeout) — never a hang
@@ -740,9 +745,9 @@ export function registerServarrRoutes(app) {
   })
 
   // Discover rail for the Browse tab's no-query state (movies).
-  app.get('/api/servarr/radarr/popular', requireAuth, servePopular('radarr', buildRadarrPopular))
+  app.get('/api/servarr/radarr/popular', requireAdmin, servePopular('radarr', buildRadarrPopular))
 
-  app.get('/api/servarr/radarr/discover', requireAuth, async (req, res) => {
+  app.get('/api/servarr/radarr/discover', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const page = Number(req.query.page ?? 1)
     if (!Number.isInteger(page) || page < 1 || page > 500) return res.status(400).json({ error: 'page must be an integer from 1 to 500' })
@@ -773,7 +778,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'radarr/root-folders', err) }
   })
 
-  app.post('/api/servarr/radarr/add', requireAuth, async (req, res) => {
+  app.post('/api/servarr/radarr/add', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const { movie, qualityProfileId, rootFolderPath, monitor, searchNow } = req.body || {}
     if (!movie?.tmdbId || !qualityProfileId || !rootFolderPath) {
@@ -796,7 +801,7 @@ export function registerServarrRoutes(app) {
   //      fails), we do NOT know the title has no release — leave the entry in
   //      place and return { outcome: 'search_failed' }. Never discard a wanted
   //      movie on a transient blip.
-  app.post('/api/servarr/radarr/request', requireAuth, async (req, res) => {
+  app.post('/api/servarr/radarr/request', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const { movie, qualityProfileId, rootFolderPath } = req.body || {}
     if (!movie?.tmdbId || !qualityProfileId || !rootFolderPath) {
@@ -890,7 +895,7 @@ export function registerServarrRoutes(app) {
   // first. Returns { movieId, cancellationToken, releases, searchFailed }. A failed
   // live search is reported (searchFailed:true) WITHOUT deleting anything — the
   // client still holds movieId so closing the picker can clean up if we created it.
-  app.post('/api/servarr/radarr/releases', requireAuth, async (req, res) => {
+  app.post('/api/servarr/radarr/releases', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const { movieId: bodyMovieId, movie, qualityProfileId, rootFolderPath } = req.body || {}
 
@@ -961,7 +966,7 @@ export function registerServarrRoutes(app) {
   })
 
   // Grab one specific release the user chose in the picker, keeping the entry.
-  app.post('/api/servarr/radarr/grab', requireAuth, async (req, res) => {
+  app.post('/api/servarr/radarr/grab', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const { guid, indexerId } = req.body || {}
     if (!guid || indexerId == null) return res.status(400).json({ error: 'guid and indexerId required' })
@@ -998,7 +1003,7 @@ export function registerServarrRoutes(app) {
   // signed lease proves this user created this record through the picker;
   // the movie must also have no imported file and nothing in the download queue.
   // Cleanup failures leave the entry in place rather than risk deleting a title.
-  app.post('/api/servarr/radarr/releases/cancel', requireAuth, async (req, res) => {
+  app.post('/api/servarr/radarr/releases/cancel', requireAdmin, async (req, res) => {
     if (!ensureConfigured('radarr', res)) return
     const movieId = Number(req.body?.movieId)
     if (!Number.isFinite(movieId)) return res.status(400).json({ error: 'movieId required' })
@@ -1054,9 +1059,9 @@ export function registerServarrRoutes(app) {
   })
 
   // Discover rail for the Browse tab's no-query state (series).
-  app.get('/api/servarr/sonarr/popular', requireAuth, servePopular('sonarr', buildSonarrPopular))
+  app.get('/api/servarr/sonarr/popular', requireAdmin, servePopular('sonarr', buildSonarrPopular))
 
-  app.get('/api/servarr/sonarr/discover', requireAuth, async (req, res) => {
+  app.get('/api/servarr/sonarr/discover', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const page = Number(req.query.page ?? 1)
     if (!Number.isInteger(page) || page < 1 || page > 500) return res.status(400).json({ error: 'page must be an integer from 1 to 500' })
@@ -1109,7 +1114,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'sonarr/root-folders', err) }
   })
 
-  app.post('/api/servarr/sonarr/add', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/add', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const { series, qualityProfileId, languageProfileId, rootFolderPath, monitor, searchNow } = req.body || {}
     if (!series?.tvdbId || !qualityProfileId || !rootFolderPath) {
@@ -1134,7 +1139,7 @@ export function registerServarrRoutes(app) {
   // (any episodes it grabs surface via the live download list, same as movies).
   // A fully-correct series grab-or-remove (per-episode release search with
   // partial-availability accounting) is intentionally out of scope here.
-  app.post('/api/servarr/sonarr/request', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/request', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const { series, qualityProfileId, languageProfileId, rootFolderPath, monitor, searchNow } = req.body || {}
     if (!series?.tvdbId || !qualityProfileId || !rootFolderPath) {
@@ -1178,7 +1183,7 @@ export function registerServarrRoutes(app) {
   //      command id). Best-effort: the durable part is the monitoring PUT, so a
   //      search that fails to queue still leaves Sonarr watching the season.
   // Returns { outcome: 'season_searching', seriesId, title, seasons: [...] }.
-  app.post('/api/servarr/sonarr/request-season', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/request-season', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const { series, qualityProfileId, languageProfileId, rootFolderPath } = req.body || {}
 
@@ -1305,7 +1310,7 @@ export function registerServarrRoutes(app) {
   // Interactive release search at one of Sonarr's two scopes: a whole season
   // (omit episodeNumber) or a single episode. Mirrors radarr/releases — same
   // response shape, same cancellation-capability contract for the cancel path.
-  app.post('/api/servarr/sonarr/releases', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/releases', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const seasonNumber = Number(req.body?.seasonNumber)
     if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
@@ -1376,7 +1381,7 @@ export function registerServarrRoutes(app) {
 
   // Grab one chosen release. The target is monitored first so Sonarr claims the
   // import instead of leaving it in the queue unmatched.
-  app.post('/api/servarr/sonarr/grab', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/grab', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const { guid, indexerId } = req.body || {}
     if (!guid || indexerId == null) return res.status(400).json({ error: 'guid and indexerId required' })
@@ -1425,7 +1430,7 @@ export function registerServarrRoutes(app) {
   // there is none, fall back to the best release for each missing episode. This
   // is the primitive the client loops over for "download whole show", so the
   // response says which route the season actually took.
-  app.post('/api/servarr/sonarr/auto-season', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/auto-season', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const seasonNumber = Number(req.body?.seasonNumber)
     if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
@@ -1485,7 +1490,7 @@ export function registerServarrRoutes(app) {
   // Drop a browsing-only shell when the picker closes without a grab. Mirrors
   // radarr/releases/cancel: require the user-bound capability, no files, and an
   // empty queue. Cleanup failures leave the shell in place.
-  app.post('/api/servarr/sonarr/releases/cancel', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/releases/cancel', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     const seriesId = Number(req.body?.seriesId)
     if (!Number.isFinite(seriesId)) return res.status(400).json({ error: 'seriesId required' })
@@ -1497,7 +1502,7 @@ export function registerServarrRoutes(app) {
   // to attribute the download to, and a Discover series has none until it
   // exists in Sonarr — without this, "paste a magnet" is dead exactly when the
   // indexers came up empty, which is the case it exists for (FR-019).
-  app.post('/api/servarr/sonarr/resolve', requireAuth, async (req, res) => {
+  app.post('/api/servarr/sonarr/resolve', requireAdmin, async (req, res) => {
     if (!ensureConfigured('sonarr', res)) return
     try {
       const { seriesId, freshlyAdded } = await resolveSonarrSeriesId(req.body || {})
@@ -1556,7 +1561,7 @@ export function registerServarrRoutes(app) {
   })
 
   // ── Prowlarr ──────────────────────────────────────────────────────────────────
-  app.get('/api/servarr/prowlarr/indexers', requireAuth, async (_req, res) => {
+  app.get('/api/servarr/prowlarr/indexers', requireAdmin, async (_req, res) => {
     if (!ensureConfigured('prowlarr', res)) return
     try {
       const data = await prowlarr.indexers()
@@ -1564,7 +1569,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'prowlarr/indexers', err) }
   })
 
-  app.get('/api/servarr/prowlarr/search', requireAuth, async (req, res) => {
+  app.get('/api/servarr/prowlarr/search', requireAdmin, async (req, res) => {
     if (!ensureConfigured('prowlarr', res)) return
     const query = (req.query.query || '').toString().trim()
     if (!query) return res.status(400).json({ error: 'query required' })
@@ -1593,7 +1598,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'bazarr/wanted/series', err) }
   })
 
-  app.post('/api/servarr/manual/magnet', requireAuth, async (req, res) => {
+  app.post('/api/servarr/manual/magnet', requireAdmin, async (req, res) => {
     const parsed = parseManualSubmission(req.body || {})
     if (parsed.error) return res.status(400).json({ error: parsed.error })
     if (!ensureConfigured(parsed.value.service, res)) return
@@ -1604,7 +1609,7 @@ export function registerServarrRoutes(app) {
 
   app.post(
     '/api/servarr/manual/torrent',
-    requireAuth,
+    requireAdmin,
     (req, res, next) => express.raw({ type: 'application/x-bittorrent', limit: MAX_TORRENT_BYTES })(req, res, (err) => {
       if (err?.type === 'entity.too.large') return res.status(413).json({ error: `torrent exceeds ${MAX_TORRENT_BYTES} bytes` })
       if (err) return res.status(400).json({ error: 'invalid torrent body' })
@@ -1698,7 +1703,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, `${service}/image`, err) }
   })
 
-  app.post('/api/servarr/qbittorrent/pause', requireAuth, async (req, res) => {
+  app.post('/api/servarr/qbittorrent/pause', requireAdmin, async (req, res) => {
     if (!ensureConfigured('qbittorrent', res)) return
     const hashes = (req.body?.hashes || '').toString().trim()
     if (!hashes) return res.status(400).json({ error: 'hashes required' })
@@ -1708,7 +1713,7 @@ export function registerServarrRoutes(app) {
     } catch (err) { fail(res, 'qbittorrent/pause', err) }
   })
 
-  app.post('/api/servarr/qbittorrent/resume', requireAuth, async (req, res) => {
+  app.post('/api/servarr/qbittorrent/resume', requireAdmin, async (req, res) => {
     if (!ensureConfigured('qbittorrent', res)) return
     const hashes = (req.body?.hashes || '').toString().trim()
     if (!hashes) return res.status(400).json({ error: 'hashes required' })

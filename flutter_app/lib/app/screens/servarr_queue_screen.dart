@@ -15,7 +15,11 @@ import 'download_detail_screen.dart';
 /// NOT the native on-device offline downloads (`downloads_screen`) — this is the
 /// acquisition queue the servarr stack is pulling down.
 class ServarrQueueScreen extends ConsumerWidget {
-  const ServarrQueueScreen({super.key});
+  const ServarrQueueScreen({super.key, this.padding});
+
+  /// Overrides the standalone page's insets when this is embedded under
+  /// something that already drew a heading — the Downloads screen's Server tab.
+  final EdgeInsets? padding;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -42,7 +46,7 @@ class ServarrQueueScreen extends ConsumerWidget {
         final arrReady = servarrServiceReady(h, 'radarr') ||
             servarrServiceReady(h, 'sonarr');
         return ListView(
-          padding: const EdgeInsets.fromLTRB(44, 56, 44, 100),
+          padding: padding ?? const EdgeInsets.fromLTRB(44, 56, 44, 100),
           children: [
             if (arrReady) const _NeedsAttention(),
             _ActiveDownloads(

@@ -26,7 +26,17 @@ function startServer() {
   const app = express()
   app.use(express.json())
   app.use((req, _res, next) => {
-    req.session = { jellyfin: { userId: req.get('x-test-user') || 'user-a' } }
+    // Acquisition routes are admin-only (see ../auth.js), so the default test
+    // identity is an admin whose role was checked just now — the picker suite
+    // below is about leases, not authorisation. `x-test-admin: 0` opts a request
+    // out, which is what the gate tests use.
+    req.session = {
+      jellyfin: {
+        userId: req.get('x-test-user') || 'user-a',
+        isAdmin: req.get('x-test-admin') !== '0',
+        adminCheckedAt: Date.now(),
+      },
+    }
     next()
   })
   registerServarrRoutes(app)
@@ -94,6 +104,83 @@ test.after(() => {
 test.afterEach(() => {
   Object.assign(radarr, originalRadarr)
   Object.assign(sonarr, originalSonarr)
+})
+
+// Every route that can put something on the server's disk — or take it off —
+// belongs to the admin. A signed-in member reaching one gets 403 and, crucially,
+// NO upstream call: the gate has to run before Radarr/Sonarr/qBittorrent hear
+// about the request at all, or a rejected member could still start a download.
+test('acquisition routes are closed to a non-admin member, without touching upstream', async (t) => {
+  const { server, origin } = await startServer()
+  t.after(() => server.close())
+
+  let upstreamCalls = 0
+  const count = async () => { upstreamCalls += 1; return { id: 1, title: 'x' } }
+  for (const client of [radarr, sonarr]) {
+    Object.assign(client, {
+      add: count, remove: count, lookup: count, library: count, discover: count,
+      releaseSearch: count, grabRelease: count, get: count, queue: count,
+      update: count, episodes: count, command: count, pushRelease: count,
+    })
+  }
+
+  const gated = [
+    ['POST', '/api/servarr/radarr/add'],
+    ['POST', '/api/servarr/radarr/request'],
+    ['POST', '/api/servarr/radarr/releases'],
+    ['POST', '/api/servarr/radarr/grab'],
+    ['POST', '/api/servarr/radarr/releases/cancel'],
+    ['POST', '/api/servarr/sonarr/add'],
+    ['POST', '/api/servarr/sonarr/request'],
+    ['POST', '/api/servarr/sonarr/request-season'],
+    ['POST', '/api/servarr/sonarr/releases'],
+    ['POST', '/api/servarr/sonarr/grab'],
+    ['POST', '/api/servarr/sonarr/auto-season'],
+    ['POST', '/api/servarr/sonarr/releases/cancel'],
+    ['POST', '/api/servarr/sonarr/resolve'],
+    ['POST', '/api/servarr/manual/magnet'],
+    ['POST', '/api/servarr/qbittorrent/pause'],
+    ['POST', '/api/servarr/qbittorrent/resume'],
+    ['POST', '/api/servarr/qbittorrent/delete'],
+    ['GET', '/api/servarr/radarr/discover'],
+    ['GET', '/api/servarr/radarr/popular'],
+    ['GET', '/api/servarr/sonarr/discover'],
+    ['GET', '/api/servarr/sonarr/popular'],
+    ['DELETE', '/api/servarr/radarr/movie/1'],
+    ['DELETE', '/api/servarr/sonarr/series/1'],
+    ['DELETE', '/api/servarr/radarr/queue/1'],
+    ['DELETE', '/api/servarr/sonarr/queue/1'],
+  ]
+
+  for (const [method, path] of gated) {
+    const response = await fetch(`${origin}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json', 'x-test-admin': '0' },
+      body: method === 'GET' ? undefined : JSON.stringify({}),
+    })
+    assert.equal(response.status, 403, `${method} ${path} should be admin-only`)
+  }
+  assert.equal(upstreamCalls, 0)
+})
+
+// The other half of the gate: a member can still see everything they need in
+// order to watch. Closing these would break the library, not just Discover.
+test('read-only routes stay open to a non-admin member', async (t) => {
+  const { server, origin } = await startServer()
+  t.after(() => server.close())
+  radarr.library = async () => []
+  sonarr.library = async () => []
+  sonarr.lookup = async () => []
+
+  for (const path of [
+    '/api/servarr/health',
+    '/api/servarr/radarr/movies',
+    '/api/servarr/sonarr/series',
+    '/api/servarr/sonarr/search?term=anything',
+  ]) {
+    const response = await fetch(`${origin}${path}`, { headers: { 'x-test-admin': '0' } })
+    assert.notEqual(response.status, 403, `GET ${path} should stay open to a member`)
+  }
 })
 
 test('forged createdByPicker cannot authorize cancellation', async (t) => {
