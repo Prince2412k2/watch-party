@@ -143,3 +143,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>(
   (ref) => AuthNotifier(ref),
 );
+
+/// Whether the signed-in account is a Jellyfin administrator — the one bit that
+/// decides who may put something on the server's disk.
+///
+/// Acquiring a title (Discover, request, release picker, manual magnet) and the
+/// download-client controls are the admin's; everything needed to WATCH is
+/// everyone's. The server enforces exactly this (`requireAdmin`, see
+/// `app/server/auth.js`) — the UI reads this flag only so a member is never
+/// shown a control that would answer 403. It is never the authorisation itself.
+///
+/// False while signed out, and false until boot-time session restore resolves,
+/// so nothing admin-only flashes on screen before we know who is here.
+final isAdminProvider = Provider<bool>(
+  (ref) => ref.watch(authProvider.select((s) => s.user?.isAdmin ?? false)),
+);

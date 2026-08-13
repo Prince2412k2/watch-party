@@ -4,13 +4,24 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../analog/chrome/chrome.dart';
 import '../../models/models.dart';
-import '../../state/downloads_provider.dart';
 import '../../state/offline_provider.dart';
-import '../../state/providers.dart';
+import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/download_poster.dart';
 import 'media_row.dart';
+import 'servarr_queue_screen.dart';
+
+/// Which set of downloads the screen is showing.
+enum DownloadsScope {
+  /// This device: what you have pulled down to watch offline.
+  device,
+
+  /// The server: what Radarr/Sonarr → qBittorrent is fetching onto the box
+  /// everybody streams from. The administrator's, because acting on it is.
+  server,
+}
 
 /// Everything you have downloaded or are downloading, in one list.
 ///
@@ -22,6 +33,13 @@ import 'media_row.dart';
 ///
 /// Now the in-flight records and the finished ones render together, newest
 /// activity first, with the finished ones deletable in place.
+///
+/// An administrator gets a second tab here: the server's own acquisition queue,
+/// which was a page of its own at `/servarr/queue` that nothing in the nav
+/// pointed at. Two kinds of "downloading" under one word was the confusion —
+/// they are now two positions under one heading, which is what they are. A
+/// member has only the one, so no tabs are drawn at all: a single tab is a
+/// control that lies about being one.
 class DownloadsScreen extends ConsumerStatefulWidget {
   const DownloadsScreen({super.key});
 
@@ -30,6 +48,8 @@ class DownloadsScreen extends ConsumerStatefulWidget {
 }
 
 class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
+  DownloadsScope _scope = DownloadsScope.device;
+
   @override
   void initState() {
     super.initState();
@@ -50,6 +70,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
+    final canSeeServer = ref.watch(isAdminProvider);
+    // Losing the admin flag mid-session (a demotion, a re-login as someone
+    // else) must not leave the screen parked on a tab that is no longer there.
+    final scope = canSeeServer ? _scope : DownloadsScope.device;
     final active =
         ref
             .watch(downloadsProvider)
@@ -79,28 +103,55 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
               Text('Downloads', style: AppTheme.displaySmall.copyWith(color: wp.text)),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Resumable, survives a restart, and retries itself when the '
-                'network drops.',
+                scope == DownloadsScope.device
+                    ? 'Resumable, survives a restart, and retries itself when '
+                          'the network drops.'
+                    : 'What the server is fetching for everyone — the *arr '
+                          'queue and the download client behind it.',
                 style: AppTheme.dim,
               ),
+              if (canSeeServer) ...[
+                const SizedBox(height: AppSpacing.lg),
+                AnalogSegmented<DownloadsScope>(
+                  semanticLabel: 'Downloads',
+                  value: scope,
+                  segments: const [
+                    AnalogSegment(
+                      value: DownloadsScope.device,
+                      label: 'This device',
+                    ),
+                    AnalogSegment(
+                      value: DownloadsScope.server,
+                      label: 'Server',
+                    ),
+                  ],
+                  onChanged: (next) => setState(() => _scope = next),
+                ),
+              ],
               const SizedBox(height: AppSpacing.xl),
               Expanded(
-                child: rows.isEmpty
-                    ? const EmptyState(
-                        icon: Icons.download_outlined,
-                        title: 'Nothing downloaded yet',
-                        message:
-                            'Start a download from a title\'s detail page.',
-                      )
-                    : ListView.separated(
-                        itemCount: rows.length,
-                        separatorBuilder: (_, _) =>
-                            const SizedBox(height: AppSpacing.md),
-                        itemBuilder: (context, i) => Reveal(
-                          delay: AppMotion.stagger * math.min(i, 8),
-                          child: rows[i],
-                        ),
-                      ),
+                child: switch (scope) {
+                  // The server queue is its own page's worth of content (stuck
+                  // grabs, the live poster grid), rendered here rather than
+                  // restated — `/servarr/queue` still routes to the same thing.
+                  DownloadsScope.server => const ServarrQueueScreen(
+                    padding: EdgeInsets.only(bottom: 100),
+                  ),
+                  DownloadsScope.device when rows.isEmpty => const EmptyState(
+                    icon: Icons.download_outlined,
+                    title: 'Nothing downloaded yet',
+                    message: 'Start a download from a title\'s detail page.',
+                  ),
+                  DownloadsScope.device => ListView.separated(
+                    itemCount: rows.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AppSpacing.md),
+                    itemBuilder: (context, i) => Reveal(
+                      delay: AppMotion.stagger * math.min(i, 8),
+                      child: rows[i],
+                    ),
+                  ),
+                },
               ),
             ],
           ),

@@ -10,6 +10,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/models.dart';
 import '../state/state.dart';
 import 'offline_playback.dart';
 import 'player_controller.dart';
@@ -80,6 +81,7 @@ Future<OpenTitleResult> openTitleIntoPlayer(
       controller,
       itemId: itemId,
       streamUrl: streamUrl,
+      startAt: await _resumePoint(ref, itemId),
       autoplay: false,
     );
     if (isStale()) return const OpenTitleResult.ready(usesCacheProxy: false);
@@ -87,5 +89,32 @@ Future<OpenTitleResult> openTitleIntoPlayer(
     return OpenTitleResult.ready(usesCacheProxy: isAuthenticated);
   } catch (e) {
     return OpenTitleResult.failed(e);
+  }
+}
+
+/// Where this viewer got to last time, or zero.
+///
+/// The other half of watch history: `watch_history_provider.dart` writes the
+/// position down, and this is what it was written down FOR. Jellyfin decides
+/// whether a position is worth resuming from at all — it stores none below its
+/// MinResumePct or past its MaxResumePct — so a title that was barely started or
+/// all but finished comes back as zero here, which is the intended answer.
+///
+/// In a party this deliberately returns zero. The room's position is the host's
+/// and the sync engine seeks to it; opening at your own resume point first would
+/// jump the film to a scene nobody else is on, for the moment it takes sync to
+/// pull it back.
+///
+/// Best-effort in every direction: an unreachable detail fetch means starting
+/// from the beginning, which is worse than resuming but far better than failing
+/// to open the film.
+Future<Duration> _resumePoint(WidgetRef ref, String itemId) async {
+  if (ref.read(partyProvider) != null) return Duration.zero;
+  try {
+    final item = await ref.read(itemDetailProvider(itemId).future);
+    final ticks = item.userData?.playbackPositionTicks ?? 0;
+    return ticks > 0 ? PlaybackReport.durationOf(ticks) : Duration.zero;
+  } catch (_) {
+    return Duration.zero;
   }
 }

@@ -177,8 +177,14 @@ export default function DownloadsStage() {
 
   // ── actions ───────────────────────────────────────────────────────────────
 
+  // Acting on the download client is the administrator's; the server enforces
+  // it (403 on pause/resume/delete). The buttons are absent for a member, but
+  // Enter reaches these handlers without passing through one — so the gate is
+  // here as well, not only on what is drawn.
+  const canControl = !!user?.isAdmin
+
   const runPrimary = () => {
-    if (!focusedTorrent) return
+    if (!canControl || !focusedTorrent) return
     const action = primaryAction(downloadState(focusedTorrent.state), hub.busy.has(focusedTorrent.hash))
     // The button is disabled for this, but Enter reaches the same handler without
     // going through it — so a held key would otherwise fire a second pause on top
@@ -192,13 +198,13 @@ export default function DownloadsStage() {
   }
 
   const confirmRemoval = () => {
-    if (!removal) return
+    if (!canControl || !removal) return
     hub.remove(removal.hash, removal.deleteFiles)
     setRemoval(null)
   }
 
   const resolveQueued = (blocklist: boolean) => {
-    if (!focusedQueue) return
+    if (!canControl || !focusedQueue) return
     hub.failing.remove(focusedQueue, blocklist)
     setResolving(null)
   }
@@ -223,6 +229,7 @@ export default function DownloadsStage() {
   // focused movie. For a stuck grab that is opening the resolve panel — the two
   // ways out of it are both destructive, so neither may be one keypress away.
   const activate = () => {
+    if (!canControl) return
     if (focusedQueue) {
       setResolving(queueKey(focusedQueue))
       return
@@ -346,6 +353,7 @@ export default function DownloadsStage() {
             </div>
 
             <AnalogDownloadDetails
+              canControl={canControl}
               layout={layout}
               motion={motion}
               eyebrow={eyebrow}
@@ -385,6 +393,7 @@ export default function DownloadsStage() {
           <AnalogNav
             active="downloads"
             onNavigate={navigate}
+            canAcquire={!!user?.isAdmin}
             downloadCount={hub.activeCount}
             failingCount={hub.failingCount}
             compact={layout.size === 'phone'}

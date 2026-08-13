@@ -32,7 +32,8 @@ export function isUserProfile(value: unknown): value is UserProfile {
 export function isAuthUser(value: unknown): value is AuthUser {
   return isObject(value) && typeof value.userId === 'string' &&
     (value.name === undefined || typeof value.name === 'string') &&
-    (value.username === undefined || typeof value.username === 'string')
+    (value.username === undefined || typeof value.username === 'string') &&
+    (value.isAdmin === undefined || typeof value.isAdmin === 'boolean')
 }
 
 export function errorMessage(value: unknown, fallback: string): string {

@@ -24,10 +24,13 @@ void main() {
           // `authProvider` stays at its default logged-out state and Home
           // would render the login page instead of the mock catalog (guest
           // offline-browse, PLAN). Sign in directly to exercise that content.
+          // An admin, because this walks every primary tab and Discover is
+          // one of them only for an administrator — acquiring a title is
+          // theirs alone (see `isAdminProvider`).
           authProvider.overrideWith((ref) {
             final notifier = AuthNotifier(ref);
             notifier.state = const AuthState(
-              user: User(userId: 'u1', name: 'Test User'),
+              user: User(userId: 'u1', name: 'Test User', isAdmin: true),
               initialized: true,
             );
             return notifier;

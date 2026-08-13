@@ -7,7 +7,7 @@ import '../state/state.dart';
 import '../ui/command_palette.dart';
 import '../ui/ui.dart' show NavDestination;
 import 'screens/app_shell.dart'
-    show kGuestShellDestinations, kShellDestinations;
+    show kGuestShellDestinations, shellDestinationsFor;
 
 /// Jump to the nth primary destination (keys 1–4, the four bottom-nav tabs).
 class NavigateToIndexIntent extends Intent {
@@ -66,14 +66,15 @@ class AppShortcuts extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // A logged-out guest only gets Movies + Downloaded (PLAN guest-browse) — the
-    // digit shortcuts, the arrow-key nav action, and the command palette must
-    // all stick to that subset so a guest can't jump to a gated route.
+    // A logged-out guest only gets Movies + Downloaded (PLAN guest-browse), and
+    // a member gets everything but Discover — the digit shortcuts, the arrow-key
+    // nav action, and the command palette must all stick to whichever subset
+    // applies, so nobody can jump to a gated route past the bottom nav.
     final isAuthenticated = ref.watch(
       authProvider.select((s) => s.isAuthenticated),
     );
     final destinations = isAuthenticated
-        ? kShellDestinations
+        ? shellDestinationsFor(isAdmin: ref.watch(isAdminProvider))
         : kGuestShellDestinations;
 
     final shortcuts = <ShortcutActivator, Intent>{

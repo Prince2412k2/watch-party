@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analog/chrome/analog_command_palette.dart';
+import 'analog_tokens.dart';
+import 'widgets/authed_image.dart';
 import '../models/models.dart';
 import '../state/state.dart';
 import 'widgets/nav_rail.dart' show NavDestination;
@@ -23,6 +25,9 @@ Future<void> showCommandPalette({
   return showAnalogCommandPalette(
     context: context,
     hint: 'Search your library',
+    // fzf: the names down the left, the poster of whatever the highlight is on
+    // to the right of them.
+    previewPane: true,
     // Snappier than half a second — this is a local list, not a network
     // search, so results should feel instant.
     debounce: const Duration(milliseconds: 140),
@@ -74,6 +79,7 @@ Stream<List<AnalogCommandCategory>> _results(
     }
     ranked.sort((a, b) => a.$1.compareTo(b.$1));
 
+    final api = ref.read(apiClientProvider);
     final libItems = <AnalogCommandItem>[
       for (final (_, item) in ranked.take(20))
         AnalogCommandItem(
@@ -81,6 +87,7 @@ Stream<List<AnalogCommandCategory>> _results(
           label: item.name,
           trailing: item.productionYear?.toString(),
           onSelected: () => run('/detail/${item.id}'),
+          preview: (_) => _Poster(url: api.imageUrl(item.id), item: item),
         ),
     ];
     yield [
@@ -122,3 +129,82 @@ IconData _iconForType(String? type) => switch (type) {
   'Episode' => Icons.smart_display_outlined,
   _ => Icons.play_circle_outline,
 };
+
+/// The right-hand pane's contents for one library title: the poster at a size
+/// worth looking at, its name under it, and the facts that tell two versions of
+/// the same film apart.
+class _Poster extends StatelessWidget {
+  const _Poster({required this.url, required this.item});
+
+  final String url;
+  final LibraryItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final facts = [
+      ?item.productionYear?.toString(),
+      if ((item.officialRating ?? '').isNotEmpty) item.officialRating!,
+      if (item.communityRating != null)
+        '★ ${item.communityRating!.toStringAsFixed(1)}',
+    ].join('  ·  ');
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Flexible(
+          child: AspectRatio(
+            aspectRatio: 2 / 3,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AnalogRadius.chromePx),
+              child: AuthedNetworkImage(
+                url,
+                fit: BoxFit.cover,
+                // No spinner and no broken-image glyph: the pane redraws on
+                // every arrow key, and either one would flicker down the list.
+                loadingBuilder: (_, _, _) => const ColoredBox(
+                  color: AnalogColor.stageSurface2,
+                ),
+                errorBuilder: (_, _, _) => const ColoredBox(
+                  color: AnalogColor.stageSurface2,
+                  child: Center(
+                    child: Icon(
+                      Icons.movie_outlined,
+                      size: 20,
+                      color: AnalogColor.lineStrong,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: AnalogSpace.mdPx),
+        Text(
+          item.name,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: AnalogType.sansFamily,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AnalogColor.ink,
+          ),
+        ),
+        if (facts.isNotEmpty) ...[
+          const SizedBox(height: AnalogSpace.xsPx),
+          Text(
+            facts,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: AnalogType.sansFamily,
+              fontSize: 12,
+              color: AnalogColor.inkFaint,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}

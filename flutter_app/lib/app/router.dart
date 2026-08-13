@@ -87,6 +87,18 @@ bool _guestAllowed(String location) =>
     location == Routes.offline ||
     location.startsWith('${Routes.detail}/');
 
+/// Routes only a Jellyfin administrator may stand on. Discover and the *arr
+/// queue are acquisition surfaces — every action on them puts something on (or
+/// takes something off) the server's disk. A member who reaches one anyway (a
+/// deep link, a restored location, a stale bookmark) is sent to Movies rather
+/// than shown a page whose every request answers 403.
+bool isAdminOnlyRoute(String location) =>
+    location.startsWith(Routes.discover) ||
+    location.startsWith(Routes.servarrQueue) ||
+    // `/downloads` itself is everyone's — it is this device's download list.
+    // `/downloads/<hash>` is a SERVER torrent, with pause/resume/delete on it.
+    location.startsWith('${Routes.downloads}/');
+
 /// E2/guest-browse: a logged-out user may browse `/movies` (which renders the
 /// login page inline) and the offline library/detail without signing in; every
 /// other route bounces them to `/movies`. An authenticated visit to `/login`
@@ -114,6 +126,9 @@ GoRouter buildRouter(WidgetRef ref) {
         return (redirectTo != null && redirectTo.isNotEmpty)
             ? redirectTo
             : Routes.movies;
+      }
+      if (isAdminOnlyRoute(loc) && !(auth.user?.isAdmin ?? false)) {
+        return Routes.movies;
       }
       return null;
     },

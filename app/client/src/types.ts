@@ -7,6 +7,9 @@ export interface AuthUser {
   userId: string
   name?: string
   username?: string
+  /** Jellyfin administrator. Decides who may acquire (and delete) titles on the
+      server; `/api/auth/me` carries it. Absent is the same as false. */
+  isAdmin?: boolean
 }
 
 /** The signed-in user's own profile. Both fields are null for anyone who has

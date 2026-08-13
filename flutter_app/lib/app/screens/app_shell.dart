@@ -14,6 +14,9 @@ import '../shortcuts.dart';
 /// nav, the keyboard layer (`shortcuts.dart`, number keys), and the command
 /// palette's quick-nav. Find/Acquire folds into Discover; Offline into
 /// Downloads, so neither is a tab.
+///
+/// This is the ADMIN nav. Discover exists only to put a title on the server's
+/// disk, which is the admin's alone — see [kMemberShellDestinations].
 const List<NavDestination> kShellDestinations = [
   NavDestination(icon: Icons.movie_outlined, label: 'Movies', route: '/movies'),
   NavDestination(icon: Icons.tv_outlined, label: 'Shows', route: '/series'),
@@ -28,6 +31,23 @@ const List<NavDestination> kShellDestinations = [
     route: '/downloads',
   ),
 ];
+
+/// The nav for a signed-in member who is not a Jellyfin administrator: the same
+/// tabs minus Discover. Everything left is about watching what is already here
+/// — the library, and what the server is currently pulling down.
+///
+/// Discover is not disabled or greyed, it is absent: every action on that
+/// surface starts a download, so a member has nothing to do there. The server
+/// answers 403 to its feeds regardless (`app/server/servarr/index.js`), and the
+/// router refuses the route, so this is presentation, not the gate.
+final List<NavDestination> kMemberShellDestinations = List.unmodifiable([
+  for (final d in kShellDestinations)
+    if (d.route != '/discover') d,
+]);
+
+/// The destinations for a given account, by admin-ness.
+List<NavDestination> shellDestinationsFor({required bool isAdmin}) =>
+    isAdmin ? kShellDestinations : kMemberShellDestinations;
 
 /// The nav (+ keyboard layer + command palette) shown to a logged-out guest:
 /// just enough to browse and play what's already downloaded (PLAN guest-browse).
@@ -118,8 +138,14 @@ class _AppShellState extends ConsumerState<AppShell> {
       authProvider.select((s) => s.isAuthenticated),
     );
     final destinations = isAuthenticated
-        ? kShellDestinations
+        ? shellDestinationsFor(isAdmin: ref.watch(isAdminProvider))
         : kGuestShellDestinations;
+
+    // `/movies` is where a guest meets the login form ([HomeScreen] renders it
+    // in place rather than bouncing to `/login`), so on that one location the
+    // shell's own top-right control has to stand down.
+    final showsLoginForm =
+        !isAuthenticated && widget.location.startsWith(Routes.movies);
 
     return Scaffold(
       body: AppShortcuts(
@@ -144,13 +170,23 @@ class _AppShellState extends ConsumerState<AppShell> {
                 ),
               ),
             ),
-            Positioned(
-              top: 20,
-              right: 28,
-              child: isAuthenticated
-                  ? const ProfileMenu()
-                  : const _LoginButton(),
-            ),
+            // Nothing in this corner on the inline login page: `/movies`
+            // renders the login form itself for a guest, and that page already
+            // owns the corner with its "set server" chip. The two were landing
+            // on top of each other, the round button sitting over the host
+            // name. It is also a Login button on the login page, which has
+            // nowhere to send anyone.
+            //
+            // A guest anywhere else — the downloaded library, a title they can
+            // play offline — still gets it, because there it is the only way in.
+            if (!showsLoginForm)
+              Positioned(
+                top: 20,
+                right: 28,
+                child: isAuthenticated
+                    ? const ProfileMenu()
+                    : const _LoginButton(),
+              ),
           ],
         ),
       ),

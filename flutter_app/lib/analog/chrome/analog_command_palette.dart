@@ -15,6 +15,7 @@ class AnalogCommandItem {
     required this.onSelected,
     this.icon,
     this.trailing,
+    this.preview,
   });
 
   final String label;
@@ -23,6 +24,15 @@ class AnalogCommandItem {
 
   /// A short right-aligned readout — a year, a shortcut, a count.
   final String? trailing;
+
+  /// What to show beside the list while this row is the highlighted one — a
+  /// poster, typically. Only ever asked for when the palette was opened with
+  /// `previewPane: true`; a row without one leaves the pane empty rather than
+  /// letting the previous row's poster stand in for it.
+  ///
+  /// A builder rather than a widget because this is built once per frame for
+  /// exactly one row, not eagerly for every match in the library.
+  final WidgetBuilder? preview;
 }
 
 /// A titled group of [AnalogCommandItem]s.
@@ -51,17 +61,27 @@ typedef AnalogCommandResults =
 /// to finish is worse than no palette. Up/Down move the highlight, Enter runs
 /// it, Escape closes. The highlight is a filled plate with a detent bar down
 /// its leading edge — position and weight, not a tint.
+///
+/// With [previewPane] it is fzf: the matches down the left, and what the
+/// highlight is currently sitting on shown at size on the right, changing as
+/// the highlight moves. On a window under 720 logical pixels the pane is
+/// dropped and the list gets the sheet to itself.
 Future<void> showAnalogCommandPalette({
   required BuildContext context,
   required AnalogCommandResults results,
   Duration debounce = const Duration(milliseconds: 140),
   String hint = 'Search',
+  bool previewPane = false,
 }) {
   return showAnalogDialog<void>(
     context: context,
     barrierLabel: 'Close the command palette',
-    builder: (context) =>
-        _CommandPalette(results: results, debounce: debounce, hint: hint),
+    builder: (context) => _CommandPalette(
+      results: results,
+      debounce: debounce,
+      hint: hint,
+      previewPane: previewPane,
+    ),
   );
 }
 
@@ -70,11 +90,13 @@ class _CommandPalette extends StatefulWidget {
     required this.results,
     required this.debounce,
     required this.hint,
+    required this.previewPane,
   });
 
   final AnalogCommandResults results;
   final Duration debounce;
   final String hint;
+  final bool previewPane;
 
   @override
   State<_CommandPalette> createState() => _CommandPaletteState();
@@ -193,12 +215,24 @@ class _CommandPaletteState extends State<_CommandPalette> {
       }
     }
 
+    // fzf's two panes: the matches on the left, what the highlight is sitting
+    // on to the right of them. Decided by the CALLER, not by whether the
+    // current matches happen to carry a preview — deriving it from the results
+    // resized the sheet under the reader's hands the moment typing turned the
+    // pane on. Dropped on a window too narrow to hold both, where the list is
+    // what the pixels are worth spending on.
+    final flat = _flat;
+    final showPreview = widget.previewPane && media.size.width >= 720;
+    final highlighted = _highlight >= 0 && _highlight < flat.length
+        ? flat[_highlight]
+        : null;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AnalogSpace.xlPx),
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 560,
+            maxWidth: showPreview ? 820 : 560,
             maxHeight: (media.size.height * 0.7).clamp(240.0, 520.0),
           ),
           child: AnalogPanel(
@@ -261,31 +295,81 @@ class _CommandPaletteState extends State<_CommandPalette> {
                   color: AnalogColor.line,
                 ),
                 Flexible(
-                  child: rows.isEmpty
-                      ? const Padding(
-                          padding: EdgeInsets.all(AnalogSpace.xlPx),
-                          child: Text(
-                            'No matches',
-                            style: TextStyle(
-                              fontFamily: AnalogType.sansFamily,
-                              fontSize: 13,
-                              color: AnalogColor.inkFaint,
+                  child: showPreview
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(child: _list(rows, _scroll)),
+                            const VerticalDivider(
+                              width: AnalogPoster.framePx,
+                              thickness: AnalogPoster.framePx,
+                              color: AnalogColor.line,
                             ),
-                          ),
+                            SizedBox(
+                              width: 260,
+                              child: _Preview(item: highlighted),
+                            ),
+                          ],
                         )
-                      : ListView(
-                          controller: _scroll,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: AnalogSpace.smPx,
-                          ),
-                          shrinkWrap: true,
-                          children: rows,
-                        ),
+                      : _list(rows, _scroll),
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The match list. Extracted because it renders either alone or as the left
+/// half of the two-pane layout, and the two must not drift apart.
+Widget _list(List<Widget> rows, ScrollController scroll) => Builder(
+  builder: (context) => rows.isEmpty
+      ? const Padding(
+          padding: EdgeInsets.all(AnalogSpace.xlPx),
+          child: Text(
+            'No matches',
+            style: TextStyle(
+              fontFamily: AnalogType.sansFamily,
+              fontSize: 13,
+              color: AnalogColor.inkFaint,
+            ),
+          ),
+        )
+      : ListView(
+          controller: scroll,
+          padding: const EdgeInsets.symmetric(vertical: AnalogSpace.smPx),
+          // Hugs its content when it is the whole sheet; the two-pane layout
+          // stretches it, and then this costs nothing.
+          shrinkWrap: true,
+          children: rows,
+        ),
+);
+
+/// The right pane: whatever the highlighted row wants shown for itself.
+///
+/// A row with nothing to show (the quick-nav entries) leaves it empty rather
+/// than holding the last poster, which would say the highlight was somewhere it
+/// is not.
+class _Preview extends StatelessWidget {
+  const _Preview({required this.item});
+
+  final AnalogCommandItem? item;
+
+  @override
+  Widget build(BuildContext context) {
+    final builder = item?.preview;
+    return Padding(
+      padding: const EdgeInsets.all(AnalogSpace.lgPx),
+      child: Center(
+        child: builder == null
+            ? const Icon(
+                Icons.image_outlined,
+                size: 22,
+                color: AnalogColor.lineStrong,
+              )
+            : builder(context),
       ),
     );
   }

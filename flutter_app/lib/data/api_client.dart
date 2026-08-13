@@ -159,6 +159,21 @@ abstract class ApiClient {
     int? subtitleStreamIndex,
   });
 
+  // ── Watch history ─────────────────────────────────────────────────────
+  /// Report playback to the server, which forwards it to Jellyfin on this
+  /// user's own token (`POST /api/playback/{started,progress,stopped}`).
+  ///
+  /// [positionTicks] is Jellyfin's unit — 100ns, i.e. microseconds x 10 — the
+  /// same one `UserData.playbackPositionTicks` comes back in.
+  ///
+  /// This is what makes Resume, Next Up, the played flag and every progress bar
+  /// in the app work: none of them are computed here, they are Jellyfin's
+  /// answers to what we reported.
+  Future<void> reportPlayback(
+    PlaybackReport report, {
+    required PlaybackReportKind kind,
+  });
+
   /// Raw subtitle text for a Jellyfin stream index.
   Future<String> subtitleContent(
     String itemId,
@@ -523,6 +538,18 @@ class DioApiClient implements ApiClient {
     );
     if (res.statusCode != 200) _fail(res, 'playbackInfo');
     return PlaybackInfo.fromJson(res.data as Map<String, dynamic>);
+  }
+
+  @override
+  Future<void> reportPlayback(
+    PlaybackReport report, {
+    required PlaybackReportKind kind,
+  }) async {
+    final res = await _dio.post(
+      '/api/playback/${kind.path}',
+      data: report.toJson(),
+    );
+    if (res.statusCode != 200) _fail(res, 'reportPlayback');
   }
 
   @override

@@ -31,6 +31,7 @@ export 'analog_dialog.dart';
 export 'analog_menu.dart';
 export 'analog_panel.dart';
 export 'analog_pressable.dart';
+export 'analog_side_strip.dart';
 export 'analog_progress.dart';
 export 'analog_switch.dart';
 export 'analog_text_field.dart';

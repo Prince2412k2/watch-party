@@ -478,6 +478,7 @@ export default function MoviesStage() {
           <AnalogNav
             active="movies"
             onNavigate={navigate}
+            canAcquire={!!user?.isAdmin}
             downloadCount={hub.activeCount}
             failingCount={hub.failingCount}
             compact={layout.size === 'phone'}

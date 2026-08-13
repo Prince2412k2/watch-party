@@ -288,7 +288,10 @@ void main() {
       expect(player.seeks, contains(Duration.zero));
       expect(container.read(chatProvider), isEmpty);
       expect(container.read(profileProvider).profile, isNull);
-      expect(container.read(serverConfigProvider), isNull);
+      // Back to whatever the build itself knows: null for a build that has to
+      // be told its origin, and the baked-in one for a build that already
+      // knows — which must not be stranded on a server picker it never shows.
+      expect(container.read(serverConfigProvider), bakedServerUrl);
       // Cached avatar drawings are keyed by this revision.
       expect(container.read(avatarRevisionProvider), 1);
     });
@@ -308,7 +311,7 @@ void main() {
       expect(container.read(livekitProvider).connected, isFalse);
       expect(player.pauseCalls, greaterThanOrEqualTo(1));
       expect(container.read(profileProvider).profile, isNull);
-      expect(container.read(serverConfigProvider), isNull);
+      expect(container.read(serverConfigProvider), bakedServerUrl);
     });
   });
 

@@ -1,11 +1,20 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../app/config.dart';
 import 'auth_provider.dart';
 import 'providers.dart';
 
 /// SharedPreferences key holding the runtime backend origin.
 const kServerUrlPrefKey = 'server.baseUrl';
+
+/// The origin a build falls back to when nothing has been chosen at runtime.
+///
+/// Non-null only for a build that baked one in (see [AppConfig.hasBakedServer]).
+/// When it is non-null the app never asks for a server: there is always one, so
+/// there is never a setup step to show.
+String? get bakedServerUrl =>
+    AppConfig.hasBakedServer ? AppConfig.apiBase : null;
 
 /// The backend the app is currently pointed at (null/empty until the user
 /// connects to one). Made runtime-settable so the app is backend-agnostic —
@@ -38,13 +47,17 @@ class ServerConfigNotifier extends StateNotifier<String?> {
     state = url;
   }
 
-  /// Forget the current server (used by "change server"); the router then
-  /// routes back to the setup screen.
+  /// Forget the runtime server (used by "change server", and by logout); the
+  /// router then routes back to the setup screen.
+  ///
+  /// A build with an origin baked in falls back to THAT rather than to nothing:
+  /// signing out of such a build must not strand the user on a server picker it
+  /// does not show, which is what dropping to null did.
   Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(kServerUrlPrefKey);
     await _dropOriginSession();
-    state = null;
+    state = bakedServerUrl;
   }
 
   /// Discard the authentication state that belonged to the origin we are

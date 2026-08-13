@@ -16,6 +16,7 @@ import '../../analog/widgets/analog_poster.dart';
 import '../../analog/widgets/analog_rail.dart';
 import '../../data/api_client.dart';
 import '../../models/models.dart';
+import '../../state/servarr_provider.dart';
 import '../../state/state.dart';
 import '../../ui/analog_tokens.dart';
 import '../../ui/ui.dart';
@@ -965,6 +966,22 @@ class _CopyColumn extends StatelessWidget {
                       runTimeTicks: active.runTimeTicks,
                     ),
                   ],
+                  // Deleting a SHOW is deleting all of it, so the target is the
+                  // series root whatever the episode cursor is sitting on — an
+                  // episode is not separately removable here, and the dialog
+                  // names the show so that is never in doubt.
+                  if (rootIsSeries)
+                    _DeleteFromServerButton(
+                      item: detailSeries!,
+                      kind: ServarrKind.series,
+                      onDeleted: state.widget.onBack,
+                    )
+                  else if (active.type == 'Movie')
+                    _DeleteFromServerButton(
+                      item: active,
+                      kind: ServarrKind.movie,
+                      onDeleted: state.widget.onBack,
+                    ),
                 ],
               ),
             ),
@@ -975,6 +992,109 @@ class _CopyColumn extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Delete a title from the SERVER: the Radarr/Sonarr record and the media file
+/// behind it, gone for everyone. Not to be confused with the download button
+/// beside it, which is about this device only.
+///
+/// Three things have to be true before it appears, and each one is a reason not
+/// to show a button that could not work:
+///   * the account is a Jellyfin administrator (the server enforces this — see
+///     `requireAdmin` in `app/server/auth.js`; this only keeps a member from
+///     being offered a 403),
+///   * the Jellyfin item carries the Tmdb/Tvdb id the *arr record is joined on,
+///   * and Radarr/Sonarr actually holds a record for it.
+/// Otherwise it is absent rather than disabled: a greyed delete on a hand-copied
+/// film invites the question "why not?" and has no answer worth giving.
+class _DeleteFromServerButton extends ConsumerWidget {
+  const _DeleteFromServerButton({
+    required this.item,
+    required this.kind,
+    required this.onDeleted,
+  });
+
+  final LibraryItem item;
+  final ServarrKind kind;
+
+  /// Leave the page — the title it was showing no longer exists.
+  final VoidCallback onDeleted;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(isAdminProvider)) return const SizedBox.shrink();
+    final providerId = servarrProviderId(item.providerIds, kind);
+    if (providerId == null) return const SizedBox.shrink();
+    // Unresolved (still loading, or no match) reads the same as "nothing to
+    // delete" — the button simply arrives a moment later if there is one.
+    final record = ref
+        .watch(
+          libraryServarrRecordProvider((kind: kind, providerId: providerId)),
+        )
+        .valueOrNull;
+    if (record == null) return const SizedBox.shrink();
+
+    return AppButton(
+      label: 'Delete',
+      icon: Icons.delete_outline,
+      variant: AppButtonVariant.danger,
+      onPressed: () => _confirmAndDelete(context, ref, record),
+    );
+  }
+
+  Future<void> _confirmAndDelete(
+    BuildContext context,
+    WidgetRef ref,
+    ServarrLibraryRecord record,
+  ) async {
+    final what = kind == ServarrKind.movie ? 'movie' : 'show';
+    final confirmed = await showConfirm(
+      context,
+      title: 'Delete from the server?',
+      body:
+          '${record.title} and its files are deleted from the server, and the '
+          '$what is excluded so nothing re-downloads it. This is everyone\'s '
+          'copy, not just yours, and it can\'t be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    );
+    if (!confirmed) return;
+
+    try {
+      await ref
+          .read(servarrRequestsProvider.notifier)
+          .removeRecord(kind, record.id);
+    } catch (error) {
+      if (!context.mounted) return;
+      final reason = error is ApiException ? error.message : '$error';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete ${record.title}: $reason')),
+      );
+      return;
+    }
+
+    // Re-subscribing these refetches from Jellyfin rather than replaying the
+    // cache, so the library catches up as soon as Jellyfin itself has.
+    ref.invalidate(libraryProvider);
+    ref.invalidate(browseByTypeProvider);
+    ref.invalidate(homeProvider);
+    ref.invalidate(latestProvider);
+    ref.invalidate(itemDetailProvider);
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        // Said plainly, because the title does not vanish on the spot: the
+        // files are gone, but Jellyfin keeps listing it until its next scan,
+        // and a bare "Deleted" would look like the delete had failed.
+        content: Text(
+          '${record.title} deleted from the server. It leaves the library '
+          'when Jellyfin next scans.',
+        ),
+      ),
+    );
+    onDeleted();
   }
 }
 
@@ -1154,84 +1274,19 @@ class _SeasonStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     if (rows.isEmpty) return const SizedBox.shrink();
     final active = _activeSeason(rows, activeId);
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < rows.length; i++) ...[
-          _SeasonButton(
+    return AnalogSideStrip(
+      options: [
+        for (var i = 0; i < rows.length; i++)
+          (
             label: rows[i].season.name.isNotEmpty
                 ? rows[i].season.name
                 : 'Season ${i + 1}',
-            active: rows[i].season.id == active?.season.id,
-            onPressed: () => state._selectSeason(rows[i]),
+            value: rows[i].season.id,
           ),
-          if (i != rows.length - 1) const SizedBox(height: AnalogSpace.smPx),
-        ],
       ],
-    );
-  }
-}
-
-class _SeasonButton extends StatelessWidget {
-  const _SeasonButton({
-    required this.label,
-    required this.active,
-    required this.onPressed,
-  });
-
-  final String label;
-  final bool active;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnalogPressable(
-      onPressed: onPressed,
-      semanticLabel: label,
-      selected: active,
-      button: false,
-      builder: (context, state) => AnalogFocusRing(
-        visible: state.focused,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AnalogSpace.smPx,
-            vertical: AnalogSpace.xsPx,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontFamily: AnalogType.sansFamily,
-                  fontSize: 15,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                  color: active || state.lit
-                      ? AnalogColor.ink
-                      : AnalogColor.inkFaint,
-                ),
-              ),
-              const SizedBox(height: 3),
-              // The detent, not a tint: the active position is marked by
-              // geometry so it survives a monochrome display.
-              AnimatedContainer(
-                duration: AnalogMotion.detentMs,
-                curve: AnalogMotion.detentEase,
-                height: active
-                    ? AnalogHairline.activePx
-                    : AnalogHairline.idlePx,
-                width: active ? 34 : 14,
-                color: active ? AnalogColor.ink : AnalogColor.line,
-              ),
-            ],
-          ),
-        ),
+      selected: active?.season.id,
+      onSelected: (id) => state._selectSeason(
+        rows.firstWhere((row) => row.season.id == id),
       ),
     );
   }

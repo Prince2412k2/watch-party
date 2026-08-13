@@ -383,7 +383,12 @@ class _MoviesStageState extends ConsumerState<MoviesStage>
                                 ),
                                 if (_collection == null)
                                   Align(
-                                    alignment: Alignment.topRight,
+                                    // Centred, like the season picker it is
+                                    // now the same widget as. Pinned to the
+                                    // top it sat above the title and under the
+                                    // account button, reading as a caption on
+                                    // the corner rather than a control.
+                                    alignment: Alignment.centerRight,
                                     // Same reason as the copy: on a window
                                     // short enough that this does not fit
                                     // beside the rail, it clips rather than
@@ -677,9 +682,10 @@ class _Details extends StatelessWidget {
 
 /// Singles ⇄ Collections, stacked down the side.
 ///
-/// Presented the way the season slider is — plain text positions each carrying
-/// their own detent rule — rather than as a pill or a segmented control, so the
-/// two surfaces read as the same idiom.
+/// The same widget the season picker is, at the same size, in the same place on
+/// the page — see [AnalogSideStrip]. It used to be a private copy of that,
+/// pinned to the top corner and left at the smaller size, which is why the two
+/// stages did not read alike despite the comment here claiming they did.
 class _ModeStrip extends StatelessWidget {
   const _ModeStrip({required this.mode, required this.onChanged});
 
@@ -688,80 +694,13 @@ class _ModeStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        for (final candidate in browseModes) ...[
-          _ModeButton(
-            label: browseModeLabels[candidate]!,
-            active: candidate == mode,
-            onPressed: () => onChanged(candidate),
-          ),
-          if (candidate != browseModes.last)
-            const SizedBox(height: AnalogSpace.smPx),
-        ],
+    return AnalogSideStrip(
+      options: [
+        for (final candidate in browseModes)
+          (label: browseModeLabels[candidate]!, value: candidate),
       ],
-    );
-  }
-}
-
-class _ModeButton extends StatelessWidget {
-  const _ModeButton({
-    required this.label,
-    required this.active,
-    required this.onPressed,
-  });
-
-  final String label;
-  final bool active;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnalogPressable(
-      onPressed: onPressed,
-      semanticLabel: label,
-      selected: active,
-      button: false,
-      builder: (context, state) => AnalogFocusRing(
-        visible: state.focused,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AnalogSpace.smPx,
-            vertical: AnalogSpace.xsPx,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontFamily: AnalogType.sansFamily,
-                  fontSize: 15,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                  color: active || state.lit
-                      ? AnalogColor.ink
-                      : AnalogColor.inkFaint,
-                ),
-              ),
-              const SizedBox(height: 3),
-              // The detent, not a tint: the active position is marked by
-              // geometry so it survives a monochrome display.
-              AnimatedContainer(
-                duration: AnalogMotion.detentMs,
-                curve: AnalogMotion.detentEase,
-                height: active
-                    ? AnalogHairline.activePx
-                    : AnalogHairline.idlePx,
-                width: active ? 34 : 14,
-                color: active ? AnalogColor.ink : AnalogColor.line,
-              ),
-            ],
-          ),
-        ),
-      ),
+      selected: mode,
+      onSelected: (value) => onChanged(value as BrowseMode),
     );
   }
 }

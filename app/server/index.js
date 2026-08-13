@@ -46,7 +46,7 @@ import { registerSubtitleRoutes } from './subtitles.js'
 import { registerLiveKitRoutes } from './livekit.js'
 import { registerServarrRoutes } from './servarr/index.js'
 import { registerDesktopBuildRoutes } from './desktop-builds.js'
-import { refreshPlayback } from './playback.js'
+import { refreshPlayback, registerPlaybackRoutes } from './playback.js'
 import {
   createSession, getSession, deleteSession,
   findSessionBySocket, findSessionByUser, findSessionForMember, findSessionByHost,
@@ -369,6 +369,7 @@ registerSubtitleRoutes(app, io)
 registerLiveKitRoutes(app)
 registerServarrRoutes(app)
 registerNativeRoutes(app)
+registerPlaybackRoutes(app)
 registerDesktopBuildRoutes(app)
 registerProfileRoutes(app, io)
 registerAvatarRoutes(app)

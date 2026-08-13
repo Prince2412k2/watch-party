@@ -263,6 +263,16 @@ class MockApiClient implements ApiClient {
     'ok': true,
   };
 
+  /// Records what the player reported, so a test can assert on the history a
+  /// playback session would have written.
+  final playbackReports = <(PlaybackReportKind, PlaybackReport)>[];
+
+  @override
+  Future<void> reportPlayback(
+    PlaybackReport report, {
+    required PlaybackReportKind kind,
+  }) async => playbackReports.add((kind, report));
+
   @override
   Future<dynamic> servarrDelete(
     String path, {

@@ -337,12 +337,81 @@ class ServarrRequests extends StateNotifier<Map<String, ServarrRequestState>> {
   Future<void> remove(ServarrTitle t, ServarrKind kind) async {
     final id = t.id;
     if (id == null) return;
+    await removeRecord(kind, id);
+  }
+
+  /// Delete one Radarr/Sonarr record by its own id, with its files, and exclude
+  /// it so the next automatic search cannot quietly pull it back.
+  ///
+  /// Admin-only on the server (`DELETE /api/servarr/{radarr/movie,sonarr/series}
+  /// /:id`). Errors are not swallowed: unlike a request — where a failure just
+  /// leaves the title un-added — a delete that silently did nothing would have
+  /// the caller report the title gone while it is still on disk.
+  Future<void> removeRecord(ServarrKind kind, int id) async {
     final path =
         kind == ServarrKind.movie ? 'radarr/movie/$id' : 'sonarr/series/$id';
     await _ref
         .read(apiClientProvider)
         .servarrDelete(path, query: const {'deleteFiles': 'true'});
   }
+}
+
+/// The Radarr/Sonarr record behind a title, once it has been matched.
+class ServarrLibraryRecord {
+  const ServarrLibraryRecord({required this.id, required this.title});
+  final int id;
+  final String title;
+}
+
+/// Which *arr record — if any — holds the files behind a library title.
+///
+/// A Jellyfin item and an *arr record are two views of the same film, joined
+/// only by the metadata provider id both carry: Tmdb for a movie, Tvdb for a
+/// series. So this reads the *arr library (a small, already-cached list) and
+/// matches on that id — the same join `_librarySonarrIdentity` in
+/// `show_source.dart` makes for the download actions.
+///
+/// Null is the ordinary answer, not a failure: a title Jellyfin has but Radarr
+/// or Sonarr never added (hand-copied, imported by something else, or the
+/// service is simply not configured) has no record to delete, and the delete
+/// affordance stays off it rather than offering an action that cannot work.
+/// Every failure mode degrades to null for the same reason it does over there
+/// — this must never be why a title page fails to open.
+final libraryServarrRecordProvider = FutureProvider.autoDispose
+    .family<ServarrLibraryRecord?, ({ServarrKind kind, int providerId})>((
+      ref,
+      key,
+    ) async {
+      final api = ref.read(apiClientProvider);
+      _bindServarrApi(api);
+      final movie = key.kind == ServarrKind.movie;
+      try {
+        final rows = await api.servarrGet(movie ? 'radarr/movies' : 'sonarr/series');
+        final idKey = movie ? 'tmdbId' : 'tvdbId';
+        for (final row in (rows is List ? rows : const []).whereType<Map>()) {
+          if ((row[idKey] as num?)?.toInt() != key.providerId) continue;
+          final id = (row['id'] as num?)?.toInt();
+          if (id == null) return null;
+          return ServarrLibraryRecord(
+            id: id,
+            title: (row['title'] ?? '').toString(),
+          );
+        }
+      } catch (_) {
+        // Unconfigured, unreachable, a 503 — nothing to offer, quietly.
+      }
+      return null;
+    });
+
+/// The `Tmdb`/`Tvdb` id off a Jellyfin item's `ProviderIds`, case-insensitively
+/// — the key casing has been seen to vary by metadata plugin (the note on
+/// `_tvdbIdFrom` in `show_source.dart` carries the same warning).
+int? servarrProviderId(Map<String, String> providerIds, ServarrKind kind) {
+  final wanted = kind == ServarrKind.movie ? 'tmdb' : 'tvdb';
+  for (final entry in providerIds.entries) {
+    if (entry.key.toLowerCase() == wanted) return int.tryParse(entry.value);
+  }
+  return null;
 }
 
 final servarrRequestsProvider =

@@ -230,6 +230,15 @@ export interface AnalogDownloadDetailsProps {
   message: StageMessage | null
   /** Optional: nothing gates these controls now that browsing is never shared. */
   disabled?: boolean
+  /**
+   * Whether this account may act on the download client at all — pause, resume,
+   * remove, resolve a stuck grab. That is the administrator's (the server
+   * answers 403 to every one of those routes for anyone else), so a member gets
+   * the same page to WATCH what is coming, with no controls on it. Absent, not
+   * disabled: a greyed row of buttons reads as "not yet", and this is "not
+   * yours".
+   */
+  canControl?: boolean
   torrent?: TorrentFocus | null
   queue?: QueueFocus | null
 }
@@ -241,6 +250,7 @@ export function AnalogDownloadDetails({
   loading,
   message,
   disabled,
+  canControl = false,
   torrent = null,
   queue = null,
 }: AnalogDownloadDetailsProps) {
@@ -314,7 +324,7 @@ export function AnalogDownloadDetails({
             </div>
           ) : null}
 
-          <div className="an-detail-actions">
+          {canControl ? <div className="an-detail-actions">
             <button
               type="button"
               className="an-action is-danger"
@@ -354,7 +364,7 @@ export function AnalogDownloadDetails({
                 </div>
               </div>
             ) : null}
-          </div>
+          </div> : null}
         </div>
       </div>
     )
@@ -410,7 +420,7 @@ export function AnalogDownloadDetails({
           ))}
         </div>
 
-        <div className="an-detail-actions">
+        {canControl ? <div className="an-detail-actions">
           <button
             type="button"
             className="an-action is-primary"
@@ -473,7 +483,7 @@ export function AnalogDownloadDetails({
               </div>
             </div>
           ) : null}
-        </div>
+        </div> : null}
       </div>
     </div>
   )

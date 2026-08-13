@@ -164,9 +164,13 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // same fixed-cursor rail, the same bottom modes and corner toolboxes at every
   // size. There is no separate phone tree any more — the stage is responsive,
   // so `usePhone()` no longer picks a different component, only a layout.
+  // Discover is the administrator's: every action on it downloads something to
+  // the server, and the server refuses its feeds to anyone else. A member who
+  // reaches the route anyway (a bookmark, a shared link, a stale tab) lands on
+  // Movies rather than on a page whose every request answers 403.
   const screen = path === '/movies' ? <MoviesStage />
     : path === '/series' ? <ShowsStage />
-    : path === '/discover' ? <DiscoverStage />
+    : path === '/discover' ? (user.isAdmin ? <DiscoverStage /> : <MoviesStage />)
     : path === '/downloads' ? <DownloadsStage />
     : <div>404</div>
 
