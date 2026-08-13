@@ -123,6 +123,12 @@ export function getItems(token, userId, params = {}) {
   const qs = new URLSearchParams({
     IncludeItemTypes: 'Movie,Series',
     Recursive: 'true',
+    // SortName explicitly rather than by omission: `orderByRecentlyWatched`
+    // leaves the never-played tail in whatever order this returns, so "then
+    // alphabetical" has to be a promise the query makes, not a default we
+    // happen to be getting.
+    SortBy: 'SortName',
+    SortOrder: 'Ascending',
     Fields: 'MediaSources',
     ...params,
   })

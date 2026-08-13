@@ -43,7 +43,6 @@ import 'trickplay_preview.dart';
 /// `canControl` gating in the web player.
 /// Near-black translucent scrims for the chrome edges (design system: flat,
 /// no gradients/glass). Both are [AppColors.bg] at different opacities.
-const Color _kChromeScrim = Color(0xB30A0A0B); // top bar (~70%)
 const Color _kBufferingScrim = Color(0x8C0A0A0B); // centered spinner backdrop
 
 class PlayerChrome extends StatefulWidget {
@@ -1375,8 +1374,7 @@ class _TopBar extends StatelessWidget {
     if (onBack == null && title == null) {
       return const SizedBox.shrink();
     }
-    return Container(
-      width: double.infinity,
+    return Padding(
       // Inset to put the back button exactly where every other surface puts it
       // — see [BackButtonPlacement]. Leaving the player on its own bar padding
       // meant the one control you reach for on the way out of a film moved as
@@ -1387,8 +1385,6 @@ class _TopBar extends StatelessWidget {
         right: AppSpacing.md,
         bottom: AppSpacing.sm,
       ),
-      // Flat near-black translucent bar — no gradients per the design system.
-      decoration: const BoxDecoration(color: _kChromeScrim),
       child: Row(
         children: [
           if (onBack != null) GlassBackButton(onTap: onBack!),
@@ -1399,7 +1395,15 @@ class _TopBar extends StatelessWidget {
                 title!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: AppTheme.titleMedium,
+                // Carries its own legibility now that nothing is behind it: a
+                // shadow tight enough to read as weight rather than as glow,
+                // which holds the name over a bright frame without putting a
+                // slab back across the top of the picture.
+                style: AppTheme.titleMedium.copyWith(
+                  shadows: const [
+                    Shadow(color: Color(0xCC000000), blurRadius: 6),
+                  ],
+                ),
               ),
             ),
           ],

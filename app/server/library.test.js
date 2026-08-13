@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isJellyfinId, isSafeHlsPath } from './library.js'
+import { isJellyfinId, isSafeHlsPath, orderByRecentlyWatched } from './library.js'
 
 const REAL_ID = '0123456789abcdef0123456789abcdef'
 const REAL_GUID = '01234567-89ab-cdef-0123-456789abcdef'
@@ -35,4 +35,48 @@ test('isSafeHlsPath rejects paths whose item id is not a real Jellyfin id', () =
   assert.equal(isSafeHlsPath('Videos'), false)
   assert.equal(isSafeHlsPath(''), false)
   assert.equal(isSafeHlsPath(null), false)
+})
+
+// ── Recently-watched ordering ────────────────────────────────────────────────
+
+test('recently watched leads the rail; the untouched tail keeps its order', () => {
+  const items = [
+    { Name: 'Alien' },
+    { Name: 'Arrival', UserData: { LastPlayedDate: '2026-08-12T20:00:00Z' } },
+    { Name: 'Blade Runner' },
+    { Name: 'Dune', UserData: { LastPlayedDate: '2026-08-13T09:00:00Z' } },
+    { Name: 'Heat', UserData: { LastPlayedDate: '2026-08-06T21:00:00Z' } },
+  ]
+
+  assert.deepEqual(
+    orderByRecentlyWatched(items).map((i) => i.Name),
+    // Played first, newest first. Then the never-played ones exactly as the
+    // query returned them — alphabetical — so the rest of the library is still
+    // something you can scan.
+    ['Dune', 'Arrival', 'Heat', 'Alien', 'Blade Runner'],
+  )
+})
+
+test('an unplayable date is treated as never played, not as the epoch', () => {
+  const items = [
+    { Name: 'Alien' },
+    { Name: 'Broken', UserData: { LastPlayedDate: 'not a date' } },
+    { Name: 'Dune', UserData: { LastPlayedDate: '2026-08-13T09:00:00Z' } },
+  ]
+  // `Date.parse` yields NaN, and a NaN comparison sorts unpredictably — it must
+  // fall to the tail rather than land somewhere arbitrary among real dates.
+  assert.deepEqual(
+    orderByRecentlyWatched(items).map((i) => i.Name),
+    ['Dune', 'Alien', 'Broken'],
+  )
+})
+
+test('ordering survives a library with nothing watched, and a junk payload', () => {
+  const untouched = [{ Name: 'Alien' }, { Name: 'Blade Runner' }]
+  assert.deepEqual(
+    orderByRecentlyWatched(untouched).map((i) => i.Name),
+    ['Alien', 'Blade Runner'],
+  )
+  assert.deepEqual(orderByRecentlyWatched(null), [])
+  assert.deepEqual(orderByRecentlyWatched(undefined), [])
 })
