@@ -17,6 +17,21 @@ void main() {
       expect(s.backdropStrength, ArtworkWall.kBackdropPasteStrength);
       expect(s.posterStrength, ArtworkWall.kPasteStrength);
       expect(s.tintOpacity, ArtworkWall.kTintOpacity);
+      expect(s.brightness, ArtworkWall.kReliefBrightness);
+      expect(s.contrast, ArtworkWall.kReliefContrast);
+      expect(s.posterPaper, ArtworkTexture.kPosterPaperOpacity);
+      expect(s.backdropPaper, ArtworkTexture.kBackdropPaperOpacity);
+      expect(s.washAmount, ArtworkTexture.kWashAmount);
+    });
+
+    test('poster and backdrop paper are independent', () {
+      // They always wanted different amounts: a poster is a small sheet you
+      // look straight at, where grain is most of what says "paper"; the
+      // backdrop is scenery already carrying the relief and a scrim.
+      const s = TextureSettings();
+      final moved = s.copyWith(posterPaper: 0.4);
+      expect(moved.posterPaper, 0.4);
+      expect(moved.backdropPaper, s.backdropPaper);
     });
 
     test('name the constants they belong to', () {
@@ -30,6 +45,13 @@ void main() {
       expect(out, contains('kPasteStrength = 0.250'));
       expect(out, contains('artwork_wall.dart'));
       expect(out, contains('analog_stage.dart'));
+      // Every knob now has a real constant behind it, so all of them paste as
+      // source rather than as a comment saying where they would go.
+      expect(out, contains('kPosterPaperOpacity'));
+      expect(out, contains('kBackdropPaperOpacity'));
+      expect(out, contains('kReliefBrightness'));
+      expect(out, contains('kReliefContrast'));
+      expect(out, isNot(contains('//   brightness:')));
     });
 
     test('the wash dial has a defined meaning at both ends', () {
@@ -37,6 +59,7 @@ void main() {
         const TextureSettings(washAmount: 1).wash,
         TexturedArtwork.defaultWash,
       );
+      expect(TexturedArtwork.washAt(1), TexturedArtwork.defaultWash);
       // At zero it must be the identity, or "no wash" would still tint.
       expect(
         const TextureSettings(washAmount: 0).wash,

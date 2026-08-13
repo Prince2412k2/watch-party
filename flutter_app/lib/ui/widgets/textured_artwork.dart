@@ -9,6 +9,22 @@ import 'package:flutter/widgets.dart';
 abstract final class ArtworkTexture {
   static const int count = 10;
 
+  /// How strongly the paper's noise and grunge is laid over a poster.
+  ///
+  /// Separate from [kBackdropPaperOpacity] because the two want different
+  /// amounts and always did: a poster is a small sheet you look straight at,
+  /// where the grain is most of what says "paper", while the backdrop is
+  /// scenery already carrying the wall's relief and a scrim on top of that.
+  /// One shared number could only ever be wrong for one of them.
+  static const double kPosterPaperOpacity = 0.901;
+
+  /// The same for the backdrop, off by default — the grunge is wanted on the
+  /// posters, not on the sheet behind them.
+  static const double kBackdropPaperOpacity = 0.0;
+
+  /// How far the print wash is dialled in, 0 = none, 1 = the full matrix.
+  static const double kWashAmount = 0.706;
+
   /// The nth sheet of a kind, for a caller that wants to name one directly
   /// rather than derive it from a title.
   static String sheetAt(int index, {required bool portrait}) {
@@ -102,7 +118,7 @@ class TexturedArtwork extends StatelessWidget {
     this.portrait = true,
     this.sheet,
     this.opacity = 1,
-    this.wash = defaultWash,
+    this.wash,
   });
 
   /// The artwork to print.
@@ -122,16 +138,45 @@ class TexturedArtwork extends StatelessWidget {
   /// How strongly the sheet is laid on.
   final double opacity;
 
-  /// The print wash. Exposed so it can be tuned against real artwork.
-  final ColorFilter wash;
+  /// The print wash. Null takes the shipped amount; exposed so it can be tuned
+  /// against real artwork.
+  final ColorFilter? wash;
 
   /// Off returns [child] untouched. Null — the usual case — defers to the
   /// nearest [ArtworkTextureScope], and so to the user's setting; pass it
   /// explicitly only to force one surface against that.
   final bool? enabled;
 
-  /// Print wash: slightly desaturated with the blacks lifted off true black, so
-  /// the image sits *in* the paper rather than glowing through it. Gentle on
+  /// The wash at [ArtworkTexture.kWashAmount]. Held rather than rebuilt,
+  /// because every tile asks for it on every build.
+  static final ColorFilter shippedWash = washAt(ArtworkTexture.kWashAmount);
+
+  /// The wash dialled between none and the full matrix, so both ends of the
+  /// control mean something rather than being an arbitrary nudge of nine
+  /// coefficients.
+  static ColorFilter washAt(double amount) {
+    if (amount >= 1) return defaultWash;
+    const shipped = <double>[
+      0.86, 0.11, 0.03, 0, 6, //
+      0.05, 0.90, 0.05, 0, 5, //
+      0.04, 0.09, 0.87, 0, 4, //
+      0, 0, 0, 1, 0, //
+    ];
+    const identity = <double>[
+      1, 0, 0, 0, 0, //
+      0, 1, 0, 0, 0, //
+      0, 0, 1, 0, 0, //
+      0, 0, 0, 1, 0, //
+    ];
+    return ColorFilter.matrix(<double>[
+      for (var i = 0; i < 20; i++)
+        identity[i] + (shipped[i] - identity[i]) * amount,
+    ]);
+  }
+
+  /// Print wash at full strength: slightly desaturated with the blacks lifted
+  /// off true black, so the image sits *in* the paper rather than glowing
+  /// through it. Gentle on
   /// purpose — the poster is the one thing on the stage whose job is to sell
   /// the title, and a heavy wash costs more in legibility than it buys in
   /// atmosphere.
@@ -152,7 +197,10 @@ class TexturedArtwork extends StatelessWidget {
       // height, which `expand` turns into an infinite-height assertion.
       fit: StackFit.passthrough,
       children: [
-        ColorFiltered(colorFilter: wash, child: child),
+        ColorFiltered(
+          colorFilter: wash ?? TexturedArtwork.shippedWash,
+          child: child,
+        ),
         Positioned.fill(
           child: Opacity(
             opacity: opacity.clamp(0.0, 1.0),

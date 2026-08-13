@@ -346,10 +346,17 @@ class _Printed extends StatelessWidget {
     return WallLayer(
       index: ArtworkWall.indexFor(ArtworkTextureScope.wallSeedOf(context)),
       strength: ArtworkWall.kPasteStrength,
+      brightness: ArtworkWall.kReliefBrightness,
+      contrast: ArtworkWall.kReliefContrast,
       builder: (context, depth, _) => WallRelief(
         depth: depth,
         strength: ArtworkWall.kPasteStrength,
-        child: TexturedArtwork(seed: seed, enabled: true, child: child),
+        child: TexturedArtwork(
+          seed: seed,
+          enabled: true,
+          opacity: ArtworkTexture.kPosterPaperOpacity,
+          child: child,
+        ),
       ),
     );
   }

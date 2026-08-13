@@ -27,23 +27,33 @@ abstract final class ArtworkWall {
 
   /// The colour layer's opacity. The sources carried a flat ~8% alpha which was
   /// dropped at bake time — this puts it back.
-  static const double kTintOpacity = 0.08;
+  static const double kTintOpacity = 0.0;
 
   /// How hard the relief is pressed into the bare wall. This one is brick seen
   /// directly, with nothing over it, so it can take the map close to full.
-  static const double kReliefStrength = 0.90;
+  static const double kReliefStrength = 0.735;
 
   /// The relief through the backdrop sheet. Deeper than a poster's, because the
   /// backdrop is the largest thing on the stage and reads as scenery — it is
   /// what has to sell the room — and because the scrim and vignette over it eat
   /// a good deal of the relief before it reaches the eye.
-  static const double kBackdropPasteStrength = 0.62;
+  static const double kBackdropPasteStrength = 0.599;
 
   /// The relief through a poster. Kept well back: a poster is a small sheet of
   /// paper over the brick, not the brick itself, so it takes the shape of what
   /// it is stuck to without taking its full texture — and unlike the backdrop
   /// it is artwork someone is trying to read at rail size.
-  static const double kPasteStrength = 0.30;
+  static const double kPasteStrength = 0.230;
+
+  /// Relief tuning, baked into the map alongside strength and taken about
+  /// mid-grey — which is soft-light's no-op, so "no relief" and "no adjustment"
+  /// are the same point and the three cannot fight each other.
+  ///
+  /// The contrast is well above 1 because the sources span only ~0.40-0.74 even
+  /// after the bake normalises them; without it the brick reads as a smudge
+  /// rather than as courses.
+  static const double kReliefBrightness = 0.275;
+  static const double kReliefContrast = 2.564;
 
   static String _two(int i) => (i % count).abs().toString().padLeft(2, '0');
 

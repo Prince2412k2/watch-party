@@ -54,7 +54,7 @@ class AnalogStage extends StatefulWidget {
 
   /// How much wall shows around the pasted backdrop. Without a margin the sheet
   /// covers the room and there is no wall left to be pasted onto.
-  static const double kPasteInset = 0.045;
+  static const double kPasteInset = 0.0;
 
   /// Whether something on the stage currently owns focus. Raises the grain by
   /// [AnalogGrain.focusedBoostPct], which is the whole of that token's job.
@@ -93,8 +93,10 @@ class _AnalogStageState extends State<AnalogStage> {
               if (textured)
                 WallLayer(
                   index: ArtworkWall.indexFor(widget.wallSeed),
-                  withTint: true,
+                  withTint: ArtworkWall.kTintOpacity > 0,
                   strength: ArtworkWall.kReliefStrength,
+                  brightness: ArtworkWall.kReliefBrightness,
+                  contrast: ArtworkWall.kReliefContrast,
                   builder: (context, depth, tint) => Stack(
                     fit: StackFit.expand,
                     children: [
@@ -103,7 +105,7 @@ class _AnalogStageState extends State<AnalogStage> {
                         strength: ArtworkWall.kReliefStrength,
                         child: const ColoredBox(color: AnalogColor.stageGround),
                       ),
-                      if (tint != null)
+                      if (tint != null && ArtworkWall.kTintOpacity > 0)
                         Opacity(
                           opacity: ArtworkWall.kTintOpacity,
                           child: RawImage(image: tint, fit: BoxFit.cover),
@@ -190,6 +192,8 @@ class _PastedBackdrop extends StatelessWidget {
       child: WallLayer(
         index: ArtworkWall.indexFor(wallSeed),
         strength: ArtworkWall.kBackdropPasteStrength,
+        brightness: ArtworkWall.kReliefBrightness,
+        contrast: ArtworkWall.kReliefContrast,
         builder: (context, depth, _) => WallRelief(
           depth: depth,
           strength: ArtworkWall.kBackdropPasteStrength,
@@ -199,6 +203,7 @@ class _PastedBackdrop extends StatelessWidget {
             seed: url,
             portrait: false,
             enabled: true,
+            opacity: ArtworkTexture.kBackdropPaperOpacity,
             child: art,
           ),
         ),

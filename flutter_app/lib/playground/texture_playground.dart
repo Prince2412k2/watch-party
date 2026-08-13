@@ -32,11 +32,12 @@ class TextureSettings {
     this.backdropStrength = ArtworkWall.kBackdropPasteStrength,
     this.posterStrength = ArtworkWall.kPasteStrength,
     this.tintOpacity = ArtworkWall.kTintOpacity,
-    this.brightness = 0,
-    this.contrast = 1,
-    this.paperOpacity = 1,
-    this.washAmount = 1,
-    this.backdropInset = 0.045,
+    this.brightness = ArtworkWall.kReliefBrightness,
+    this.contrast = ArtworkWall.kReliefContrast,
+    this.posterPaper = ArtworkTexture.kPosterPaperOpacity,
+    this.backdropPaper = ArtworkTexture.kBackdropPaperOpacity,
+    this.washAmount = ArtworkTexture.kWashAmount,
+    this.backdropInset = 0.0,
     this.mode = PasteMode.shader,
     this.shader = const PasteShaderSettings(),
   });
@@ -49,7 +50,8 @@ class TextureSettings {
   final double tintOpacity;
   final double brightness;
   final double contrast;
-  final double paperOpacity;
+  final double posterPaper;
+  final double backdropPaper;
   final double washAmount;
   final double backdropInset;
   final PasteMode mode;
@@ -64,7 +66,8 @@ class TextureSettings {
     double? tintOpacity,
     double? brightness,
     double? contrast,
-    double? paperOpacity,
+    double? posterPaper,
+    double? backdropPaper,
     double? washAmount,
     double? backdropInset,
     PasteMode? mode,
@@ -78,7 +81,8 @@ class TextureSettings {
     tintOpacity: tintOpacity ?? this.tintOpacity,
     brightness: brightness ?? this.brightness,
     contrast: contrast ?? this.contrast,
-    paperOpacity: paperOpacity ?? this.paperOpacity,
+    posterPaper: posterPaper ?? this.posterPaper,
+    backdropPaper: backdropPaper ?? this.backdropPaper,
     washAmount: washAmount ?? this.washAmount,
     backdropInset: backdropInset ?? this.backdropInset,
     mode: mode ?? this.mode,
@@ -88,25 +92,7 @@ class TextureSettings {
   /// The wash, dialled between "no wash at all" and the shipped matrix, so the
   /// slider has a defined meaning at both ends rather than being an arbitrary
   /// nudge of nine coefficients.
-  ColorFilter get wash {
-    if (washAmount >= 1) return TexturedArtwork.defaultWash;
-    const shipped = <double>[
-      0.86, 0.11, 0.03, 0, 6, //
-      0.05, 0.90, 0.05, 0, 5, //
-      0.04, 0.09, 0.87, 0, 4, //
-      0, 0, 0, 1, 0, //
-    ];
-    const identity = <double>[
-      1, 0, 0, 0, 0, //
-      0, 1, 0, 0, 0, //
-      0, 0, 1, 0, 0, //
-      0, 0, 0, 1, 0, //
-    ];
-    return ColorFilter.matrix(<double>[
-      for (var i = 0; i < 20; i++)
-        identity[i] + (shipped[i] - identity[i]) * washAmount,
-    ]);
-  }
+  ColorFilter get wash => TexturedArtwork.washAt(washAmount);
 
   String _n(double v) => v.toStringAsFixed(3);
 
@@ -122,15 +108,14 @@ static const double kTintOpacity = ${_n(tintOpacity)};
 // lib/analog/widgets/analog_stage.dart — AnalogStage
 static const double kPasteInset = ${_n(backdropInset)};
 
-// Relief tuning, passed to WallLayer(brightness:, contrast:).
-// Currently WallLayer defaults to brightness 0 / contrast 1; thread these
-// through the two call sites in analog_stage.dart and analog_poster.dart.
-//   brightness: ${_n(brightness)}
-//   contrast:   ${_n(contrast)}
+// lib/ui/widgets/textured_artwork.dart — ArtworkTexture
+static const double kPosterPaperOpacity = ${_n(posterPaper)};
+static const double kBackdropPaperOpacity = ${_n(backdropPaper)};
+static const double kWashAmount = ${_n(washAmount)};
 
-// Paper: TexturedArtwork(opacity:) — currently defaults to 1.
-//   opacity: ${_n(paperOpacity)}
-//   wash amount: ${_n(washAmount)}  (1.0 = the shipped matrix, 0 = none)
+// lib/ui/widgets/artwork_wall.dart — ArtworkWall
+static const double kReliefBrightness = ${_n(brightness)};
+static const double kReliefContrast = ${_n(contrast)};
 
 // Previewed on wall $wall, sheet $sheet, mode ${mode.name}.
 
@@ -330,7 +315,7 @@ class _PreviewState extends State<_Preview> {
         child: TexturedArtwork(
           portrait: portrait,
           sheet: ArtworkTexture.sheetAt(s.sheet + i, portrait: portrait),
-          opacity: s.paperOpacity,
+          opacity: portrait ? s.posterPaper : s.backdropPaper,
           wash: s.wash,
           child: RawImage(image: _synthetic(i, size), fit: BoxFit.cover),
         ),
@@ -594,9 +579,14 @@ class _Panel extends StatelessWidget {
 
                 const _Head('Paper & wall colour'),
                 _Slide(
-                  label: 'Paper opacity',
-                  value: s.paperOpacity,
-                  onChanged: (v) => onChanged(s.copyWith(paperOpacity: v)),
+                  label: 'Poster paper (noise & grunge)',
+                  value: s.posterPaper,
+                  onChanged: (v) => onChanged(s.copyWith(posterPaper: v)),
+                ),
+                _Slide(
+                  label: 'Backdrop paper',
+                  value: s.backdropPaper,
+                  onChanged: (v) => onChanged(s.copyWith(backdropPaper: v)),
                 ),
                 _Slide(
                   label: 'Print wash',
