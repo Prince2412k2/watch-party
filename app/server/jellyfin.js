@@ -87,6 +87,38 @@ export function changePassword(token, userId, currentPassword, newPassword) {
   })
 }
 
+// ── Playback reporting ──────────────────────────────────────────────────────
+// What makes a watch history exist. Jellyfin keeps per-user progress (the
+// `UserData` on every item) only for playback it was TOLD about: these three
+// calls are the telling, and without them Resume, Next Up, the played flag and
+// every progress bar in the app stay empty forever — which is exactly what they
+// were, because nothing here called them until now.
+//
+// Crucially this is independent of how the bytes reach the player. Jellyfin does
+// not check; it takes our word for the position. So the fact that we serve the
+// file ourselves (`native.js` proxies `/Videos/:id/stream?static=true` behind a
+// signed URL, bypassing Jellyfin's own session handshake) costs us nothing here
+// — we just have to do the reporting the handshake would have done.
+//
+// All three run on the CALLER'S token, never an admin one. The session decides
+// whose history moves; a body can't ask for someone else's.
+export function reportPlaybackStart(token, body) {
+  return jfetch('/Sessions/Playing', { method: 'POST', token, body })
+}
+
+export function reportPlaybackProgress(token, body) {
+  return jfetch('/Sessions/Playing/Progress', { method: 'POST', token, body })
+}
+
+// The one that matters most: Jellyfin decides the resume position and the
+// played flag from where playback STOPPED. A session that only ever reported
+// progress and then vanished leaves the item mid-watched at whatever the last
+// tick said, which is why this is sent on pause-to-background and on quit, not
+// only on a tidy close.
+export function reportPlaybackStopped(token, body) {
+  return jfetch('/Sessions/Playing/Stopped', { method: 'POST', token, body })
+}
+
 export function getItems(token, userId, params = {}) {
   const qs = new URLSearchParams({
     IncludeItemTypes: 'Movie,Series',

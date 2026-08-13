@@ -31,12 +31,13 @@ Future<void> main() async {
   // Initialize libmpv (media_kit) once, before any player is created (E4 uses it).
   MediaKit.ensureInitialized();
 
-  // Backend-agnostic: the origin is chosen at runtime (the user pastes a
-  // server URL) and persisted in SharedPreferences. Read it before building
-  // the clients so they start pointed at the right server; null means "not
-  // configured yet" and the router routes to the setup screen.
+  // The origin, in priority order: whatever was chosen at runtime, else
+  // whatever the build baked in. Read before building the clients so they start
+  // pointed at the right server; null means "not configured yet" and the router
+  // routes to the setup screen — which a build with a baked-in origin never
+  // reaches, because it is never without one.
   final prefs = await SharedPreferences.getInstance();
-  final savedServerUrl = prefs.getString(kServerUrlPrefKey);
+  final savedServerUrl = prefs.getString(kServerUrlPrefKey) ?? bakedServerUrl;
 
   // The real, cookie-persisting API client (E2). Cookies live under the app's
   // support directory so a session survives a full app restart.
@@ -100,9 +101,12 @@ Future<void> main() async {
 
   // Closing the window exits the process, but not before releasing what the user
   // expects to stop: the LiveKit room (camera and mic), playback, and in-flight
-  // transfers. Each step is independent and best-effort — one failure must not
-  // skip the rest — and the camera/mic release is ordered first because it is
-  // the one with a privacy cost.
+  // transfers — and before writing down where they got to in the film, which is
+  // the last chance to: a quit mid-title is the ordinary way of stopping, and
+  // without this it is the one way that loses the resume point. Each step is
+  // independent and best-effort — one failure must not skip the rest — and the
+  // camera/mic release is ordered first because it is the one with a privacy
+  // cost.
   if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
     DesktopLifecycle.instance.onShutdown = () async {
       await Future.wait([
@@ -119,6 +123,11 @@ Future<void> main() async {
         Future<void>.sync(
           container.read(cacheFillControllerProvider).pauseAll,
         ).catchError((_) {}),
+        container
+            .read(watchHistoryProvider)
+            .close()
+            .timeout(const Duration(seconds: 2))
+            .catchError((_) {}),
       ]);
     };
 
@@ -138,6 +147,11 @@ Future<void> main() async {
     // No server chosen yet — show login (with the server picker) immediately.
     container.read(authProvider.notifier).markUnauthenticated();
   }
+
+  // Watch history follows whatever the player has open, for the life of the
+  // process — not of any screen. Started after runApp so the widgets binding it
+  // observes exists.
+  container.read(watchHistoryBindingProvider).start();
 
   runApp(
     UncontrolledProviderScope(
