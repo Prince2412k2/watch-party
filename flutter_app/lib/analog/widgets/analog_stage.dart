@@ -189,10 +189,10 @@ class _PastedBackdrop extends StatelessWidget {
       padding: EdgeInsets.all(inset),
       child: WallLayer(
         index: ArtworkWall.indexFor(wallSeed),
-        strength: ArtworkWall.kPasteStrength,
+        strength: ArtworkWall.kBackdropPasteStrength,
         builder: (context, depth, _) => WallRelief(
           depth: depth,
-          strength: ArtworkWall.kPasteStrength,
+          strength: ArtworkWall.kBackdropPasteStrength,
           // Seeded by the URL so the paper changes with the title rather than
           // on every rebuild.
           child: TexturedArtwork(
