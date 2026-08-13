@@ -9,15 +9,20 @@ import 'package:flutter/widgets.dart';
 abstract final class ArtworkTexture {
   static const int count = 10;
 
+  /// The nth sheet of a kind, for a caller that wants to name one directly
+  /// rather than derive it from a title.
+  static String sheetAt(int index, {required bool portrait}) {
+    final kind = portrait ? 'portrait' : 'landscape';
+    return 'assets/textures/paper/$kind-'
+        '${(index % count).abs().toString().padLeft(2, '0')}.png';
+  }
+
   /// Paper cut to the shape it is printed on: tall sheets for posters, wide
   /// ones for the backdrop. Using one for both would stretch a sheet's grain
   /// and edge wear along whichever axis it was scaled on, which is exactly the
   /// sort of thing the eye reads as "filter" rather than "paper".
-  static String sheetFor(String? seed, {required bool portrait}) {
-    final kind = portrait ? 'portrait' : 'landscape';
-    final i = _index(seed).toString().padLeft(2, '0');
-    return 'assets/textures/paper/$kind-$i.png';
-  }
+  static String sheetFor(String? seed, {required bool portrait}) =>
+      sheetAt(_index(seed), portrait: portrait);
 
   /// Stable on purpose: a poster that re-creases every time it scrolls back
   /// into view is more distracting than no texture at all. A null or empty seed
@@ -95,6 +100,9 @@ class TexturedArtwork extends StatelessWidget {
     this.seed,
     this.enabled,
     this.portrait = true,
+    this.sheet,
+    this.opacity = 1,
+    this.wash = defaultWash,
   });
 
   /// The artwork to print.
@@ -107,6 +115,16 @@ class TexturedArtwork extends StatelessWidget {
   /// Tall paper for a poster, wide paper for a backdrop.
   final bool portrait;
 
+  /// An explicit sheet, overriding the one [seed] would pick. For tuning, where
+  /// the point is to compare sheets rather than to keep one stable.
+  final String? sheet;
+
+  /// How strongly the sheet is laid on.
+  final double opacity;
+
+  /// The print wash. Exposed so it can be tuned against real artwork.
+  final ColorFilter wash;
+
   /// Off returns [child] untouched. Null — the usual case — defers to the
   /// nearest [ArtworkTextureScope], and so to the user's setting; pass it
   /// explicitly only to force one surface against that.
@@ -117,7 +135,7 @@ class TexturedArtwork extends StatelessWidget {
   /// purpose — the poster is the one thing on the stage whose job is to sell
   /// the title, and a heavy wash costs more in legibility than it buys in
   /// atmosphere.
-  static const ColorFilter wash = ColorFilter.matrix(<double>[
+  static const ColorFilter defaultWash = ColorFilter.matrix(<double>[
     0.86, 0.11, 0.03, 0, 6, //
     0.05, 0.90, 0.05, 0, 5, //
     0.04, 0.09, 0.87, 0, 4, //
@@ -136,11 +154,14 @@ class TexturedArtwork extends StatelessWidget {
       children: [
         ColorFiltered(colorFilter: wash, child: child),
         Positioned.fill(
-          child: Image.asset(
-            ArtworkTexture.sheetFor(seed, portrait: portrait),
-            fit: BoxFit.cover,
-            excludeFromSemantics: true,
-            gaplessPlayback: true,
+          child: Opacity(
+            opacity: opacity.clamp(0.0, 1.0),
+            child: Image.asset(
+              sheet ?? ArtworkTexture.sheetFor(seed, portrait: portrait),
+              fit: BoxFit.cover,
+              excludeFromSemantics: true,
+              gaplessPlayback: true,
+            ),
           ),
         ),
       ],

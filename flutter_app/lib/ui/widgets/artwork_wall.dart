@@ -77,28 +77,39 @@ class WallImages {
   /// is a [ShaderMaskLayer], which takes a shader and no paint, so there is
   /// nowhere to hang an opacity or a colour filter. There are only ever two
   /// strengths in play, so this costs one extra decode each and then nothing.
-  static Future<ui.Image> loadEased(String key, double strength) =>
-      _cache.putIfAbsent('$key@$strength', () async {
-        final full = await load(key);
-        if (strength >= 1) return full;
-        final recorder = ui.PictureRecorder();
-        final grey = 127.5 * (1 - strength);
-        ui.Canvas(recorder).drawImage(
-          full,
-          Offset.zero,
-          Paint()
-            ..colorFilter = ColorFilter.matrix(<double>[
-              strength, 0, 0, 0, grey, //
-              0, strength, 0, 0, grey, //
-              0, 0, strength, 0, grey, //
-              0, 0, 0, 1, 0, //
-            ]),
-        );
-        final picture = recorder.endRecording();
-        final out = await picture.toImage(full.width, full.height);
-        picture.dispose();
-        return out;
-      });
+  static Future<ui.Image> loadEased(
+    String key,
+    double strength, {
+    double brightness = 0,
+    double contrast = 1,
+  }) => _cache.putIfAbsent('$key@$strength/$brightness/$contrast', () async {
+    final full = await load(key);
+    if (strength >= 1 && brightness == 0 && contrast == 1) return full;
+    // Contrast and brightness are taken about mid-grey, then the whole thing
+    // is eased back toward mid-grey by strength — because mid-grey is
+    // soft-light's no-op, so "no relief" and "no adjustment" are the same
+    // point and the three controls cannot fight each other.
+    //
+    //   out = 0.5 + (((v - 0.5) * contrast) + brightness) * strength
+    final scale = contrast * strength;
+    final offset = (0.5 - 0.5 * scale + brightness * strength) * 255;
+    final recorder = ui.PictureRecorder();
+    ui.Canvas(recorder).drawImage(
+      full,
+      Offset.zero,
+      Paint()
+        ..colorFilter = ColorFilter.matrix(<double>[
+          scale, 0, 0, 0, offset, //
+          0, scale, 0, 0, offset, //
+          0, 0, scale, 0, offset, //
+          0, 0, 0, 1, 0, //
+        ]),
+    );
+    final picture = recorder.endRecording();
+    final out = await picture.toImage(full.width, full.height);
+    picture.dispose();
+    return out;
+  });
 
   static Future<ui.Image> load(String key) =>
       _cache.putIfAbsent(key, () async {
@@ -246,12 +257,18 @@ class WallLayer extends StatefulWidget {
     required this.builder,
     required this.strength,
     this.withTint = false,
+    this.brightness = 0,
+    this.contrast = 1,
   });
 
   final int index;
 
   /// How hard this surface takes the relief. Eased into the map at decode time.
   final double strength;
+
+  /// Relief tuning, also baked into the map. Both are taken about mid-grey.
+  final double brightness;
+  final double contrast;
 
   /// Also decode the colour layer. Only the stage wants it: on a poster the
   /// dirt would sit *over* the artwork, which is not where dirt on a wall goes.
@@ -279,7 +296,9 @@ class _WallLayerState extends State<WallLayer> {
     super.didUpdateWidget(old);
     if (old.index != widget.index ||
         old.withTint != widget.withTint ||
-        old.strength != widget.strength) {
+        old.strength != widget.strength ||
+        old.brightness != widget.brightness ||
+        old.contrast != widget.contrast) {
       _resolve();
     }
   }
@@ -289,6 +308,8 @@ class _WallLayerState extends State<WallLayer> {
     final depth = await WallImages.loadEased(
       ArtworkWall.depth(index),
       widget.strength,
+      brightness: widget.brightness,
+      contrast: widget.contrast,
     );
     final tint = widget.withTint
         ? await WallImages.load(ArtworkWall.tint(index))
