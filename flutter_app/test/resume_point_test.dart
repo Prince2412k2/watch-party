@@ -128,8 +128,9 @@ void main() {
       player: MockPlayerController(),
     );
 
-    // 45 minutes, not zero. Zero here is the cached copy winning.
-    expect(position, const Duration(minutes: 45));
+    // 45 minutes less the run-up, not zero. Zero here is the cached copy
+    // winning.
+    expect(position, const Duration(minutes: 45) - kResumeRewind);
   });
 
   testWidgets('an unwatched title opens at the beginning', (tester) async {
@@ -167,5 +168,21 @@ void main() {
     // Seeking to your own resume point would jump the film to a scene nobody
     // else is on, until sync drags it back.
     expect(position, Duration.zero);
+  });
+
+  group('the run-up before the mark', () {
+    test('playback starts a few seconds before where you stopped', () {
+      expect(
+        rewoundResumePoint(const Duration(minutes: 45)),
+        const Duration(minutes: 45) - kResumeRewind,
+      );
+    });
+
+    test('a mark inside the run-up starts at the beginning, not before it', () {
+      // Negative seeks are a way to open a film at a position that does not
+      // exist; some players clamp, some fail, none of it is worth finding out.
+      expect(rewoundResumePoint(const Duration(seconds: 2)), Duration.zero);
+      expect(rewoundResumePoint(Duration.zero), Duration.zero);
+    });
   });
 }

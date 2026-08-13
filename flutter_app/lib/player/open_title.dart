@@ -120,8 +120,28 @@ Future<Duration> _resumePoint(WidgetRef ref, String itemId) async {
   try {
     final item = await ref.read(apiClientProvider).item(itemId);
     final ticks = item.userData?.playbackPositionTicks ?? 0;
-    return ticks > 0 ? PlaybackReport.durationOf(ticks) : Duration.zero;
+    return ticks > 0
+        ? rewoundResumePoint(PlaybackReport.durationOf(ticks))
+        : Duration.zero;
   } catch (_) {
     return Duration.zero;
   }
+}
+
+/// How far before the stored position playback actually starts.
+///
+/// You stopped watching a moment before you stopped the film — reaching for
+/// the remote, walking out, closing the laptop — so the exact mark is a little
+/// past the last thing you took in. Coming back a few seconds early gives you
+/// the run-up instead of dropping you mid-sentence.
+const Duration kResumeRewind = Duration(seconds: 5);
+
+/// [position], backed off by [kResumeRewind] and never before the start.
+///
+/// Only the SEEK is rewound. The stored position is left alone and the Resume
+/// button still names it: quietly rewriting the mark would walk a title
+/// backwards five seconds every time it was opened and closed.
+Duration rewoundResumePoint(Duration position) {
+  final rewound = position - kResumeRewind;
+  return rewound.isNegative ? Duration.zero : rewound;
 }

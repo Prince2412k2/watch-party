@@ -93,6 +93,31 @@ function stripApiKey(text) {
     .replace(/\?$/g, '')
 }
 
+// Titles you have played, most recent first; everything you have not touched
+// keeps the alphabetical order the query asked for. So picking a film back up
+// is the top of the rail, and the rest of the library still reads as an
+// alphabet you can scan — which sorting EVERYTHING by date would destroy, since
+// the untouched half would land in an order with no meaning to scan by.
+//
+// Sorted here rather than by Jellyfin because the two halves want opposite
+// directions (date descending, name ascending) and per-field SortOrder is not
+// something every Jellyfin version honours. This is a page of items already in
+// memory; ordering it costs nothing worth saving.
+//
+// `LastPlayedDate` is set by the playback reporting in `playback.js`. Before
+// that existed no item had one and this was the alphabet, unchanged.
+export function orderByRecentlyWatched(items) {
+  const played = []
+  const untouched = []
+  for (const item of Array.isArray(items) ? items : []) {
+    const at = Date.parse(item?.UserData?.LastPlayedDate ?? '')
+    if (Number.isFinite(at)) played.push({ at, item })
+    else untouched.push(item)
+  }
+  played.sort((a, b) => b.at - a.at)
+  return [...played.map((entry) => entry.item), ...untouched]
+}
+
 export function registerLibraryRoutes(app) {
   app.get('/api/library/items/:itemId/trickplay', requireAuth, async (req, res) => {
     const { token, userId } = getJellyfin(req)
@@ -226,7 +251,7 @@ export function registerLibraryRoutes(app) {
     try {
       await sendCachedJson(req, res, `items:${parentId ?? ''}`, 120, async () => {
         const data = await getItems(token, userId, parentId ? { ParentId: parentId } : {})
-        return data.Items ?? []
+        return orderByRecentlyWatched(data.Items ?? [])
       })
     } catch (err) {
       console.error('library/items', err.message)
