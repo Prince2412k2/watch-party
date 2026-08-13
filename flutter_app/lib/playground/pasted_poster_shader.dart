@@ -2,6 +2,14 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 
+import '../ui/widgets/textured_artwork.dart';
+
+/// The shipped paper values, so the shader opens where the app already sits.
+abstract final class ArtworkTextureDefaults {
+  static const double posterPaper = ArtworkTexture.kPosterPaperOpacity;
+  static const double wash = ArtworkTexture.kWashAmount;
+}
+
 /// Everything `shaders/pasted_poster.frag` takes, in declaration order.
 ///
 /// Order is the contract: `setFloat` indexes a flat list of floats, so a vec2
@@ -19,6 +27,8 @@ class PasteShaderSettings {
     this.ambient = 0.82,
     this.gain = 1.12,
     this.sampleSpread = 1,
+    this.paperStrength = ArtworkTextureDefaults.posterPaper,
+    this.wash = ArtworkTextureDefaults.wash,
   });
 
   /// How far the print slides down a slope, as a fraction of the quad.
@@ -45,6 +55,13 @@ class PasteShaderSettings {
   /// smooths mortar joints into rolling swells rather than sharp steps.
   final double sampleSpread;
 
+  /// The paper's own noise and grunge over the print. This is the poster's
+  /// paper, not the wall's grain — [textureStrength] is that one.
+  final double paperStrength;
+
+  /// The print wash, 0 = none.
+  final double wash;
+
   PasteShaderSettings copyWith({
     double? displacement,
     double? textureStrength,
@@ -54,6 +71,8 @@ class PasteShaderSettings {
     double? ambient,
     double? gain,
     double? sampleSpread,
+    double? paperStrength,
+    double? wash,
   }) => PasteShaderSettings(
     displacement: displacement ?? this.displacement,
     textureStrength: textureStrength ?? this.textureStrength,
@@ -63,6 +82,8 @@ class PasteShaderSettings {
     ambient: ambient ?? this.ambient,
     gain: gain ?? this.gain,
     sampleSpread: sampleSpread ?? this.sampleSpread,
+    paperStrength: paperStrength ?? this.paperStrength,
+    wash: wash ?? this.wash,
   );
 
   String _n(double v) => v.toStringAsFixed(3);
@@ -78,6 +99,8 @@ lightDepth:      ${_n(lightDepth)}
 ambient:         ${_n(ambient)}
 gain:            ${_n(gain)}
 sampleSpread:    ${_n(sampleSpread)}
+paperStrength:   ${_n(paperStrength)}
+wash:            ${_n(wash)}
 ''';
 }
 
@@ -111,6 +134,7 @@ class PastedPosterPainter extends CustomPainter {
     required this.poster,
     required this.wall,
     required this.depth,
+    required this.paper,
     required this.origin,
     required this.window,
     required this.settings,
@@ -120,6 +144,7 @@ class PastedPosterPainter extends CustomPainter {
   final ui.Image poster;
   final ui.Image wall;
   final ui.Image depth;
+  final ui.Image paper;
   final Offset origin;
   final Size window;
   final PasteShaderSettings settings;
@@ -145,11 +170,14 @@ class PastedPosterPainter extends CustomPainter {
     f(settings.ambient);
     f(settings.gain);
     f(settings.sampleSpread);
+    f(settings.paperStrength);
+    f(settings.wash);
 
     shader
       ..setImageSampler(0, poster)
       ..setImageSampler(1, wall)
-      ..setImageSampler(2, depth);
+      ..setImageSampler(2, depth)
+      ..setImageSampler(3, paper);
 
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
     shader.dispose();
@@ -160,6 +188,7 @@ class PastedPosterPainter extends CustomPainter {
       old.poster != poster ||
       old.wall != wall ||
       old.depth != depth ||
+      old.paper != paper ||
       old.origin != origin ||
       old.window != window ||
       old.settings != settings ||
@@ -181,6 +210,7 @@ class PastedPoster extends StatefulWidget {
     required this.poster,
     required this.wall,
     required this.depth,
+    required this.paper,
     required this.settings,
     required this.program,
   });
@@ -188,6 +218,7 @@ class PastedPoster extends StatefulWidget {
   final ui.Image? poster;
   final ui.Image? wall;
   final ui.Image? depth;
+  final ui.Image? paper;
   final PasteShaderSettings settings;
   final ui.FragmentProgram? program;
 
@@ -224,7 +255,12 @@ class _PastedPosterState extends State<PastedPoster> {
     final poster = widget.poster;
     final wall = widget.wall;
     final depth = widget.depth;
-    if (program == null || poster == null || wall == null || depth == null) {
+    final paper = widget.paper;
+    if (program == null ||
+        poster == null ||
+        wall == null ||
+        depth == null ||
+        paper == null) {
       // Plain artwork until everything has arrived. A hole on the stage while
       // a shader compiles is worse than a poster that gains its texture late.
       return poster == null
@@ -237,6 +273,7 @@ class _PastedPosterState extends State<PastedPoster> {
         poster: poster,
         wall: wall,
         depth: depth,
+        paper: paper,
         origin: _origin,
         window: MediaQuery.sizeOf(context),
         settings: widget.settings,

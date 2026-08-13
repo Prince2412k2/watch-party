@@ -30,10 +30,13 @@ uniform float uLightDepth;      // z of the light vector; low = raking, harsh
 uniform float uAmbient;         // brightness of a fully unlit patch
 uniform float uGain;            // brightness of a fully lit one
 uniform float uSampleSpread;    // gradient sample distance, in wall pixels
+uniform float uPaperStrength;   // paper noise and grunge over the print
+uniform float uWash;            // print wash: desaturate and lift the blacks
 
 uniform sampler2D uPoster;
 uniform sampler2D uWallTex;
 uniform sampler2D uDepth;
+uniform sampler2D uPaper;
 
 out vec4 fragColor;
 
@@ -79,5 +82,20 @@ void main() {
     float grain = mix(1.0, wallLum * 1.5, uTextureStrength);
 
     poster.rgb *= lighting * grain;
+
+    // 4. The print wash. Approximates the ColorFilter the soft-light path uses:
+    //    pull the colour back and lift the blacks off true black, so the image
+    //    sits in the paper rather than glowing through it.
+    float lum = dot(poster.rgb, vec3(0.299, 0.587, 0.114));
+    poster.rgb = mix(poster.rgb, vec3(lum), 0.14 * uWash);
+    poster.rgb += vec3(0.023, 0.020, 0.016) * uWash;
+
+    // 5. The paper itself — its noise, grunge and edge wear, over everything.
+    //    Sampled in the quad's own space, not the wall's: the sheet belongs to
+    //    this poster and moves with it, unlike the brick behind it.
+    vec4 paper = texture(uPaper, quadUV);
+    float paperA = paper.a * uPaperStrength;
+    poster.rgb = poster.rgb * (1.0 - paperA) + paper.rgb * uPaperStrength;
+
     fragColor = poster;
 }

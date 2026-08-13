@@ -44,7 +44,7 @@ void main() {
       expect(out, contains('kReliefStrength = 0.800'));
       expect(out, contains('kPasteStrength = 0.250'));
       expect(out, contains('artwork_wall.dart'));
-      expect(out, contains('analog_stage.dart'));
+      expect(out, contains('textured_artwork.dart'));
       // Every knob now has a real constant behind it, so all of them paste as
       // source rather than as a comment saying where they would go.
       expect(out, contains('kPosterPaperOpacity'));
@@ -52,6 +52,9 @@ void main() {
       expect(out, contains('kReliefBrightness'));
       expect(out, contains('kReliefContrast'));
       expect(out, isNot(contains('//   brightness:')));
+      // The inset is fixed at zero now, so it is no longer a knob and must not
+      // come out as one.
+      expect(out, isNot(contains('kPasteInset')));
     });
 
     test('the wash dial has a defined meaning at both ends', () {
@@ -80,6 +83,10 @@ void main() {
       ).asDart();
       expect(out, contains('displacement:    0.020'));
       expect(out, contains('bumpStrength:    12.000'));
+      // Paper and wash reach the shader too, or every paper control would be
+      // dead in the mode that is actually being used.
+      expect(out, contains('paperStrength:'));
+      expect(out, contains('wash:'));
       expect(out, contains('pasted_poster.frag'));
     });
 
@@ -134,5 +141,27 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byType(TexturedArtwork), findsWidgets);
     expect(find.byType(PastedPoster), findsNothing);
+  });
+
+  testWidgets('the wall can be seen with the backdrop hidden', (tester) async {
+    // The backdrop is full-bleed, so with it showing there is nothing of the
+    // wall left to look at and every wall control appears to do nothing.
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const MaterialApp(home: TexturePlayground()));
+    for (var i = 0; i < 3; i++) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+    }
+    final withBackdrop = find.byType(PastedPoster).evaluate().length;
+
+    await tester.tap(find.byType(Switch));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.byType(PastedPoster).evaluate().length, withBackdrop - 1);
   });
 }

@@ -37,7 +37,7 @@ class TextureSettings {
     this.posterPaper = ArtworkTexture.kPosterPaperOpacity,
     this.backdropPaper = ArtworkTexture.kBackdropPaperOpacity,
     this.washAmount = ArtworkTexture.kWashAmount,
-    this.backdropInset = 0.0,
+    this.showBackdrop = true,
     this.mode = PasteMode.shader,
     this.shader = const PasteShaderSettings(),
   });
@@ -53,7 +53,10 @@ class TextureSettings {
   final double posterPaper;
   final double backdropPaper;
   final double washAmount;
-  final double backdropInset;
+  /// The backdrop is full-bleed, so it covers the wall completely. Hiding it
+  /// is the only way to see what the wall controls are doing — and it is also
+  /// the app's real no-selection state, so it is worth looking at anyway.
+  final bool showBackdrop;
   final PasteMode mode;
   final PasteShaderSettings shader;
 
@@ -69,7 +72,7 @@ class TextureSettings {
     double? posterPaper,
     double? backdropPaper,
     double? washAmount,
-    double? backdropInset,
+    bool? showBackdrop,
     PasteMode? mode,
     PasteShaderSettings? shader,
   }) => TextureSettings(
@@ -84,7 +87,7 @@ class TextureSettings {
     posterPaper: posterPaper ?? this.posterPaper,
     backdropPaper: backdropPaper ?? this.backdropPaper,
     washAmount: washAmount ?? this.washAmount,
-    backdropInset: backdropInset ?? this.backdropInset,
+    showBackdrop: showBackdrop ?? this.showBackdrop,
     mode: mode ?? this.mode,
     shader: shader ?? this.shader,
   );
@@ -104,9 +107,6 @@ static const double kReliefStrength = ${_n(reliefStrength)};
 static const double kBackdropPasteStrength = ${_n(backdropStrength)};
 static const double kPasteStrength = ${_n(posterStrength)};
 static const double kTintOpacity = ${_n(tintOpacity)};
-
-// lib/analog/widgets/analog_stage.dart — AnalogStage
-static const double kPasteInset = ${_n(backdropInset)};
 
 // lib/ui/widgets/textured_artwork.dart — ArtworkTexture
 static const double kPosterPaperOpacity = ${_n(posterPaper)};
@@ -194,6 +194,8 @@ class _PreviewState extends State<_Preview> {
   ui.FragmentProgram? _program;
   ui.Image? _wall;
   ui.Image? _depth;
+  ui.Image? _paperPortrait;
+  ui.Image? _paperLandscape;
   final _art = <int, ui.Image>{};
   String? _artFor;
 
@@ -214,12 +216,14 @@ class _PreviewState extends State<_Preview> {
   void didUpdateWidget(_Preview old) {
     super.didUpdateWidget(old);
     if (old.settings.wall != widget.settings.wall) _loadWall();
+    if (old.settings.sheet != widget.settings.sheet) _loadPaper();
     if (old.artPath != widget.artPath) _loadArt();
   }
 
   Future<void> _load() async {
     _program = await PasteShader.load();
     await _loadWall();
+    await _loadPaper();
     await _loadArt();
   }
 
@@ -233,6 +237,21 @@ class _PreviewState extends State<_Preview> {
     setState(() {
       _depth = depth;
       _wall = wall;
+    });
+  }
+
+  Future<void> _loadPaper() async {
+    final i = widget.settings.sheet;
+    final portrait = await WallImages.load(
+      ArtworkTexture.sheetAt(i, portrait: true),
+    );
+    final landscape = await WallImages.load(
+      ArtworkTexture.sheetAt(i, portrait: false),
+    );
+    if (!mounted || i != widget.settings.sheet) return;
+    setState(() {
+      _paperPortrait = portrait;
+      _paperLandscape = landscape;
     });
   }
 
@@ -300,7 +319,13 @@ class _PreviewState extends State<_Preview> {
         poster: _synthetic(i, size),
         wall: _wall,
         depth: _depth,
-        settings: s.shader,
+        paper: portrait ? _paperPortrait : _paperLandscape,
+        settings: s.shader.copyWith(
+          // The two surfaces want different amounts of paper, so the shader
+          // takes whichever belongs to the one being drawn.
+          paperStrength: portrait ? s.posterPaper : s.backdropPaper,
+          wash: s.washAmount,
+        ),
       );
     }
     // The shipped path, for comparison.
@@ -328,7 +353,6 @@ class _PreviewState extends State<_Preview> {
     final s = widget.settings;
     return LayoutBuilder(
       builder: (context, box) {
-        final inset = box.biggest.shortestSide * s.backdropInset;
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -356,15 +380,16 @@ class _PreviewState extends State<_Preview> {
                 ],
               ),
             ),
-            Padding(
-              padding: EdgeInsets.all(inset),
-              child: _paste(
+            // Full-bleed, as it is in the app. Which means it covers the wall
+            // completely — so it can be hidden, or every wall control would
+            // look dead with nothing to show for it.
+            if (s.showBackdrop)
+              _paste(
                 i: 0,
                 size: const Size(1280, 720),
                 softStrength: s.backdropStrength,
                 portrait: false,
               ),
-            ),
             Positioned(
               left: 0,
               right: 0,
@@ -476,6 +501,39 @@ class _Panel extends StatelessWidget {
                   ),
                 ),
 
+                const _Head('View'),
+                // A plain Row, not a SwitchListTile: the panel is a ColoredBox
+                // and a ListTile paints its ink on the nearest Material, which
+                // the box would hide — Flutter asserts on exactly that.
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Show backdrop',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                          Text(
+                            'Full-bleed, so it hides the wall',
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: s.showBackdrop,
+                      onChanged: (v) => onChanged(s.copyWith(showBackdrop: v)),
+                    ),
+                  ],
+                ),
                 if (s.mode == PasteMode.shader) ...[
                   const _Head('Shader'),
                   _Slide(
@@ -600,13 +658,6 @@ class _Panel extends StatelessWidget {
                   onChanged: (v) => onChanged(s.copyWith(tintOpacity: v)),
                 ),
 
-                const _Head('Layout'),
-                _Slide(
-                  label: 'Backdrop inset',
-                  value: s.backdropInset,
-                  max: 0.2,
-                  onChanged: (v) => onChanged(s.copyWith(backdropInset: v)),
-                ),
               ],
             ),
           ),
