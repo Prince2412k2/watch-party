@@ -200,9 +200,27 @@ class _CameraTile extends StatelessWidget {
 /// placeholder. Shared by [CameraGrid]'s docked tiles and the floating PiP
 /// tiles ([FloatingCameraTile]) so both render identical video.
 class CameraVideoView extends StatelessWidget {
-  const CameraVideoView({super.key, required this.track});
+  const CameraVideoView({
+    super.key,
+    required this.track,
+    this.fit = lk.VideoViewFit.contain,
+  });
 
   final ParticipantTrack track;
+
+  /// How the camera fills its box.
+  ///
+  /// `contain` — LiveKit's default, and the docked grid's — shows the whole
+  /// frame and letterboxes whatever is left over. That is right for a grid,
+  /// where tiles size themselves around the video.
+  ///
+  /// A floating tile does not: its box is fixed at 4:3
+  /// ([FloatingTileGeometry.aspect]) while a laptop camera streams 16:9, so
+  /// `contain` there means permanent bars across the top and bottom of a tile
+  /// small enough that the bars are a serious fraction of it. Those tiles pass
+  /// `cover` and lose a sliver of the sides instead, which is what every other
+  /// picture-in-picture self-view does.
+  final lk.VideoViewFit fit;
 
   @override
   Widget build(BuildContext context) {
@@ -218,7 +236,11 @@ class CameraVideoView extends StatelessWidget {
       return Stack(
         fit: StackFit.expand,
         children: [
-          lk.VideoTrackRenderer(videoTrack, key: ValueKey(videoTrack.sid)),
+          lk.VideoTrackRenderer(
+            videoTrack,
+            key: ValueKey(videoTrack.sid),
+            fit: fit,
+          ),
           if (track.videoMuted) _CamOffPlaceholder(track: track),
         ],
       );

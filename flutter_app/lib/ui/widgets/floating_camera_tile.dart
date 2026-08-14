@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:livekit_client/livekit_client.dart' as lk;
 
 import '../../livekit/livekit_room.dart';
 import '../../state/livekit_provider.dart';
@@ -334,7 +335,10 @@ class _FloatingCameraTileState extends State<FloatingCameraTile> {
         : Stack(
             fit: StackFit.expand,
             children: [
-              CameraVideoView(track: track),
+              // `cover`, not the default `contain`: this box is a fixed 4:3
+              // and a laptop camera is 16:9, so containing it puts a bar
+              // across the top and the bottom of an already-small tile.
+              CameraVideoView(track: track, fit: lk.VideoViewFit.cover),
               // Top scrim + name/indicators/collapse — hover/speaking only.
               Positioned(
                 left: 0,
