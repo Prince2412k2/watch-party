@@ -302,6 +302,22 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         );
   }
 
+  /// Dial the socket again after it has dropped, for [PartyConnectionNotifier]
+  /// to call on a schedule.
+  ///
+  /// Only the dial: re-joining the room is not done here, because the
+  /// connection listener installed in [_subscribe] already runs
+  /// [_recoverAfterReconnect] the moment the link comes back, and doing it in
+  /// both places would race two joins against each other. Everything downstream
+  /// of "connected" therefore stays in one path, whether the connection
+  /// returned by itself or because this asked it to.
+  ///
+  /// Throws whatever the dial throws; the caller retries on a timer.
+  Future<void> retryConnection() async {
+    if (state == null && _pendingPartyId == null) return;
+    await _ensureConnected();
+  }
+
   // ── Create / join ─────────────────────────────────────────────────────────
   /// Restores a server-side party after an app restart.
   Future<bool> resume() async {

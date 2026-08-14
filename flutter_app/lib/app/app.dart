@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../analog/chrome/analog_toast.dart';
 import '../party/party_overlay.dart';
+import '../party/party_reconnect_screen.dart';
 import '../player/player_host.dart';
 import '../state/state.dart';
 import '../ui/ui.dart';
@@ -160,6 +161,11 @@ class _RootChrome extends StatelessWidget {
       // wrapping the app and started sitting beside it.
       Positioned.fill(child: PlayerHost()),
       Positioned.fill(child: PartyOverlay()),
+      // Above both: a party whose connection has dropped covers the room's
+      // chrome, because the room is exactly what is not there. It draws
+      // nothing at all while the socket is up, and shrinks to a corner pill
+      // once Back has minimised it.
+      Positioned.fill(child: PartyReconnectScreen()),
       _PopcornLayer(),
     ],
   );
