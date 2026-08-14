@@ -148,6 +148,11 @@ Future<void> main() async {
     container.read(authProvider.notifier).markUnauthenticated();
   }
 
+  // A dropped party reconnects itself from here on: the socket raises the
+  // reconnect surface and retries, LiveKit retries quietly. Started before
+  // runApp so a drop during the first frame is already being chased.
+  container.read(partyConnectionProvider.notifier).start();
+
   // Watch history follows whatever the player has open, for the life of the
   // process — not of any screen. Started after runApp so the widgets binding it
   // observes exists.

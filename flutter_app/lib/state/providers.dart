@@ -55,6 +55,16 @@ final socketClientProvider = Provider<SocketClient>(
   (ref) => MockSocketClient(),
 );
 
+/// Whether the party socket is up.
+///
+/// The client already exposes this as a stream; this is the provider form, so
+/// something other than [PartyNotifier] can watch the link without reaching
+/// into the socket itself. Loading (before the first event) reads as down,
+/// which is true — nothing has connected yet.
+final socketConnectedProvider = StreamProvider<bool>(
+  (ref) => ref.watch(socketClientProvider).connectionState,
+);
+
 /// The old `background_downloader`-backed download service (E8.1). Retired
 /// from the download/offline UI as of Phase 3b-wiring — [downloadsProvider]
 /// and [offlineProvider] are now backed by [cacheFillControllerProvider] /
