@@ -5,6 +5,7 @@ import { navigate } from './router.ts'
 import { usePhone } from './hooks/useIsMobile.ts'
 import { PartyProvider } from './context/PartyContext.tsx'
 import { DownloadsProvider } from './context/DownloadsContext.tsx'
+import PartyReconnect from './components/PartyReconnect.tsx'
 
 /* Route-level code splitting. Every screen used to be a static import, so the
  * whole app — video pipeline (videojs + hls.js), WebRTC (livekit-client),
@@ -83,6 +84,10 @@ function Router() {
   return (
     <PartyProvider userId={user.userId}>
       <AuthenticatedRouter user={user} />
+      {/* Above the router, inside the provider: a lost room covers the lobby
+          and the watch screen alike, and draws nothing while the socket is
+          up. */}
+      <PartyReconnect />
     </PartyProvider>
   )
 }
