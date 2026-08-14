@@ -449,6 +449,20 @@
   color: var(--an-color-on-accent);
 }
 
+/* Destructive, and marked as such by a semantic border rather than a filled
+   red button — the accent stays with the safe primary action everywhere else on
+   the stage, so a red slab here would read as the recommended choice. */
+.an-action.is-danger {
+  border-color: var(--an-color-status-danger);
+  color: var(--an-color-status-danger);
+}
+
+.an-action.is-danger:hover:not(:disabled),
+.an-action.is-danger:focus-visible {
+  background: var(--an-color-stage-surface2);
+  border-color: var(--an-color-status-danger);
+}
+
 .an-action.is-icon {
   width: 42px;
   padding: 0;

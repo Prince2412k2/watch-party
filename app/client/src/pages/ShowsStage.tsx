@@ -15,6 +15,7 @@ import { AnalogPartyWidget } from '../analog/AnalogPartyWidget.tsx'
 import { AnalogRail, type AnalogRailItem } from '../analog/AnalogRail.tsx'
 import { AnalogSeasonRail } from '../analog/AnalogSeasonRail.tsx'
 import { AnalogDetails } from '../analog/AnalogDetails.tsx'
+import { useLibraryDelete } from '../hooks/useLibraryDelete.ts'
 import { AnalogTrackMenu } from '../analog/AnalogTrackMenu.tsx'
 import { AnIcon } from '../analog/icons.tsx'
 import { useStageMetrics } from '../analog/useStageMetrics.ts'
@@ -251,6 +252,13 @@ export default function ShowsStage() {
   // mergeDetail is generic over nothing, so the show-only fields it copies
   // through (SeriesName, ParentIndexNumber) need naming back on the way out.
   const focused = listed ? (mergeDetail(listed, details[listed.Id]) as ShowStageItem) : null
+
+  // Admin only, and only when Radarr/Sonarr actually holds the record behind
+  // this title — see useLibraryDelete.
+  const { canDelete, deleting, remove: removeFromServer } = useLibraryDelete(
+    'series',
+    focused,
+  )
 
   useEffect(() => {
     if (!focused) return
@@ -514,6 +522,8 @@ export default function ShowsStage() {
 
             <AnalogDetails
               item={focused}
+              onDeleteFromServer={canDelete ? () => void removeFromServer() : undefined}
+              deleting={deleting}
               context={showContext(focused, seriesItem?.Name ?? seriesLevel?.name)}
               fallbackTitle={error ? 'Shows' : loading ? 'Loading' : railLabel}
               error={error || null}

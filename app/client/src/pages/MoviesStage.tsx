@@ -15,6 +15,7 @@ import { AnalogPartyWidget } from '../analog/AnalogPartyWidget.tsx'
 import { AnalogRail, type AnalogRailItem } from '../analog/AnalogRail.tsx'
 import { AnalogModeSlider } from '../analog/AnalogModeSlider.tsx'
 import { AnalogDetails } from '../analog/AnalogDetails.tsx'
+import { useLibraryDelete } from '../hooks/useLibraryDelete.ts'
 import { AnalogTrackMenu } from '../analog/AnalogTrackMenu.tsx'
 import { AnIcon } from '../analog/icons.tsx'
 import { useStageMetrics } from '../analog/useStageMetrics.ts'
@@ -200,6 +201,13 @@ export default function MoviesStage() {
 
   const listed = items[selection] ?? null
   const focused = listed ? mergeDetail(listed, details[listed.Id]) : null
+
+  // Admin only, and only when Radarr/Sonarr actually holds the record behind
+  // this title — see useLibraryDelete.
+  const { canDelete, deleting, remove: removeFromServer } = useLibraryDelete(
+    'movie',
+    focused,
+  )
 
   useEffect(() => {
     if (!focused) return
@@ -448,6 +456,8 @@ export default function MoviesStage() {
 
             <AnalogDetails
               item={focused}
+              onDeleteFromServer={canDelete ? () => void removeFromServer() : undefined}
+              deleting={deleting}
               context={context}
               fallbackTitle={error ? 'Movies' : loading ? 'Loading' : railLabel}
               error={error || null}

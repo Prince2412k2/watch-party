@@ -30,6 +30,16 @@ export interface AnalogDetailsProps {
   onTracks: () => void
   tracksOpen?: boolean
   downloadState?: 'idle' | 'busy' | 'queued' | 'failed'
+  /**
+   * Removes the title and its files from the SERVER — everyone's copy, not a
+   * local tidy-up. Omitted unless all of: the account is a Jellyfin
+   * administrator, the item carries the provider id the *arr record is joined
+   * on, and that record exists. Absent rather than disabled, because a greyed
+   * delete on a hand-copied film invites a question with no answer worth
+   * giving.
+   */
+  onDeleteFromServer?: () => void
+  deleting?: boolean
   /** The track menu, mounted next to the button that opens it. */
   children?: ReactNode
 }
@@ -52,6 +62,8 @@ export function AnalogDetails({
   onPlay,
   onDownload,
   onTracks,
+  onDeleteFromServer,
+  deleting = false,
   tracksOpen = false,
   downloadState = 'idle',
   children,
@@ -120,6 +132,19 @@ export function AnalogDetails({
               onClick={onTracks}
             >
               <AnIcon name="tracks" size={16} />
+            </button>
+          ) : null}
+
+          {onDeleteFromServer ? (
+            <button
+              type="button"
+              className="an-action is-icon is-danger"
+              disabled={disabled || deleting}
+              aria-label="Delete from the server"
+              title="Delete from the server"
+              onClick={onDeleteFromServer}
+            >
+              <AnIcon name="trash" size={16} />
             </button>
           ) : null}
 

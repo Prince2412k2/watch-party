@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import '../analog/partyReconnect.css'
 import Avatar from './Avatar.tsx'
 import { useParty } from '../context/PartyContext.tsx'
 import { useSocket } from '../hooks/useSocket.ts'
