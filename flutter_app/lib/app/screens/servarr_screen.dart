@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analog/chrome/chrome.dart';
+import '../../analog/stage_layout.dart';
+import '../../analog/widgets/analog_rail.dart';
 import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
 import 'servarr_detail_screen.dart';
@@ -123,7 +125,16 @@ class _ServarrScreenState extends ConsumerState<ServarrScreen> {
   }
 }
 
-class _DiscoverRail extends ConsumerWidget {
+/// Discover's row of titles.
+///
+/// The same rail the Movies and Shows tabs run — [AnalogRail], with its fixed
+/// cursor, the row travelling underneath it, the scale falloff and the settle.
+/// It used to be a [PosterShelf]: a plain scroller with a moving cursor, which
+/// meant the two halves of the app that both show a row of posters answered
+/// the arrow keys differently and looked different doing it. The rail takes a
+/// list of [AnalogRailItem]s and does not care where they came from, so there
+/// was never a reason for Discover to have its own.
+class _DiscoverRail extends ConsumerStatefulWidget {
   const _DiscoverRail({
     required this.kind,
     required this.query,
@@ -136,10 +147,18 @@ class _DiscoverRail extends ConsumerWidget {
   final List<ServarrDownload>? torrents;
   final ValueChanged<ServarrTitle> onOpen;
 
-  static const double _posterWidth = 190;
+  @override
+  ConsumerState<_DiscoverRail> createState() => _DiscoverRailState();
+}
+
+class _DiscoverRailState extends ConsumerState<_DiscoverRail> {
+  int _selected = 0;
+
+  ServarrKind get kind => widget.kind;
+  String get query => widget.query;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final normalized = query.trim();
     if (normalized.isNotEmpty) {
       final request = (kind: kind, query: normalized);
@@ -184,16 +203,38 @@ class _DiscoverRail extends ConsumerWidget {
     );
   }
 
-  Widget _shelf(String title, List<ServarrTitle> items) => PosterShelf(
-    title: title,
-    leftInset: 0,
-    itemCount: items.length,
-    onActivate: (index) => onOpen(items[index]),
-    itemBuilder: (_, index) => _card(items[index]),
-  );
+  Widget _shelf(String title, List<ServarrTitle> items) {
+    final media = MediaQuery.of(context);
+    final size = stageLayout(media.size.width, media.size.height, false).size;
+    final selection = _selected.clamp(0, items.isEmpty ? 0 : items.length - 1);
 
-  Widget _card(ServarrTitle t) {
-    final torrent = matchTorrent(t.title, torrents);
+    return Padding(
+      padding: const EdgeInsets.only(right: 24, bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title,
+            style: AppTheme.headlineLarge.copyWith(color: context.wp.text),
+          ),
+          const SizedBox(height: 20),
+          AnalogRail(
+            items: [for (final t in items) _railItem(t)],
+            selection: selection,
+            size: size,
+            motion: motionProfile(media.disableAnimations),
+            onSelect: (i) => setState(() => _selected = i),
+            onActivate: (i) => widget.onOpen(items[i]),
+            emptyLabel: 'Nothing here yet',
+          ),
+        ],
+      ),
+    );
+  }
+
+  AnalogRailItem _railItem(ServarrTitle t) {
+    final torrent = matchTorrent(t.title, widget.torrents);
     final active = torrent != null && !torrent.isPaused;
     final pct = torrent?.percent ?? 0;
     final downloading = active && pct < 100;
@@ -202,15 +243,14 @@ class _DiscoverRail extends ConsumerWidget {
       t.network,
     ].where((e) => e != null && e.isNotEmpty).join(' · ');
 
-    return PosterCard(
-      title: t.title,
+    return AnalogRailItem(
+      // A Discover title has no library id — tmdb/tvdb is the only stable one
+      // it has, and the rail only needs it to tell rows apart.
+      id: '${t.tmdbId ?? t.tvdbId ?? t.title}',
+      label: t.title,
       subtitle: subtitle.isEmpty ? null : subtitle,
       imageUrl: t.posterUrl,
-      rating: t.rating,
-      width: _posterWidth,
-      aspectRatio: 3 / 5,
       progress: downloading ? pct / 100 : null,
-      onTap: () => onOpen(t),
     );
   }
 }

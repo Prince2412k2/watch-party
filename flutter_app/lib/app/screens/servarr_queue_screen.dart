@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../analog/stage_layout.dart';
+import '../../analog/widgets/analog_rail.dart';
 import '../../state/servarr_provider.dart';
 import '../../ui/ui.dart';
-import '../../ui/widgets/download_poster.dart';
 import 'download_detail_screen.dart';
 
 /// Downloads — the server-side Radarr/Sonarr → qBittorrent acquisition surface.
@@ -326,12 +327,11 @@ class _ActiveDownloads extends ConsumerStatefulWidget {
 }
 
 class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
-  final _busy = <String>{};
+  int _selected = 0;
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    final actions = ref.read(servarrQueueActionsProvider);
 
     if (!widget.qbitReady) {
       return _Unavailable(
@@ -401,29 +401,48 @@ class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
         if (list.isEmpty)
           _Unavailable(text: 'No downloads', icon: Icons.download_outlined)
         else
-          Wrap(
-            spacing: 18,
-            runSpacing: 18,
-            children: [
-              for (final t in list)
-                _TorrentCard(
-                  key: ValueKey('dl-${t.hash}'),
-                  item: t,
-                  busy: _busy.contains(t.hash),
-                  onOpen: () => _openDetail(t),
-                  onPauseResume: () {
-                    if (t.isPaused) {
-                      actions.resume(t.hash);
-                    } else {
-                      actions.pause(t.hash);
-                    }
-                  },
-                  onDelete: () => _confirmDelete(t, actions),
-                ),
-            ],
-          ),
+          _activeRail(list),
       ],
     );
+  }
+
+  /// What is coming down, as the same rail the Movies and Shows tabs run.
+  ///
+  /// It was a wrapping grid of cards, each carrying its own pause/resume and
+  /// delete. Those controls are not lost, they have moved to where the rest of
+  /// the app keeps them: a rail's job everywhere else is to CHOOSE a title, and
+  /// the detail it opens is where the title is acted on — which is exactly
+  /// where [DownloadDetailScreen] already had pause, resume and delete. Two
+  /// idioms for one row of posters was the thing worth dropping.
+  Widget _activeRail(List<ServarrDownload> list) {
+    final media = MediaQuery.of(context);
+    final size = stageLayout(media.size.width, media.size.height, false).size;
+    return AnalogRail(
+      items: [
+        for (final t in list)
+          AnalogRailItem(
+            id: t.hash,
+            label: t.name,
+            subtitle: _railSubtitle(t),
+            imageUrl: t.posterUrl,
+            progress: (t.percent / 100).clamp(0.0, 1.0),
+          ),
+      ],
+      selection: _selected.clamp(0, list.isEmpty ? 0 : list.length - 1),
+      size: size,
+      motion: motionProfile(media.disableAnimations),
+      onSelect: (i) => setState(() => _selected = i),
+      onActivate: (i) => _openDetail(list[i]),
+      emptyLabel: 'No downloads',
+    );
+  }
+
+  /// The line under a download: what it is doing, and how fast while that is
+  /// still a question.
+  String _railSubtitle(ServarrDownload t) {
+    final state = t.stateInfo.label;
+    if (t.percent >= 100 || t.isPaused) return state;
+    return '$state · ↓ ${fmtSpeed(t.dlspeed)}';
   }
 
   void _openDetail(ServarrDownload t) {
@@ -434,123 +453,6 @@ class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
     );
   }
 
-  Future<void> _confirmDelete(
-      ServarrDownload t, ServarrQueueActions actions) async {
-    final deleteFiles = await showDownloadDeleteDialog(context, name: t.name);
-    if (deleteFiles == null || !mounted) return;
-    setState(() => _busy.add(t.hash));
-    await actions.deleteTorrent(t.hash, deleteFiles: deleteFiles);
-    if (mounted) setState(() => _busy.remove(t.hash));
-  }
-}
-
-/// One active-download card: a [DownloadPoster] with the ring + DL dot, then the
-/// title and a mono `{state} · {subtitle | ↓ speed}` line and inline
-/// pause/resume + delete controls. Tapping the poster opens the detail overlay.
-class _TorrentCard extends StatelessWidget {
-  const _TorrentCard({
-    super.key,
-    required this.item,
-    required this.busy,
-    required this.onOpen,
-    required this.onPauseResume,
-    required this.onDelete,
-  });
-  final ServarrDownload item;
-  final bool busy;
-  final VoidCallback onOpen;
-  final VoidCallback onPauseResume;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final wp = context.wp;
-    final info = item.stateInfo;
-    final done = item.percent >= 100;
-    final subtitle = (item.subtitle != null && item.subtitle!.isNotEmpty)
-        ? item.subtitle!
-        : '↓ ${fmtSpeed(item.dlspeed)}';
-    final statusColor = info.label == 'Error'
-        ? AppColors.red
-        : (info.paused ? wp.faint : wp.dim);
-
-    return SizedBox(
-      width: 160,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: onOpen,
-              child: DownloadPoster(
-                posterUrl: item.posterUrl,
-                kind: item.kind,
-                pct: item.percent.toDouble(),
-                paused: info.paused,
-                width: 160,
-                ringSize: 78,
-              ),
-            ),
-          ),
-          const SizedBox(height: 9),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      item.name.isEmpty ? '—' : item.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: wp.text,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${info.label} · $subtitle',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.mono.copyWith(
-                        fontSize: 11.5,
-                        color: statusColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              MediaRowIconButtonLike(
-                icon: info.paused ? Icons.play_arrow : Icons.pause,
-                tooltip: info.paused ? 'Resume' : 'Pause',
-                disabled: busy || done,
-                onTap: onPauseResume,
-              ),
-              const SizedBox(width: 6),
-              MediaRowIconButtonLike(
-                icon: Icons.delete_outline,
-                tooltip: 'Remove',
-                danger: true,
-                disabled: busy,
-                onTap: onDelete,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// A small bordered icon button matching the web `RowBtn` (used for card + card
