@@ -72,6 +72,15 @@ export interface PlayerProps {
   onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
   /** Playback state for the auto-hide rule "never hide while paused". */
   onPlayingChange?: (playing: boolean) => void
+  /**
+   * Handed the <video> as it mounts, and null as it goes.
+   *
+   * The element is owned here, but watch-history reporting is the caller's
+   * business — it needs the position at arbitrary moments (a pause, a tick, the
+   * tab closing), which no callback prop expresses without inventing one per
+   * moment. See `useWatchHistory`.
+   */
+  onMediaElement?: (element: HTMLVideoElement | null) => void
 }
 
 // Fullscreen is owned by WatchView (Party.jsx) via a single `immersive` state and
@@ -165,10 +174,18 @@ export default function Player({
   hideSelf, onToggleHideSelf,
   visible = true, immersive, enterImmersive, exitImmersive,
   phone = false, camStripOpen, seekBridgeRef, onSetPlaybackTracks, subtitlePreferences, onSetSubtitlePreferences,
-  onHoldChrome, onReleaseChrome, onPlayingChange,
+  onHoldChrome, onReleaseChrome, onPlayingChange, onMediaElement,
 }: PlayerProps = {}) {
   const canControl = Boolean(isHost || collaborativeControl)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+
+  // Published on every render rather than once on mount: <HlsVideo> attaches
+  // the element after the first paint, so a mount-only effect would hand the
+  // caller a null it never heard about again.
+  useEffect(() => {
+    onMediaElement?.(videoRef.current)
+    return () => onMediaElement?.(null)
+  })
 
   // A freshly-opened movie is authored as "playing" immediately (so muted
   // guests autoplay) but the host's own video needs a real .play() call —

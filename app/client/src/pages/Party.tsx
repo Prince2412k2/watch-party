@@ -4,6 +4,7 @@ import { Rnd } from 'react-rnd'
 import { useParty } from '../context/PartyContext.tsx'
 import { useAuth } from '../context/AuthContext.tsx'
 import { useSocket } from '../hooks/useSocket.ts'
+import { useWatchHistory } from '../hooks/useWatchHistory.ts'
 import { useLiveKit } from '../hooks/useLiveKit.ts'
 import type { LiveKitParticipantView } from '../hooks/useLiveKit.ts'
 import { useHideSelf } from '../hooks/useHideSelf.ts'
@@ -910,9 +911,17 @@ type HlsPlayerProps = Omit<PlayerProps, 'hlsUrl' | 'mediaItemId' | 'playback' | 
 
 function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, ...rest }: HlsPlayerProps) {
   const [hlsUrl, setHlsUrl] = useState<{ itemId: string; url: string } | null>(null)
+  // The <video>, once the player has one. Watch history needs the position at
+  // moments no prop expresses — a pause, a ten-second tick, the tab closing.
+  const [media, setMedia] = useState<HTMLVideoElement | null>(null)
   const audioStreamIndex = session?.playback?.selectedAudioIndex
   const subtitleStreamIndex = session?.playback?.selectedSubtitleIndex
   const mediaSourceId = session?.playback?.mediaSourceId ?? session?.mediaSourceId ?? session?.mediaItemId
+
+  // What makes Continue Watching, Next Up and every progress bar work for
+  // someone watching on the web. Nothing reported here before, so watching in a
+  // browser left no trace at all.
+  useWatchHistory(media, session?.mediaItemId ?? undefined, mediaSourceId ?? undefined)
 
   // Phase 1.2: fetch the ADAPTIVE (ABR) master playlist ONCE per media item.
   // The URL carries no bitrate pin, so hls.js loads a multi-variant ladder and
@@ -956,6 +965,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
 
   return (
     <Player
+      onMediaElement={setMedia}
       // A media item has its own HLS engine and text-track collection. Keying
       // the player prevents the previous item's engine from receiving a new
       // subtitle selection during the handoff.
