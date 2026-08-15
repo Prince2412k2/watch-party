@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext.tsx'
+import ReelAnimation from '../components/ReelAnimation.tsx'
+import '../analog/reel.css'
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
@@ -32,7 +34,13 @@ export default function Login({ onSuccess }: { onSuccess?: () => void } = {}) {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--text)', overflow: 'hidden' }}>
+    <div className="an-login" style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24, background: 'var(--bg)', color: 'var(--text)', overflow: 'hidden' }}>
+      {/* The reel turning beside the form, as it does on the desktop client.
+          Dropped below `an-login-reel`'s breakpoint: it is atmosphere, and a
+          narrow window should spend its width on the form. */}
+      <div className="an-login-reel">
+        <ReelAnimation />
+      </div>
       <div style={{ width: 380, maxWidth: '90vw', padding: '48px 36px', borderRadius: 16, background: 'var(--surface)', border: '1px solid var(--line)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginBottom: 44 }}>
           <img src="/icon.svg" alt="" width={40} height={40} style={{ display: 'block' }} />

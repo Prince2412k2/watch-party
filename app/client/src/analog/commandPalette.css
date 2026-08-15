@@ -1,0 +1,126 @@
+/* The fuzzy finder, on `/` and Ctrl/Cmd-K.
+ *
+ * Its own sheet because the palette is mounted above the router and can open on
+ * any screen — putting it in a page's stylesheet would style it only where it
+ * was least needed.
+ */
+
+.an-palette-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  background: rgba(7, 6, 5, .62);
+}
+
+.an-palette {
+  width: min(820px, 100%);
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--an-color-line-strong, #34353a);
+  background: var(--an-color-stage-surface, #16130f);
+  overflow: hidden;
+}
+
+.an-palette-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--an-color-line, #26272b);
+  color: var(--an-color-ink-faint, #8b8c93);
+}
+
+.an-palette-search input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--an-color-ink, #f4efe6);
+  font-size: 15px;
+}
+
+.an-palette-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.an-palette-list {
+  flex: 1;
+  margin: 0;
+  padding: 8px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.an-palette-list button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 18px;
+  border: 0;
+  background: transparent;
+  color: var(--an-color-ink, #f4efe6);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Position and weight, not a tint: the highlight carries a detent down its
+   leading edge so it survives a monochrome display. */
+.an-palette-list button.is-active {
+  background: var(--an-color-stage-surface2, #201c18);
+  box-shadow: inset 2px 0 0 var(--an-color-ink, #f4efe6);
+}
+
+.an-palette-list small,
+.an-palette-preview small {
+  color: var(--an-color-ink-faint, #8b8c93);
+  font-size: 12px;
+}
+
+.an-palette-empty {
+  padding: 24px 18px;
+  color: var(--an-color-ink-faint, #8b8c93);
+  font-size: 13px;
+}
+
+/* Reserved whether or not the highlighted row has artwork — a pane that came
+   and went as the highlight moved would resize the sheet while it is read. */
+.an-palette-preview {
+  width: 260px;
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border-left: 1px solid var(--an-color-line, #26272b);
+  overflow: hidden;
+}
+
+.an-palette-preview img,
+.an-palette-preview-empty {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 10px;
+  background: var(--an-color-stage-surface2, #201c18);
+}
+
+.an-palette-preview strong {
+  color: var(--an-color-ink, #f4efe6);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+/* Under this the list is what the pixels are worth spending on. */
+@media (max-width: 720px) {
+  .an-palette-preview { display: none; }
+}

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import '../analog/partyReconnect.css'
+import '../analog/reel.css'
 import Avatar from './Avatar.tsx'
+import ReelAnimation from './ReelAnimation.tsx'
 import { useParty } from '../context/PartyContext.tsx'
 import { useSocket } from '../hooks/useSocket.ts'
 import { artworkSrc } from '../analog/artwork.ts'
@@ -89,6 +91,14 @@ export default function PartyReconnect() {
 
   return (
     <div className="an-reconnect" role="dialog" aria-label="Reconnecting to the party">
+      {/* The reel turning beside the room, as it does on the desktop client's
+          login page — the same moment, and the same reason for it being there:
+          something is happening on your behalf and there is nothing to do but
+          see that it is. Dropped on a narrow window, where the room is what the
+          pixels are worth spending on. */}
+      <div className="an-reconnect-reel">
+        <ReelAnimation />
+      </div>
       <div className="an-reconnect-room">
         {poster ? <img className="an-reconnect-poster" src={poster} alt="" /> : null}
         <div className="an-reconnect-status">

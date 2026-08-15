@@ -9,9 +9,24 @@
   position: fixed;
   inset: 0;
   z-index: 60;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
   background: linear-gradient(135deg, #2b2c30, #161719);
+}
+
+/* 6:5 against the room, the same split the desktop login uses. */
+.an-reconnect-reel {
+  flex: 0 1 auto;
+  width: min(42vw, 420px);
+  padding: 48px;
+}
+
+/* Below this the reel is dropped rather than shrunk: it is atmosphere, and a
+   narrow window should spend its width on the room. */
+@media (max-width: 880px) {
+  .an-reconnect-reel { display: none; }
 }
 
 .an-reconnect-room {

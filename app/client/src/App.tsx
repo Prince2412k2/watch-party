@@ -6,6 +6,7 @@ import { usePhone } from './hooks/useIsMobile.ts'
 import { PartyProvider } from './context/PartyContext.tsx'
 import { DownloadsProvider } from './context/DownloadsContext.tsx'
 import PartyReconnect from './components/PartyReconnect.tsx'
+import CommandPalette from './components/CommandPalette.tsx'
 
 /* Route-level code splitting. Every screen used to be a static import, so the
  * whole app — video pipeline (videojs + hls.js), WebRTC (livekit-client),
@@ -88,6 +89,8 @@ function Router() {
           and the watch screen alike, and draws nothing while the socket is
           up. */}
       <PartyReconnect />
+      {/* `/` and Ctrl/Cmd-K, from anywhere signed in. */}
+      <CommandPalette />
     </PartyProvider>
   )
 }

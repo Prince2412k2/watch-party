@@ -1,0 +1,22 @@
+/* The reel, wherever it turns.
+ *
+ * Its own sheet because two surfaces use it — the login form and a party being
+ * reconnected — and neither should have to import the other's stylesheet to
+ * get it.
+ */
+
+.an-reel {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.an-login-reel {
+  flex: 0 1 auto;
+  width: min(38vw, 400px);
+}
+
+/* Below this the form is what the width is worth spending on. */
+@media (max-width: 880px) {
+  .an-login-reel { display: none; }
+}
