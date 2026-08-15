@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const API_TARGET = process.env.API_TARGET || 'http://localhost:3001'
+
 export default defineConfig({
   plugins: [react()],
   // react-rnd / react-draggable reference process.env for debug logging,
@@ -20,10 +22,19 @@ export default defineConfig({
     // tell Vite's HMR client to use that port instead of 5173.
     hmr: { clientPort: 443 },
     proxy: {
-      '/api': 'http://localhost:3001',
+      // Where the API lives. Defaults to a server on this machine; point it
+      // somewhere else to run this frontend against another backend without
+      // touching the code:
+      //
+      //   API_TARGET=https://your-host npm run dev
+      //
+      // `changeOrigin` matters for a remote target — the Host header has to say
+      // the backend's name or its TLS front end will not route the request.
+      '/api': { target: API_TARGET, changeOrigin: true },
       '/socket.io': {
-        target: 'http://localhost:3001',
+        target: API_TARGET,
         ws: true,
+        changeOrigin: true,
       },
       // Jellyfin media (manifest + segments) — keeps everything same-origin
       '/jellyfin': {
