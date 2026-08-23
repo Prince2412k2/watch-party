@@ -40,3 +40,7 @@ secrets/
 
 # Generated component-library page — rebuild with docs/watchparty-design/components/build.py
 docs/watchparty-design/components/.build/
+
+# Mockup texture sources — hundreds of megabytes of PSD-scale PNG/JPG that the
+# repo only ever consumes as exported artwork. Keep them on disk, out of history.
+docs/textures/
