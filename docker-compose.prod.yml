@@ -42,41 +42,17 @@ services:
   # set. Version comments are the human-readable label of that same image.
   #
   # To upgrade a pin, see docs/deploy/pinning.md — never hand-edit a digest.
-  caddy:
-    # caddy v2.11.4
-    image: caddy@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
-    container_name: watchparty-caddy
-    restart: unless-stopped
-    networks:
-      - watchparty-net
-      - caddy-proxy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./secrets/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    healthcheck:
-      # Caddy's admin API on 2019 (localhost-only by default) rather than
-      # probing :80 — a request to :80 gets a 308 redirect to https, which is a
-      # confusing signal for a liveness probe. Verified returning 200 against
-      # the running container.
-      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:2019/config/"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    depends_on:
-      watchparty:
-        condition: service_healthy
 
   jellyfin:
     # jellyfin 10.11.11
     image: jellyfin/jellyfin@sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db
     container_name: watchparty-jellyfin
     restart: unless-stopped
-    networks: [watchparty-net]
+    networks:
+      watchparty-net:
+      caddy-proxy:
+        aliases:
+          - jellyfin
     ports:
       # Admin UI — bound to 0.0.0.0 for Tailscale access, with public exposure
       # blocked by deploy/firewall.sh (see the header). Playback for party
@@ -160,7 +136,12 @@ services:
     build: ./app
     container_name: watchparty-app
     restart: unless-stopped
-    networks: [watchparty-net]
+    networks:
+      watchparty-net:
+      caddy-proxy:
+        aliases:
+          - watchparty
+      
     ports:
       # Caddy reaches this over the internal docker network by container
       # name, not via this port — this is only for direct/admin access
@@ -370,6 +351,3 @@ networks:
     driver: bridge
   caddy-proxy:
     external: true
-volumes:
-  caddy_data:
-  caddy_config:
