@@ -24,13 +24,13 @@ INTERVAL="${INTERVAL:-5}"
 
 # Critical = on the watch path. If any of these is unhealthy, nobody can watch
 # anything, so a deploy must not be considered successful.
-CRITICAL=(watchparty-app watchparty-jellyfin watchparty-livekit watchparty-caddy)
+CRITICAL=(watchparty-app watchparty-jellyfin watchparty-livekit)
 
 # Reported but NOT deploy-blocking: these serve the library/download flow, not
 # playback. A failing Sonarr should not roll back a working watch party.
 ADVISORY=(watchparty-prowlarr watchparty-sonarr watchparty-radarr watchparty-bazarr)
 
-log()  { printf '%s\n' "$*"; }
+log() { printf '%s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; }
 
 # Health status of a container, normalised. Containers with no healthcheck
@@ -38,19 +38,28 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; }
 # silently passing it as healthy.
 status_of() {
   local name="$1" state health
-  state="$(docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null)" || { printf 'missing'; return; }
-  [ -z "$state" ] && { printf 'missing'; return; }
+  state="$(docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null)" || {
+    printf 'missing'
+    return
+  }
+  [ -z "$state" ] && {
+    printf 'missing'
+    return
+  }
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$name" 2>/dev/null)"
-  if [ "$state" != "running" ]; then printf '%s' "$state"; return; fi
+  if [ "$state" != "running" ]; then
+    printf '%s' "$state"
+    return
+  fi
   case "$health" in
-    healthy)   printf 'healthy' ;;
-    none)      printf 'running-no-healthcheck' ;;
-    *)         printf '%s' "$health" ;;
+  healthy) printf 'healthy' ;;
+  none) printf 'running-no-healthcheck' ;;
+  *) printf '%s' "$health" ;;
   esac
 }
 
 # ── Wait for the critical set ──────────────────────────────────────────────
-deadline=$(( SECONDS + TIMEOUT ))
+deadline=$((SECONDS + TIMEOUT))
 declare -A final=()
 all_ok=0
 

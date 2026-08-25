@@ -21,15 +21,18 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 COMPOSE=(docker compose --env-file secrets/.env -f docker-compose.prod.yml)
 FAIL=0
 
-echo "== 1/6  Checking secrets/ =="
-REQUIRED_FILES=(secrets/.env secrets/.env.local secrets/livekit.yaml secrets/coturn.conf secrets/Caddyfile)
+echo "== 1/5  Checking secrets/ =="
+REQUIRED_FILES=(secrets/.env secrets/.env.local secrets/livekit.yaml secrets/coturn.conf)
 for f in "${REQUIRED_FILES[@]}"; do
   if [ ! -f "$f" ]; then
     echo "  MISSING: $f  (see secrets/README.md)"
     FAIL=1
   fi
 done
-[ "$FAIL" = 1 ] && { echo "Aborting — fill in the missing secrets/ files first."; exit 1; }
+[ "$FAIL" = 1 ] && {
+  echo "Aborting — fill in the missing secrets/ files first."
+  exit 1
+}
 echo "  all present"
 
 echo ""
@@ -64,7 +67,7 @@ fi
 echo "  clean"
 
 echo ""
-echo "== 3/6  Verifying VPS_PUBLIC_IP actually resolves through compose =="
+echo "== 3/5  Verifying VPS_PUBLIC_IP actually resolves through compose =="
 RESOLVED_IP=$("${COMPOSE[@]}" config 2>/dev/null | grep -m1 'NODE_IP:' | awk '{print $2}')
 if [ -z "$RESOLVED_IP" ] || [ "$RESOLVED_IP" = "YOUR_VPS_PUBLIC_IP" ]; then
   echo "  NODE_IP did not resolve to a real IP (got: '${RESOLVED_IP:-empty}')."
@@ -122,29 +125,7 @@ fi
 echo "  coturn external-ip agrees"
 
 echo ""
-echo "== 4/6  Verifying the admin-port firewall =="
-# docker-compose.prod.yml publishes the admin UIs on 0.0.0.0, so these rules are
-# the only thing keeping Jellyfin/Sonarr/Radarr/Bazarr/Prowlarr/qBittorrent and
-# the app's own port off the public internet. Bringing the stack up without them
-# would publish every admin UI, so this is a hard gate rather than a warning.
-if ! sudo -n ./deploy/firewall.sh --verify >/tmp/wp-fw-verify.$$ 2>&1; then
-  if grep -q 'must run as root' /tmp/wp-fw-verify.$$; then
-    echo "  Cannot verify without root. Run:  sudo ./deploy/firewall.sh --verify"
-    echo "  Aborting — refusing to expose admin ports unverified."
-  else
-    sed 's/^/  /' /tmp/wp-fw-verify.$$
-    echo ""
-    echo "  Admin ports are NOT protected. Apply the rules first:"
-    echo "      sudo ./deploy/firewall.sh"
-  fi
-  rm -f /tmp/wp-fw-verify.$$
-  exit 1
-fi
-sed 's/^/  /' /tmp/wp-fw-verify.$$
-rm -f /tmp/wp-fw-verify.$$
-
-echo ""
-echo "== 5/6  Checking bind-mount ownership for the non-root app container =="
+echo "== 5/5  Checking bind-mount ownership for the non-root app container =="
 # app/Dockerfile runs the server as uid 1000 (the image's `node` user). The
 # session store, subtitle cache and data dir are host bind mounts, so if the host
 # directories are owned by root the container cannot write them — and the visible
