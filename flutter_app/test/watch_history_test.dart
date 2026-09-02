@@ -58,6 +58,16 @@ NowPlaying _open(String itemId) => NowPlaying(
   presentation: PlayerPresentation.expanded,
 );
 
+Future<void> _start(
+  WatchHistoryReporter reporter,
+  MockPlayerController player,
+  String itemId,
+) async {
+  await reporter.open(_open(itemId));
+  await player.play();
+  await Future<void>.delayed(Duration.zero);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -68,15 +78,19 @@ void main() {
     final reporter = _container(api, player).read(watchHistoryProvider);
 
     await reporter.open(_open('item-1'));
+    await player.seek(const Duration(minutes: 12));
+    await player.play();
+    await Future<void>.delayed(Duration.zero);
     expect(api.playbackReports.single.$1, PlaybackReportKind.started);
     expect(api.playbackReports.single.$2.itemId, 'item-1');
-    // Starting is position zero, and the session id ties the three calls into
-    // one play rather than a stream of unrelated positions.
-    expect(api.playbackReports.single.$2.positionTicks, 0);
+    expect(
+      api.playbackReports.single.$2.positionTicks,
+      PlaybackReport.ticksOf(const Duration(minutes: 12)),
+    );
     expect(api.playbackReports.single.$2.playSessionId, isNotNull);
 
-    await player.seek(const Duration(minutes: 12));
     await reporter.close();
+    await player.pause();
 
     final stop = api.playbackReports.last;
     expect(stop.$1, PlaybackReportKind.stopped);
@@ -91,9 +105,11 @@ void main() {
     final player = MockPlayerController();
     final reporter = _container(api, player).read(watchHistoryProvider);
 
-    await reporter.open(_open('item-1'));
+    await _start(reporter, player, 'item-1');
     await player.seek(const Duration(minutes: 30));
     await reporter.open(_open('item-2'));
+    await player.play();
+    await Future<void>.delayed(Duration.zero);
 
     final kinds = api.playbackReports.map((r) => r.$1).toList();
     final items = api.playbackReports.map((r) => r.$2.itemId).toList();
@@ -109,17 +125,19 @@ void main() {
       api.playbackReports[1].$2.positionTicks,
       PlaybackReport.ticksOf(const Duration(minutes: 30)),
     );
+    await reporter.close();
+    await player.pause();
   });
 
   test('closing twice reports once', () async {
     final api = MockApiClient();
-    final reporter = _container(api, MockPlayerController()).read(
-      watchHistoryProvider,
-    );
+    final player = MockPlayerController();
+    final reporter = _container(api, player).read(watchHistoryProvider);
 
-    await reporter.open(_open('item-1'));
+    await _start(reporter, player, 'item-1');
     await reporter.close();
     await reporter.close();
+    await player.pause();
 
     expect(
       api.playbackReports.where((r) => r.$1 == PlaybackReportKind.stopped),
@@ -149,10 +167,11 @@ void main() {
       final player = MockPlayerController();
       final reporter = _container(offline, player).read(watchHistoryProvider);
 
-      await reporter.open(_open('item-1'));
+      await _start(reporter, player, 'item-1');
       await player.seek(const Duration(minutes: 20));
       await reporter.flush();       // a progress tick, lost
       await reporter.close();       // the stop, kept
+      await player.pause();
 
       final queued = SharedPreferences.getInstance().then(
         (p) => p.getStringList(kWatchHistoryQueueKey) ?? const <String>[],
@@ -183,13 +202,14 @@ void main() {
       final player = MockPlayerController();
       final reporter = _container(offline, player).read(watchHistoryProvider);
 
-      await reporter.open(_open('item-1'));
+      await _start(reporter, player, 'item-1');
       await player.seek(const Duration(minutes: 10));
       await reporter.close();
 
-      await reporter.open(_open('item-1'));
+      await _start(reporter, player, 'item-1');
       await player.seek(const Duration(minutes: 40));
       await reporter.close();
+      await player.pause();
 
       final prefs = await SharedPreferences.getInstance();
       final queue = prefs.getStringList(kWatchHistoryQueueKey)!;
@@ -211,9 +231,10 @@ void main() {
       final reporter = _container(offline, player).read(watchHistoryProvider);
 
       for (var i = 0; i < kWatchHistoryQueueLimit + 20; i++) {
-        await reporter.open(_open('item-$i'));
+        await _start(reporter, player, 'item-$i');
         await reporter.close();
       }
+      await player.pause();
 
       final prefs = await SharedPreferences.getInstance();
       expect(

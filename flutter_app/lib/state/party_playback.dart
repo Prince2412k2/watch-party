@@ -104,6 +104,7 @@ class PartyPlayback {
   /// them in a party watching nothing with no way back to it. Minimising is
   /// unrestricted — see the note at the top of the file.
   bool get canClose => canDrive;
+  Stream<CatchUp> get catchUp => _engine.catchUp;
 
   /// Tell the room where the driver just scrubbed to.
   ///
@@ -113,6 +114,24 @@ class PartyPlayback {
   void reportSeek(Duration position) {
     if (!_attached || !canDrive) return;
     unawaited(_engine.requestSeek(position));
+  }
+
+  Future<void> togglePlay() async {
+    if (!canDrive) return;
+    final player = _ref.read(playerControllerProvider);
+    if (!_attached) {
+      if (player.isPlayingNow) {
+        await player.pause();
+      } else {
+        await player.play();
+      }
+      return;
+    }
+    if (player.isPlayingNow) {
+      await _engine.requestPause();
+    } else {
+      await _engine.requestPlay();
+    }
   }
 
   /// Whether the room's title is what the player currently holds.
@@ -142,14 +161,26 @@ class PartyPlayback {
       case PartyRole.passenger:
         return OpenOutcome.refusedPassenger;
       case PartyRole.driver:
+        final resumePositionTicks = await _resumePositionTicks(itemId);
         await _ref
             .read(partyProvider.notifier)
             .selectMedia(
               mediaItemId: itemId,
               audioStreamIndex: audioStreamIndex,
               subtitleStreamIndex: subtitleStreamIndex,
+              resumePositionTicks: resumePositionTicks,
             );
         return OpenOutcome.sentToRoom;
+    }
+  }
+
+  Future<int?> _resumePositionTicks(String itemId) async {
+    try {
+      final item = await _ref.read(apiClientProvider).item(itemId);
+      final ticks = item.userData?.playbackPositionTicks ?? 0;
+      return ticks > 0 ? ticks : null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -207,6 +238,8 @@ class PartyPlayback {
         .open(
           itemId: wanted,
           mediaSourceId: party?.mediaSourceId,
+          audioStreamIndex: party?.playback?.selectedAudioIndex,
+          subtitleStreamIndex: party?.playback?.selectedSubtitleIndex,
           presentation: presentation,
         );
   }
@@ -243,6 +276,12 @@ class PartyPlayback {
     _engine.canControl = driver;
     if (_engine case final SyncEngineImpl impl) {
       impl.isHost = _ref.read(partyProvider.notifier).isHost;
+      impl.syncMode = party.syncMode;
+      impl.downloadedChunks = () {
+        final itemId = party.mediaItemId;
+        if (itemId == null) return 0;
+        return _ref.read(mediaCacheProxyProvider).cachedSpansFor(itemId).value.length;
+      };
     }
     if (_attached) return;
 

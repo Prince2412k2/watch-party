@@ -465,7 +465,7 @@ io.on('connection', (socket) => {
   })
 
   // party:create ────────────────────────────────────────────────────────────
-  socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
+  socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, subtitleStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     let sess = null
     try {
       if (findSessionByUser(userId)) return ack?.({ error: 'already in a party' })
@@ -488,6 +488,12 @@ io.on('connection', (socket) => {
           audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
           subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
         })
+        const initialPosition = Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0
+          ? resumePositionTicks
+          : 0
+        sess.pos = initialPosition
+        sess.intent.playing = true
+        startSegment(sess, Date.now())
         persistSession(sess)
       }
 
@@ -708,7 +714,7 @@ io.on('connection', (socket) => {
   const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl
 
   // party:selectMedia — a title was chosen in the lobby → enter watching stage
-  socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
+  socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, subtitleStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
     try {
@@ -724,9 +730,9 @@ io.on('connection', (socket) => {
       sess.mediaSourceId = src
       sess.stage = 'watching'
       beginMediaGeneration(sess)
-      // Autoplay from the top: the picker's click is a user gesture (host),
-      // and guests are muted so synced play() isn't blocked by autoplay policy.
-      sess.pos = 0
+      sess.pos = Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0
+        ? resumePositionTicks
+        : 0
       sess.stalled.clear()
       clearTimeout(sess._stallTimer)
       sess.intent.playing = true
@@ -860,11 +866,22 @@ io.on('connection', (socket) => {
     ack?.({ ok: true, version: sess.schedule.version })
   })
 
-  // sync:report — a member's live drift telemetry (debug/observability only)
-  socket.on('sync:report', ({ position, drift, rate } = {}) => {
+  // sync:report — live position and buffer telemetry for sync diagnostics and
+  // optional participant pointers in the player timeline.
+  socket.on('sync:report', ({ position, drift, rate, downloadedChunks } = {}) => {
     const sess = findSessionForMember(userId)
-    if (!sess) return
-    sess.reports.set(userId, { position, drift, rate, at: Date.now() })
+    if (!sess || !Number.isFinite(position)) return
+    const report = {
+      userId,
+      name: effectiveName(userId, name),
+      position: Math.max(0, position),
+      drift: Number.isFinite(drift) ? drift : 0,
+      rate: Number.isFinite(rate) ? rate : 1,
+      downloadedChunks: Number.isSafeInteger(downloadedChunks) && downloadedChunks >= 0 ? downloadedChunks : 0,
+      at: Date.now(),
+    }
+    sess.reports.set(userId, report)
+    socket.to(sess.id).emit('sync:peer_report', report)
   })
 
   // sync:stall — a member's buffering state changed (drives dragging mode)

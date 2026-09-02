@@ -15,8 +15,6 @@ import type { SyncIntent, SyncSchedule } from '../sync/syncCore.ts'
 const STRUGGLE_WINDOW_MS = 15_000
 const STRUGGLE_HARD_SEEKS = 3
 
-const REPORT_MS = 1000             // drift-telemetry throttle
-
 /**
  * Playback sync with two modes:
  *   hopping  — host plays natively and never waits; guests follow/catch up.
@@ -51,7 +49,7 @@ export function useSyncPlay({
   const userSeekTimer = useRef<number | null>(null)
   const hardSeeks = useRef<number[]>([])
   const lastHardSeekAt = useRef(0)
-  const lastReport = useRef(0)
+  const pendingLocalCommand = useRef<{ kind: 'play' | 'pause'; until: number } | null>(null)
   const syncModeRef = useRef(syncMode)
   syncModeRef.current = syncMode
   // Last schedule.version this hook has applied, and the media generation it
@@ -297,6 +295,10 @@ export function useSyncPlay({
       }
 
       scheduleRef.current = s
+      const pending = pendingLocalCommand.current
+      if (pending && ((pending.kind === 'play' && s.phase === 'playing') || (pending.kind === 'pause' && s.phase !== 'playing'))) {
+        pendingLocalCommand.current = null
+      }
       userSeekRef.current = false
       if (userSeekTimer.current != null) window.clearTimeout(userSeekTimer.current)
 
@@ -339,6 +341,10 @@ export function useSyncPlay({
       // old "playing" schedule and calls video.play() right back, so pause
       // silently "doesn't stick" until the stale window happens to close.
       if (applyingRef.current) return
+      if (pendingLocalCommand.current) {
+        if (pendingLocalCommand.current.until > Date.now()) return
+        pendingLocalCommand.current = null
+      }
 
       // Idempotently (re)start a hopping host's own video. decideSyncAction
       // returns null for a hopping host, so this loop is the only place that
@@ -391,19 +397,6 @@ export function useSyncPlay({
       if (intent.pause && !video.paused) { markApplying(); video.pause() }
       if (intent.hardSeek) recordHardSeek()
 
-      // Drift telemetry — guests only (a hopping host returns null above and
-      // never reaches here). Throttled to ~REPORT_MS, reusing the core's drift.
-      if (!isHost && intent.drift != null) {
-        const now = Date.now()
-        if (now - lastReport.current >= REPORT_MS) {
-          lastReport.current = now
-          socket.emit('sync:report', {
-            position: video.currentTime,
-            drift: intent.drift,
-            rate: video.playbackRate,
-          })
-        }
-      }
     }, CONTROL_MS)
     return () => clearInterval(id)
   }, [isHost, socket, playerRef, serverNow, clockReady])
@@ -418,18 +411,25 @@ export function useSyncPlay({
     [canControl],
   )
   const requestPlay = useCallback((positionTicks: number, origin: CommandOrigin = 'media-event') => {
-    if (authorized(origin)) socket.emit('sync:play', { positionTicks, t0: serverNow() })
+    if (!authorized(origin)) return
+    if (origin === 'local') pendingLocalCommand.current = { kind: 'play', until: Date.now() + 2000 }
+    socket.emit('sync:play', { positionTicks, t0: serverNow() })
   }, [authorized, socket, serverNow])
   const requestPause = useCallback((positionTicks: number, origin: CommandOrigin = 'media-event') => {
-    if (authorized(origin)) socket.emit('sync:pause', { positionTicks })
+    if (!authorized(origin)) return
+    if (origin === 'local') pendingLocalCommand.current = { kind: 'pause', until: Date.now() + 2000 }
+    socket.emit('sync:pause', { positionTicks })
   }, [authorized, socket])
   const requestSeek = useCallback((positionTicks: number, origin: CommandOrigin = 'media-event') => {
     if (authorized(origin)) socket.emit('sync:seek', { positionTicks, t0: serverNow() })
   }, [authorized, socket, serverNow])
+  const reportPlayback = useCallback((position: number, rate: number, downloadedChunks: number) => {
+    socket.emit('sync:report', { position, rate, downloadedChunks })
+  }, [socket])
 
   return {
     canControl, applyingRef, holdApplying, releaseApplying, notifyUserSeeking, reportStall,
-    requestPlay, requestPause, requestSeek, TICKS_PER_SECOND: TICKS,
+    requestPlay, requestPause, requestSeek, reportPlayback, TICKS_PER_SECOND: TICKS,
     // 'ready' | 'catchingUp' | 'buffering' — local playback phase, distinct
     // from shared intent. See the comment on the localPhase state above.
     localPhase,

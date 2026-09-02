@@ -24,6 +24,7 @@ import '../ui/analog_tokens.dart';
 import '../ui/ui.dart';
 import 'media_kit_player_controller.dart';
 import 'party_track_mapping.dart';
+import 'playback_failure.dart';
 import 'player_controller.dart';
 import 'subtitle_cues.dart';
 import 'trickplay_preview.dart';
@@ -55,11 +56,15 @@ class PlayerChrome extends StatefulWidget {
     this.onToggleFullscreen,
     this.isFullscreen = false,
     this.onSeekAuthored,
+    this.onTogglePlay,
+    this.onRetryPlayback,
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
     this.preferredSubtitleStreamIndex,
+    this.subtitleRevision = 0,
     this.cachedSpans,
+    this.peerPositions = const [],
     this.visible,
     this.onWake,
     this.onToggleChat,
@@ -103,11 +108,13 @@ class PlayerChrome extends StatefulWidget {
   /// (nothing to show — the whole file is already local) and for
   /// tests/mocks that don't wire a cache proxy.
   final ValueListenable<List<CachedSpan>>? cachedSpans;
+  final List<TimelinePeerPosition> peerPositions;
 
   final String? itemId;
   final String? mediaSourceId;
   final ApiClient? apiClient;
   final int? preferredSubtitleStreamIndex;
+  final int subtitleRevision;
 
   /// Host owns fullscreen (window-level); chrome just renders the affordance.
   final VoidCallback? onToggleFullscreen;
@@ -116,6 +123,8 @@ class PlayerChrome extends StatefulWidget {
   /// Reports a seek this viewer authored, after it has been applied locally.
   /// A party publishes it to the room from here.
   final ValueChanged<Duration>? onSeekAuthored;
+  final Future<void> Function()? onTogglePlay;
+  final VoidCallback? onRetryPlayback;
 
   @override
   State<PlayerChrome> createState() => _PlayerChromeState();
@@ -190,6 +199,7 @@ class _PlayerChromeState extends State<PlayerChrome>
 
   final _subs = <StreamSubscription<dynamic>>[];
   String? _error;
+  bool _runtimeRetryUsed = false;
 
   @override
   void initState() {
@@ -266,7 +276,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     // (not part of the frozen contract) — drive the E4.3 error overlay off it
     // when the concrete controller supports it.
     if (c is MediaKitPlayerController) {
-      _subs.add(c.errors.listen((e) => setState(() => _error = e)));
+      _subs.add(c.errors.listen(_onPlaybackError));
     }
   }
 
@@ -302,9 +312,11 @@ class _PlayerChromeState extends State<PlayerChrome>
     }
     if (oldWidget.itemId != widget.itemId ||
         oldWidget.mediaSourceId != widget.mediaSourceId ||
-        oldWidget.apiClient != widget.apiClient) {
+        oldWidget.apiClient != widget.apiClient ||
+        oldWidget.subtitleRevision != widget.subtitleRevision) {
       _loadTrickplay();
       _loadExternalSubtitles();
+      _runtimeRetryUsed = false;
     }
     if (oldWidget.chatOpen != widget.chatOpen) {
       // Opening chat dismisses what is on screen and does not resurrect it on
@@ -313,6 +325,20 @@ class _PlayerChromeState extends State<PlayerChrome>
       _armToastTimers();
     }
     if (!identical(oldWidget.chatToasts, widget.chatToasts)) _syncToasts();
+  }
+
+  void _onPlaybackError(String error) {
+    final failure = classifyPlaybackFailure(error);
+    if (mounted) setState(() => _error = failure.message);
+    if (!failure.retryable || _runtimeRetryUsed || widget.onRetryPlayback == null) {
+      return;
+    }
+    _runtimeRetryUsed = true;
+    Future<void>.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted || widget.onRetryPlayback == null) return;
+      setState(() => _error = null);
+      widget.onRetryPlayback!();
+    });
   }
 
   // ── chat toasts ───────────────────────────────────────────────────────────
@@ -469,14 +495,18 @@ class _PlayerChromeState extends State<PlayerChrome>
       return Future<String>.error(StateError('Subtitle source unavailable'));
     }
     final key = '$itemId:${widget.mediaSourceId ?? ''}:${track.index}';
-    return _externalSubtitleContent.putIfAbsent(
-      key,
-      () => api.subtitleContent(
-        itemId,
-        track.index,
-        mediaSourceId: widget.mediaSourceId,
-      ),
-    );
+    return _externalSubtitleContent.putIfAbsent(key, () async {
+      try {
+        return await api.subtitleContent(
+          itemId,
+          track.index,
+          mediaSourceId: widget.mediaSourceId,
+        );
+      } catch (_) {
+        _externalSubtitleContent.remove(key);
+        rethrow;
+      }
+    });
   }
 
   Future<void> _loadExternalSubtitles() async {
@@ -618,7 +648,10 @@ class _PlayerChromeState extends State<PlayerChrome>
 
   Future<void> _togglePlay() async {
     if (!widget.canControl) return;
-    if (_playing) {
+    final toggle = widget.onTogglePlay;
+    if (toggle != null) {
+      await toggle();
+    } else if (_playing) {
       await widget.controller.pause();
     } else {
       await widget.controller.play();
@@ -1168,6 +1201,7 @@ class _PlayerChromeState extends State<PlayerChrome>
                 _ErrorOverlay(
                   message: _error!,
                   onDismiss: () => setState(() => _error = null),
+                  onRetry: widget.onRetryPlayback,
                 )
               else if (_buffering && !_completed)
                 const _BufferingSpinner(),
@@ -1222,6 +1256,7 @@ class _PlayerChromeState extends State<PlayerChrome>
                   trickplay: _trickplay,
                   apiClient: widget.apiClient,
                   cachedSpans: widget.cachedSpans,
+                  peerPositions: widget.peerPositions,
                   previewPosition: _previewPosition,
                   previewFraction: _previewFraction,
                   onHoverPreview: (position, fraction) => setState(() {
@@ -1440,6 +1475,7 @@ class _TransportBar extends StatelessWidget {
     required this.trickplay,
     required this.apiClient,
     this.cachedSpans,
+    this.peerPositions = const [],
     required this.previewPosition,
     required this.previewFraction,
     required this.onHoverPreview,
@@ -1487,6 +1523,7 @@ class _TransportBar extends StatelessWidget {
   final ApiClient? apiClient;
 
   final ValueListenable<List<CachedSpan>>? cachedSpans;
+  final List<TimelinePeerPosition> peerPositions;
   final Duration? previewPosition;
   final double previewFraction;
   final void Function(Duration position, double fraction) onHoverPreview;
@@ -1530,7 +1567,8 @@ class _TransportBar extends StatelessWidget {
                   onScrubbingChanged: onScrubbingChanged,
                   onHoverPreview: onHoverPreview,
                   onHoverEnd: onHoverEnd,
-                  cachedSpans: cachedSpans,
+                   cachedSpans: cachedSpans,
+                   peerPositions: peerPositions,
                 ),
                 if (previewPosition != null &&
                     trickplay != null &&
@@ -1648,6 +1686,7 @@ class _Timeline extends StatelessWidget {
     required this.onHoverPreview,
     required this.onHoverEnd,
     this.cachedSpans,
+    this.peerPositions = const [],
   });
 
   final Duration position;
@@ -1663,6 +1702,7 @@ class _Timeline extends StatelessWidget {
   /// approximate time for variable-bitrate media — see the caveat on
   /// [CachedSpan]. Null/empty renders that layer empty.
   final ValueListenable<List<CachedSpan>>? cachedSpans;
+  final List<TimelinePeerPosition> peerPositions;
 
   AnalogTimeline _timeline(List<CachedSpan> spans) => AnalogTimeline(
     position: position,
@@ -1674,6 +1714,7 @@ class _Timeline extends StatelessWidget {
     onHoverPreview: onHoverPreview,
     onHoverEnd: onHoverEnd,
     cached: [for (final span in spans) TimelineRange(span.start, span.end)],
+    peers: peerPositions,
   );
 
   @override
@@ -2398,9 +2439,10 @@ class _BufferingSpinner extends StatelessWidget {
 }
 
 class _ErrorOverlay extends StatelessWidget {
-  const _ErrorOverlay({required this.message, required this.onDismiss});
+  const _ErrorOverlay({required this.message, required this.onDismiss, this.onRetry});
   final String message;
   final VoidCallback onDismiss;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -2409,8 +2451,8 @@ class _ErrorOverlay extends StatelessWidget {
       child: ErrorState(
         title: 'Playback error',
         message: message,
-        onRetry: onDismiss,
-        retryLabel: 'Dismiss',
+        onRetry: onRetry ?? onDismiss,
+        retryLabel: onRetry == null ? 'Dismiss' : 'Retry',
       ),
     );
   }

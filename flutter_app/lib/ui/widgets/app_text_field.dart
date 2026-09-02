@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 
 import '../../analog/chrome/analog_text_field.dart';
 
@@ -19,6 +20,8 @@ class AppTextField extends StatelessWidget {
     this.onChanged,
     this.autofocus = false,
     this.enabled = true,
+    this.focusNode,
+    this.textInputAction,
   });
 
   final TextEditingController? controller;
@@ -30,6 +33,8 @@ class AppTextField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final bool autofocus;
   final bool enabled;
+  final FocusNode? focusNode;
+  final TextInputAction? textInputAction;
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +48,8 @@ class AppTextField extends StatelessWidget {
       onChanged: onChanged,
       autofocus: autofocus,
       enabled: enabled,
+      focusNode: focusNode,
+      textInputAction: textInputAction,
     );
   }
 }

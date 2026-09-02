@@ -201,6 +201,7 @@ class _HostControlsDialogState extends ConsumerState<HostControlsDialog> {
     final me = ref.watch(currentUserIdProvider);
     final isHost = me != null && party.hostId == me;
     final notifier = ref.read(partyProvider.notifier);
+    final showPeerPointers = ref.watch(showPeerPointersProvider);
     final joinUrl = '${ref.watch(apiClientProvider).baseUrl}/party/${party.id}';
 
     return Dialog(
@@ -233,6 +234,24 @@ class _HostControlsDialogState extends ConsumerState<HostControlsDialog> {
               Divider(height: 1, color: wp.line),
               const SizedBox(height: AppSpacing.md),
 
+              if (isHost) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'hopping', label: Text('Tailing')),
+                      ButtonSegment(value: 'dragging', label: Text('Dragging')),
+                    ],
+                    selected: {party.syncMode},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (selection) {
+                      notifier.setSyncMode(selection.first);
+                    },
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+              ],
+
               // Everyone's actions, then the host's. One wrapping row so the
               // panel grows by a line rather than by a section.
               Wrap(
@@ -251,6 +270,16 @@ class _HostControlsDialogState extends ConsumerState<HostControlsDialog> {
                     icon: _copied ? Icons.check : Icons.link,
                     tooltip: _copied ? 'Invite copied' : 'Copy the invite link',
                     onTap: () => _copyInvite(joinUrl),
+                  ),
+                  _AvIconButton(
+                    icon: Icons.linear_scale,
+                    tooltip: showPeerPointers
+                        ? 'Hide viewer timeline pointers'
+                        : 'Show viewer timeline pointers',
+                    active: showPeerPointers,
+                    onTap: () => ref
+                        .read(showPeerPointersProvider.notifier)
+                        .state = !showPeerPointers,
                   ),
                   if (isHost) ...[
                     const _AvDivider.vertical(),

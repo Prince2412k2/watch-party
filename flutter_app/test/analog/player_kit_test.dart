@@ -116,6 +116,36 @@ void main() {
   });
 
   group('AnalogTimeline', () {
+    testWidgets('peer positions expose names and downloaded chunk counts', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AnalogTimeline(
+              position: const Duration(seconds: 10),
+              duration: const Duration(minutes: 1),
+              enabled: false,
+              onPreview: (_) {},
+              onCommit: (_) {},
+              onHoverPreview: (_, _) {},
+              onHoverEnd: () {},
+              peers: const [
+                TimelinePeerPosition(
+                  id: 'guest',
+                  label: 'Guest',
+                  position: Duration(seconds: 30),
+                  downloadedChunks: 7,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byTooltip('Guest · 7 downloaded chunks'), findsOneWidget);
+    });
+
     Future<AnalogTimelinePainter> pumpTimeline(
       WidgetTester tester, {
       List<TimelineRange> cached = const [],

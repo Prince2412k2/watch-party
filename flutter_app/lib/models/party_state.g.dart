@@ -37,7 +37,10 @@ _$PartyStateImpl _$$PartyStateImplFromJson(Map<String, dynamic> json) =>
       mediaItemId: json['mediaItemId'] as String?,
       mediaSourceId: json['mediaSourceId'] as String?,
       collaborativeControl: json['collaborativeControl'] as bool? ?? false,
-      syncMode: json['syncMode'] as String? ?? 'hopping',
+      syncMode: json['syncMode'] as String? ?? 'dragging',
+      playback: json['playback'] == null
+          ? null
+          : PlaybackInfo.fromJson(json['playback'] as Map<String, dynamic>),
       participants:
           (json['participants'] as List<dynamic>?)
               ?.map((e) => Participant.fromJson(e as Map<String, dynamic>))
@@ -58,6 +61,7 @@ Map<String, dynamic> _$$PartyStateImplToJson(_$PartyStateImpl instance) =>
       'mediaSourceId': instance.mediaSourceId,
       'collaborativeControl': instance.collaborativeControl,
       'syncMode': instance.syncMode,
+      'playback': instance.playback,
       'participants': instance.participants,
       'schedule': instance.schedule,
     };

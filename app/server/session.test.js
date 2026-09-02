@@ -27,6 +27,13 @@ function fresh() {
   return createSession({ hostId: 'host', hostName: 'Host', hostSocketId: 's1' })
 }
 
+test('new sessions default to dragging sync', () => {
+  const sess = fresh()
+  try {
+    assert.equal(sess.syncMode, 'dragging')
+  } finally { deleteSession(sess.id) }
+})
+
 test('validateSyncCommand rejects non-finite and negative positions', () => {
   assert.equal(validateSyncCommand({ positionTicks: Infinity }).error, 'invalid positionTicks')
   assert.equal(validateSyncCommand({ positionTicks: -1 }).error, 'invalid positionTicks')

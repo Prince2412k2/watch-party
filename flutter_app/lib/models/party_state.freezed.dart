@@ -364,6 +364,7 @@ mixin _$PartyState {
 
   /// 'hopping' | 'dragging'
   String get syncMode => throw _privateConstructorUsedError;
+  PlaybackInfo? get playback => throw _privateConstructorUsedError;
   List<Participant> get participants => throw _privateConstructorUsedError;
   SyncSchedule get schedule => throw _privateConstructorUsedError;
 
@@ -393,10 +394,12 @@ abstract class $PartyStateCopyWith<$Res> {
     String? mediaSourceId,
     bool collaborativeControl,
     String syncMode,
+    PlaybackInfo? playback,
     List<Participant> participants,
     SyncSchedule schedule,
   });
 
+  $PlaybackInfoCopyWith<$Res>? get playback;
   $SyncScheduleCopyWith<$Res> get schedule;
 }
 
@@ -423,6 +426,7 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
     Object? mediaSourceId = freezed,
     Object? collaborativeControl = null,
     Object? syncMode = null,
+    Object? playback = freezed,
     Object? participants = null,
     Object? schedule = null,
   }) {
@@ -460,6 +464,10 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
                 ? _value.syncMode
                 : syncMode // ignore: cast_nullable_to_non_nullable
                       as String,
+            playback: freezed == playback
+                ? _value.playback
+                : playback // ignore: cast_nullable_to_non_nullable
+                      as PlaybackInfo?,
             participants: null == participants
                 ? _value.participants
                 : participants // ignore: cast_nullable_to_non_nullable
@@ -471,6 +479,20 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
           )
           as $Val,
     );
+  }
+
+  /// Create a copy of PartyState
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $PlaybackInfoCopyWith<$Res>? get playback {
+    if (_value.playback == null) {
+      return null;
+    }
+
+    return $PlaybackInfoCopyWith<$Res>(_value.playback!, (value) {
+      return _then(_value.copyWith(playback: value) as $Val);
+    });
   }
 
   /// Create a copy of PartyState
@@ -502,10 +524,13 @@ abstract class _$$PartyStateImplCopyWith<$Res>
     String? mediaSourceId,
     bool collaborativeControl,
     String syncMode,
+    PlaybackInfo? playback,
     List<Participant> participants,
     SyncSchedule schedule,
   });
 
+  @override
+  $PlaybackInfoCopyWith<$Res>? get playback;
   @override
   $SyncScheduleCopyWith<$Res> get schedule;
 }
@@ -532,6 +557,7 @@ class __$$PartyStateImplCopyWithImpl<$Res>
     Object? mediaSourceId = freezed,
     Object? collaborativeControl = null,
     Object? syncMode = null,
+    Object? playback = freezed,
     Object? participants = null,
     Object? schedule = null,
   }) {
@@ -569,6 +595,10 @@ class __$$PartyStateImplCopyWithImpl<$Res>
             ? _value.syncMode
             : syncMode // ignore: cast_nullable_to_non_nullable
                   as String,
+        playback: freezed == playback
+            ? _value.playback
+            : playback // ignore: cast_nullable_to_non_nullable
+                  as PlaybackInfo?,
         participants: null == participants
             ? _value._participants
             : participants // ignore: cast_nullable_to_non_nullable
@@ -593,7 +623,8 @@ class _$PartyStateImpl implements _PartyState {
     this.mediaItemId,
     this.mediaSourceId,
     this.collaborativeControl = false,
-    this.syncMode = 'hopping',
+    this.syncMode = 'dragging',
+    this.playback,
     final List<Participant> participants = const <Participant>[],
     this.schedule = const SyncSchedule(),
   }) : _participants = participants;
@@ -624,6 +655,8 @@ class _$PartyStateImpl implements _PartyState {
   @override
   @JsonKey()
   final String syncMode;
+  @override
+  final PlaybackInfo? playback;
   final List<Participant> _participants;
   @override
   @JsonKey()
@@ -639,7 +672,7 @@ class _$PartyStateImpl implements _PartyState {
 
   @override
   String toString() {
-    return 'PartyState(id: $id, hostId: $hostId, hostName: $hostName, stage: $stage, mediaItemId: $mediaItemId, mediaSourceId: $mediaSourceId, collaborativeControl: $collaborativeControl, syncMode: $syncMode, participants: $participants, schedule: $schedule)';
+    return 'PartyState(id: $id, hostId: $hostId, hostName: $hostName, stage: $stage, mediaItemId: $mediaItemId, mediaSourceId: $mediaSourceId, collaborativeControl: $collaborativeControl, syncMode: $syncMode, playback: $playback, participants: $participants, schedule: $schedule)';
   }
 
   @override
@@ -660,6 +693,8 @@ class _$PartyStateImpl implements _PartyState {
                 other.collaborativeControl == collaborativeControl) &&
             (identical(other.syncMode, syncMode) ||
                 other.syncMode == syncMode) &&
+            (identical(other.playback, playback) ||
+                other.playback == playback) &&
             const DeepCollectionEquality().equals(
               other._participants,
               _participants,
@@ -680,6 +715,7 @@ class _$PartyStateImpl implements _PartyState {
     mediaSourceId,
     collaborativeControl,
     syncMode,
+    playback,
     const DeepCollectionEquality().hash(_participants),
     schedule,
   );
@@ -708,6 +744,7 @@ abstract class _PartyState implements PartyState {
     final String? mediaSourceId,
     final bool collaborativeControl,
     final String syncMode,
+    final PlaybackInfo? playback,
     final List<Participant> participants,
     final SyncSchedule schedule,
   }) = _$PartyStateImpl;
@@ -735,6 +772,8 @@ abstract class _PartyState implements PartyState {
   /// 'hopping' | 'dragging'
   @override
   String get syncMode;
+  @override
+  PlaybackInfo? get playback;
   @override
   List<Participant> get participants;
   @override

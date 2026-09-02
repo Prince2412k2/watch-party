@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import 'participant.dart';
+import 'playback_info.dart';
 
 part 'party_state.freezed.dart';
 part 'party_state.g.dart';
@@ -44,7 +45,8 @@ class PartyState with _$PartyState {
     String? mediaSourceId,
     @Default(false) bool collaborativeControl,
     /// 'hopping' | 'dragging'
-    @Default('hopping') String syncMode,
+    @Default('dragging') String syncMode,
+    PlaybackInfo? playback,
     @Default(<Participant>[]) List<Participant> participants,
     @Default(SyncSchedule()) SyncSchedule schedule,
   }) = _PartyState;

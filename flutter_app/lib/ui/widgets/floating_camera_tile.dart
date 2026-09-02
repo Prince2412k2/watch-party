@@ -58,15 +58,17 @@ abstract final class FloatingTileGeometry {
     double width, {
     required bool collapsed,
     double aspect = FloatingTileGeometry.aspect,
+    bool headerOverlay = false,
   }) => collapsed
       ? const Size.square(ballDiameter)
-      : Size(width, headerHeight + width / aspect);
+      : Size(width, width / aspect + (headerOverlay ? 0 : headerHeight));
 
   /// Clamp a width to the min/max, also never wider than the stage allows.
   static double clampWidth(
     double width,
     Size stage, {
     double aspect = FloatingTileGeometry.aspect,
+    bool headerOverlay = false,
   }) {
     // The stage is the only ceiling. Also bounded by height, which the old cap
     // was quietly standing in for: at 4:3 a tile 1200px wide is 900px tall, so
@@ -75,7 +77,7 @@ abstract final class FloatingTileGeometry {
     final byWidth = math.max(minWidth, stage.width - 2 * margin);
     final byHeight = math.max(
       minWidth,
-      (stage.height - 2 * margin - headerHeight) * aspect,
+      (stage.height - 2 * margin - (headerOverlay ? 0 : headerHeight)) * aspect,
     );
     return width.clamp(minWidth, math.min(byWidth, byHeight));
   }
@@ -190,19 +192,29 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
             final w = FloatingTileGeometry.clampWidth(
               FloatingTileGeometry.defaultWidth,
               _stage,
+              headerOverlay: true,
             );
-            final size = FloatingTileGeometry.tileSize(w, collapsed: false);
+            final size = FloatingTileGeometry.tileSize(
+              w,
+              collapsed: false,
+              headerOverlay: true,
+            );
             return _TileLayout(
               FloatingTileGeometry.cascadeAnchor(i, size, _stage),
               w,
             );
           });
 
-          final width = FloatingTileGeometry.clampWidth(layout.width, _stage);
+          final width = FloatingTileGeometry.clampWidth(
+            layout.width,
+            _stage,
+            headerOverlay: true,
+          );
           layout.width = width;
           final size = FloatingTileGeometry.tileSize(
             width,
             collapsed: layout.collapsed,
+            headerOverlay: true,
           );
           final pos = FloatingTileGeometry.clamp(layout.offset, size, _stage);
 
@@ -233,7 +245,11 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
   }
 
   Size _sizeOf(_TileLayout l) =>
-      FloatingTileGeometry.tileSize(l.width, collapsed: l.collapsed);
+      FloatingTileGeometry.tileSize(
+        l.width,
+        collapsed: l.collapsed,
+        headerOverlay: true,
+      );
 
   void _onDrag(String id, Offset delta) {
     final l = _layouts[id];
@@ -262,7 +278,11 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     if (l == null) return;
     setState(() {
       _animate = false;
-      l.width = FloatingTileGeometry.clampWidth(l.width + delta.dx, _stage);
+      l.width = FloatingTileGeometry.clampWidth(
+        l.width + delta.dx,
+        _stage,
+        headerOverlay: true,
+      );
       l.offset = FloatingTileGeometry.clamp(l.offset, _sizeOf(l), _stage);
     });
   }

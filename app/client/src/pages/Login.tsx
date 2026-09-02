@@ -51,7 +51,7 @@ export default function Login({ onSuccess }: { onSuccess?: () => void } = {}) {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <label style={{ display: 'block' }}>
             <span style={{ display: 'block', fontFamily: MONO, fontSize: 11.5, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--faint)', marginBottom: 8 }}>Username</span>
-            <input type="text" value={username} onChange={e => setUsername(e.target.value)} disabled={submitting} required autoComplete="username" autoFocus
+            <input type="text" inputMode="text" name="username" value={username} onChange={e => setUsername(e.target.value)} onKeyDown={e => e.stopPropagation()} disabled={submitting} required autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoFocus
               style={field}
               onFocus={e => { e.currentTarget.style.borderColor = 'var(--text)' }}
               onBlur={e => { e.currentTarget.style.borderColor = 'var(--line2)' }} />
@@ -59,7 +59,7 @@ export default function Login({ onSuccess }: { onSuccess?: () => void } = {}) {
 
           <label style={{ display: 'block' }}>
             <span style={{ display: 'block', fontFamily: MONO, fontSize: 11.5, letterSpacing: '.14em', textTransform: 'uppercase', fontWeight: 700, color: 'var(--faint)', marginBottom: 8 }}>Password</span>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} disabled={submitting} autoComplete="current-password"
+            <input type="password" inputMode="text" name="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.stopPropagation()} disabled={submitting} autoComplete="current-password"
               style={field}
               onFocus={e => { e.currentTarget.style.borderColor = 'var(--text)' }}
               onBlur={e => { e.currentTarget.style.borderColor = 'var(--line2)' }} />

@@ -16,6 +16,7 @@ class FakePlayer implements PlayerController {
   double rate = 1.0;
 
   final _playingCtrl = StreamController<bool>.broadcast();
+  final _bufferingCtrl = StreamController<bool>.broadcast();
   final calls = <String>[];
 
   @override
@@ -53,6 +54,8 @@ class FakePlayer implements PlayerController {
     _playingCtrl.add(v);
   }
 
+  void setBuffering(bool value) => _bufferingCtrl.add(value);
+
   @override
   Stream<bool> get playing => _playingCtrl.stream;
   @override
@@ -65,8 +68,11 @@ class FakePlayer implements PlayerController {
   bool get isBufferingNow => false;
 
   @override
-  Future<void> open(String url,
-      {Duration startAt = Duration.zero, bool autoplay = false}) async {}
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {}
   @override
   Future<void> setVolume(double volume) async {}
   @override
@@ -74,46 +80,60 @@ class FakePlayer implements PlayerController {
   @override
   Future<void> setSubtitle(String? trackId) async {}
   @override
-  Future<void> dispose() async => _playingCtrl.close();
+  Future<void> dispose() async {
+    await _playingCtrl.close();
+    await _bufferingCtrl.close();
+  }
+
   @override
   Stream<Duration> get position => const Stream.empty();
   @override
   Stream<Duration> get duration => const Stream.empty();
   @override
-  Stream<bool> get buffering => const Stream.empty();
+  Stream<bool> get buffering => _bufferingCtrl.stream;
   @override
   Stream<bool> get completed => const Stream.empty();
   @override
   Stream<PlayerTracks> get tracks => const Stream.empty();
 }
 
-Map<String, dynamic> playingSchedule({int posTicks = 100000000, int t0 = 1000, int version = 1}) =>
-    {
-      'positionTicks': posTicks,
-      't0': t0,
-      'rate': 1,
-      'paused': false,
-      'phase': 'playing',
-      'version': version,
-      'mediaGeneration': 0,
-    };
+Map<String, dynamic> playingSchedule({
+  int posTicks = 100000000,
+  int t0 = 1000,
+  int version = 1,
+}) => {
+  'positionTicks': posTicks,
+  't0': t0,
+  'rate': 1,
+  'paused': false,
+  'phase': 'playing',
+  'version': version,
+  'mediaGeneration': 0,
+};
 
-Map<String, dynamic> pausedSchedule({int posTicks = 100000000, int version = 1, int gen = 0}) =>
-    {
-      'positionTicks': posTicks,
-      't0': 0,
-      'rate': 0,
-      'paused': true,
-      'phase': 'paused',
-      'version': version,
-      'mediaGeneration': gen,
-    };
+Map<String, dynamic> pausedSchedule({
+  int posTicks = 100000000,
+  int version = 1,
+  int gen = 0,
+}) => {
+  'positionTicks': posTicks,
+  't0': 0,
+  'rate': 0,
+  'paused': true,
+  'phase': 'paused',
+  'version': version,
+  'mediaGeneration': gen,
+};
 
 /// Build an engine with a manual clock whose server-now is [nowMs].
-SyncEngineImpl engineWith(double Function() nowMs) => SyncEngineImpl(
-    clock: ManualServerClock(nowMs: nowMs, ready: true));
+SyncEngineImpl engineWith(double Function() nowMs) =>
+    SyncEngineImpl(clock: ManualServerClock(nowMs: nowMs, ready: true));
 
 void main() {
+  test('dragging is the default sync mode', () {
+    expect(engineWith(() => 0).syncMode, 'dragging');
+  });
+
   test('guest is driven onto the shared timeline (seek + play)', () {
     fakeAsync((fa) {
       var serverNow = 2000.0; // 1s after t0 → expected 11s
@@ -121,7 +141,12 @@ void main() {
       final player = FakePlayer();
       final socket = MockSocketClient();
 
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: false);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
       fa.flushMicrotasks();
 
       // sync:hello was emitted on attach.
@@ -149,17 +174,26 @@ void main() {
       final socket = MockSocketClient();
       // canControl TRUE (collaborative guest): its own gestures author, so the
       // guard must stop the loop-applied play() from being re-emitted.
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: true);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
       fa.flushMicrotasks();
 
       socket.inject(ServerEvent.syncSchedule, playingSchedule());
-      final beforePlays = socket.emitted.where((e) => e.$1 == ClientEvent.syncPlay).length;
+      final beforePlays = socket.emitted
+          .where((e) => e.$1 == ClientEvent.syncPlay)
+          .length;
 
       fa.elapse(const Duration(milliseconds: 250)); // loop applies play()
       fa.flushMicrotasks(); // deliver the player's playing-stream event
 
       expect(player.playingNow, isTrue);
-      final afterPlays = socket.emitted.where((e) => e.$1 == ClientEvent.syncPlay).length;
+      final afterPlays = socket.emitted
+          .where((e) => e.$1 == ClientEvent.syncPlay)
+          .length;
       // The applied play() did NOT round-trip back out as a sync:play command.
       expect(afterPlays, beforePlays);
 
@@ -172,7 +206,12 @@ void main() {
       final engine = engineWith(() => 2000.0);
       final player = FakePlayer();
       final socket = MockSocketClient();
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: false);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
       fa.flushMicrotasks();
 
       // Explicit intents are dropped.
@@ -197,15 +236,24 @@ void main() {
       final engine = engineWith(() => 5000.0)..isHost = true;
       final player = FakePlayer()..pos = const Duration(seconds: 42);
       final socket = MockSocketClient();
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: true);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
       fa.flushMicrotasks();
 
       engine.requestSeek(const Duration(seconds: 30));
       engine.requestPause();
 
-      final seek = socket.emitted.firstWhere((e) => e.$1 == ClientEvent.syncSeek);
+      final seek = socket.emitted.firstWhere(
+        (e) => e.$1 == ClientEvent.syncSeek,
+      );
       expect((seek.$2 as Map)['positionTicks'], 30 * 1000 * ticksPerMs);
-      final pause = socket.emitted.firstWhere((e) => e.$1 == ClientEvent.syncPause);
+      final pause = socket.emitted.firstWhere(
+        (e) => e.$1 == ClientEvent.syncPause,
+      );
       expect((pause.$2 as Map)['positionTicks'], 42 * 1000 * ticksPerMs);
 
       // A UI-driven play transition authors sync:play at the player position.
@@ -224,13 +272,27 @@ void main() {
       final socket = MockSocketClient();
       final seen = <int>[];
       engine.scheduleStream.listen((s) => seen.add(s.version));
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: false);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
       fa.flushMicrotasks();
 
       socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 5));
-      socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 3)); // stale
-      socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 5)); // dup
-      socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 6)); // ok
+      socket.inject(
+        ServerEvent.syncSchedule,
+        playingSchedule(version: 3),
+      ); // stale
+      socket.inject(
+        ServerEvent.syncSchedule,
+        playingSchedule(version: 5),
+      ); // dup
+      socket.inject(
+        ServerEvent.syncSchedule,
+        playingSchedule(version: 6),
+      ); // ok
       fa.flushMicrotasks();
 
       expect(seen, [5, 6]);
@@ -247,12 +309,23 @@ void main() {
       final socket = MockSocketClient();
       final seen = <int>[];
       engine.scheduleStream.listen((s) => seen.add(s.version));
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: false);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
       fa.flushMicrotasks();
 
-      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 9, gen: 0));
+      socket.inject(
+        ServerEvent.syncSchedule,
+        pausedSchedule(version: 9, gen: 0),
+      );
       // New media: version restarts lower but a new generation resets baseline.
-      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 1, gen: 1));
+      socket.inject(
+        ServerEvent.syncSchedule,
+        pausedSchedule(version: 1, gen: 1),
+      );
       fa.flushMicrotasks();
 
       expect(seen, [9, 1]);
@@ -265,7 +338,12 @@ void main() {
       final engine = engineWith(() => 2000.0)..isHost = false;
       final player = FakePlayer()..playingNow = true;
       final socket = MockSocketClient();
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: false);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
       fa.flushMicrotasks();
 
       socket.inject(ServerEvent.syncHostGone, null);
@@ -276,12 +354,108 @@ void main() {
     });
   });
 
-  test('hopping host is not corrected but is kicked into play', () {
+  test('buffering reports stalls and recovery for dragging mode', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000.0);
+      final player = FakePlayer();
+      final socket = MockSocketClient();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(gen: 4));
+
+      player.setBuffering(true);
+      player.setBuffering(false);
+      fa.flushMicrotasks();
+
+      final stalls = socket.emitted
+          .where((event) => event.$1 == ClientEvent.syncStall)
+          .map((event) => event.$2 as Map)
+          .toList();
+      expect(stalls, [
+        {'stalled': true, 'mediaGeneration': 4},
+        {'stalled': false, 'mediaGeneration': 4},
+      ]);
+      engine.detach();
+    });
+  });
+
+  test('peer telemetry includes position and downloaded chunks', () {
+    fakeAsync((fa) {
+      var now = 2000.0;
+      final engine = engineWith(() => now)..downloadedChunks = () => 7;
+      final player = FakePlayer()..pos = const Duration(seconds: 12);
+      final socket = MockSocketClient();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      fa.flushMicrotasks();
+      socket.inject(
+        ServerEvent.syncSchedule,
+        pausedSchedule(posTicks: 120000000),
+      );
+      fa.elapse(const Duration(milliseconds: 250));
+      now += 1000;
+      fa.elapse(const Duration(seconds: 1));
+
+      final report =
+          socket.emitted
+                  .lastWhere((event) => event.$1 == ClientEvent.syncReport)
+                  .$2
+              as Map;
+      expect(report['position'], 12.0);
+      expect(report['downloadedChunks'], 7);
+      engine.detach();
+    });
+  });
+
+  test('a local play is not undone by a stale paused schedule', () {
     fakeAsync((fa) {
       final engine = engineWith(() => 2000.0)..isHost = true;
+      final player = FakePlayer();
+      final socket = MockSocketClient();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 1));
+
+      engine.requestPlay();
+      fa.flushMicrotasks();
+      expect(player.playingNow, isTrue);
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 2));
+      fa.elapse(const Duration(milliseconds: 500));
+      fa.flushMicrotasks();
+
+      expect(player.playingNow, isTrue);
+      socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 3));
+      engine.detach();
+    });
+  });
+
+  test('hopping host is not corrected but is kicked into play', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000.0)
+        ..isHost = true
+        ..syncMode = 'hopping';
       final player = FakePlayer(); // paused
       final socket = MockSocketClient();
-      engine.attach(player: player, socket: socket, partyId: 'p', canControl: true);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
       fa.flushMicrotasks();
 
       socket.inject(ServerEvent.syncSchedule, playingSchedule());
@@ -310,32 +484,39 @@ void main() {
   //
   // Real timers instead, kept short: the control loop is 200ms, so a ~300ms
   // wait proves it is live and a ~500ms wait proves it stopped.
-  test('dispose() stops the control loop and closes the engine streams', () async {
-    final engine = engineWith(() => 2000.0);
-    final player = FakePlayer();
-    final socket = MockSocketClient();
-    var scheduleStreamDone = false;
-    engine.scheduleStream.listen(
-      (_) {},
-      onDone: () => scheduleStreamDone = true,
-    );
+  test(
+    'dispose() stops the control loop and closes the engine streams',
+    () async {
+      final engine = engineWith(() => 2000.0);
+      final player = FakePlayer();
+      final socket = MockSocketClient();
+      var scheduleStreamDone = false;
+      engine.scheduleStream.listen(
+        (_) {},
+        onDone: () => scheduleStreamDone = true,
+      );
 
-    await engine.attach(
-        player: player, socket: socket, partyId: 'p', canControl: false);
-    socket.inject(ServerEvent.syncSchedule, playingSchedule());
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(player.calls, isNotEmpty, reason: 'the control loop is live');
+      await engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      socket.inject(ServerEvent.syncSchedule, playingSchedule());
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(player.calls, isNotEmpty, reason: 'the control loop is live');
 
-    await engine.dispose();
+      await engine.dispose();
 
-    // Nothing may drive the player after disposal — the 200ms control loop,
-    // the applying timers and the user-seek timer all outlived the provider
-    // before, still holding the player and socket they were attached to.
-    player.calls.clear();
-    await Future<void>.delayed(const Duration(milliseconds: 500));
+      // Nothing may drive the player after disposal — the 200ms control loop,
+      // the applying timers and the user-seek timer all outlived the provider
+      // before, still holding the player and socket they were attached to.
+      player.calls.clear();
+      await Future<void>.delayed(const Duration(milliseconds: 500));
 
-    expect(player.calls, isEmpty);
-    expect(engine.isDisposed, isTrue);
-    expect(scheduleStreamDone, isTrue);
-  });
+      expect(player.calls, isEmpty);
+      expect(engine.isDisposed, isTrue);
+      expect(scheduleStreamDone, isTrue);
+    },
+  );
 }

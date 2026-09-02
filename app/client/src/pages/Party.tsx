@@ -26,7 +26,7 @@ import {
 } from '../analog/player/index.ts'
 import MoviesStage from './MoviesStage.tsx'
 import Lobby from './Lobby.tsx'
-import type { ChatMessage, PartySession, SubtitlePreferences } from '../types.ts'
+import type { ChatMessage, PartyContextValue, PartySession, SubtitlePreferences } from '../types.ts'
 import { apiJson, stringField } from '../types/guards.ts'
 import { partyJoinTransition } from '../partyAuthority.ts'
 
@@ -47,13 +47,14 @@ type SeekBridge = {
   guardToggle: (action: () => unknown) => Promise<void>
 }
 
-export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } } = {}) {
+export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } } = {}) {
   const { socket } = useSocket()
   const party = useParty()
   const { user } = useAuth()
   const {
     session, role, messages, layoutMode, chatOpen, chatRipple, alertMode,
     setLayout, toggleChat, openChat, closeChat, selectMedia, setPlaybackTracks, setSubtitlePreferences,
+    peerPlayback, showPeerPointers,
   } = party
 
   const lk = useLiveKit({ partyId: session?.id, enabled: role === 'host' || role === 'guest' })
@@ -205,6 +206,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
       session={session} isHost={isHost} cameraProps={cameraProps} lk={lk}
       chatOpen={chatOpen} chatRipple={chatRipple} alertMode={alertMode}
       messages={messages} selfUserId={user?.userId}
+      peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
       layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat} toggleChat={toggleChat}
       setPlaybackTracks={setPlaybackTracks}
       setSubtitlePreferences={setSubtitlePreferences}
@@ -254,6 +256,7 @@ const NO_MESSAGES: ChatMessage[] = []
 function WatchView({
   session, isHost, cameraProps, lk, chatOpen, chatRipple = 0, alertMode, layoutMode,
   messages = NO_MESSAGES, selfUserId,
+  peerPlayback = {}, showPeerPointers = false,
   setLayout = () => {}, openChat = () => {}, closeChat = () => {}, toggleChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
 }: {
   session: PartySession
@@ -265,6 +268,8 @@ function WatchView({
   alertMode?: 'focus' | 'on' | 'mute'
   messages?: ChatMessage[]
   selfUserId?: string
+  peerPlayback?: PartyContextValue['peerPlayback']
+  showPeerPointers?: boolean
   layoutMode?: 'float' | 'dock'
   setLayout?: (mode: 'float' | 'dock') => void
   openChat?: (focus?: boolean) => void
@@ -522,6 +527,8 @@ function WatchView({
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
           onSetPlaybackTracks={setPlaybackTracks}
           onSetSubtitlePreferences={setSubtitlePreferences}
+          peerPlayback={peerPlayback}
+          showPeerPointers={showPeerPointers}
           micOn={lk.micOn} camOn={lk.camOn}
           onToggleMic={() => guardedToggle(() => lk.enableMic(!lk.micOn))}
           onToggleCam={() => guardedToggle(() => lk.enableCamera(!lk.camOn))}

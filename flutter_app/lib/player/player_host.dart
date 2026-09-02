@@ -22,15 +22,16 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../analog/player/auto_hide_controller.dart';
+import '../analog/player/analog_timeline.dart' show TimelinePeerPosition;
 import '../analog/player_core.dart';
 import '../party/party_controls.dart';
 import '../state/state.dart';
-import '../data/api_client.dart';
 import '../ui/ui.dart';
 import '../ui/widgets/floating_camera_tile.dart';
 import 'now_playing_card.dart';
 import 'open_title.dart';
 import 'player_view.dart';
+import 'playback_failure.dart';
 
 /// Movies are 16:9, unlike the 4:3 camera tiles the geometry was written for.
 const double _playerAspect = 16 / 9;
@@ -106,6 +107,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   bool _ready = false;
   Object? _error;
   bool _usesCacheProxy = false;
+  int? _autoRetriedRevision;
 
   @override
   void initState() {
@@ -168,6 +170,14 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
       _error = result.error;
       _usesCacheProxy = result.usesCacheProxy;
     });
+    final error = result.error;
+    if (error != null &&
+        classifyPlaybackFailure(error).retryable &&
+        _autoRetriedRevision != revision) {
+      _autoRetriedRevision = revision;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (mounted && ref.read(nowPlayingProvider).revision == revision) _retry();
+    }
   }
 
   void _onAutoHide() {
@@ -396,11 +406,24 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             apiClient: ref.watch(apiClientProvider),
                             preferredSubtitleStreamIndex:
                                 now.subtitleStreamIndex,
+                            subtitleRevision: party?.playback.hashCode ?? 0,
                             cachedSpans: _usesCacheProxy && now.itemId != null
                                 ? ref
                                       .watch(mediaCacheProxyProvider)
                                       .cachedSpansFor(now.itemId!)
                                 : null,
+                            peerPositions: ref.watch(showPeerPointersProvider)
+                                ? [
+                                    for (final peer in ref.watch(peerPlaybackProvider).values)
+                                      TimelinePeerPosition(
+                                        id: peer.userId,
+                                        label: peer.name,
+                                        position: peer.position,
+                                        downloadedChunks: peer.downloadedChunks,
+                                      ),
+                                  ]
+                                : const [],
+                            catchUp: party == null ? null : playback.catchUp,
                             onBack: notifier.minimise,
                             onToggleFullscreen: _toggleFullscreen,
                             isFullscreen: _isFullscreen,
@@ -408,6 +431,8 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             // dishonest ones: their play would be undone by
                             // the correction loop a tick later.
                             canControl: playback.canDrive,
+                            onTogglePlay: playback.togglePlay,
+                            onRetryPlayback: _retry,
                             onSeekAuthored: playback.reportSeek,
                             onPushToTalkStart: party != null ? _pttStart : null,
                             onPushToTalkStop: party != null ? _pttStop : null,
@@ -497,9 +522,9 @@ class _PlayerFrame extends StatelessWidget {
   /// The video, or the reason there isn't one. Kept in ONE place so the
   /// expanded and floating branches below cannot disagree about it.
   Widget _body() {
-    final errorMessage = error is ApiException
-        ? (error! as ApiException).message
-        : 'Could not open this title. Check your connection and try again.';
+    final errorMessage = error == null
+        ? ''
+        : classifyPlaybackFailure(error!).message;
     return Stack(
       fit: StackFit.expand,
       children: [

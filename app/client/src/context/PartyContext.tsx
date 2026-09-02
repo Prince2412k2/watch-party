@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { useSocket } from '../hooks/useSocket.ts'
 import { navigate } from '../router.ts'
-import type { PartyContextValue, PartySession, PartyUser, SubtitlePreferences, ToastRecord } from '../types.ts'
+import type { PartyContextValue, PartySession, PartyUser, PeerPlayback, SubtitlePreferences, ToastRecord } from '../types.ts'
 import { isChatMessage, isObject, isPartySession, isPartyUser } from '../guards.ts'
 import { partyRoleForUser, shouldOpenPartyPlayer } from '../partyAuthority.ts'
 import { analogTokens } from '../design/analogTokens.ts'
@@ -19,6 +19,8 @@ interface PartyState {
   chatRipple: number
   alertMode: PartyContextValue['alertMode']
   toasts: ToastRecord[]
+  peerPlayback: Record<string, PeerPlayback>
+  showPeerPointers: boolean
 }
 
 type PartyAction =
@@ -35,6 +37,8 @@ type PartyAction =
   | { type: 'RIPPLE' }
   | { type: 'ADD_TOAST'; toast: ToastRecord }
   | { type: 'REMOVE_TOAST'; id: number }
+  | { type: 'PEER_PLAYBACK'; report: PeerPlayback }
+  | { type: 'TOGGLE_PEER_POINTERS' }
   | { type: 'USER_JOINED'; user: PartyUser }
   | { type: 'USER_LEFT'; userId: string }
   | { type: 'HOST_CHANGED'; hostId: string }
@@ -51,12 +55,21 @@ const initialState: PartyState = {
   chatRipple: 0,
   alertMode: 'focus',
   toasts: [],
+  peerPlayback: {},
+  showPeerPointers: false,
 }
 
 function reducer(state: PartyState, action: PartyAction): PartyState {
   switch (action.type) {
     case 'SET_SESSION':
-      return { ...state, session: action.session, role: action.role }
+      return {
+        ...state,
+        session: action.session,
+        role: action.role,
+        peerPlayback: state.session?.id === action.session.id && state.session.mediaItemId === action.session.mediaItemId
+          ? state.peerPlayback
+          : {},
+      }
     case 'SET_ROLE':
       return { ...state, role: action.role }
     case 'UPDATE_SESSION':
@@ -81,6 +94,10 @@ function reducer(state: PartyState, action: PartyAction): PartyState {
       return { ...state, toasts: [...state.toasts, action.toast] }
     case 'REMOVE_TOAST':
       return { ...state, toasts: state.toasts.filter(t => t.id !== action.id) }
+    case 'PEER_PLAYBACK':
+      return { ...state, peerPlayback: { ...state.peerPlayback, [action.report.userId]: action.report } }
+    case 'TOGGLE_PEER_POINTERS':
+      return { ...state, showPeerPointers: !state.showPeerPointers }
     case 'USER_JOINED': {
       if (state.session?.guests?.some(guest => guest.userId === action.user.userId)) return state
       const guests = state.session
@@ -90,7 +107,9 @@ function reducer(state: PartyState, action: PartyAction): PartyState {
     }
     case 'USER_LEFT': {
       const guests = (state.session?.guests ?? []).filter(g => g.userId !== action.userId)
-      return { ...state, session: state.session ? { ...state.session, guests } : null }
+      const peerPlayback = { ...state.peerPlayback }
+      delete peerPlayback[action.userId]
+      return { ...state, session: state.session ? { ...state.session, guests } : null, peerPlayback }
     }
     case 'HOST_CHANGED':
       return { ...state, session: state.session ? { ...state.session, hostId: action.hostId } : null }
@@ -229,6 +248,22 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       dispatch({ type: 'SET_MESSAGES', msgs: value.filter(isChatMessage) })
     })
 
+    socket.on('sync:peer_report', (value: unknown) => {
+      if (!isObject(value) || typeof value.userId !== 'string' || typeof value.position !== 'number') return
+      dispatch({
+        type: 'PEER_PLAYBACK',
+        report: {
+          userId: value.userId,
+          name: typeof value.name === 'string' ? value.name : undefined,
+          position: value.position,
+          drift: typeof value.drift === 'number' ? value.drift : 0,
+          rate: typeof value.rate === 'number' ? value.rate : 1,
+          downloadedChunks: typeof value.downloadedChunks === 'number' ? value.downloadedChunks : 0,
+          at: typeof value.at === 'number' ? value.at : Date.now(),
+        },
+      })
+    })
+
     return () => {
       socket.off('party:state')
       socket.off('party:waiting')
@@ -241,6 +276,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       socket.off('host:changed')
       socket.off('chat:message')
       socket.off('chat:history')
+      socket.off('sync:peer_report')
     }
   }, [socket, userId])
 
@@ -277,7 +313,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   }, [socket, userId])
 
   // Actions
-  function createParty(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } = {}): Promise<string> {
+  function createParty(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       socket.emit('party:create', { mediaItemId, ...tracks }, (value: unknown) => {
         if (!isObject(value)) return reject(new Error('Party creation failed'))
@@ -303,7 +339,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   }
 
   // Pick a title from the lobby → everyone transitions into the player.
-  function selectMedia(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } = {}) {
+  function selectMedia(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}) {
     socket.emit('party:selectMedia', { mediaItemId, ...tracks })
   }
 
@@ -411,6 +447,9 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   function setAlertMode(mode: PartyContextValue['alertMode']) {
     dispatch({ type: 'SET_ALERT_MODE', mode })
   }
+  function togglePeerPointers() {
+    dispatch({ type: 'TOGGLE_PEER_POINTERS' })
+  }
 
   return (
     <PartyContext.Provider value={{
@@ -422,6 +461,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       setPlaybackTracks,
       setSubtitlePreferences,
       setLayout, toggleChat, openChat, closeChat, setAlertMode,
+      togglePeerPointers,
     }}>
       {children}
     </PartyContext.Provider>

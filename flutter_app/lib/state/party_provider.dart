@@ -74,6 +74,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     state = s.copyWith(
       participants: s.participants.where((e) => e.userId != userId).toList(),
     );
+    _ref.read(peerPlaybackProvider.notifier).remove(userId);
   }
 
   void clear() {
@@ -81,6 +82,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _pendingPartyId = null;
     _ref.read(partyWaitingProvider.notifier).clear();
     _ref.read(chatDrawerOpenProvider.notifier).state = false;
+    _ref.read(peerPlaybackProvider.notifier).clear();
   }
 
   // ── Socket subscription (idempotent) ─────────────────────────────────────
@@ -183,6 +185,15 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         _toast('$name left');
       }),
     );
+    _unsubs.add(
+      socket.on(ServerEvent.syncPeerReport, (data) {
+        if (data is! Map) return;
+        final report = PeerPlayback.fromJson(Map<String, dynamic>.from(data));
+        if (report != null) {
+          _ref.read(peerPlaybackProvider.notifier).put(report);
+        }
+      }),
+    );
   }
 
   void _unsubscribe() {
@@ -267,6 +278,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     };
     final participants = participantsById.values.toList(growable: false);
 
+    final scheduleJson = json['schedule'];
+    final playbackJson = json['playback'];
     state = PartyState(
       id: json['id']?.toString() ?? state?.id ?? '',
       hostId: hostId,
@@ -275,8 +288,14 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       mediaItemId: json['mediaItemId']?.toString(),
       mediaSourceId: json['mediaSourceId']?.toString(),
       collaborativeControl: json['collaborativeControl'] == true,
-      syncMode: json['syncMode']?.toString() ?? 'hopping',
+      syncMode: json['syncMode']?.toString() ?? 'dragging',
+      playback: playbackJson is Map
+          ? PlaybackInfo.fromJson(Map<String, dynamic>.from(playbackJson))
+          : null,
       participants: participants,
+      schedule: scheduleJson is Map
+          ? SyncSchedule.fromJson(Map<String, dynamic>.from(scheduleJson))
+          : const SyncSchedule(),
     );
     final partyId = state?.id;
     if (partyId != null && partyId.isNotEmpty) {
@@ -347,6 +366,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     String? mediaItemId,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
+    int? resumePositionTicks,
   }) async {
     await _teardown;
     final generation = ++_generation;
@@ -356,6 +376,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       'mediaItemId': ?mediaItemId,
       'audioStreamIndex': ?audioStreamIndex,
       'subtitleStreamIndex': ?subtitleStreamIndex,
+      'resumePositionTicks': ?resumePositionTicks,
     });
     if (generation != _generation) throw StateError('Party creation cancelled');
     if (resp is Map && resp['error'] != null) {
@@ -534,10 +555,16 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     required String mediaItemId,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
+    int? resumePositionTicks,
   }) => _ack(ClientEvent.partySelectMedia, {
     'mediaItemId': mediaItemId,
     'audioStreamIndex': ?audioStreamIndex,
     'subtitleStreamIndex': ?subtitleStreamIndex,
+    'resumePositionTicks': ?resumePositionTicks,
+  });
+
+  Future<void> setSyncMode(String mode) => _ack(ClientEvent.partySetSyncMode, {
+    'mode': mode == 'hopping' ? 'hopping' : 'dragging',
   });
 
   /// Take the title off the room's timeline, for everyone. What the host's
@@ -585,6 +612,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _generation++;
     _pendingPartyId = null;
     state = null;
+    _ref.read(peerPlaybackProvider.notifier).clear();
     _ref.read(chatDrawerOpenProvider.notifier).state = false;
     _ref.read(partyWaitingProvider.notifier).clear();
     _ref.read(chatProvider.notifier).deactivate();
@@ -656,6 +684,105 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 final partyProvider = StateNotifierProvider<PartyNotifier, PartyState?>(
   (ref) => PartyNotifier(ref),
 );
+
+class PeerPlayback {
+  const PeerPlayback({
+    required this.userId,
+    required this.name,
+    required this.position,
+    required this.drift,
+    required this.rate,
+    required this.downloadedChunks,
+    required this.at,
+  });
+
+  final String userId;
+  final String name;
+  final Duration position;
+  final Duration drift;
+  final double rate;
+  final int downloadedChunks;
+  final int at;
+
+  static PeerPlayback? fromJson(Map<String, dynamic> json) {
+    final userId = json['userId'];
+    final position = json['position'];
+    if (userId is! String || position is! num) return null;
+    final drift = json['drift'];
+    final rate = json['rate'];
+    final chunks = json['downloadedChunks'];
+    final at = json['at'];
+    return PeerPlayback(
+      userId: userId,
+      name: json['name']?.toString() ?? userId,
+      position: Duration(milliseconds: (position.toDouble() * 1000).round()),
+      drift: Duration(
+        milliseconds: ((drift is num ? drift.toDouble() : 0) * 1000).round(),
+      ),
+      rate: rate is num ? rate.toDouble() : 1,
+      downloadedChunks: chunks is int && chunks >= 0 ? chunks : 0,
+      at: at is int ? at : DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+}
+
+class PeerPlaybackNotifier extends StateNotifier<Map<String, PeerPlayback>> {
+  PeerPlaybackNotifier() : super(const {});
+
+  Timer? _expiry;
+
+  void put(PeerPlayback report) {
+    _expiry ??= Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _removeStale(),
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    state = {
+      for (final entry in state.entries)
+        if (now - entry.value.at < 5000) entry.key: entry.value,
+      report.userId: report,
+    };
+  }
+
+  void remove(String userId) {
+    if (!state.containsKey(userId)) return;
+    state = {...state}..remove(userId);
+    if (state.isEmpty) _stopExpiry();
+  }
+
+  void clear() {
+    state = const {};
+    _stopExpiry();
+  }
+
+  void _removeStale() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final next = {
+      for (final entry in state.entries)
+        if (now - entry.value.at < 5000) entry.key: entry.value,
+    };
+    if (next.length != state.length) state = next;
+    if (next.isEmpty) _stopExpiry();
+  }
+
+  void _stopExpiry() {
+    _expiry?.cancel();
+    _expiry = null;
+  }
+
+  @override
+  void dispose() {
+    _stopExpiry();
+    super.dispose();
+  }
+}
+
+final peerPlaybackProvider =
+    StateNotifierProvider<PeerPlaybackNotifier, Map<String, PeerPlayback>>(
+      (ref) => PeerPlaybackNotifier(),
+    );
+
+final showPeerPointersProvider = StateProvider<bool>((ref) => false);
 
 /// Guests awaiting host approval (server's `party:waiting` broadcasts + the
 /// `waiting[]` field on a full `party:state` snapshot). Host-only UI concern.

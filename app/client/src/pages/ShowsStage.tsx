@@ -346,12 +346,13 @@ export default function ShowsStage() {
 
   const watch = (item: ShowStageItem) => {
     const chosen = tracks ? wireSelection(selected) : undefined
+    const resumePositionTicks = item.UserData?.PlaybackPositionTicks ?? null
     if (party.session) {
-      party.selectMedia(item.Id, chosen)
+      party.selectMedia(item.Id, { ...chosen, resumePositionTicks })
       navigate(`/party/${party.session.id}`)
       return
     }
-    navigate(`/party/new?${playbackQuery(item.Id, chosen)}`)
+    navigate(`/party/new?${playbackQuery(item.Id, chosen, resumePositionTicks)}`)
   }
 
   // Offline download, desktop shell only — a browser tab has nowhere to put the

@@ -19,6 +19,8 @@ class _FakeEngine implements SyncEngine {
   String? partyId;
   bool _canControl = false;
   final seeks = <Duration>[];
+  int plays = 0;
+  int pauses = 0;
 
   @override
   Future<void> attach({
@@ -42,10 +44,10 @@ class _FakeEngine implements SyncEngine {
   set canControl(bool value) => _canControl = value;
 
   @override
-  Future<void> requestPlay() async {}
+  Future<void> requestPlay() async => plays++;
 
   @override
-  Future<void> requestPause() async {}
+  Future<void> requestPause() async => pauses++;
 
   @override
   Future<void> requestSeek(Duration position) async => seeks.add(position);
@@ -63,16 +65,27 @@ class _FakeEngine implements SyncEngine {
   Stream<CatchUp> get catchUp => const Stream.empty();
 }
 
+class _WatchedApi extends MockApiClient {
+  @override
+  Future<LibraryItem> item(String id) async => LibraryItem(
+    id: id,
+    name: 'Watched',
+    type: 'Movie',
+    userData: const UserItemData(playbackPositionTicks: 45000000),
+  );
+}
+
 ({ProviderContainer container, _FakeEngine engine}) _boot({
   required String me,
   required String hostId,
   bool collaborative = false,
   String? watching,
+  MockApiClient? api,
 }) {
   final engine = _FakeEngine();
   final container = ProviderContainer(
     overrides: [
-      apiClientProvider.overrideWithValue(MockApiClient()),
+      apiClientProvider.overrideWithValue(api ?? MockApiClient()),
       socketClientProvider.overrideWithValue(MockSocketClient()),
       playerControllerProvider.overrideWithValue(MockPlayerController()),
       syncEngineProvider.overrideWithValue(engine),
@@ -101,7 +114,11 @@ class _FakeEngine implements SyncEngine {
   return (container: container, engine: engine);
 }
 
-void _watch(ProviderContainer container, String? itemId) {
+void _watch(
+  ProviderContainer container,
+  String? itemId, {
+  PlaybackInfo? playback,
+}) {
   final party = container.read(partyProvider)!;
   container
       .read(partyProvider.notifier)
@@ -111,6 +128,7 @@ void _watch(ProviderContainer container, String? itemId) {
           hostId: party.hostId,
           mediaItemId: itemId,
           collaborativeControl: party.collaborativeControl,
+          playback: playback,
         ),
       );
 }
@@ -167,34 +185,37 @@ void main() {
     expect(engine.detachCount, greaterThanOrEqualTo(1));
   });
 
-  test('a passenger cannot close, a driver can, and it closes the room', () async {
-    final guest = _boot(me: 'guest', hostId: 'host', watching: 'film-1');
-    addTearDown(guest.container.dispose);
-    final playback = guest.container.read(partyPlaybackProvider);
+  test(
+    'a passenger cannot close, a driver can, and it closes the room',
+    () async {
+      final guest = _boot(me: 'guest', hostId: 'host', watching: 'film-1');
+      addTearDown(guest.container.dispose);
+      final playback = guest.container.read(partyPlaybackProvider);
 
-    expect(playback.canClose, isFalse);
-    expect(playback.canDrive, isFalse);
-    await playback.close();
-    expect(
-      guest.container.read(nowPlayingProvider).isOpen,
-      isTrue,
-      reason: 'a guest closing the room\'s film must be a no-op',
-    );
+      expect(playback.canClose, isFalse);
+      expect(playback.canDrive, isFalse);
+      await playback.close();
+      expect(
+        guest.container.read(nowPlayingProvider).isOpen,
+        isTrue,
+        reason: 'a guest closing the room\'s film must be a no-op',
+      );
 
-    final host = _boot(me: 'host', hostId: 'host', watching: 'film-1');
-    addTearDown(host.container.dispose);
-    final hostPlayback = host.container.read(partyPlaybackProvider);
-    final socket =
-        host.container.read(socketClientProvider) as MockSocketClient;
+      final host = _boot(me: 'host', hostId: 'host', watching: 'film-1');
+      addTearDown(host.container.dispose);
+      final hostPlayback = host.container.read(partyPlaybackProvider);
+      final socket =
+          host.container.read(socketClientProvider) as MockSocketClient;
 
-    expect(hostPlayback.canClose, isTrue);
-    await hostPlayback.close();
-    // Not a local close: the room is told, and everyone's follow path does it.
-    expect(
-      socket.emitted.map((e) => e.$1),
-      contains(ClientEvent.partyBackToLobby),
-    );
-  });
+      expect(hostPlayback.canClose, isTrue);
+      await hostPlayback.close();
+      // Not a local close: the room is told, and everyone's follow path does it.
+      expect(
+        socket.emitted.map((e) => e.$1),
+        contains(ClientEvent.partyBackToLobby),
+      );
+    },
+  );
 
   test('collaborative control promotes a guest to driver', () {
     final (:container, :engine) = _boot(
@@ -213,6 +234,64 @@ void main() {
     expect(engine.seeks, [const Duration(minutes: 3)]);
   });
 
+  test('a driver sends the fresh resume position to the room', () async {
+    final (:container, :engine) = _boot(
+      me: 'host',
+      hostId: 'host',
+      api: _WatchedApi(),
+    );
+    addTearDown(container.dispose);
+
+    final outcome = await container
+        .read(partyPlaybackProvider)
+        .requestOpen(itemId: 'film-1');
+    final socket = container.read(socketClientProvider) as MockSocketClient;
+    final payload =
+        socket.emitted
+                .firstWhere((event) => event.$1 == ClientEvent.partySelectMedia)
+                .$2
+            as Map;
+
+    expect(outcome, OpenOutcome.sentToRoom);
+    expect(payload['resumePositionTicks'], 45000000);
+    expect(engine.attachCount, 0);
+  });
+
+  test('party playback forwards canonical track selections', () {
+    final (:container, :engine) = _boot(me: 'guest', hostId: 'host');
+    addTearDown(container.dispose);
+    _watch(
+      container,
+      'film-1',
+      playback: const PlaybackInfo(
+        selectedAudioIndex: 2,
+        selectedSubtitleIndex: 4,
+      ),
+    );
+
+    final now = container.read(nowPlayingProvider);
+    expect(now.audioStreamIndex, 2);
+    expect(now.subtitleStreamIndex, 4);
+    expect(engine.attachCount, 1);
+  });
+
+  test('party transport uses the sync engine for play and pause', () async {
+    final (:container, :engine) = _boot(
+      me: 'host',
+      hostId: 'host',
+      watching: 'film-1',
+    );
+    addTearDown(container.dispose);
+    final player = container.read(playerControllerProvider);
+    final playback = container.read(partyPlaybackProvider);
+
+    await playback.togglePlay();
+    expect(engine.plays, 1);
+    await player.play();
+    await playback.togglePlay();
+    expect(engine.pauses, 1);
+  });
+
   test('a passenger\'s seek is never published', () {
     final (:container, :engine) = _boot(
       me: 'guest',
@@ -221,7 +300,9 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    container.read(partyPlaybackProvider).reportSeek(const Duration(minutes: 3));
+    container
+        .read(partyPlaybackProvider)
+        .reportSeek(const Duration(minutes: 3));
     expect(engine.seeks, isEmpty);
   });
 
@@ -239,10 +320,7 @@ void main() {
     final playback = container.read(partyPlaybackProvider);
 
     expect(playback.role, PartyRole.solo);
-    expect(
-      await playback.requestOpen(itemId: 'film-9'),
-      OpenOutcome.opened,
-    );
+    expect(await playback.requestOpen(itemId: 'film-9'), OpenOutcome.opened);
     expect(container.read(nowPlayingProvider).itemId, 'film-9');
     expect(engine.attachCount, 0);
   });

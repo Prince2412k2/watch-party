@@ -23,10 +23,12 @@ export function WatchRoute({ path }: { path: string }) {
     const subtitleParam = qs.get('subtitleStreamIndex')
     const audioStreamIndex = audioParam == null ? NaN : Number(audioParam)
     const subtitleStreamIndex = subtitleParam == null ? NaN : Number(subtitleParam)
+    const resumePositionTicks = Number(qs.get('resumePositionTicks'))
     return <Party isNew itemId={qs.get('itemId') ?? undefined}
       initialTracks={{
         audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
         subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+        resumePositionTicks: Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0 ? resumePositionTicks : undefined,
       }} />
   }
   return <Party partyId={segment} />

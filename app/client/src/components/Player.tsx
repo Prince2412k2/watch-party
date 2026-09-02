@@ -28,7 +28,7 @@ import {
   type TimelinePreview,
 } from '../analog/player/index.ts'
 import { analogTokens } from '../design/analogTokens.ts'
-import type { SubtitlePreferences } from '../types.ts'
+import type { PeerPlayback, SubtitlePreferences } from '../types.ts'
 
 type LocalPhase = 'ready' | 'catchingUp' | 'buffering'
 type VoidCallback = () => void
@@ -40,14 +40,15 @@ interface MediaLike {
   play: () => Promise<void>; pause: () => void
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
+  error?: MediaError | null
 }
 interface HlsLevel { height?: number; width?: number; bitrate?: number }
 interface HlsTrack { id: number; name: string; lang?: string; url: string; default?: boolean }
-interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number; autoLevelEnabled?: boolean; audioTrack: number; audioTracks: HlsTrack[]; subtitleTrack: number; subtitleTracks: HlsTrack[]; on: (event: string, fn: (...a: unknown[]) => void) => void; off: (event: string, fn: (...a: unknown[]) => void) => void }
+interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number; autoLevelEnabled?: boolean; audioTrack: number; audioTracks: HlsTrack[]; subtitleTrack: number; subtitleTracks: HlsTrack[]; startLoad?: (position?: number) => void; on: (event: string, fn: (...a: unknown[]) => void) => void; off: (event: string, fn: (...a: unknown[]) => void) => void }
 interface QualityState { levels: HlsLevel[]; current: number; selected: number; choose: (index: number) => void }
 type TrackSelection = { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
 export interface PlayerTrack { index: number; displayTitle?: string; title?: string; language?: string; codec?: string; isDefault?: boolean; isExternal?: boolean; deliveryUrl?: string | null }
-export interface PlayerPlayback { mediaSourceId?: string | null; audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
+export interface PlayerPlayback { mediaSourceId?: string | null; playSessionId?: string | null; audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
 export interface PlayerProps {
   hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
   onToggleMic?: VoidCallback; onToggleCam?: VoidCallback; micOn?: boolean; camOn?: boolean
@@ -72,6 +73,7 @@ export interface PlayerProps {
   onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
   /** Playback state for the auto-hide rule "never hide while paused". */
   onPlayingChange?: (playing: boolean) => void
+  peerPlayback?: Record<string, PeerPlayback>; showPeerPointers?: boolean
 }
 
 // Fullscreen is owned by WatchView (Party.jsx) via a single `immersive` state and
@@ -166,6 +168,7 @@ export default function Player({
   visible = true, immersive, enterImmersive, exitImmersive,
   phone = false, camStripOpen, seekBridgeRef, onSetPlaybackTracks, subtitlePreferences, onSetSubtitlePreferences,
   onHoldChrome, onReleaseChrome, onPlayingChange,
+  peerPlayback, showPeerPointers,
 }: PlayerProps = {}) {
   const canControl = Boolean(isHost || collaborativeControl)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -240,6 +243,8 @@ export default function Player({
           seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
           userMuted={userMuted} onToggleMuted={toggleMuted} onLocalPhase={setLocalPhase} onPlayingChange={onPlayingChange} />
 
+        <PlaybackReporter mediaItemId={mediaItemId} playback={playback} />
+
         {userMuted && !hostMuted && (
           <UnmuteButton onClick={toggleMuted} />
         )}
@@ -259,10 +264,11 @@ export default function Player({
             micOn={micOn} camOn={camOn}
             onToggleMic={onToggleMic} onToggleCam={onToggleCam}
             hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
-            userMuted={userMuted} onToggleMuted={toggleMuted}
-            onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
-            visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
-          />
+             userMuted={userMuted} onToggleMuted={toggleMuted}
+             onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+             peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
+             visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
+           />
         ) : (
           <>
             {/* The primary transport on desktop: one big knob over the middle of
@@ -292,12 +298,46 @@ export default function Player({
               onToggleMic={onToggleMic} onToggleCam={onToggleCam}
               hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
               onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+              peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
             />
           </>
         )}
       </div>
     </VPlayer.Provider>
   )
+}
+
+function PlaybackReporter({ mediaItemId, playback }: { mediaItemId?: string; playback?: PlayerPlayback }) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
+
+  useEffect(() => {
+    if (!media || !mediaItemId) return
+    const body = () => ({
+      itemId: mediaItemId,
+      mediaSourceId: playback?.mediaSourceId,
+      playSessionId: playback?.playSessionId,
+      positionTicks: Math.round(Math.max(0, media.currentTime || 0) * 10_000_000),
+      isPaused: media.paused,
+    })
+    const send = (path: string, keepalive = false) => {
+      void fetch(`/api/playback/${path}`, {
+        method: 'POST', credentials: 'include', keepalive,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body()),
+      }).catch(() => {})
+    }
+    const onPlay = () => send('started')
+    media.addEventListener('play', onPlay)
+    if (!media.paused) onPlay()
+    const progress = setInterval(() => send('progress'), 10_000)
+    return () => {
+      clearInterval(progress)
+      media.removeEventListener('play', onPlay)
+      send('stopped', true)
+    }
+  }, [media, mediaItemId, playback?.mediaSourceId, playback?.playSessionId])
+
+  return null
 }
 
 // ── Native (Tauri) branch — opaque video-stage + docked non-video chrome ────
@@ -518,13 +558,67 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
 
   const {
     canControl, applyingRef, holdApplying, releaseApplying, notifyUserSeeking, reportStall,
-    requestPlay, requestPause, requestSeek, localPhase,
+    requestPlay, requestPause, requestSeek, reportPlayback, localPhase,
     TICKS_PER_SECOND,
   } = useSyncPlay({ playerRef: mediaRef as unknown as RefObject<HTMLVideoElement | null>, isHost, collaborativeControl, syncMode, onStruggle, onAutoplayBlocked })
 
   // Surface localPhase to Player (MobileBottomBar's transport button needs it
   // and is a sibling of this component, not a descendant).
   useEffect(() => { onLocalPhase?.(localPhase) }, [localPhase, onLocalPhase])
+
+  const downloadedChunks = useRef(0)
+  const [playbackIssue, setPlaybackIssue] = useState('')
+  useEffect(() => {
+    if (!media) return
+    let hls: HlsLike | undefined
+    let attachTimer: ReturnType<typeof setInterval> | undefined
+    const onFragmentBuffered = () => { downloadedChunks.current += 1 }
+    const onHlsError = (...args: unknown[]) => {
+      const details = args[1] as { fatal?: boolean; type?: string; details?: string } | undefined
+      if (!details?.fatal) return
+      const networkFailure = details.type?.toLowerCase().includes('network') || details.details?.toLowerCase().includes('network')
+      setPlaybackIssue(networkFailure ? 'Network connection interrupted. Retrying…' : 'The video stream could not be decoded.')
+      if (networkFailure) hls?.startLoad?.(media.currentTime || 0)
+    }
+    const attach = () => {
+      const engine = media.engine
+      if (!engine || engine === hls) return Boolean(hls)
+      hls?.off('hlsFragBuffered', onFragmentBuffered)
+      hls?.off('hlsError', onHlsError)
+      hls = engine
+      hls.on('hlsFragBuffered', onFragmentBuffered)
+      hls.on('hlsError', onHlsError)
+      return true
+    }
+    if (!attach()) attachTimer = setInterval(attach, 100)
+    const reportTimer = setInterval(() => {
+      attach()
+      reportPlayback(media.currentTime || 0, media.playbackRate || 1, downloadedChunks.current)
+    }, 1000)
+    return () => {
+      if (attachTimer) clearInterval(attachTimer)
+      clearInterval(reportTimer)
+      hls?.off('hlsFragBuffered', onFragmentBuffered)
+      hls?.off('hlsError', onHlsError)
+    }
+  }, [media, reportPlayback])
+
+  useEffect(() => {
+    if (!media) return
+    const onError = () => {
+      const code = media.error?.code
+      setPlaybackIssue(code === MediaError.MEDIA_ERR_NETWORK || !navigator.onLine
+        ? 'Network connection interrupted. Retrying…'
+        : 'The video stream could not be played.')
+    }
+    const clear = () => setPlaybackIssue('')
+    media.addEventListener('error', onError)
+    media.addEventListener('playing', clear)
+    return () => {
+      media.removeEventListener('error', onError)
+      media.removeEventListener('playing', clear)
+    }
+  }, [media])
 
   const seekTimer = useRef<number | null>(null)
   const transportIntent = useRef(createTransportIntent())
@@ -730,7 +824,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       }
       // We handled it — stop the skin's built-in shortcut from also firing
       // (otherwise its space/arrow handler double-toggles and cancels ours).
-      e.stopPropagation()
+      e.stopImmediatePropagation()
     }
     // Capture phase so we run before the vidstack skin's own key handler.
     window.addEventListener('keydown', onKey, true)
@@ -878,7 +972,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     }
   }, [media, canControl, applyingRef, notifyUserSeeking, requestPlay, requestPause, requestSeek, TICKS_PER_SECOND])
 
-  if (!buffering && !switchingQuality) return null
+  if (!buffering && !switchingQuality && !playbackIssue) return null
   // Neutral spinner: 2px ring, white top segment, transparent rest. Flat
   // black-alpha backdrop, no blur, no color.
   return (
@@ -892,7 +986,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
           border: '2px solid rgba(255,255,255,.14)', borderTopColor: '#f4f4f5',
           animation: 'spin .9s linear infinite',
         }} />
-        <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(244,244,245,.62)' }}>{switchingQuality ? 'Switching quality…' : 'Catching up…'}</span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: 'rgba(244,244,245,.62)' }}>{playbackIssue || (switchingQuality ? 'Switching quality…' : 'Catching up…')}</span>
       </div>
     </div>
   )
@@ -1187,18 +1281,25 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
     const video = videoRef?.current
     if (!video || !mediaItemId || !stream.isExternal) return null
     let trackElement = externalTracks.current.get(stream.index)
-    if (trackElement) return trackElement
+    const baseUrl = subtitleContentUrl(mediaItemId, stream.index, playback?.mediaSourceId)
+    const version = encodeURIComponent(stream.deliveryUrl || String(playback?.subtitleStreams?.length ?? 0))
+    const src = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}v=${version}`
+    if (trackElement?.src.endsWith(src)) return trackElement
+    if (trackElement) {
+      trackElement.remove()
+      externalTracks.current.delete(stream.index)
+    }
     trackElement = document.createElement('track')
     trackElement.kind = 'subtitles'
     trackElement.label = stream.displayTitle || stream.title || stream.language || `Subtitle ${stream.index}`
     if (stream.language) trackElement.srclang = stream.language
-    trackElement.src = subtitleContentUrl(mediaItemId, stream.index, playback?.mediaSourceId)
+    trackElement.src = src
     trackElement.dataset.watchpartySubtitle = String(stream.index)
     trackElement.addEventListener('load', () => applyCuePreferences(trackElement!.track, preferencesRef.current))
     video.append(trackElement)
     externalTracks.current.set(stream.index, trackElement)
     return trackElement
-  }, [mediaItemId, playback?.mediaSourceId, videoRef])
+  }, [mediaItemId, playback?.mediaSourceId, playback?.subtitleStreams?.length, videoRef])
 
   useEffect(() => {
     for (const stream of playback?.subtitleStreams ?? []) {
@@ -1391,13 +1492,23 @@ interface PlayerTimelineProps {
   trailing?: ReactNode
   onHoldChrome?: (reason: string) => void
   onReleaseChrome?: (reason: string) => void
+  peerPlayback?: Record<string, PeerPlayback>
+  showPeerPointers?: boolean
 }
-function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, labels, trailing, onHoldChrome, onReleaseChrome }: PlayerTimelineProps = {}) {
+function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, labels, trailing, onHoldChrome, onReleaseChrome, peerPlayback, showPeerPointers }: PlayerTimelineProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const { cur, dur, ranges } = useMediaClock(media)
   const preferences = useDisplayPreferences()
   const [manifest, setManifest] = useState<TrickplayManifest | null>(null)
   const [failedSheet, setFailedSheet] = useState<number | null>(null)
+  const peerMarkers = showPeerPointers
+    ? Object.values(peerPlayback ?? {}).filter(peer => Date.now() - peer.at < 5000).map(peer => ({
+      id: peer.userId,
+      name: peer.name || peer.userId,
+      positionSec: peer.position,
+      downloadedChunks: peer.downloadedChunks,
+    }))
+    : []
 
   useEffect(() => {
     setManifest(null)
@@ -1456,6 +1567,7 @@ function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, labels, traili
       trailing={trailing}
       preferences={preferences}
       ariaLabel="Playback progress"
+      peerMarkers={peerMarkers}
     />
   )
 }
@@ -1528,7 +1640,7 @@ function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal,
 // Play/pause is NOT here: on desktop it's the big CenterTransport knob over the
 // middle of the frame. Guests get no transport at all, and the "Host controls
 // playback" hint sits in the left cluster instead.
-interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds' | 'onHoldChrome' | 'onReleaseChrome'> {
+interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds' | 'onHoldChrome' | 'onReleaseChrome' | 'peerPlayback' | 'showPeerPointers'> {
   mediaElementRef?: RefObject<HTMLVideoElement | null>; canControl?: boolean; canManageMedia?: boolean; userMuted?: boolean; onToggleMuted?: VoidCallback; localPhase?: LocalPhase
 }
 function DesktopControlBar({
@@ -1537,6 +1649,7 @@ function DesktopControlBar({
   visible, canControl, canManageMedia, immersive, enterImmersive, exitImmersive,
   userMuted, onToggleMuted, micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds,
   onHoldChrome, onReleaseChrome,
+  peerPlayback, showPeerPointers,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
@@ -1573,6 +1686,7 @@ function DesktopControlBar({
           <PlayerTimeline
             canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId}
             onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+            peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
           />
         </div>
 
@@ -1649,6 +1763,7 @@ function MobileBottomBar({
   canControl, localPhase, micOn, camOn, onToggleMic, onToggleCam,
   hideAllFeeds, onToggleHideAllFeeds, visible, immersive, enterImmersive, exitImmersive,
   userMuted, onToggleMuted, onHoldChrome, onReleaseChrome,
+  peerPlayback, showPeerPointers,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
@@ -1728,6 +1843,7 @@ function MobileBottomBar({
             canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId}
             labels
             onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
+            peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
             trailing={
               <>
                 {!canControl && <span style={{ fontSize: 10.5, color: 'rgba(244,244,245,.36)', flexShrink: 0 }}>Host controls</span>}

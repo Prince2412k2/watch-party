@@ -85,6 +85,34 @@ class _SpyController implements PlayerController {
   bool get isBufferingNow => false;
 }
 
+class _MutableSubtitleApi extends MockApiClient {
+  PlaybackInfo info = const PlaybackInfo(
+    subtitleStreams: [
+      PlaybackTrack(index: 4, title: 'Uploaded', isExternal: true),
+    ],
+  );
+  String content = '00:00:01.000 --> 00:00:03.000\nFirst';
+  int contentCalls = 0;
+
+  @override
+  Future<PlaybackInfo> playbackInfo(
+    String itemId, {
+    String? mediaSourceId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) async => info;
+
+  @override
+  Future<String> subtitleContent(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  }) async {
+    contentCalls++;
+    return content;
+  }
+}
+
 void main() {
   test(
     'Jellyfin global indices map by metadata then preserve subtitle off',
@@ -300,6 +328,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('externalSubtitleOverlay')), findsNothing);
     expect(c.subtitles, [null]);
+  });
+
+  testWidgets('subtitle revision replaces same-index cached content', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final api = _MutableSubtitleApi();
+
+    Widget chrome(int revision) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(
+        body: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: api,
+          preferredSubtitleStreamIndex: 4,
+          subtitleRevision: revision,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(chrome(1));
+    await tester.pumpAndSettle();
+    c.emitPosition(const Duration(seconds: 2));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('First'), findsOneWidget);
+
+    api.content = '00:00:01.000 --> 00:00:03.000\nSecond';
+    await tester.pumpWidget(chrome(2));
+    await tester.pumpAndSettle();
+    c.emitPosition(const Duration(seconds: 2));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Second'), findsOneWidget);
+    expect(api.contentCalls, 2);
   });
 
   testWidgets(

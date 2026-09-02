@@ -58,6 +58,7 @@ class WatchHistoryReporter {
   /// what is playing, NOT its position — the position is read from the player
   /// at the moment of each report, so a report is never stale.
   PlaybackReport? _session;
+  bool _started = false;
 
   /// The last position actually sent, so a stop that follows a tick with no
   /// movement between them does not spend a request saying the same thing.
@@ -89,10 +90,9 @@ class WatchHistoryReporter {
       mediaSourceId: now.mediaSourceId,
       playSessionId: PlaybackReport.newSessionId(),
     );
+    _started = false;
     _lastSentTicks = null;
-    await _send(PlaybackReportKind.started, _session!);
     _listen();
-    _startTicker();
   }
 
   void _listen() {
@@ -101,20 +101,34 @@ class WatchHistoryReporter {
     // A pause is worth a report on its own: it is the most common way a viewer
     // stops for the night, and the position at that moment is the one they will
     // come back to.
-    _playing = _player.playing.listen((playing) {
-      if (playing) {
-        _startTicker();
-      } else {
-        _ticker?.cancel();
-      }
-      unawaited(_report(isPaused: !playing));
-    });
+    _playing = _player.playing.listen((playing) => unawaited(_onPlaying(playing)));
     // Reaching the end is the whole point of the played flag. Reported as a
     // STOP at the final position, which is what tips Jellyfin past its
     // watched threshold.
     _completed = _player.completed.listen((done) {
       if (done) unawaited(close());
     });
+  }
+
+  Future<void> _onPlaying(bool playing) async {
+    final session = _session;
+    if (session == null) return;
+    if (playing) {
+      if (!_started) {
+        _started = true;
+        final ticks = PlaybackReport.ticksOf(_player.positionNow);
+        _lastSentTicks = ticks;
+        await _send(
+          PlaybackReportKind.started,
+          session.copyWith(positionTicks: ticks),
+        );
+        if (_session != session) return;
+      }
+      _startTicker();
+      return;
+    }
+    _ticker?.cancel();
+    if (_started) await _report(isPaused: true);
   }
 
   void _startTicker() {
@@ -148,7 +162,9 @@ class WatchHistoryReporter {
     await _completed?.cancel();
     _playing = null;
     _completed = null;
-    if (session == null) return;
+    final started = _started;
+    _started = false;
+    if (session == null || !started) return;
 
     // Forced: this is the report Jellyfin decides the resume point from, so it
     // goes even when the position has not moved since the last tick.

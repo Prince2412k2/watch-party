@@ -35,6 +35,21 @@ class TimelineRange {
   String toString() => 'TimelineRange($start, $end)';
 }
 
+@immutable
+class TimelinePeerPosition {
+  const TimelinePeerPosition({
+    required this.id,
+    required this.label,
+    required this.position,
+    required this.downloadedChunks,
+  });
+
+  final String id;
+  final String label;
+  final Duration position;
+  final int downloadedChunks;
+}
+
 /// Turn normalised [ranges] into rects inside [track], keeping a visible
 /// [gapPx] between spans that do not touch.
 ///
@@ -105,6 +120,7 @@ class AnalogTimeline extends StatefulWidget {
     required this.onHoverPreview,
     required this.onHoverEnd,
     this.cached = const [],
+    this.peers = const [],
     this.onScrubbingChanged,
     this.focusNode,
   });
@@ -123,6 +139,7 @@ class AnalogTimeline extends StatefulWidget {
 
   /// Cached ("downloaded") spans.
   final List<TimelineRange> cached;
+  final List<TimelinePeerPosition> peers;
 
   /// Raised for the length of a drag so the caller can pin the chrome open.
   final ValueChanged<bool>? onScrubbingChanged;
@@ -225,19 +242,76 @@ class _AnalogTimelineState extends State<AnalogTimeline> {
                 },
           // The hit box is AnalogHairline.hitPx tall at every state, so growing
           // the visible line from idlePx to activePx never moves the row.
-          child: SizedBox(
-            height: AnalogHairline.hitPx,
-            width: double.infinity,
-            child: CustomPaint(
-              painter: AnalogTimelinePainter(
-                fraction: _fraction,
-                cached: widget.cached,
-                active: active,
-                focused: _focused && !_hovering && !_dragging,
-                showHandle: active,
+          child: LayoutBuilder(
+            builder: (context, constraints) => SizedBox(
+              height: AnalogHairline.hitPx,
+              width: double.infinity,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: AnalogTimelinePainter(
+                        fraction: _fraction,
+                        cached: widget.cached,
+                        active: active,
+                        focused: _focused && !_hovering && !_dragging,
+                        showHandle: active,
+                      ),
+                    ),
+                  ),
+                  for (var i = 0; i < widget.peers.length; i++)
+                    _PeerMarker(
+                      peer: widget.peers[i],
+                      index: i,
+                      width: constraints.maxWidth,
+                      duration: widget.duration,
+                    ),
+                ],
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PeerMarker extends StatelessWidget {
+  const _PeerMarker({
+    required this.peer,
+    required this.index,
+    required this.width,
+    required this.duration,
+  });
+
+  final TimelinePeerPosition peer;
+  final int index;
+  final double width;
+  final Duration duration;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = duration.inMilliseconds;
+    final fraction = total <= 0
+        ? 0.0
+        : (peer.position.inMilliseconds / total).clamp(0.0, 1.0);
+    final left = (fraction * width - 4)
+        .clamp(0.0, math.max(0.0, width - 8))
+        .toDouble();
+    final color = HSVColor.fromAHSV(1, (index * 83 + 28) % 360, .7, .85).toColor();
+    return Positioned(
+      left: left,
+      top: (AnalogHairline.hitPx - 8) / 2,
+      child: Tooltip(
+        message: '${peer.label} · ${peer.downloadedChunks} downloaded chunks',
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(color: AnalogColor.stageVoid, width: 2),
+          ),
+          child: const SizedBox(width: 8, height: 8),
         ),
       ),
     );

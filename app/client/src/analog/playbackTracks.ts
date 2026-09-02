@@ -93,8 +93,9 @@ export const wireSelection = (selection: TrackSelection): TrackSelection => ({
  * reverse as omitting the audio index. A selection that was never made carries
  * nothing at all, which is what leaves the player its own defaulting.
  */
-export function playbackQuery(itemId: string, selection?: TrackSelection): URLSearchParams {
+export function playbackQuery(itemId: string, selection?: TrackSelection, resumePositionTicks?: number | null): URLSearchParams {
   const query = new URLSearchParams({ itemId })
+  if (typeof resumePositionTicks === 'number' && resumePositionTicks > 0) query.set('resumePositionTicks', String(resumePositionTicks))
   if (!selection) return query
   if (Number.isInteger(selection.audioStreamIndex)) {
     query.set('audioStreamIndex', String(selection.audioStreamIndex))

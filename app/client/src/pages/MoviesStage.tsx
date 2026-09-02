@@ -47,6 +47,7 @@ import {
   type PlaybackTracks,
   type TrackSelection,
 } from '../analog/playbackTracks.ts'
+import { resumeTicks } from '../analog/movieDetails.ts'
 
 /**
  * Movies, rebuilt to the owner's revised model.
@@ -297,12 +298,14 @@ export default function MoviesStage() {
 
   const watch = (item: StageItem) => {
     const chosen = tracks ? wireSelection(selected) : undefined
+    const resumePositionTicks = resumeTicks(item)
     if (party.session) {
-      party.selectMedia(item.Id, chosen)
+      party.selectMedia(item.Id, { ...chosen, resumePositionTicks })
       navigate(`/party/${party.session.id}`)
       return
     }
     const query = new URLSearchParams({ itemId: item.Id })
+    if (resumePositionTicks) query.set('resumePositionTicks', String(resumePositionTicks))
     if (Number.isInteger(chosen?.audioStreamIndex)) query.set('audioStreamIndex', String(chosen!.audioStreamIndex))
     if (Number.isInteger(chosen?.subtitleStreamIndex)) {
       query.set('subtitleStreamIndex', String(chosen!.subtitleStreamIndex))

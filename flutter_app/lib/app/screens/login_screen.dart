@@ -29,11 +29,15 @@ class LoginScreen extends ConsumerStatefulWidget {
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _user = TextEditingController();
   final _pass = TextEditingController();
+  final _userFocus = FocusNode(debugLabel: 'login username');
+  final _passFocus = FocusNode(debugLabel: 'login password');
 
   @override
   void dispose() {
     _user.dispose();
     _pass.dispose();
+    _userFocus.dispose();
+    _passFocus.dispose();
     super.dispose();
   }
 
@@ -78,6 +82,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 final form = _LoginForm(
                   user: _user,
                   pass: _pass,
+                  userFocus: _userFocus,
+                  passFocus: _passFocus,
                   loading: auth.loading,
                   error: auth.error,
                   onSubmit: _submit,
@@ -169,6 +175,8 @@ class _LoginForm extends StatelessWidget {
   const _LoginForm({
     required this.user,
     required this.pass,
+    required this.userFocus,
+    required this.passFocus,
     required this.loading,
     required this.error,
     required this.onSubmit,
@@ -176,6 +184,8 @@ class _LoginForm extends StatelessWidget {
 
   final TextEditingController user;
   final TextEditingController pass;
+  final FocusNode userFocus;
+  final FocusNode passFocus;
   final bool loading;
   final String? error;
   final VoidCallback onSubmit;
@@ -211,9 +221,11 @@ class _LoginForm extends StatelessWidget {
           caption: 'Username',
           child: AppTextField(
             controller: user,
+            focusNode: userFocus,
             autofocus: true,
             enabled: !loading,
-            onSubmitted: (_) => onSubmit(),
+            textInputAction: TextInputAction.next,
+            onSubmitted: (_) => passFocus.requestFocus(),
           ),
         ),
         const SizedBox(height: AppSpacing.lg),
@@ -221,8 +233,10 @@ class _LoginForm extends StatelessWidget {
           caption: 'Password',
           child: AppTextField(
             controller: pass,
+            focusNode: passFocus,
             obscureText: true,
             enabled: !loading,
+            textInputAction: TextInputAction.done,
             onSubmitted: (_) => onSubmit(),
           ),
         ),

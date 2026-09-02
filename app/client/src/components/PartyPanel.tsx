@@ -201,7 +201,7 @@ function Segmented({ value, options, onChange, tap }: {
 }
 
 const SYNC_OPTIONS = [
-  { id: 'hopping', label: 'Hopping', hint: 'Host never waits; slow viewers catch up' },
+  { id: 'hopping', label: 'Tailing', hint: 'Playback continues while slow viewers catch up' },
   { id: 'dragging', label: 'Dragging', hint: 'Everyone waits for the slowest viewer' },
 ]
 
@@ -359,7 +359,7 @@ export default function PartyPanel({
   hideSelf?: boolean
   onToggleHideSelf?: () => void
 }) {
-  const { session, role, kickUser, transferHost, setCollaborative, setSyncMode, backToLobby, endParty } = useParty()
+  const { session, role, kickUser, transferHost, setCollaborative, setSyncMode, backToLobby, endParty, showPeerPointers, togglePeerPointers } = useParty()
   const short = useMatch(SHORT)
   const wide = useMatch(WIDE)
   const roomy = useMatch(ROOMY)
@@ -377,7 +377,7 @@ export default function PartyPanel({
   const guests = session.guests ?? []
   const participantCount = 1 + guests.length
   const joinUrl = `${window.location.origin}/party/${session.id}`
-  const syncMode = session.syncMode ?? 'hopping'
+  const syncMode = session.syncMode ?? 'dragging'
 
   const mode = panelMode(short, wide, phone)
   const dense = short
@@ -421,7 +421,8 @@ export default function PartyPanel({
   const showSync = isHost && watching
   const showHideSelf = watching && !!onToggleHideSelf
   const showLayout = watching && !!onToggleLayout && !phone
-  const hasControls = showCollab || showSync || showHideSelf || showLayout
+  const showPeerControl = watching
+  const hasControls = showCollab || showSync || showHideSelf || showLayout || showPeerControl
 
   const controls = hasControls ? (
     <Pane key="controls" label="Controls" gap={gap} divided={mode === 'stack'}>
@@ -440,6 +441,14 @@ export default function PartyPanel({
         />
       ) : null}
       {showSync ? <SyncControl value={syncMode} onChange={setSyncMode} tap={tap} dense={dense} /> : null}
+      {showPeerControl ? (
+        <SettingRow
+          label="Viewer pointers"
+          hint="Show everyone’s timeline position and downloaded chunks"
+          showHint={!dense} row={tap}
+          control={<Switch checked={showPeerPointers} tap={tap} label="Viewer pointers" onChange={togglePeerPointers} />}
+        />
+      ) : null}
       {showHideSelf || showLayout ? (
         <div style={{
           display: 'flex', flexDirection: 'column', gap: dense ? 4 : 8,

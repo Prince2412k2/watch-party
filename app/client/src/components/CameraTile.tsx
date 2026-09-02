@@ -63,7 +63,7 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
     }}>
       {/* Live video always wins; the avatar is what a camera-off tile shows. */}
       {hasVideo
-        ? <video ref={videoRef} autoPlay muted={isLocal} playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ? <video ref={videoRef} autoPlay muted={isLocal} playsInline style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
         : (
           <div style={{
             width: '100%', height: '100%',

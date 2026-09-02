@@ -90,6 +90,7 @@ abstract final class ServerEvent {
   static const syncSchedule = 'sync:schedule';
   static const syncHostGone = 'sync:host_gone';
   static const syncStallFallback = 'sync:stall_fallback';
+  static const syncPeerReport = 'sync:peer_report';
   static const partyState = 'party:state';
   static const partyWaiting = 'party:waiting';
   static const partyApproved = 'party:approved';

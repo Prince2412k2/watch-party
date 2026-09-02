@@ -200,6 +200,17 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     await emitAck(hostBackup, 'chat:message', { text: 'approved' })
     await Promise.all([joinedOne, joinedTwo])
 
+    const peerReport = nextMatching(guestTwo, 'sync:peer_report', report => report.position === 12.5)
+    hostBackup.emit('sync:report', { position: 12.5, rate: 1.01, downloadedChunks: 7 })
+    const report = await peerReport
+    assert.equal(report.userId, firstParty.session.hostId)
+    assert.equal(report.name, 'Host One')
+    assert.equal(report.position, 12.5)
+    assert.equal(report.drift, 0)
+    assert.equal(report.rate, 1.01)
+    assert.equal(report.downloadedChunks, 7)
+    assert.equal(Number.isFinite(report.at), true)
+
     guestOne.disconnect()
     const remainingGuest = nextMatching(guestTwo, 'chat:message', message => message.text === 'guest-remains')
     await emitAck(hostBackup, 'chat:message', { text: 'guest-remains' })

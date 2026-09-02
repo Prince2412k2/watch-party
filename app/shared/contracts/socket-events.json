@@ -39,6 +39,7 @@
     "party:state",
     "party:waiting",
     "sync:host_gone",
+    "sync:peer_report",
     "sync:schedule",
     "sync:stall_fallback",
     "user:joined",

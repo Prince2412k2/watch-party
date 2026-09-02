@@ -37,7 +37,18 @@ export interface PartyUser {
   avatar?: AvatarConfig | null
 }
 
+export interface PeerPlayback {
+  userId: string
+  name?: string
+  position: number
+  drift: number
+  rate: number
+  downloadedChunks: number
+  at: number
+}
+
 export interface PartyPlayback {
+  playSessionId?: string | null
   audioStreams?: PlaybackTrack[]
   subtitleStreams?: PlaybackTrack[]
   selectedAudioIndex?: number | null
@@ -70,6 +81,7 @@ export interface PartySession {
   mediaItemId?: string | null
   mediaSourceId?: string | null
   subtitlePreferences?: SubtitlePreferences
+  schedule?: { positionTicks: number; t0: number; phase: string; version?: number }
 }
 
 export interface ToastRecord {
@@ -99,7 +111,9 @@ export interface PartyContextValue {
   chatRipple: number
   alertMode: 'focus' | 'on' | 'mute'
   toasts: ToastRecord[]
-  createParty: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => Promise<string>
+  peerPlayback: Record<string, PeerPlayback>
+  showPeerPointers: boolean
+  createParty: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => Promise<string>
   createRoom: () => Promise<string>
   joinParty: (partyId: string) => Promise<string>
   /**
@@ -108,7 +122,7 @@ export interface PartyContextValue {
    * previous room's session/role/messages can't bleed into the new one.
    */
   leaveParty: () => void
-  selectMedia: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
+  selectMedia: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => void
   backToLobby: () => void
   approveUser: (userId: string) => void
   rejectUser: (userId: string) => void
@@ -130,5 +144,5 @@ export interface PartyContextValue {
   openChat: (focus?: boolean) => void
   closeChat: () => void
   setAlertMode: (mode: 'focus' | 'on' | 'mute') => void
+  togglePeerPointers: () => void
 }
-

@@ -44,7 +44,7 @@ class SyncEngineImpl implements SyncEngine {
   /// True when the local user is the party host (party.hostId == me). Distinct
   /// from [canControl] (see the `_isHost` note). E5.2 sets it from party state.
   bool isHost = false;
-  String _mode = 'hopping';
+  String _mode = 'dragging';
 
   // ── Guards / refs (mirrors the useRef state in the web hook) ─────────────
   int _applying = 0; // reference-counted applying-guard (see markApplying)
@@ -62,7 +62,8 @@ class SyncEngineImpl implements SyncEngine {
   /// player, and calls `play()` — which is exactly the state a fresh pause
   /// leaves behind. Cleared by the next schedule from the server, whatever it
   /// says: at that point the timeline, not this flag, is the authority.
-  bool _pausePending = false;
+  String? _pendingCommand;
+  int _pendingUntilMs = 0;
   int? _lastMediaGen;
   int _lastReportMs = 0;
   int _lastHardSeekAtMs = 0;
@@ -70,7 +71,11 @@ class SyncEngineImpl implements SyncEngine {
   Timer? _controlLoop;
   final List<void Function()> _unsubs = [];
   StreamSubscription<bool>? _playingSub;
+  StreamSubscription<bool>? _bufferingSub;
+  bool? _lastStalled;
   bool _disposed = false;
+
+  int Function()? downloadedChunks;
 
   final _scheduleCtrl = StreamController<SyncSchedule>.broadcast();
   final _driftCtrl = StreamController<Duration>.broadcast();
@@ -112,6 +117,7 @@ class SyncEngineImpl implements SyncEngine {
     // Author play/pause from the player's own transitions (the Dart analog of
     // the web media element's 'play'/'pause' events wired to request*).
     _playingSub = player.playing.listen(_onPlayingChanged);
+    _bufferingSub = player.buffering.listen(_onBufferingChanged);
 
     // Ask the server for the current timeline once we're listening (avoids the
     // race where a pushed schedule arrives before we subscribed).
@@ -131,6 +137,15 @@ class SyncEngineImpl implements SyncEngine {
     _unsubs.clear();
     await _playingSub?.cancel();
     _playingSub = null;
+    await _bufferingSub?.cancel();
+    _bufferingSub = null;
+    if (_lastStalled == true) {
+      _socket?.emit(ClientEvent.syncStall, {
+        'stalled': false,
+        'mediaGeneration': _schedule?.mediaGeneration,
+      });
+    }
+    _lastStalled = null;
     _userSeekTimer?.cancel();
     _userSeekTimer = null;
     for (final t in _applyingTimers) {
@@ -145,7 +160,8 @@ class SyncEngineImpl implements SyncEngine {
     _socket = null;
     _schedule = null;
     _lastAppliedVersion = double.negativeInfinity;
-    _pausePending = false;
+    _pendingCommand = null;
+    _pendingUntilMs = 0;
     _lastMediaGen = null;
   }
 
@@ -191,7 +207,12 @@ class SyncEngineImpl implements SyncEngine {
     _schedule = s;
     _userSeeking = false;
     _userSeekTimer?.cancel();
-    _pausePending = false;
+    final pending = _pendingCommand;
+    if ((pending == 'play' && s.phase == 'playing') ||
+        (pending == 'pause' && s.phase != 'playing')) {
+      _pendingCommand = null;
+      _pendingUntilMs = 0;
+    }
     _scheduleCtrl.add(s);
 
     _kickHostPlay();
@@ -218,6 +239,15 @@ class SyncEngineImpl implements SyncEngine {
     }
   }
 
+  void _onBufferingChanged(bool stalled) {
+    if (_lastStalled == stalled) return;
+    _lastStalled = stalled;
+    _socket?.emit(ClientEvent.syncStall, {
+      'stalled': stalled,
+      'mediaGeneration': _schedule?.mediaGeneration,
+    });
+  }
+
   // Idempotently (re)start a hopping host's own player. decideSyncAction returns
   // null for a hopping host, so this is the only thing that honors a 'playing'
   // schedule which arrived before playback started (e.g. party:selectMedia
@@ -226,7 +256,7 @@ class SyncEngineImpl implements SyncEngine {
     final p = _player;
     if (p == null) return;
     if (!(_isHost &&
-        !_pausePending &&
+        _pendingCommand != 'pause' &&
         _mode != 'dragging' &&
         _schedule?.phase == 'playing' &&
         !p.isPlayingNow)) {
@@ -243,6 +273,11 @@ class SyncEngineImpl implements SyncEngine {
     // A locally-authored command is in flight and hasn't round-tripped yet —
     // scheduleRef is still stale. Skip so our own change isn't fought.
     if (_applying > 0) return;
+    if (_pendingCommand != null) {
+      if (_pendingUntilMs > DateTime.now().millisecondsSinceEpoch) return;
+      _pendingCommand = null;
+      _pendingUntilMs = 0;
+    }
 
     _kickHostPlay();
 
@@ -257,7 +292,11 @@ class SyncEngineImpl implements SyncEngine {
       userSeeking: _userSeeking,
       suppressHardSeek: _nowMs() - _lastHardSeekAtMs < hardSeekCooldownMs,
     );
-    if (intent == null) return;
+    if (intent == null) {
+      _reportPlayback(p, null);
+      return;
+    }
+    _reportPlayback(p, intent.drift);
 
     // Guest hopping hard catch-up. On non-HLS media_kit this is a guarded
     // seek(+resume); the cooldown prevents re-entry from stale drift.
@@ -301,16 +340,19 @@ class SyncEngineImpl implements SyncEngine {
       _emitCatchUp(
         CatchUp(rate: intent.rate ?? 1, drift: _sec(intent.drift!)),
       );
-      final now = _nowMs();
-      if (now - _lastReportMs >= _reportMs) {
-        _lastReportMs = now.toInt();
-        _socket?.emit(ClientEvent.syncReport, {
-          'position': p.positionNow.inMilliseconds / 1000.0,
-          'drift': intent.drift,
-          'rate': intent.rate ?? 1,
-        });
-      }
     }
+  }
+
+  void _reportPlayback(PlayerController player, double? drift) {
+    final now = _nowMs();
+    if (now - _lastReportMs < _reportMs) return;
+    _lastReportMs = now.toInt();
+    _socket?.emit(ClientEvent.syncReport, {
+      'position': player.positionNow.inMilliseconds / 1000.0,
+      'drift': drift ?? 0,
+      'rate': _catchUp.rate,
+      'downloadedChunks': downloadedChunks?.call() ?? 0,
+    });
   }
 
   /// Only on a CHANGE. The correction loop runs every CONTROL_MS, and pushing
@@ -372,7 +414,8 @@ class SyncEngineImpl implements SyncEngine {
   @override
   Future<void> requestPlay() async {
     if (!_canControl) return;
-    _pausePending = false;
+    _pendingCommand = 'play';
+    _pendingUntilMs = DateTime.now().millisecondsSinceEpoch + 2000;
     final p = _player;
     if (p != null && !p.isPlayingNow) {
       _markApplying();
@@ -384,7 +427,8 @@ class SyncEngineImpl implements SyncEngine {
   @override
   Future<void> requestPause() async {
     if (!_canControl) return;
-    _pausePending = true;
+    _pendingCommand = 'pause';
+    _pendingUntilMs = DateTime.now().millisecondsSinceEpoch + 2000;
     final p = _player;
     if (p != null && p.isPlayingNow) {
       _markApplying();

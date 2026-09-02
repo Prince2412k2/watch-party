@@ -64,6 +64,7 @@ export interface AnalogTimelineProps {
   trailing?: ReactNode
   preferences?: DisplayPreferences
   ariaLabel?: string
+  peerMarkers?: readonly { id: string; name: string; positionSec: number; downloadedChunks: number }[]
 }
 
 export default function AnalogTimeline({
@@ -80,6 +81,7 @@ export default function AnalogTimeline({
   trailing,
   preferences = defaultDisplayPreferences,
   ariaLabel = 'Seek',
+  peerMarkers = [],
 }: AnalogTimelineProps) {
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
@@ -260,6 +262,18 @@ export default function AnalogTimeline({
       ))}
       {/* 4 — played progress */}
       <div aria-hidden style={layer('var(--an-color-ink)', { left: 0, width: `${playedPct}%` })} />
+
+      {durationSec > 0 && peerMarkers.map((peer, index) => {
+        const left = Math.max(0, Math.min(100, (peer.positionSec / durationSec) * 100))
+        return (
+          <div key={peer.id} title={`${peer.name}: ${formatClock(peer.positionSec)} · ${peer.downloadedChunks} chunks`} style={{
+            position: 'absolute', left: `${left}%`, top: '50%', width: 8, height: 8,
+            marginLeft: -4, transform: 'translateY(-50%)', borderRadius: '50%',
+            background: `hsl(${(index * 83 + 28) % 360} 70% 65%)`,
+            boxShadow: '0 0 0 2px var(--an-color-stage-void)', zIndex: 1,
+          }} />
+        )
+      })}
 
       {canControl && (
         <div aria-hidden style={{

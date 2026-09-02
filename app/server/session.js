@@ -97,7 +97,7 @@ function runtimeState(saved) {
     collaborativeControl: saved.collaborativeControl ?? false,
     hostDisconnectTimer: null,
     mediaGeneration,
-    syncMode: saved.syncMode ?? 'hopping',
+    syncMode: saved.syncMode ?? 'dragging',
     stalled: new Set(),
     stallFallback: new Set(),
     seenCommandIds: new Set(),
@@ -152,7 +152,7 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     schedule: { positionTicks: 0, t0: 0, rate: 0, paused: true, phase: 'paused', version: 0, mediaGeneration: mediaItemId ? 1 : 0 },
     // 'hopping' = host-authority, guests catch up, host never waits.
     // 'dragging' = group waits for the slowest; any stall freezes everyone.
-    syncMode: 'hopping',
+    syncMode: 'dragging',
     stalled: new Set(),   // members currently buffering (dragging mode)
     stallFallback: new Set(), // timed-out members temporarily treated as hopping
     seenCommandIds: new Set(),

@@ -15,6 +15,15 @@ void main() {
       expect(size.height, FloatingTileGeometry.headerHeight + 120);
     });
 
+    test('frameless camera tiles keep a true 4:3 renderer box', () {
+      final size = FloatingTileGeometry.tileSize(
+        160,
+        collapsed: false,
+        headerOverlay: true,
+      );
+      expect(size, const Size(160, 120));
+    });
+
     test('collapsed tile is a round ball, whatever width it was', () {
       final size = FloatingTileGeometry.tileSize(160, collapsed: true);
       expect(size.width, FloatingTileGeometry.ballDiameter);

@@ -2,9 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../analog/player_core.dart' show ToastMessage;
+import '../analog/player/analog_timeline.dart' show TimelinePeerPosition;
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
 import '../ui/tokens.dart';
+import '../sync/sync_engine.dart';
 import 'player_chrome.dart';
 import 'player_controller.dart';
 import 'video_view.dart';
@@ -20,6 +22,8 @@ class PlayerView extends StatelessWidget {
     required this.controller,
     this.canControl = true,
     this.onSeekAuthored,
+    this.onTogglePlay,
+    this.onRetryPlayback,
     this.title,
     this.onBack,
     this.onToggleFullscreen,
@@ -28,7 +32,10 @@ class PlayerView extends StatelessWidget {
     this.mediaSourceId,
     this.apiClient,
     this.preferredSubtitleStreamIndex,
+    this.subtitleRevision = 0,
     this.cachedSpans,
+    this.peerPositions = const [],
+    this.catchUp,
     this.visible,
     this.onWake,
     this.onToggleChat,
@@ -42,6 +49,7 @@ class PlayerView extends StatelessWidget {
   final PlayerController controller;
 
   final int? preferredSubtitleStreamIndex;
+  final int subtitleRevision;
 
   /// Read-only transport bar when false — E5 passes this for a guest without
   /// playback-control rights (PLAN §4 E5.2 `canControl` gating).
@@ -50,6 +58,8 @@ class PlayerView extends StatelessWidget {
   /// Called with every seek this viewer authors, so a party can publish it to
   /// the room. Null when nothing is listening (solo playback).
   final ValueChanged<Duration>? onSeekAuthored;
+  final Future<void> Function()? onTogglePlay;
+  final VoidCallback? onRetryPlayback;
 
   /// Optional title shown in the chrome's top bar.
   final String? title;
@@ -70,6 +80,8 @@ class PlayerView extends StatelessWidget {
   /// to [PlayerChrome]'s seek-bar overlay. Null for the offline-local-file
   /// path (nothing to indicate) or when the caller has no cache proxy.
   final ValueListenable<List<CachedSpan>>? cachedSpans;
+  final List<TimelinePeerPosition> peerPositions;
+  final Stream<CatchUp>? catchUp;
 
   /// Party path only: parent-owned chrome visibility + wake, and the party
   /// key bindings (`c` chat, hold-`T` push-to-talk) — forwarded to
@@ -97,6 +109,8 @@ class PlayerView extends StatelessWidget {
             controller: controller,
             canControl: canControl,
             onSeekAuthored: onSeekAuthored,
+            onTogglePlay: onTogglePlay,
+            onRetryPlayback: onRetryPlayback,
             title: title,
             onBack: onBack,
             onToggleFullscreen: onToggleFullscreen,
@@ -105,7 +119,9 @@ class PlayerView extends StatelessWidget {
             mediaSourceId: mediaSourceId,
             apiClient: apiClient,
             preferredSubtitleStreamIndex: preferredSubtitleStreamIndex,
+            subtitleRevision: subtitleRevision,
             cachedSpans: cachedSpans,
+            peerPositions: peerPositions,
             visible: visible,
             onWake: onWake,
             onToggleChat: onToggleChat,
@@ -114,8 +130,48 @@ class PlayerView extends StatelessWidget {
             chatOpen: chatOpen,
             chatToasts: chatToasts,
           ),
+          if (catchUp != null)
+            Positioned(
+              top: 20,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(child: _CatchUpBadge(stream: catchUp!)),
+            ),
         ],
       ),
     );
   }
+}
+
+class _CatchUpBadge extends StatelessWidget {
+  const _CatchUpBadge({required this.stream});
+
+  final Stream<CatchUp> stream;
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<CatchUp>(
+    stream: stream,
+    initialData: CatchUp.idle,
+    builder: (context, snapshot) {
+      final catchUp = snapshot.data ?? CatchUp.idle;
+      if (!catchUp.active) return const SizedBox.shrink();
+      return Center(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xCC0A0A0B),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Text(
+              catchUp.behind
+                  ? 'Tailing · ${catchUp.rate.toStringAsFixed(2)}×'
+                  : 'Synchronizing · ${catchUp.rate.toStringAsFixed(2)}×',
+              style: const TextStyle(color: Color(0xFFF4F4F5), fontSize: 12),
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }

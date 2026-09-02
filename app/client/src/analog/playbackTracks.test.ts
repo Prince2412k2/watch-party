@@ -2,7 +2,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { defaultSelection, parsePlaybackTracks, trackLabel, wireSelection } from './playbackTracks.ts'
+import { defaultSelection, parsePlaybackTracks, playbackQuery, trackLabel, wireSelection } from './playbackTracks.ts'
 
 const payload = {
   mediaSourceId: 'source-1',
@@ -72,4 +72,12 @@ test('subtitles off is spelled -1 on the wire, not null', () => {
     subtitleStreamIndex: -1,
   })
   assert.deepEqual(wireSelection({}), { audioStreamIndex: null, subtitleStreamIndex: -1 })
+})
+
+test('playback query preserves a positive resume position', () => {
+  assert.equal(
+    playbackQuery('movie', { audioStreamIndex: 2, subtitleStreamIndex: -1 }, 45_000_000).toString(),
+    'itemId=movie&resumePositionTicks=45000000&audioStreamIndex=2&subtitleStreamIndex=-1',
+  )
+  assert.equal(playbackQuery('movie', undefined, 0).toString(), 'itemId=movie')
 })

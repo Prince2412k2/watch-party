@@ -139,10 +139,11 @@ Map<String, dynamic> _session({
   String? mediaItemId,
   String? mediaSourceId,
   bool collaborativeControl = false,
-  String syncMode = 'hopping',
+  String syncMode = 'dragging',
   List<Map<String, dynamic>> guests = const [],
   Map<String, dynamic>? playback,
   Map<String, dynamic>? subtitlePreferences,
+  Map<String, dynamic> schedule = const {},
   List<Map<String, dynamic>> waiting = const [],
 }) => {
   'id': 'party-1',
@@ -154,7 +155,7 @@ Map<String, dynamic> _session({
   'collaborativeControl': collaborativeControl,
   'syncMode': syncMode,
   'guests': guests,
-  'schedule': {},
+  'schedule': schedule,
   'browse': {'stack': []},
   'waiting': waiting,
   'playback': playback,
@@ -207,6 +208,105 @@ void main() {
     expect(partyId, 'party-1');
     expect(notifier.isHost, isTrue);
   });
+
+  test('create and select media send resume ticks', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+      }
+      return {'ok': true};
+    });
+    final notifier = container.read(partyProvider.notifier);
+    await notifier.create(mediaItemId: 'movie', resumePositionTicks: 45000000);
+    await notifier.selectMedia(
+      mediaItemId: 'episode',
+      resumePositionTicks: 90000000,
+    );
+
+    final create =
+        socket.emitted
+                .firstWhere((event) => event.$1 == ClientEvent.partyCreate)
+                .$2
+            as Map;
+    final select =
+        socket.emitted
+                .firstWhere((event) => event.$1 == ClientEvent.partySelectMedia)
+                .$2
+            as Map;
+    expect(create['resumePositionTicks'], 45000000);
+    expect(select['resumePositionTicks'], 90000000);
+  });
+
+  test(
+    'session snapshots preserve schedule, playback, and dragging mode',
+    () async {
+      container = build('host1', (event, data) {
+        if (event == ClientEvent.partyCreate) {
+          return {
+            'partyId': 'party-1',
+            'session': _session(
+              hostId: 'host1',
+              mediaItemId: 'movie',
+              playback: const {
+                'selectedAudioIndex': 2,
+                'selectedSubtitleIndex': 4,
+                'subtitleStreams': [
+                  {'index': 4, 'isExternal': true, 'deliveryUrl': '/sub/4'},
+                ],
+              },
+              schedule: const {
+                'positionTicks': 45000000,
+                'phase': 'playing',
+                'paused': false,
+                'rate': 1,
+                'version': 3,
+                'mediaGeneration': 1,
+              },
+            ),
+          };
+        }
+        return {'ok': true};
+      });
+      await container.read(partyProvider.notifier).create();
+
+      final party = container.read(partyProvider)!;
+      expect(party.syncMode, 'dragging');
+      expect(party.schedule.positionTicks, 45000000);
+      expect(party.schedule.phase, 'playing');
+      expect(party.playback?.selectedSubtitleIndex, 4);
+      expect(party.playback?.subtitleStreams.single.deliveryUrl, '/sub/4');
+    },
+  );
+
+  test(
+    'peer reports are stored and removed when the participant leaves',
+    () async {
+      container = build('host1', (event, data) {
+        if (event == ClientEvent.partyCreate) {
+          return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
+      await container.read(partyProvider.notifier).create();
+      socket.inject(ServerEvent.syncPeerReport, {
+        'userId': 'guest1',
+        'name': 'Guest',
+        'position': 12.5,
+        'downloadedChunks': 7,
+        'at': DateTime.now().millisecondsSinceEpoch,
+      });
+      expect(
+        container.read(peerPlaybackProvider)['guest1']?.position,
+        const Duration(milliseconds: 12500),
+      );
+
+      socket.inject(ServerEvent.userLeft, {
+        'userId': 'guest1',
+        'name': 'Guest',
+      });
+      expect(container.read(peerPlaybackProvider), isEmpty);
+    },
+  );
 
   test('resume restores a host party and its waiting requests', () async {
     container = build('host1', (event, data) {

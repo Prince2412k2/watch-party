@@ -84,7 +84,7 @@ export default function Login() {
             <div style={{ position: 'relative' }}>
               <span style={lead}><Icon path={Ic.user} size={19} stroke={focus === 'u' ? T.text : T.faint} /></span>
               <input
-                type="text" value={username} onChange={(e) => setUsername(e.currentTarget.value)}
+                type="text" inputMode="text" value={username} onChange={(e) => setUsername(e.currentTarget.value)} onKeyDown={e => e.stopPropagation()}
                 onFocus={() => setFocus('u')} onBlur={() => setFocus('')}
                 disabled={busy} required
                 name="username" autoComplete="username" autoCapitalize="none"
@@ -99,7 +99,7 @@ export default function Login() {
             <div style={{ position: 'relative' }}>
               <span style={lead}><Icon path={LOCK} size={19} stroke={focus === 'p' ? T.text : T.faint} /></span>
               <input
-                type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.currentTarget.value)}
+                type={showPw ? 'text' : 'password'} inputMode="text" value={password} onChange={(e) => setPassword(e.currentTarget.value)} onKeyDown={e => e.stopPropagation()}
                 onFocus={() => setFocus('p')} onBlur={() => setFocus('')}
                 disabled={busy}
                 name="password" autoComplete="current-password" enterKeyHint="go" placeholder="••••••••"
