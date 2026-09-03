@@ -143,7 +143,10 @@ void main() {
         ),
       );
 
-      expect(find.byTooltip('Guest · 7 downloaded chunks'), findsOneWidget);
+      expect(
+        find.byTooltip('Guest at 0:30 · 7 downloaded chunks'),
+        findsOneWidget,
+      );
     });
 
     Future<AnalogTimelinePainter> pumpTimeline(

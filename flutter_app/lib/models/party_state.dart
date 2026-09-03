@@ -13,15 +13,20 @@ part 'party_state.g.dart';
 class SyncSchedule with _$SyncSchedule {
   const factory SyncSchedule({
     @Default(0) int positionTicks,
+
     /// Server epoch-ms when the current play segment started (0 when paused).
     @Default(0) int t0,
+
     /// Playback rate: 1 while playing, 0 while paused/stalled.
     @Default(0) int rate,
     @Default(true) bool paused,
+
     /// 'playing' | 'paused' | 'stalled'
     @Default('paused') String phase,
+
     /// Monotonic version; a controller may gate a command on it (baseVersion).
     @Default(0) int version,
+
     /// Bumped whenever the media selection changes (guards stale stalls).
     @Default(0) int mediaGeneration,
   }) = _SyncSchedule;
@@ -39,14 +44,17 @@ class PartyState with _$PartyState {
     required String id,
     required String hostId,
     String? hostName,
+
     /// 'lobby' | 'watching'
     @Default('lobby') String stage,
     String? mediaItemId,
     String? mediaSourceId,
     @Default(false) bool collaborativeControl,
+
     /// 'hopping' | 'dragging'
     @Default('dragging') String syncMode,
     PlaybackInfo? playback,
+    @Default(0) int playbackRevision,
     @Default(<Participant>[]) List<Participant> participants,
     @Default(SyncSchedule()) SyncSchedule schedule,
   }) = _PartyState;

@@ -216,6 +216,7 @@ export class HeadlessClient {
     // change. See _applySchedule.
     this._lastAppliedVersion = -Infinity
     this._lastMediaGen = undefined
+    this._stalled = false
     this.staleSchedulesDropped = 0
   }
 
@@ -225,6 +226,11 @@ export class HeadlessClient {
   // browser guest does.
   _applySchedule(s) {
     const gen = s?.mediaGeneration
+    if (this._lastMediaGen != null && gen != null && Number(gen) < Number(this._lastMediaGen)) {
+      this.staleSchedulesDropped++
+      return
+    }
+    const generationChanged = gen !== this._lastMediaGen
     if (gen !== this._lastMediaGen) {
       this._lastMediaGen = gen
       this._lastAppliedVersion = -Infinity
@@ -234,6 +240,9 @@ export class HeadlessClient {
       this._lastAppliedVersion = s.version
     }
     this.schedule = s
+    if (generationChanged && gen != null && this.socket) {
+      this._emit('sync:stall', { stalled: this._stalled, mediaGeneration: gen })
+    }
     this.userSeeking = false
   }
 
@@ -307,7 +316,11 @@ export class HeadlessClient {
   }
 
   // sync:stall — mirror the browser hook's reportStall (drives dragging mode).
-  reportStall(stalled) { this._emit('sync:stall', { stalled: !!stalled }) }
+  reportStall(stalled) {
+    this._stalled = !!stalled
+    const mediaGeneration = this.schedule?.mediaGeneration
+    if (mediaGeneration != null) this._emit('sync:stall', { stalled: this._stalled, mediaGeneration })
+  }
 
   // Simulate the local user scrubbing the scrubber (suppresses correction).
   setSeeking(on) { this.userSeeking = !!on }
@@ -424,7 +437,12 @@ export class HeadlessClient {
         const now = Date.now()
         if (now - this._lastReport >= 1000) {
           this._lastReport = now
-          this._emit('sync:report', { position: v.currentTime, drift: intent.drift, rate: v.playbackRate })
+          this._emit('sync:report', {
+            position: v.currentTime,
+            drift: intent.drift,
+            rate: v.playbackRate,
+            mediaGeneration: this.schedule?.mediaGeneration,
+          })
         }
       }
     }, CONTROL_MS)

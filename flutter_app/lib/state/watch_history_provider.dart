@@ -65,6 +65,7 @@ class WatchHistoryReporter {
   int? _lastSentTicks;
 
   bool _disposed = false;
+  Future<void> _operations = Future.value();
 
   PlayerController get _player => _ref.read(playerControllerProvider);
 
@@ -73,16 +74,18 @@ class WatchHistoryReporter {
 
   /// Begin watching [now]'s title. Safe to call repeatedly for the same
   /// revision — a rebuild is not a new play.
-  Future<void> open(NowPlaying now) async {
+  Future<void> open(NowPlaying now) => _serialize(() => _open(now));
+
+  Future<void> _open(NowPlaying now) async {
     if (!now.isOpen || now.itemId == null) {
-      await close();
+      await _close();
       return;
     }
     if (_session?.itemId == now.itemId) return;
 
     // Switching straight from one title to another: the outgoing one still has
     // to be stopped, or it keeps whatever position it had when we looked away.
-    await close();
+    await _close();
 
     _session = PlaybackReport(
       itemId: now.itemId!,
@@ -93,24 +96,39 @@ class WatchHistoryReporter {
     _started = false;
     _lastSentTicks = null;
     _listen();
+    if (_player.isPlayingNow) await _onPlaying(true);
   }
 
   void _listen() {
     _playing?.cancel();
     _completed?.cancel();
+    final session = _session;
     // A pause is worth a report on its own: it is the most common way a viewer
     // stops for the night, and the position at that moment is the one they will
     // come back to.
-    _playing = _player.playing.listen((playing) => unawaited(_onPlaying(playing)));
+    _playing = _player.playing.listen(
+      (playing) => unawaited(
+        _serialize(() async {
+          if (_session == session) await _onPlaying(playing);
+        }),
+      ),
+    );
     // Reaching the end is the whole point of the played flag. Reported as a
     // STOP at the final position, which is what tips Jellyfin past its
     // watched threshold.
     _completed = _player.completed.listen((done) {
-      if (done) unawaited(close());
+      if (done) {
+        unawaited(
+          _serialize(() async {
+            if (_session == session) await _close();
+          }),
+        );
+      }
     });
   }
 
   Future<void> _onPlaying(bool playing) async {
+    if (_disposed) return;
     final session = _session;
     if (session == null) return;
     if (playing) {
@@ -122,7 +140,7 @@ class WatchHistoryReporter {
           PlaybackReportKind.started,
           session.copyWith(positionTicks: ticks),
         );
-        if (_session != session) return;
+        if (_disposed || _session != session) return;
       }
       _startTicker();
       return;
@@ -132,8 +150,12 @@ class WatchHistoryReporter {
   }
 
   void _startTicker() {
+    if (_disposed) return;
     _ticker?.cancel();
-    _ticker = Timer.periodic(kWatchHistoryInterval, (_) => _report());
+    _ticker = Timer.periodic(
+      kWatchHistoryInterval,
+      (_) => unawaited(_serialize(_report)),
+    );
   }
 
   /// Send the current position, if there is a session and it has moved.
@@ -153,7 +175,9 @@ class WatchHistoryReporter {
   }
 
   /// End the session in flight. Idempotent — closing twice reports once.
-  Future<void> close() async {
+  Future<void> close() => _serialize(_close);
+
+  Future<void> _close() async {
     final session = _session;
     _session = null;
     _ticker?.cancel();
@@ -181,7 +205,7 @@ class WatchHistoryReporter {
   ///
   /// On mobile this may be the last code that runs before the process is
   /// killed, so it reports rather than assuming a later stop will.
-  Future<void> flush() => _report(force: true);
+  Future<void> flush() => _serialize(() => _report(force: true));
 
   // ── Delivery ──────────────────────────────────────────────────────────────
 
@@ -190,11 +214,9 @@ class WatchHistoryReporter {
     // there is no history to write and nothing to queue for later either.
     if (!_signedIn) return;
     try {
-      await _ref
-          .read(apiClientProvider)
-          .reportPlayback(report, kind: kind);
+      await _ref.read(apiClientProvider).reportPlayback(report, kind: kind);
       // A successful send is also the signal that the network is back.
-      unawaited(_drain());
+      unawaited(drainPending());
     } catch (_) {
       // Offline, or the server is down. A missed progress tick is worth
       // nothing — a newer one follows in ten seconds — but a missed STOP is the
@@ -218,7 +240,7 @@ class WatchHistoryReporter {
 
   /// Send everything the queue is holding. Called on a successful report and at
   /// sign-in; anything that fails again stays queued.
-  Future<void> drainPending() => _drain();
+  Future<void> drainPending() => _serialize(_drain);
 
   Future<void> _drain() async {
     if (_disposed || !_signedIn) return;
@@ -240,6 +262,15 @@ class WatchHistoryReporter {
     await _write(prefs, unsent);
   }
 
+  Future<void> _serialize(Future<void> Function() operation) {
+    final next = _operations.then<void>((_) async {
+      if (_disposed) return;
+      await operation();
+    });
+    _operations = next.then<void>((_) {}, onError: (_, _) {});
+    return next;
+  }
+
   List<PlaybackReport> _read(SharedPreferences prefs) {
     final raw = prefs.getStringList(kWatchHistoryQueueKey) ?? const [];
     return [for (final entry in raw) ?_decode(entry)];
@@ -248,21 +279,24 @@ class WatchHistoryReporter {
   PlaybackReport? _decode(String entry) {
     try {
       final json = jsonDecode(entry);
-      return json is Map<String, dynamic> ? PlaybackReport.fromJson(json) : null;
+      return json is Map<String, dynamic>
+          ? PlaybackReport.fromJson(json)
+          : null;
     } catch (_) {
       return null;
     }
   }
 
   Future<void> _write(SharedPreferences prefs, List<PlaybackReport> queue) =>
-      prefs.setStringList(
-        kWatchHistoryQueueKey,
-        [for (final report in queue) jsonEncode(report.toJson())],
-      );
+      prefs.setStringList(kWatchHistoryQueueKey, [
+        for (final report in queue) jsonEncode(report.toJson()),
+      ]);
 
   void dispose() {
     _disposed = true;
+    _session = null;
     _ticker?.cancel();
+    _ticker = null;
     unawaited(_playing?.cancel());
     unawaited(_completed?.cancel());
   }

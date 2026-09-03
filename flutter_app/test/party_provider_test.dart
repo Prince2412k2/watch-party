@@ -142,6 +142,7 @@ Map<String, dynamic> _session({
   String syncMode = 'dragging',
   List<Map<String, dynamic>> guests = const [],
   Map<String, dynamic>? playback,
+  int playbackRevision = 0,
   Map<String, dynamic>? subtitlePreferences,
   Map<String, dynamic> schedule = const {},
   List<Map<String, dynamic>> waiting = const [],
@@ -159,6 +160,7 @@ Map<String, dynamic> _session({
   'browse': {'stack': []},
   'waiting': waiting,
   'playback': playback,
+  'playbackRevision': playbackRevision,
   'subtitlePreferences': subtitlePreferences,
 };
 
@@ -237,6 +239,30 @@ void main() {
     expect(select['resumePositionTicks'], 90000000);
   });
 
+  test('host playback track changes send both canonical indices', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {'partyId': 'party-1', 'session': _session(hostId: 'host1')};
+      }
+      return {'ok': true};
+    });
+    final notifier = container.read(partyProvider.notifier);
+    await notifier.create();
+    await notifier.setPlaybackTracks(
+      audioStreamIndex: 2,
+      subtitleStreamIndex: -1,
+    );
+
+    final payload =
+        socket.emitted
+                .firstWhere(
+                  (event) => event.$1 == ClientEvent.partySetPlaybackTracks,
+                )
+                .$2
+            as Map;
+    expect(payload, {'audioStreamIndex': 2, 'subtitleStreamIndex': -1});
+  });
+
   test(
     'session snapshots preserve schedule, playback, and dragging mode',
     () async {
@@ -254,6 +280,7 @@ void main() {
                   {'index': 4, 'isExternal': true, 'deliveryUrl': '/sub/4'},
                 ],
               },
+              playbackRevision: 7,
               schedule: const {
                 'positionTicks': 45000000,
                 'phase': 'playing',
@@ -274,9 +301,34 @@ void main() {
       expect(party.schedule.positionTicks, 45000000);
       expect(party.schedule.phase, 'playing');
       expect(party.playback?.selectedSubtitleIndex, 4);
+      expect(party.playbackRevision, 7);
       expect(party.playback?.subtitleStreams.single.deliveryUrl, '/sub/4');
     },
   );
+
+  test('peer reports from another media generation are ignored', () async {
+    container = build('host1', (event, data) {
+      if (event == ClientEvent.partyCreate) {
+        return {
+          'partyId': 'party-1',
+          'session': _session(
+            hostId: 'host1',
+            schedule: const {'mediaGeneration': 3},
+          ),
+        };
+      }
+      return {'ok': true};
+    });
+    await container.read(partyProvider.notifier).create();
+
+    socket.inject(ServerEvent.syncPeerReport, {
+      'userId': 'guest1',
+      'position': 12.5,
+      'mediaGeneration': 2,
+    });
+
+    expect(container.read(peerPlaybackProvider), isEmpty);
+  });
 
   test(
     'peer reports are stored and removed when the participant leaves',
@@ -293,6 +345,7 @@ void main() {
         'name': 'Guest',
         'position': 12.5,
         'downloadedChunks': 7,
+        'mediaGeneration': 0,
         'at': DateTime.now().millisecondsSinceEpoch,
       });
       expect(

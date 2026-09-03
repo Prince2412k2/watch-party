@@ -69,6 +69,14 @@ test('beginMediaGeneration invalidates old stall reports', () => {
   } finally { deleteSession(sess.id) }
 })
 
+test('stall reports require the current media generation', () => {
+  const sess = fresh()
+  try {
+    assert.equal(applyStallReport(sess, 'guest', { stalled: true }), false)
+    assert.equal(sess.stalled.size, 0)
+  } finally { deleteSession(sess.id) }
+})
+
 test('a timed-out stall remains in fallback until recovery is reported', () => {
   const sess = fresh()
   try {

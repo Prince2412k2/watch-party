@@ -365,6 +365,7 @@ mixin _$PartyState {
   /// 'hopping' | 'dragging'
   String get syncMode => throw _privateConstructorUsedError;
   PlaybackInfo? get playback => throw _privateConstructorUsedError;
+  int get playbackRevision => throw _privateConstructorUsedError;
   List<Participant> get participants => throw _privateConstructorUsedError;
   SyncSchedule get schedule => throw _privateConstructorUsedError;
 
@@ -395,6 +396,7 @@ abstract class $PartyStateCopyWith<$Res> {
     bool collaborativeControl,
     String syncMode,
     PlaybackInfo? playback,
+    int playbackRevision,
     List<Participant> participants,
     SyncSchedule schedule,
   });
@@ -427,6 +429,7 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
     Object? collaborativeControl = null,
     Object? syncMode = null,
     Object? playback = freezed,
+    Object? playbackRevision = null,
     Object? participants = null,
     Object? schedule = null,
   }) {
@@ -468,6 +471,10 @@ class _$PartyStateCopyWithImpl<$Res, $Val extends PartyState>
                 ? _value.playback
                 : playback // ignore: cast_nullable_to_non_nullable
                       as PlaybackInfo?,
+            playbackRevision: null == playbackRevision
+                ? _value.playbackRevision
+                : playbackRevision // ignore: cast_nullable_to_non_nullable
+                      as int,
             participants: null == participants
                 ? _value.participants
                 : participants // ignore: cast_nullable_to_non_nullable
@@ -525,6 +532,7 @@ abstract class _$$PartyStateImplCopyWith<$Res>
     bool collaborativeControl,
     String syncMode,
     PlaybackInfo? playback,
+    int playbackRevision,
     List<Participant> participants,
     SyncSchedule schedule,
   });
@@ -558,6 +566,7 @@ class __$$PartyStateImplCopyWithImpl<$Res>
     Object? collaborativeControl = null,
     Object? syncMode = null,
     Object? playback = freezed,
+    Object? playbackRevision = null,
     Object? participants = null,
     Object? schedule = null,
   }) {
@@ -599,6 +608,10 @@ class __$$PartyStateImplCopyWithImpl<$Res>
             ? _value.playback
             : playback // ignore: cast_nullable_to_non_nullable
                   as PlaybackInfo?,
+        playbackRevision: null == playbackRevision
+            ? _value.playbackRevision
+            : playbackRevision // ignore: cast_nullable_to_non_nullable
+                  as int,
         participants: null == participants
             ? _value._participants
             : participants // ignore: cast_nullable_to_non_nullable
@@ -625,6 +638,7 @@ class _$PartyStateImpl implements _PartyState {
     this.collaborativeControl = false,
     this.syncMode = 'dragging',
     this.playback,
+    this.playbackRevision = 0,
     final List<Participant> participants = const <Participant>[],
     this.schedule = const SyncSchedule(),
   }) : _participants = participants;
@@ -657,6 +671,9 @@ class _$PartyStateImpl implements _PartyState {
   final String syncMode;
   @override
   final PlaybackInfo? playback;
+  @override
+  @JsonKey()
+  final int playbackRevision;
   final List<Participant> _participants;
   @override
   @JsonKey()
@@ -672,7 +689,7 @@ class _$PartyStateImpl implements _PartyState {
 
   @override
   String toString() {
-    return 'PartyState(id: $id, hostId: $hostId, hostName: $hostName, stage: $stage, mediaItemId: $mediaItemId, mediaSourceId: $mediaSourceId, collaborativeControl: $collaborativeControl, syncMode: $syncMode, playback: $playback, participants: $participants, schedule: $schedule)';
+    return 'PartyState(id: $id, hostId: $hostId, hostName: $hostName, stage: $stage, mediaItemId: $mediaItemId, mediaSourceId: $mediaSourceId, collaborativeControl: $collaborativeControl, syncMode: $syncMode, playback: $playback, playbackRevision: $playbackRevision, participants: $participants, schedule: $schedule)';
   }
 
   @override
@@ -695,6 +712,8 @@ class _$PartyStateImpl implements _PartyState {
                 other.syncMode == syncMode) &&
             (identical(other.playback, playback) ||
                 other.playback == playback) &&
+            (identical(other.playbackRevision, playbackRevision) ||
+                other.playbackRevision == playbackRevision) &&
             const DeepCollectionEquality().equals(
               other._participants,
               _participants,
@@ -716,6 +735,7 @@ class _$PartyStateImpl implements _PartyState {
     collaborativeControl,
     syncMode,
     playback,
+    playbackRevision,
     const DeepCollectionEquality().hash(_participants),
     schedule,
   );
@@ -745,6 +765,7 @@ abstract class _PartyState implements PartyState {
     final bool collaborativeControl,
     final String syncMode,
     final PlaybackInfo? playback,
+    final int playbackRevision,
     final List<Participant> participants,
     final SyncSchedule schedule,
   }) = _$PartyStateImpl;
@@ -774,6 +795,8 @@ abstract class _PartyState implements PartyState {
   String get syncMode;
   @override
   PlaybackInfo? get playback;
+  @override
+  int get playbackRevision;
   @override
   List<Participant> get participants;
   @override

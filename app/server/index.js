@@ -70,18 +70,26 @@ if (process.env.NODE_ENV === 'production' &&
   process.exit(1)
 }
 
-const playbackTrackQueues = new Map()
+const playbackMutationQueues = new Map()
+const mediaSelectionRevisions = new WeakMap()
 
-function enqueuePlaybackTrackChange(partyId, operation) {
-  const previous = playbackTrackQueues.get(partyId) ?? Promise.resolve()
+function enqueuePlaybackMutation(session, operation) {
+  const previous = playbackMutationQueues.get(session) ?? Promise.resolve()
   const current = previous.then(operation, operation)
-  playbackTrackQueues.set(partyId, current)
+  playbackMutationQueues.set(session, current)
   const cleanup = () => {
-    if (playbackTrackQueues.get(partyId) === current) {
-      playbackTrackQueues.delete(partyId)
+    if (playbackMutationQueues.get(session) === current) {
+      playbackMutationQueues.delete(session)
     }
   }
   void current.then(cleanup, cleanup)
+  return current
+}
+
+function supersedeMediaSelection(session) {
+  const revision = (mediaSelectionRevisions.get(session) ?? 0) + 1
+  mediaSelectionRevisions.set(session, revision)
+  return revision
 }
 
 const app = express()
@@ -365,7 +373,7 @@ app.post('/api/auth/logout', logout)
 // someone can guess one.
 app.post('/api/auth/password', loginRateLimit, requireAuth, password)
 registerLibraryRoutes(app)
-registerSubtitleRoutes(app, io)
+registerSubtitleRoutes(app, io, { enqueuePlaybackMutation })
 registerLiveKitRoutes(app)
 registerServarrRoutes(app)
 registerNativeRoutes(app)
@@ -444,6 +452,7 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ session: null })
     setSocketParticipation(socket, { partyId: sess.id })
     if (sess.originalHostId === userId && sess.hostId !== userId) {
+      supersedeMediaSelection(sess)
       reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
       io.to(sess.id).emit('host:changed', { hostId: userId })
     } else if (sess.hostId === userId) {
@@ -693,6 +702,7 @@ io.on('connection', (socket) => {
     if (!targetGuest) return ack?.({ error: 'user not found' })
     const targetSocket = io.sockets.sockets.get(targetGuest.socketId)
     const targetToken = targetSocket?.user?.token ?? token
+    supersedeMediaSelection(sess)
     transferHost(sess, targetId, targetGuest.socketId, targetToken)
     io.to(sess.id).emit('host:changed', { hostId: targetId })
     ack?.({ ok: true })
@@ -717,29 +727,56 @@ io.on('connection', (socket) => {
   socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, subtitleStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    const hostId = sess.hostId
+    const revision = supersedeMediaSelection(sess)
+    const selectionError = () => {
+      if (mediaSelectionRevisions.get(sess) !== revision) return 'media selection superseded'
+      if (getSession(sess.id) !== sess || sess.hostId !== hostId || findSessionForMember(userId) !== sess || !canDrive(sess)) return 'not allowed'
+      return null
+    }
     try {
       const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
       if (!src) return ack?.({ error: 'item not found' })
-      const maySetTracks = isHost(sess, userId)
-      await refreshPlayback(sess, {
-        token, userId, itemId: mediaItemId, mediaSourceId: src,
-        audioStreamIndex: maySetTracks && Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
-        subtitleStreamIndex: maySetTracks && Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+      const error = selectionError()
+      if (error) return ack?.({ error })
+      enqueuePlaybackMutation(sess, async () => {
+        const queuedError = selectionError()
+        if (queuedError) return ack?.({ error: queuedError })
+        try {
+          const draft = {
+            mediaSourceId: src,
+            playback: sess.playback,
+            playbackRevision: sess.playbackRevision,
+          }
+          const maySetTracks = isHost(sess, userId)
+          await refreshPlayback(draft, {
+            token, userId, itemId: mediaItemId, mediaSourceId: src,
+            audioStreamIndex: maySetTracks && Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
+            subtitleStreamIndex: maySetTracks && Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
+          })
+          const refreshedError = selectionError()
+          if (refreshedError) return ack?.({ error: refreshedError })
+          sess.mediaItemId = mediaItemId
+          sess.mediaSourceId = draft.mediaSourceId
+          sess.playback = draft.playback
+          sess.playbackRevision = draft.playbackRevision
+          sess.stage = 'watching'
+          beginMediaGeneration(sess)
+          sess.pos = Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0
+            ? resumePositionTicks
+            : 0
+          sess.stalled.clear()
+          clearTimeout(sess._stallTimer)
+          sess.intent.playing = true
+          startSegment(sess, Date.now())
+          persistSession(sess)
+          io.to(sess.id).emit('party:state', publicSession(sess))
+          ack?.({ ok: true })
+        } catch (err) {
+          console.error('party:selectMedia', err.message)
+          ack?.({ error: err.message })
+        }
       })
-      sess.mediaItemId = mediaItemId
-      sess.mediaSourceId = src
-      sess.stage = 'watching'
-      beginMediaGeneration(sess)
-      sess.pos = Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0
-        ? resumePositionTicks
-        : 0
-      sess.stalled.clear()
-      clearTimeout(sess._stallTimer)
-      sess.intent.playing = true
-      startSegment(sess, Date.now())
-      persistSession(sess)
-      io.to(sess.id).emit('party:state', publicSession(sess))
-      ack?.({ ok: true })
     } catch (err) {
       console.error('party:selectMedia', err.message)
       ack?.({ error: err.message })
@@ -750,6 +787,7 @@ io.on('connection', (socket) => {
   socket.on('party:backToLobby', (_p, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    supersedeMediaSelection(sess)
     stopJellyfinPlayback(sess)
     sess.stage = 'lobby'
     persistSession(sess)
@@ -757,16 +795,30 @@ io.on('connection', (socket) => {
     ack?.({ ok: true })
   })
 
-  socket.on('party:setPlaybackTracks', ({ audioStreamIndex = null, subtitleStreamIndex = null } = {}, ack) => {
+  socket.on('party:setPlaybackTracks', (payload = {}, ack) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return ack?.({ error: 'invalid playback tracks' })
+    }
     const sess = findSessionForMember(userId)
     if (!sess || sess.hostId !== userId || !sess.mediaItemId) return ack?.({ error: 'not allowed' })
     const mediaItemId = sess.mediaItemId
-    enqueuePlaybackTrackChange(sess.id, async () => {
-      if (sess.mediaItemId !== mediaItemId || sess.hostId !== userId) {
+    enqueuePlaybackMutation(sess, async () => {
+      if (getSession(sess.id) !== sess || sess.mediaItemId !== mediaItemId || sess.hostId !== userId) {
         return ack?.({ error: 'media changed' })
       }
       try {
-        const playback = await refreshPlayback(sess, {
+        const audioStreamIndex = Object.hasOwn(payload, 'audioStreamIndex')
+          ? payload.audioStreamIndex
+          : sess.playback?.selectedAudioIndex
+        const subtitleStreamIndex = Object.hasOwn(payload, 'subtitleStreamIndex')
+          ? payload.subtitleStreamIndex
+          : sess.playback?.selectedSubtitleIndex
+        const draft = {
+          mediaSourceId: sess.mediaSourceId,
+          playback: sess.playback,
+          playbackRevision: sess.playbackRevision,
+        }
+        const playback = await refreshPlayback(draft, {
           token,
           userId,
           itemId: mediaItemId,
@@ -774,6 +826,12 @@ io.on('connection', (socket) => {
           audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : null,
           subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : null,
         })
+        if (getSession(sess.id) !== sess || sess.mediaItemId !== mediaItemId || sess.hostId !== userId) {
+          return ack?.({ error: 'media changed' })
+        }
+        sess.mediaSourceId = draft.mediaSourceId
+        sess.playback = draft.playback
+        sess.playbackRevision = draft.playbackRevision
         persistSession(sess)
         io.to(sess.id).emit('party:state', publicSession(sess))
         ack?.({ ok: true, playback })
@@ -868,9 +926,9 @@ io.on('connection', (socket) => {
 
   // sync:report — live position and buffer telemetry for sync diagnostics and
   // optional participant pointers in the player timeline.
-  socket.on('sync:report', ({ position, drift, rate, downloadedChunks } = {}) => {
+  socket.on('sync:report', ({ position, drift, rate, downloadedChunks, mediaGeneration } = {}) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !Number.isFinite(position)) return
+    if (!sess || !Number.isFinite(position) || mediaGeneration !== sess.mediaGeneration) return
     const report = {
       userId,
       name: effectiveName(userId, name),
@@ -878,6 +936,7 @@ io.on('connection', (socket) => {
       drift: Number.isFinite(drift) ? drift : 0,
       rate: Number.isFinite(rate) ? rate : 1,
       downloadedChunks: Number.isSafeInteger(downloadedChunks) && downloadedChunks >= 0 ? downloadedChunks : 0,
+      mediaGeneration,
       at: Date.now(),
     }
     sess.reports.set(userId, report)
@@ -1127,6 +1186,7 @@ function handleHostDisconnect(sess) {
     const nextSocket = io.sockets.sockets.get(next.socketId)
     const nextToken = nextSocket?.user?.token ?? sess.hostToken
     sess.hostSocketId = null
+    supersedeMediaSelection(sess)
     transferHost(sess, next.userId, next.socketId, nextToken)
     io.to(sess.id).emit('host:changed', { hostId: next.userId })
   }, HOST_GRACE_MS)

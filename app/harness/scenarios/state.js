@@ -184,6 +184,10 @@ export const staleScheduleVersionRejected = {
     guest._applySchedule(newGen)
     checks.push(check('version baseline resets on mediaGeneration change', guest.schedule === newGen, `accepted=${guest.schedule === newGen}`))
 
+    const oldGen = { ...newGen, version: newGen.version + 1, mediaGeneration: fresh.mediaGeneration }
+    guest._applySchedule(oldGen)
+    checks.push(check('older mediaGeneration is rejected', guest.schedule === newGen, `schedule unchanged=${guest.schedule === newGen}`))
+
     host.disconnect(); guest.disconnect()
     return { checks }
   },

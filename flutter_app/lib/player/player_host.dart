@@ -108,6 +108,8 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   Object? _error;
   bool _usesCacheProxy = false;
   int? _autoRetriedRevision;
+  int _playbackAttempt = 0;
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -135,6 +137,8 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
     if (now.revision == _openedRevision) return;
     final itemId = now.itemId!;
     final revision = now.revision;
+    final attempt = ++_playbackAttempt;
+    _retryTimer?.cancel();
     _openedRevision = revision;
     setState(() {
       _ready = false;
@@ -157,11 +161,13 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
             isStale: () =>
                 isSuperseded() ||
                 !mounted ||
+                attempt != _playbackAttempt ||
                 ref.read(nowPlayingProvider).revision != revision,
           ),
         );
     if (!mounted ||
         result == null ||
+        attempt != _playbackAttempt ||
         ref.read(nowPlayingProvider).revision != revision) {
       return;
     }
@@ -175,8 +181,13 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
         classifyPlaybackFailure(error).retryable &&
         _autoRetriedRevision != revision) {
       _autoRetriedRevision = revision;
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      if (mounted && ref.read(nowPlayingProvider).revision == revision) _retry();
+      _retryTimer = Timer(const Duration(milliseconds: 500), () {
+        if (mounted &&
+            attempt == _playbackAttempt &&
+            ref.read(nowPlayingProvider).revision == revision) {
+          _retry(manual: false);
+        }
+      });
     }
   }
 
@@ -217,6 +228,8 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _playingSubscription?.cancel();
+    _retryTimer?.cancel();
+    _playbackAttempt++;
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
       windowManager.removeListener(this);
     }
@@ -228,7 +241,9 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
     super.dispose();
   }
 
-  void _retry() {
+  void _retry({bool manual = true}) {
+    _retryTimer?.cancel();
+    if (manual) _autoRetriedRevision = null;
     _openedRevision = -1;
     _syncOpen(ref.read(nowPlayingProvider));
   }
@@ -317,9 +332,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
     // Never over an error: the card outlives the load, and a failed open would
     // sit behind it with its retry button unreachable.
     final introItemId =
-        _error == null &&
-            now.itemId != null &&
-            (intro == now.itemId || !_ready)
+        _error == null && now.itemId != null && (intro == now.itemId || !_ready)
         ? (intro ?? now.itemId)
         : null;
     ref.listen<NowPlaying>(nowPlayingProvider, (_, next) {
@@ -397,7 +410,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                           // the route that used to show them is gone.
                           error: _error,
                           loading: !_ready && _error == null,
-                          onRetry: _retry,
+                          onRetry: () => _retry(),
                           child: PlayerView(
                             controller: ref.watch(playerControllerProvider),
                             itemId: now.itemId,
@@ -406,7 +419,15 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             apiClient: ref.watch(apiClientProvider),
                             preferredSubtitleStreamIndex:
                                 now.subtitleStreamIndex,
-                            subtitleRevision: party?.playback.hashCode ?? 0,
+                            subtitleRevision:
+                                party?.playbackRevision ?? now.revision,
+                            canManageTracks: playback.canManageTracks,
+                            onAudioStreamSelected: party == null
+                                ? null
+                                : playback.selectAudioStream,
+                            onSubtitleStreamSelected: party == null
+                                ? null
+                                : playback.selectSubtitleStream,
                             cachedSpans: _usesCacheProxy && now.itemId != null
                                 ? ref
                                       .watch(mediaCacheProxyProvider)
@@ -414,7 +435,10 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                                 : null,
                             peerPositions: ref.watch(showPeerPointersProvider)
                                 ? [
-                                    for (final peer in ref.watch(peerPlaybackProvider).values)
+                                    for (final peer
+                                        in ref
+                                            .watch(peerPlaybackProvider)
+                                            .values)
                                       TimelinePeerPosition(
                                         id: peer.userId,
                                         label: peer.name,
@@ -432,7 +456,8 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             // the correction loop a tick later.
                             canControl: playback.canDrive,
                             onTogglePlay: playback.togglePlay,
-                            onRetryPlayback: _retry,
+                            onRetryPlayback: () => _retry(),
+                            playbackAttempt: _playbackAttempt,
                             onSeekAuthored: playback.reportSeek,
                             onPushToTalkStart: party != null ? _pttStart : null,
                             onPushToTalkStop: party != null ? _pttStop : null,

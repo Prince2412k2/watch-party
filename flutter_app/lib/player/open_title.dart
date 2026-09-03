@@ -67,6 +67,7 @@ Future<OpenTitleResult> openTitleIntoPlayer(
             );
       } catch (_) {}
     }
+    if (isStale()) return const OpenTitleResult.ready(usesCacheProxy: false);
 
     // Routed through the on-device caching proxy rather than a direct signed
     // URL — it mints and re-mints one itself on demand.
@@ -76,15 +77,20 @@ Future<OpenTitleResult> openTitleIntoPlayer(
               .urlFor(itemId, mediaSourceId: mediaSourceId)
         : '';
 
+    final startAt = await _resumePoint(ref, itemId);
+    if (isStale()) return const OpenTitleResult.ready(usesCacheProxy: false);
     await openPreferringOffline(
       ref,
       controller,
       itemId: itemId,
       streamUrl: streamUrl,
-      startAt: await _resumePoint(ref, itemId),
+      startAt: startAt,
       autoplay: false,
     );
-    if (isStale()) return const OpenTitleResult.ready(usesCacheProxy: false);
+    if (isStale()) {
+      await controller.pause();
+      return const OpenTitleResult.ready(usesCacheProxy: false);
+    }
     await controller.play();
     return OpenTitleResult.ready(usesCacheProxy: isAuthenticated);
   } catch (e) {

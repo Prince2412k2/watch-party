@@ -201,7 +201,12 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     await Promise.all([joinedOne, joinedTwo])
 
     const peerReport = nextMatching(guestTwo, 'sync:peer_report', report => report.position === 12.5)
-    hostBackup.emit('sync:report', { position: 12.5, rate: 1.01, downloadedChunks: 7 })
+    hostBackup.emit('sync:report', {
+      position: 12.5,
+      rate: 1.01,
+      downloadedChunks: 7,
+      mediaGeneration: 0,
+    })
     const report = await peerReport
     assert.equal(report.userId, firstParty.session.hostId)
     assert.equal(report.name, 'Host One')

@@ -21,9 +21,13 @@ class PlayerView extends StatelessWidget {
     super.key,
     required this.controller,
     this.canControl = true,
+    this.canManageTracks = true,
     this.onSeekAuthored,
     this.onTogglePlay,
+    this.onAudioStreamSelected,
+    this.onSubtitleStreamSelected,
     this.onRetryPlayback,
+    this.playbackAttempt = 0,
     this.title,
     this.onBack,
     this.onToggleFullscreen,
@@ -54,12 +58,16 @@ class PlayerView extends StatelessWidget {
   /// Read-only transport bar when false — E5 passes this for a guest without
   /// playback-control rights (PLAN §4 E5.2 `canControl` gating).
   final bool canControl;
+  final bool canManageTracks;
 
   /// Called with every seek this viewer authors, so a party can publish it to
   /// the room. Null when nothing is listening (solo playback).
   final ValueChanged<Duration>? onSeekAuthored;
   final Future<void> Function()? onTogglePlay;
+  final Future<void> Function(int? index)? onAudioStreamSelected;
+  final Future<void> Function(int? index)? onSubtitleStreamSelected;
   final VoidCallback? onRetryPlayback;
+  final int playbackAttempt;
 
   /// Optional title shown in the chrome's top bar.
   final String? title;
@@ -108,9 +116,13 @@ class PlayerView extends StatelessWidget {
           PlayerChrome(
             controller: controller,
             canControl: canControl,
+            canManageTracks: canManageTracks,
             onSeekAuthored: onSeekAuthored,
             onTogglePlay: onTogglePlay,
+            onAudioStreamSelected: onAudioStreamSelected,
+            onSubtitleStreamSelected: onSubtitleStreamSelected,
             onRetryPlayback: onRetryPlayback,
+            playbackAttempt: playbackAttempt,
             title: title,
             onBack: onBack,
             onToggleFullscreen: onToggleFullscreen,

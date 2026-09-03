@@ -296,22 +296,40 @@ class _PeerMarker extends StatelessWidget {
     final fraction = total <= 0
         ? 0.0
         : (peer.position.inMilliseconds / total).clamp(0.0, 1.0);
-    final left = (fraction * width - 4)
-        .clamp(0.0, math.max(0.0, width - 8))
+    final left = (fraction * width - 12)
+        .clamp(0.0, math.max(0.0, width - 24))
         .toDouble();
-    final color = HSVColor.fromAHSV(1, (index * 83 + 28) % 360, .7, .85).toColor();
+    final color = HSVColor.fromAHSV(
+      1,
+      (index * 83 + 28) % 360,
+      .7,
+      .85,
+    ).toColor();
+    final minutes = peer.position.inMinutes;
+    final seconds = (peer.position.inSeconds % 60).toString().padLeft(2, '0');
+    final label =
+        '${peer.label} at $minutes:$seconds · ${peer.downloadedChunks} downloaded chunks';
     return Positioned(
       left: left,
-      top: (AnalogHairline.hitPx - 8) / 2,
+      top: (AnalogHairline.hitPx - 24) / 2,
       child: Tooltip(
-        message: '${peer.label} · ${peer.downloadedChunks} downloaded chunks',
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            border: Border.all(color: AnalogColor.stageVoid, width: 2),
+        message: label,
+        child: Semantics(
+          label: label,
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AnalogColor.stageVoid, width: 2),
+                ),
+                child: const SizedBox(width: 8, height: 8),
+              ),
+            ),
           ),
-          child: const SizedBox(width: 8, height: 8),
         ),
       ),
     );

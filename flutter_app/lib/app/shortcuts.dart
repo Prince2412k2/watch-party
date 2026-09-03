@@ -33,6 +33,22 @@ const List<LogicalKeyboardKey> _digitKeys = [
   LogicalKeyboardKey.digit4,
 ];
 
+class _NonEditingActivator extends ShortcutActivator {
+  const _NonEditingActivator(this.activator);
+
+  final ShortcutActivator activator;
+
+  @override
+  Iterable<LogicalKeyboardKey>? get triggers => activator.triggers;
+
+  @override
+  bool accepts(KeyEvent event, HardwareKeyboard state) =>
+      !AppShortcuts._isEditing() && activator.accepts(event, state);
+
+  @override
+  String debugDescribeKeys() => activator.debugDescribeKeys();
+}
+
 /// The app-wide keyboard layer, mounted inside the shell (PLAN PKG-E). It is
 /// deliberately scoped to the shell — the immersive detail/party player routes
 /// live *outside* it, so these bindings never shadow the player's own keymap.
@@ -79,12 +95,13 @@ class AppShortcuts extends ConsumerWidget {
 
     final shortcuts = <ShortcutActivator, Intent>{
       for (var i = 0; i < _digitKeys.length && i < destinations.length; i++)
-        SingleActivator(_digitKeys[i]): NavigateToIndexIntent(i),
+        _NonEditingActivator(SingleActivator(_digitKeys[i])):
+            NavigateToIndexIntent(i),
       const SingleActivator(LogicalKeyboardKey.keyK, control: true):
           const OpenCommandPaletteIntent(),
       const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
           const OpenCommandPaletteIntent(),
-      const SingleActivator(LogicalKeyboardKey.slash):
+      const _NonEditingActivator(SingleActivator(LogicalKeyboardKey.slash)):
           const FocusSearchIntent(),
     };
 

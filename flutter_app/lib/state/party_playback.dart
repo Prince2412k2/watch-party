@@ -64,10 +64,17 @@ enum OpenOutcome {
 
   /// Refused: a passenger cannot start a title of their own.
   refusedPassenger,
+
+  /// A newer action or party transition replaced this request while it loaded.
+  superseded,
 }
 
 /// The one sync engine, so a test can put a fake in its place.
-final syncEngineProvider = Provider<SyncEngine>((ref) => SyncEngineImpl());
+final syncEngineProvider = Provider<SyncEngine>((ref) {
+  final engine = SyncEngineImpl();
+  ref.onDispose(() => unawaited(engine.dispose()));
+  return engine;
+});
 
 class PartyPlayback {
   PartyPlayback(this._ref, {SyncEngine? engine})
@@ -81,13 +88,15 @@ class PartyPlayback {
   String? _followed;
   bool _attached = false;
   Timer? _introTimer;
+  int _openGeneration = 0;
 
   PartyState? get _party => _ref.read(partyProvider);
 
   PartyRole get role {
     final party = _party;
     if (party == null) return PartyRole.solo;
-    return _ref.read(partyProvider.notifier).isHost || party.collaborativeControl
+    return _ref.read(partyProvider.notifier).isHost ||
+            party.collaborativeControl
         ? PartyRole.driver
         : PartyRole.passenger;
   }
@@ -104,6 +113,8 @@ class PartyPlayback {
   /// them in a party watching nothing with no way back to it. Minimising is
   /// unrestricted — see the note at the top of the file.
   bool get canClose => canDrive;
+  bool get canManageTracks =>
+      _party == null || _ref.read(partyProvider.notifier).isHost;
   Stream<CatchUp> get catchUp => _engine.catchUp;
 
   /// Tell the room where the driver just scrubbed to.
@@ -137,8 +148,7 @@ class PartyPlayback {
   /// Whether the room's title is what the player currently holds.
   bool get _showingPartyTitle {
     final followed = _followed;
-    return followed != null &&
-        _ref.read(nowPlayingProvider).itemId == followed;
+    return followed != null && _ref.read(nowPlayingProvider).itemId == followed;
   }
 
   // ── Asking to play something ──────────────────────────────────────────────
@@ -148,6 +158,8 @@ class PartyPlayback {
     int? audioStreamIndex,
     int? subtitleStreamIndex,
   }) async {
+    final generation = ++_openGeneration;
+    final partyId = _party?.id;
     switch (role) {
       case PartyRole.solo:
         _ref
@@ -162,6 +174,11 @@ class PartyPlayback {
         return OpenOutcome.refusedPassenger;
       case PartyRole.driver:
         final resumePositionTicks = await _resumePositionTicks(itemId);
+        if (generation != _openGeneration ||
+            _party?.id != partyId ||
+            role != PartyRole.driver) {
+          return OpenOutcome.superseded;
+        }
         await _ref
             .read(partyProvider.notifier)
             .selectMedia(
@@ -172,6 +189,16 @@ class PartyPlayback {
             );
         return OpenOutcome.sentToRoom;
     }
+  }
+
+  Future<void> selectAudioStream(int? index) async {
+    if (_party == null || !canManageTracks) return;
+    await _ref.read(partyProvider.notifier).setAudioStream(index);
+  }
+
+  Future<void> selectSubtitleStream(int? index) async {
+    if (_party == null || !canManageTracks) return;
+    await _ref.read(partyProvider.notifier).setSubtitleStream(index);
   }
 
   Future<int?> _resumePositionTicks(String itemId) async {
@@ -200,6 +227,7 @@ class PartyPlayback {
   // ── Following the room ────────────────────────────────────────────────────
 
   void onParty(PartyState? previous, PartyState? next) {
+    if (previous?.id != next?.id) _openGeneration++;
     _followMedia(next);
     _syncEngineLifecycle();
   }
@@ -209,7 +237,15 @@ class PartyPlayback {
 
   void _followMedia(PartyState? party) {
     final wanted = party?.mediaItemId;
-    if (wanted == _followed) return;
+    final nowPlaying = _ref.read(nowPlayingProvider);
+    final mediaChanged = wanted != _followed;
+    final unchanged =
+        !mediaChanged &&
+        nowPlaying.mediaSourceId == party?.mediaSourceId &&
+        nowPlaying.audioStreamIndex == party?.playback?.selectedAudioIndex &&
+        nowPlaying.subtitleStreamIndex ==
+            party?.playback?.selectedSubtitleIndex;
+    if (unchanged) return;
 
     // Left the room, or the driver put the film away: whoever is left holding
     // it stops. A film the party took away is not yours to keep watching.
@@ -224,7 +260,6 @@ class PartyPlayback {
 
     _followed = wanted;
 
-    final nowPlaying = _ref.read(nowPlayingProvider);
     // The heart of "keep the guest's state": already watching something means
     // you are already watching it SOMEWHERE, and that is where the new title
     // appears. Only someone with nothing open gets taken over.
@@ -232,7 +267,7 @@ class PartyPlayback {
         ? nowPlaying.presentation
         : PlayerPresentation.expanded;
 
-    _showIntro(wanted);
+    if (mediaChanged) _showIntro(wanted);
     _ref
         .read(nowPlayingProvider.notifier)
         .open(
@@ -259,7 +294,9 @@ class PartyPlayback {
   void _syncEngineLifecycle() {
     final party = _party;
     final wanted =
-        party != null && _showingPartyTitle && _ref.read(nowPlayingProvider).isOpen;
+        party != null &&
+        _showingPartyTitle &&
+        _ref.read(nowPlayingProvider).isOpen;
 
     if (!wanted) {
       if (_attached) {
@@ -280,7 +317,11 @@ class PartyPlayback {
       impl.downloadedChunks = () {
         final itemId = party.mediaItemId;
         if (itemId == null) return 0;
-        return _ref.read(mediaCacheProxyProvider).cachedSpansFor(itemId).value.length;
+        return _ref
+            .read(mediaCacheProxyProvider)
+            .cachedSpansFor(itemId)
+            .value
+            .length;
       };
     }
     if (_attached) return;

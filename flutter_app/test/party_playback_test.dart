@@ -12,6 +12,7 @@ import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/player/mock_player_controller.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/sync/sync_engine.dart';
+import 'package:watchparty/sync/sync_engine_impl.dart';
 
 class _FakeEngine implements SyncEngine {
   int attachCount = 0;
@@ -73,6 +74,25 @@ class _WatchedApi extends MockApiClient {
     type: 'Movie',
     userData: const UserItemData(playbackPositionTicks: 45000000),
   );
+}
+
+class _GatedItemApi extends MockApiClient {
+  final requests = <String, Completer<LibraryItem>>{};
+
+  @override
+  Future<LibraryItem> item(String id) =>
+      (requests[id] ??= Completer<LibraryItem>()).future;
+
+  void complete(String id, {int ticks = 0}) {
+    requests[id]!.complete(
+      LibraryItem(
+        id: id,
+        name: id,
+        type: 'Movie',
+        userData: UserItemData(playbackPositionTicks: ticks),
+      ),
+    );
+  }
 }
 
 ({ProviderContainer container, _FakeEngine engine}) _boot({
@@ -275,6 +295,126 @@ void main() {
     expect(engine.attachCount, 1);
   });
 
+  test('same-title canonical track changes update the active player', () {
+    final (:container, :engine) = _boot(me: 'guest', hostId: 'host');
+    addTearDown(container.dispose);
+    _watch(
+      container,
+      'film-1',
+      playback: const PlaybackInfo(
+        selectedAudioIndex: 2,
+        selectedSubtitleIndex: 4,
+      ),
+    );
+    container.read(nowPlayingProvider.notifier).minimise();
+    container.read(nowPlayingIntroProvider.notifier).state = null;
+    final revision = container.read(nowPlayingProvider).revision;
+
+    _watch(
+      container,
+      'film-1',
+      playback: const PlaybackInfo(
+        selectedAudioIndex: 5,
+        selectedSubtitleIndex: -1,
+      ),
+    );
+
+    final now = container.read(nowPlayingProvider);
+    expect(now.audioStreamIndex, 5);
+    expect(now.subtitleStreamIndex, -1);
+    expect(now.revision, greaterThan(revision));
+    expect(now.isFloating, isTrue);
+    expect(container.read(nowPlayingIntroProvider), isNull);
+    expect(engine.attachCount, 1);
+  });
+
+  test('only the host can author canonical playback tracks', () async {
+    final host = _boot(me: 'host', hostId: 'host', watching: 'film-1');
+    final guest = _boot(
+      me: 'guest',
+      hostId: 'host',
+      collaborative: true,
+      watching: 'film-1',
+    );
+    addTearDown(host.container.dispose);
+    addTearDown(guest.container.dispose);
+
+    expect(host.container.read(partyPlaybackProvider).canManageTracks, isTrue);
+    expect(
+      guest.container.read(partyPlaybackProvider).canManageTracks,
+      isFalse,
+    );
+    await host.container.read(partyPlaybackProvider).selectAudioStream(8);
+    await host.container.read(partyPlaybackProvider).selectSubtitleStream(-1);
+    await guest.container.read(partyPlaybackProvider).selectSubtitleStream(4);
+
+    final hostSocket =
+        host.container.read(socketClientProvider) as MockSocketClient;
+    final guestSocket =
+        guest.container.read(socketClientProvider) as MockSocketClient;
+    expect(
+      hostSocket.emitted.map((event) => event.$1),
+      contains(ClientEvent.partySetPlaybackTracks),
+    );
+    final trackPayloads = hostSocket.emitted
+        .where((event) => event.$1 == ClientEvent.partySetPlaybackTracks)
+        .map((event) => event.$2)
+        .toList();
+    expect(trackPayloads, [
+      {'audioStreamIndex': 8},
+      {'subtitleStreamIndex': -1},
+    ]);
+    expect(
+      guestSocket.emitted.map((event) => event.$1),
+      isNot(contains(ClientEvent.partySetPlaybackTracks)),
+    );
+  });
+
+  test('a pending open cannot select media in a replacement party', () async {
+    final api = _GatedItemApi();
+    final (:container, :engine) = _boot(me: 'host', hostId: 'host', api: api);
+    addTearDown(container.dispose);
+    final request = container
+        .read(partyPlaybackProvider)
+        .requestOpen(itemId: 'film-1');
+    await Future<void>.delayed(Duration.zero);
+    container
+        .read(partyProvider.notifier)
+        .setState(const PartyState(id: 'room-2', hostId: 'host'));
+    api.complete('film-1', ticks: 45000000);
+
+    expect(await request, OpenOutcome.superseded);
+    final socket = container.read(socketClientProvider) as MockSocketClient;
+    expect(
+      socket.emitted.map((event) => event.$1),
+      isNot(contains(ClientEvent.partySelectMedia)),
+    );
+    expect(engine.attachCount, 0);
+  });
+
+  test('only the latest pending open reaches the room', () async {
+    final api = _GatedItemApi();
+    final (:container, :engine) = _boot(me: 'host', hostId: 'host', api: api);
+    addTearDown(container.dispose);
+    final playback = container.read(partyPlaybackProvider);
+    final first = playback.requestOpen(itemId: 'film-1');
+    final second = playback.requestOpen(itemId: 'film-2');
+    await Future<void>.delayed(Duration.zero);
+
+    api.complete('film-2');
+    expect(await second, OpenOutcome.sentToRoom);
+    api.complete('film-1');
+    expect(await first, OpenOutcome.superseded);
+
+    final socket = container.read(socketClientProvider) as MockSocketClient;
+    final selections = socket.emitted
+        .where((event) => event.$1 == ClientEvent.partySelectMedia)
+        .map((event) => event.$2 as Map)
+        .toList();
+    expect(selections, [containsPair('mediaItemId', 'film-2')]);
+    expect(engine.attachCount, 0);
+  });
+
   test('party transport uses the sync engine for play and pause', () async {
     final (:container, :engine) = _boot(
       me: 'host',
@@ -323,5 +463,15 @@ void main() {
     expect(await playback.requestOpen(itemId: 'film-9'), OpenOutcome.opened);
     expect(container.read(nowPlayingProvider).itemId, 'film-9');
     expect(engine.attachCount, 0);
+  });
+
+  test('the sync engine provider disposes its engine', () async {
+    final container = ProviderContainer();
+    final engine = container.read(syncEngineProvider) as SyncEngineImpl;
+
+    container.dispose();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(engine.isDisposed, isTrue);
   });
 }

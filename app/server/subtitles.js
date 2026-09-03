@@ -2,7 +2,7 @@ import express from 'express'
 
 import { requireAuth, getJellyfin } from './auth.js'
 import { BASE, getPlaybackInfo } from './jellyfin.js'
-import { findSessionForMember, publicSession } from './session.js'
+import { findSessionForMember, persistSession, publicSession } from './session.js'
 import { refreshPlayback } from './playback.js'
 
 const ITEM_ID = /^[A-Za-z0-9-]{1,128}$/
@@ -80,6 +80,7 @@ export function subtitleMutationError(status) {
   if (status === 400) return { status: 422, error: 'Jellyfin rejected the subtitle file' }
   if (status === 403) return { status: 403, error: 'Jellyfin denied subtitle changes' }
   if (status === 404) return { status: 404, error: 'Media item or subtitle was not found' }
+  if (status === 409) return { status: 409, error: 'The party media changed before the subtitle update completed' }
   if (Number.isInteger(status) && status >= 500) return { status: 502, error: 'Jellyfin could not process the subtitle request' }
   return { status: 502, error: 'Jellyfin subtitle request failed' }
 }
@@ -143,19 +144,43 @@ function parseSubtitleUpload(req, res) {
   }
 }
 
-async function refreshSessionPlayback(io, session, { token, userId, subtitleStreamIndex = null }) {
+async function refreshSessionPlayback(io, session, {
+  token,
+  userId,
+  mediaItemId,
+  subtitleStreamIndex = null,
+}) {
+  assertCurrentPartyMedia(session, userId, mediaItemId)
   const selectedAudioIndex = session.playback?.selectedAudioIndex ?? null
-  const playback = await refreshPlayback(session, {
+  const draft = {
+    mediaSourceId: session.mediaSourceId,
+    playback: session.playback,
+    playbackRevision: session.playbackRevision,
+  }
+  const playback = await refreshPlayback(draft, {
     token,
     userId,
-    itemId: session.mediaItemId,
+    itemId: mediaItemId,
     mediaSourceId: session.mediaSourceId,
     audioStreamIndex: Number.isInteger(selectedAudioIndex) ? selectedAudioIndex : null,
     subtitleStreamIndex,
     playSessionId: session.playback?.playSessionId ?? null,
   })
+  assertCurrentPartyMedia(session, userId, mediaItemId)
+  session.mediaSourceId = draft.mediaSourceId
+  session.playback = draft.playback
+  session.playbackRevision = draft.playbackRevision
+  persistSession(session)
   io?.to(session.id).emit('party:state', publicSession(session))
   return playback
+}
+
+function assertCurrentPartyMedia(session, userId, mediaItemId) {
+  if (findSessionForMember(userId) !== session ||
+      session.hostId !== userId ||
+      session.mediaItemId !== mediaItemId) {
+    throw Object.assign(new Error('party media changed'), { status: 409 })
+  }
 }
 
 async function jellyfinSubtitleMutation({ token, deviceId, itemId, method, body, subtitleIndex = null }) {
@@ -177,7 +202,7 @@ async function jellyfinSubtitleMutation({ token, deviceId, itemId, method, body,
   return res
 }
 
-export function registerSubtitleRoutes(app, io) {
+export function registerSubtitleRoutes(app, io, { enqueuePlaybackMutation }) {
   app.get('/api/library/items/:itemId/subtitles/:index/content', requireAuth, async (req, res) => {
     const mediaItemId = String(req.params.itemId || '')
     const indexText = String(req.params.index || '')
@@ -272,31 +297,39 @@ export function registerSubtitleRoutes(app, io) {
     if (!upload) return
 
     try {
-      const before = await getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId: session.mediaSourceId })
-      await jellyfinSubtitleMutation({
-        token,
-        deviceId,
-        itemId: mediaItemId,
-        method: 'POST',
-        body: JSON.stringify({
-          Language: subtitleLanguageFrom(req),
-          Format: upload.ext,
-          IsForced: false,
-          IsHearingImpaired: false,
-          Data: upload.data,
-        }),
+      const result = await enqueuePlaybackMutation(session, async () => {
+        assertCurrentPartyMedia(session, userId, mediaItemId)
+        const mediaSourceId = session.mediaSourceId
+        const before = await getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId })
+        await jellyfinSubtitleMutation({
+          token,
+          deviceId,
+          itemId: mediaItemId,
+          method: 'POST',
+          body: JSON.stringify({
+            Language: subtitleLanguageFrom(req),
+            Format: upload.ext,
+            IsForced: false,
+            IsHearingImpaired: false,
+            Data: upload.data,
+          }),
+        })
+        const polled = await pollForNewExternalSubtitle(
+          () => getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId }),
+          before,
+          { mediaSourceId },
+        )
+        if (polled.stream) {
+          await refreshSessionPlayback(io, session, {
+            token,
+            userId,
+            mediaItemId,
+            subtitleStreamIndex: polled.stream.Index,
+          })
+        }
+        return polled
       })
-      const result = await pollForNewExternalSubtitle(
-        () => getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId: session.mediaSourceId }),
-        before,
-        { mediaSourceId: session.mediaSourceId },
-      )
       if (!result.stream) return res.status(504).json({ error: 'Subtitle was uploaded but Jellyfin did not publish the new track in time' })
-      await refreshSessionPlayback(io, session, {
-        token,
-        userId,
-        subtitleStreamIndex: result.stream.Index,
-      })
       res.status(201).json({
         ok: true,
         label: cleanLabel(upload.filename),
@@ -322,17 +355,21 @@ export function registerSubtitleRoutes(app, io) {
     if (session.mediaItemId !== mediaItemId) return res.status(409).json({ error: 'Subtitle does not match the party’s current media' })
 
     try {
-      await jellyfinSubtitleMutation({
-        token,
-        deviceId,
-        itemId: mediaItemId,
-        method: 'DELETE',
-        subtitleIndex: index,
-      })
-      await refreshSessionPlayback(io, session, {
-        token,
-        userId,
-        subtitleStreamIndex: null,
+      await enqueuePlaybackMutation(session, async () => {
+        assertCurrentPartyMedia(session, userId, mediaItemId)
+        await jellyfinSubtitleMutation({
+          token,
+          deviceId,
+          itemId: mediaItemId,
+          method: 'DELETE',
+          subtitleIndex: index,
+        })
+        await refreshSessionPlayback(io, session, {
+          token,
+          userId,
+          mediaItemId,
+          subtitleStreamIndex: null,
+        })
       })
       res.json({ ok: true, session: publicSession(session), playback: session.playback })
     } catch (err) {

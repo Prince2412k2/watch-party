@@ -3,7 +3,7 @@ import type { RefObject } from 'react'
 import { useSocket } from './useSocket.ts'
 import { useServerClock } from './useServerClock.ts'
 import {
-  decideSyncAction, predictPosition, TICKS, CONTROL_MS,
+  acceptsSchedule, decideSyncAction, predictPosition, TICKS, CONTROL_MS,
   BUFFER_AHEAD_SEC, PAUSED_BUFFER_AHEAD_SEC, SEEK_TIMEOUT_MS, BUFFER_TIMEOUT_MS,
   HARD_SEEK_COOLDOWN_MS,
 } from '../sync/syncCore.ts'
@@ -61,6 +61,7 @@ export function useSyncPlay({
   // effectively a new timeline", not a version rollback.
   const lastAppliedVersionRef = useRef(-Infinity)
   const lastMediaGenRef = useRef<SyncSchedule['mediaGeneration'] | undefined>(undefined)
+  const stalledRef = useRef(false)
   // Local (non-shared) playback phase for this player: 'ready' during normal
   // operation, 'catchingUp' while bufferAwareSeek is chasing the live position
   // (video.pause() is an implementation detail of that routine, not a user
@@ -111,7 +112,10 @@ export function useSyncPlay({
   }
 
   function reportStall(stalled: boolean) {
-    socket.emit('sync:stall', { stalled })
+    stalledRef.current = stalled
+    const mediaGeneration = scheduleRef.current?.mediaGeneration
+    if (mediaGeneration == null) return
+    socket.emit('sync:stall', { stalled, mediaGeneration })
   }
 
   function recordHardSeek() {
@@ -283,6 +287,8 @@ export function useSyncPlay({
       // selected, or back-to-lobby) — schedule.version keeps climbing across
       // generations within one party session, it does not restart at 0.
       const gen = s?.mediaGeneration
+      if (!acceptsSchedule(lastMediaGenRef.current, lastAppliedVersionRef.current, s)) return
+      const generationChanged = gen !== lastMediaGenRef.current
       if (gen !== lastMediaGenRef.current) {
         lastMediaGenRef.current = gen
         lastAppliedVersionRef.current = -Infinity
@@ -295,6 +301,9 @@ export function useSyncPlay({
       }
 
       scheduleRef.current = s
+      if (generationChanged && gen != null) {
+        socket.emit('sync:stall', { stalled: stalledRef.current, mediaGeneration: gen })
+      }
       const pending = pendingLocalCommand.current
       if (pending && ((pending.kind === 'play' && s.phase === 'playing') || (pending.kind === 'pause' && s.phase !== 'playing'))) {
         pendingLocalCommand.current = null
@@ -424,7 +433,12 @@ export function useSyncPlay({
     if (authorized(origin)) socket.emit('sync:seek', { positionTicks, t0: serverNow() })
   }, [authorized, socket, serverNow])
   const reportPlayback = useCallback((position: number, rate: number, downloadedChunks: number) => {
-    socket.emit('sync:report', { position, rate, downloadedChunks })
+    socket.emit('sync:report', {
+      position,
+      rate,
+      downloadedChunks,
+      mediaGeneration: scheduleRef.current?.mediaGeneration,
+    })
   }, [socket])
 
   return {

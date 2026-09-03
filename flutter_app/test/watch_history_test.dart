@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +28,58 @@ class _OfflineApi extends MockApiClient {
   }) async {
     attempts++;
     throw ApiException('reportPlayback', 0, 'offline');
+  }
+}
+
+class _ReportGate {
+  final arrived = Completer<void>();
+  final release = Completer<void>();
+}
+
+class _GatedApi extends MockApiClient {
+  final arrivals = <(PlaybackReportKind, PlaybackReport)>[];
+  final _gates = <_ReportGate>[];
+
+  _ReportGate gateNext() {
+    final gate = _ReportGate();
+    _gates.add(gate);
+    return gate;
+  }
+
+  @override
+  Future<void> reportPlayback(
+    PlaybackReport report, {
+    required PlaybackReportKind kind,
+  }) async {
+    arrivals.add((kind, report));
+    if (_gates.isNotEmpty) {
+      final gate = _gates.removeAt(0);
+      gate.arrived.complete();
+      await gate.release.future;
+    }
+    playbackReports.add((kind, report));
+  }
+}
+
+class _GatedOfflineApi extends _OfflineApi {
+  final arrivals = <(PlaybackReportKind, PlaybackReport)>[];
+  _ReportGate? _gate;
+
+  _ReportGate gateNext() => _gate = _ReportGate();
+
+  @override
+  Future<void> reportPlayback(
+    PlaybackReport report, {
+    required PlaybackReportKind kind,
+  }) async {
+    arrivals.add((kind, report));
+    final gate = _gate;
+    _gate = null;
+    if (gate != null) {
+      gate.arrived.complete();
+      await gate.release.future;
+    }
+    return super.reportPlayback(report, kind: kind);
   }
 }
 
@@ -70,6 +123,29 @@ Future<void> _start(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'disposing during a delayed start cannot resume queued reporting',
+    () async {
+      final api = _GatedApi();
+      final player = MockPlayerController();
+      final container = _container(api, player);
+      final reporter = container.read(watchHistoryProvider);
+      final gate = api.gateNext();
+
+      await reporter.open(_open('movie'));
+      await player.play();
+      await gate.arrived.future;
+      container.dispose();
+      gate.release.complete();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(api.arrivals.map((entry) => entry.$1), [
+        PlaybackReportKind.started,
+      ]);
+    },
+  );
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('opening a title starts a session, closing it stops one', () async {
@@ -96,35 +172,115 @@ void main() {
     expect(stop.$1, PlaybackReportKind.stopped);
     // The position Jellyfin derives the resume point from is the player's, read
     // at the moment of the stop — not whatever the last tick happened to say.
-    expect(stop.$2.positionTicks, PlaybackReport.ticksOf(const Duration(minutes: 12)));
+    expect(
+      stop.$2.positionTicks,
+      PlaybackReport.ticksOf(const Duration(minutes: 12)),
+    );
     expect(stop.$2.playSessionId, api.playbackReports.first.$2.playSessionId);
   });
 
-  test('switching titles stops the outgoing one before starting the next', () async {
-    final api = MockApiClient();
+  test(
+    'switching titles stops the outgoing one before starting the next',
+    () async {
+      final api = MockApiClient();
+      final player = MockPlayerController();
+      final reporter = _container(api, player).read(watchHistoryProvider);
+
+      await _start(reporter, player, 'item-1');
+      await player.seek(const Duration(minutes: 30));
+      await reporter.open(_open('item-2'));
+      await player.play();
+      await Future<void>.delayed(Duration.zero);
+
+      final kinds = api.playbackReports.map((r) => r.$1).toList();
+      final items = api.playbackReports.map((r) => r.$2.itemId).toList();
+      expect(kinds, [
+        PlaybackReportKind.started,
+        PlaybackReportKind.stopped,
+        PlaybackReportKind.started,
+      ]);
+      // Without the stop, the first title keeps the position it had when we
+      // looked away and never gets a resume point.
+      expect(items, ['item-1', 'item-1', 'item-2']);
+      expect(
+        api.playbackReports[1].$2.positionTicks,
+        PlaybackReport.ticksOf(const Duration(minutes: 30)),
+      );
+      await reporter.close();
+      await player.pause();
+    },
+  );
+
+  test('a delayed start completes before progress and stop', () async {
+    final api = _GatedApi();
+    final player = MockPlayerController();
+    final reporter = _container(api, player).read(watchHistoryProvider);
+
+    await reporter.open(_open('item-1'));
+    final startGate = api.gateNext();
+    await player.play();
+    await startGate.arrived.future;
+
+    await player.seek(const Duration(minutes: 5));
+    final progress = reporter.flush();
+    final stop = reporter.close();
+    await Future<void>.delayed(Duration.zero);
+    expect(api.playbackReports, isEmpty);
+
+    startGate.release.complete();
+    await Future.wait([progress, stop]);
+    expect(api.playbackReports.map((r) => r.$1), [
+      PlaybackReportKind.started,
+      PlaybackReportKind.progress,
+      PlaybackReportKind.stopped,
+    ]);
+  });
+
+  test(
+    'a title switch observes playback that began while stop was delayed',
+    () async {
+      final api = _GatedApi();
+      final player = MockPlayerController();
+      final reporter = _container(api, player).read(watchHistoryProvider);
+
+      await _start(reporter, player, 'item-1');
+      await player.pause();
+      await reporter.flush();
+
+      final stopGate = api.gateNext();
+      final switched = reporter.open(_open('item-2'));
+      await stopGate.arrived.future;
+      await player.play();
+      stopGate.release.complete();
+      await switched;
+
+      expect(api.playbackReports.last.$1, PlaybackReportKind.started);
+      expect(api.playbackReports.last.$2.itemId, 'item-2');
+      await reporter.close();
+      await player.pause();
+    },
+  );
+
+  test('rapid title opens retain call order', () async {
+    final api = _GatedApi();
     final player = MockPlayerController();
     final reporter = _container(api, player).read(watchHistoryProvider);
 
     await _start(reporter, player, 'item-1');
-    await player.seek(const Duration(minutes: 30));
-    await reporter.open(_open('item-2'));
-    await player.play();
-    await Future<void>.delayed(Duration.zero);
+    final stopGate = api.gateNext();
+    final second = reporter.open(_open('item-2'));
+    await stopGate.arrived.future;
+    final third = reporter.open(_open('item-3'));
+    stopGate.release.complete();
+    await Future.wait([second, third]);
 
-    final kinds = api.playbackReports.map((r) => r.$1).toList();
-    final items = api.playbackReports.map((r) => r.$2.itemId).toList();
-    expect(kinds, [
-      PlaybackReportKind.started,
-      PlaybackReportKind.stopped,
-      PlaybackReportKind.started,
+    expect(api.playbackReports.map((r) => (r.$1, r.$2.itemId)), [
+      (PlaybackReportKind.started, 'item-1'),
+      (PlaybackReportKind.stopped, 'item-1'),
+      (PlaybackReportKind.started, 'item-2'),
+      (PlaybackReportKind.stopped, 'item-2'),
+      (PlaybackReportKind.started, 'item-3'),
     ]);
-    // Without the stop, the first title keeps the position it had when we
-    // looked away and never gets a resume point.
-    expect(items, ['item-1', 'item-1', 'item-2']);
-    expect(
-      api.playbackReports[1].$2.positionTicks,
-      PlaybackReport.ticksOf(const Duration(minutes: 30)),
-    );
     await reporter.close();
     await player.pause();
   });
@@ -169,8 +325,8 @@ void main() {
 
       await _start(reporter, player, 'item-1');
       await player.seek(const Duration(minutes: 20));
-      await reporter.flush();       // a progress tick, lost
-      await reporter.close();       // the stop, kept
+      await reporter.flush(); // a progress tick, lost
+      await reporter.close(); // the stop, kept
       await player.pause();
 
       final queued = SharedPreferences.getInstance().then(
@@ -225,6 +381,40 @@ void main() {
       );
     });
 
+    test(
+      'pending drain and a new offline stop cannot overwrite each other',
+      () async {
+        final pending = PlaybackReport(
+          itemId: 'item-old',
+          positionTicks: PlaybackReport.ticksOf(const Duration(minutes: 10)),
+        );
+        SharedPreferences.setMockInitialValues({
+          kWatchHistoryQueueKey: [jsonEncode(pending.toJson())],
+        });
+        final offline = _GatedOfflineApi();
+        final player = MockPlayerController();
+        final reporter = _container(offline, player).read(watchHistoryProvider);
+        await _start(reporter, player, 'item-new');
+
+        final drainGate = offline.gateNext();
+        final drain = reporter.drainPending();
+        await drainGate.arrived.future;
+        final close = reporter.close();
+        await Future<void>.delayed(Duration.zero);
+        final arrivalsBeforeRelease = offline.arrivals.length;
+        drainGate.release.complete();
+        await Future.wait([drain, close]);
+
+        expect(arrivalsBeforeRelease, 2);
+        final prefs = await SharedPreferences.getInstance();
+        final queue = prefs.getStringList(kWatchHistoryQueueKey)!;
+        expect(queue, hasLength(2));
+        expect(queue.join(), contains('item-old'));
+        expect(queue.join(), contains('item-new'));
+        await player.pause();
+      },
+    );
+
     test('the queue is bounded', () async {
       final offline = _OfflineApi();
       final player = MockPlayerController();
@@ -249,6 +439,9 @@ void main() {
     // Jellyfin counts in 100ns units; a factor-of-ten slip here lands the
     // resume point in the wrong scene rather than throwing anything.
     expect(PlaybackReport.ticksOf(position), position.inMicroseconds * 10);
-    expect(PlaybackReport.durationOf(PlaybackReport.ticksOf(position)), position);
+    expect(
+      PlaybackReport.durationOf(PlaybackReport.ticksOf(position)),
+      position,
+    );
   });
 }

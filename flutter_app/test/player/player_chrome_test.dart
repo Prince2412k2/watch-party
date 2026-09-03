@@ -22,6 +22,7 @@ class _SpyController implements PlayerController {
   final audioTracks = <String?>[];
   final subtitles = <String?>[];
   final seeks = <Duration>[];
+  Completer<void>? nextAudioGate;
 
   final _tracksCtrl = StreamController<PlayerTracks>.broadcast();
   final _positionCtrl = StreamController<Duration>.broadcast();
@@ -39,7 +40,13 @@ class _SpyController implements PlayerController {
   @override
   Future<void> setRate(double rate) async => rates.add(rate);
   @override
-  Future<void> setAudioTrack(String? trackId) async => audioTracks.add(trackId);
+  Future<void> setAudioTrack(String? trackId) async {
+    audioTracks.add(trackId);
+    final gate = nextAudioGate;
+    nextAudioGate = null;
+    if (gate != null) await gate.future;
+  }
+
   @override
   Future<void> setSubtitle(String? trackId) async => subtitles.add(trackId);
 
@@ -111,6 +118,29 @@ class _MutableSubtitleApi extends MockApiClient {
     contentCalls++;
     return content;
   }
+}
+
+class _GatedSubtitleApi extends MockApiClient {
+  final requests = <Completer<PlaybackInfo>>[];
+
+  @override
+  Future<PlaybackInfo> playbackInfo(
+    String itemId, {
+    String? mediaSourceId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) {
+    final request = Completer<PlaybackInfo>();
+    requests.add(request);
+    return request.future;
+  }
+
+  @override
+  Future<String> subtitleContent(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  }) async => '00:00:01.000 --> 00:00:03.000\nNewest';
 }
 
 void main() {
@@ -367,6 +397,127 @@ void main() {
     expect(api.contentCalls, 2);
   });
 
+  testWidgets('an older subtitle request cannot overwrite a newer revision', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final api = _GatedSubtitleApi();
+    const playback = PlaybackInfo(
+      subtitleStreams: [
+        PlaybackTrack(index: 4, title: 'Uploaded', isExternal: true),
+      ],
+    );
+
+    Widget chrome(int revision) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(
+        body: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: api,
+          preferredSubtitleStreamIndex: 4,
+          subtitleRevision: revision,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(chrome(1));
+    await tester.pump();
+    await tester.pumpWidget(chrome(2));
+    await tester.pump();
+    expect(api.requests, hasLength(2));
+
+    api.requests[1].complete(playback);
+    await tester.pumpAndSettle();
+    c.emitPosition(const Duration(seconds: 2));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Newest'), findsOneWidget);
+
+    api.requests[0].complete(const PlaybackInfo());
+    await tester.pumpAndSettle();
+    expect(find.text('Newest'), findsOneWidget);
+  });
+
+  testWidgets('an older canonical track apply stops after delayed audio', (
+    tester,
+  ) async {
+    final oldAudioGate = Completer<void>();
+    final c = _SpyController()..nextAudioGate = oldAudioGate;
+    final api = _GatedSubtitleApi();
+    const tracks = PlayerTracks(
+      audio: [
+        PlayerTrack(
+          id: 'audio-old',
+          type: 'audio',
+          title: 'Old audio',
+          jellyfinIndex: 1,
+        ),
+        PlayerTrack(
+          id: 'audio-new',
+          type: 'audio',
+          title: 'New audio',
+          jellyfinIndex: 2,
+        ),
+      ],
+      subtitle: [
+        PlayerTrack(
+          id: 'sub-old',
+          type: 'subtitle',
+          title: 'Old subtitle',
+          jellyfinIndex: 3,
+        ),
+        PlayerTrack(
+          id: 'sub-new',
+          type: 'subtitle',
+          title: 'New subtitle',
+          jellyfinIndex: 4,
+        ),
+      ],
+    );
+
+    Widget chrome(int revision) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(
+        body: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: api,
+          subtitleRevision: revision,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(chrome(1));
+    await tester.pump();
+    c.emitTracks(tracks);
+    api.requests[0].complete(
+      const PlaybackInfo(
+        selectedAudioIndex: 1,
+        selectedSubtitleIndex: 3,
+        audioStreams: [PlaybackTrack(index: 1, title: 'Old audio')],
+        subtitleStreams: [PlaybackTrack(index: 3, title: 'Old subtitle')],
+      ),
+    );
+    await tester.pump();
+
+    await tester.pumpWidget(chrome(2));
+    await tester.pump();
+    api.requests[1].complete(
+      const PlaybackInfo(
+        selectedSubtitleIndex: 4,
+        subtitleStreams: [PlaybackTrack(index: 4, title: 'New subtitle')],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(c.subtitles, contains('sub-new'));
+
+    oldAudioGate.complete();
+    await tester.pumpAndSettle();
+    expect(c.subtitles.last, 'sub-new');
+    expect(c.subtitles, isNot(contains('sub-old')));
+  });
+
   testWidgets(
     'subtitle menu deduplicates Jellyfin and native representations',
     (tester) async {
@@ -437,6 +588,71 @@ void main() {
     await tester.pumpAndSettle();
     expect(c.audioTracks, ['a1']);
   });
+
+  testWidgets(
+    'party track callbacks receive Jellyfin indices without local writes',
+    (tester) async {
+      final c = _SpyController();
+      final audio = <int?>[];
+      final subtitles = <int?>[];
+      final api = MockApiClient(
+        playback: const PlaybackInfo(
+          audioStreams: [PlaybackTrack(index: 8, title: 'Commentary')],
+          subtitleStreams: [PlaybackTrack(index: 12, title: 'English SDH')],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark,
+          home: Scaffold(
+            body: PlayerChrome(
+              controller: c,
+              itemId: 'movie',
+              apiClient: api,
+              onAudioStreamSelected: (index) async => audio.add(index),
+              onSubtitleStreamSelected: (index) async => subtitles.add(index),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      c.emitTracks(
+        const PlayerTracks(
+          audio: [
+            PlayerTrack(
+              id: 'a1',
+              type: 'audio',
+              title: 'Commentary',
+              jellyfinIndex: 8,
+            ),
+          ],
+          subtitle: [
+            PlayerTrack(
+              id: 's1',
+              type: 'subtitle',
+              title: 'English SDH',
+              jellyfinIndex: 12,
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await openAudioPicker(tester);
+      await tester.tap(find.text('Commentary'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.subtitles));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Off'));
+      await tester.pumpAndSettle();
+
+      expect(audio, [8]);
+      expect(subtitles, [-1]);
+      expect(c.audioTracks, isEmpty);
+      expect(c.subtitles, isEmpty);
+    },
+  );
 
   testWidgets('guest can select local audio and subtitle tracks', (
     tester,

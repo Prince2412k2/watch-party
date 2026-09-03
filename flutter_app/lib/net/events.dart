@@ -25,10 +25,10 @@
 ///   party:setSubtitlePreferences { preferences } ack: { ok, subtitlePreferences } | { error } (host; rebroadcasts party:state)
 ///   clock:ping          t1                          ack: serverNowMs               (NTP-lite)
 ///   sync:hello          (none)                      → server replies sync:schedule
-///   sync:play           { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error }
-///   sync:pause          { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error }
-///   sync:seek           { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error }
-///   sync:report         { position, drift, rate }   (telemetry, no ack)
+///   sync:play           { positionTicks, t0?, baseVersion?, commandId? } ack: { ok, version } | { error, version? }
+///   sync:pause          { positionTicks, baseVersion?, commandId? } ack: { ok, version } | { error, version? }
+///   sync:seek           { positionTicks, t0?, baseVersion?, commandId? } ack: { ok, version } | { error, version? }
+///   sync:report         { position, drift, rate, downloadedChunks, mediaGeneration } (telemetry, no ack)
 ///   sync:stall          { ...stallReport }          (drives dragging mode)
 ///                                                    (server whitelists tab∈movies|series|discover|downloads, screen∈grid|detail)
 ///   chat:message        { text }                    ack: { ok } | { error: 'rate limited' }

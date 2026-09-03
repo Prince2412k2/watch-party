@@ -54,6 +54,7 @@ function durableState(session) {
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
     playback: session.playback,
+    playbackRevision: session.playbackRevision,
     subtitlePreferences: session.subtitlePreferences,
     stage: session.stage,
     guests: session.guests.map(durableGuest),
@@ -84,6 +85,7 @@ function runtimeState(saved) {
     mediaItemId: saved.mediaItemId ?? null,
     mediaSourceId: saved.mediaSourceId ?? null,
     playback: saved.playback ?? null,
+    playbackRevision: saved.playbackRevision ?? 0,
     subtitlePreferences: validateSubtitlePreferences(saved.subtitlePreferences).value ?? { ...DEFAULT_SUBTITLE_PREFERENCES },
     // Migration: the shared browser is gone. A party persisted mid-browse must
     // land somewhere it can act, so it opens in the lobby rather than a stage
@@ -136,6 +138,7 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     mediaItemId,      // null until a title is chosen in the lobby
     mediaSourceId,
     playback: null,   // normalized PlaybackInfo for the current title
+    playbackRevision: 0,
     subtitlePreferences: { ...DEFAULT_SUBTITLE_PREFERENCES },
     // 'lobby'    = the room is open, nobody has picked a title yet
     // 'watching' = a title is selected, playback sync engine is live
@@ -350,6 +353,7 @@ export function publicSession(session) {
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
     playback: session.playback,
+    playbackRevision: session.playbackRevision,
     subtitlePreferences: session.subtitlePreferences,
     guests: session.guests.map(publicMember),
     waiting: session.waiting.map(publicMember),
@@ -396,7 +400,7 @@ export function beginMediaGeneration(session) {
 }
 
 export function applyStallReport(session, userId, { stalled = false, mediaGeneration } = {}) {
-  if (mediaGeneration !== undefined && mediaGeneration !== session.mediaGeneration) return false
+  if (mediaGeneration !== session.mediaGeneration) return false
   if (!stalled) {
     const changed = session.stalled.delete(userId) || session.stallFallback.delete(userId)
     return changed

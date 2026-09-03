@@ -22,7 +22,7 @@ import '../ui/ui.dart';
 /// `IconBtn`): no box/border/fill; glyph rests at 62% near-white, brightens to
 /// full near-white on hover / when [active], and is red when [danger].
 ///
-class _AvIconButton extends StatefulWidget {
+class _AvIconButton extends StatelessWidget {
   const _AvIconButton({
     required this.icon,
     required this.tooltip,
@@ -44,41 +44,34 @@ class _AvIconButton extends StatefulWidget {
   static const Color _danger = Color(0xFFE0655E);
 
   @override
-  State<_AvIconButton> createState() => _AvIconButtonState();
-}
-
-class _AvIconButtonState extends State<_AvIconButton> {
-  bool _hover = false;
-
-  @override
   Widget build(BuildContext context) {
-    final color = widget.danger
-        ? _AvIconButton._danger
-        : ((widget.active || _hover)
-              ? _AvIconButton._bright
-              : _AvIconButton._rest);
-
-    final Widget glyph = widget.busy
-        ? const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: _AvIconButton._rest,
-            ),
-          )
-        : Icon(widget.icon, size: 19, color: color);
-
     return AnalogTooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.busy ? null : widget.onTap,
-          child: SizedBox(width: 34, height: 34, child: Center(child: glyph)),
+      message: tooltip,
+      child: AnalogPressable(
+        onPressed: busy ? null : onTap,
+        semanticLabel: tooltip,
+        excludeSemantics: true,
+        builder: (context, state) => SizedBox(
+          width: 34,
+          height: 34,
+          child: Center(
+            child: busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _AvIconButton._rest,
+                    ),
+                  )
+                : Icon(
+                    icon,
+                    size: 19,
+                    color: danger
+                        ? _danger
+                        : ((active || state.lit) ? _bright : _rest),
+                  ),
+          ),
         ),
       ),
     );
@@ -277,9 +270,9 @@ class _HostControlsDialogState extends ConsumerState<HostControlsDialog> {
                         ? 'Hide viewer timeline pointers'
                         : 'Show viewer timeline pointers',
                     active: showPeerPointers,
-                    onTap: () => ref
-                        .read(showPeerPointersProvider.notifier)
-                        .state = !showPeerPointers,
+                    onTap: () =>
+                        ref.read(showPeerPointersProvider.notifier).state =
+                            !showPeerPointers,
                   ),
                   if (isHost) ...[
                     const _AvDivider.vertical(),

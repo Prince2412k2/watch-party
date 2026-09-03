@@ -29,7 +29,8 @@ import 'sync_engine.dart';
 ///    equivalent of the web's media 'play'/'pause' events), guarded and
 ///    de-duplicated against the current schedule phase to prevent echo.
 class SyncEngineImpl implements SyncEngine {
-  SyncEngineImpl({ServerClock? clock, this.clockFactory}) : _injectedClock = clock;
+  SyncEngineImpl({ServerClock? clock, this.clockFactory})
+    : _injectedClock = clock;
 
   /// Optional factory to build a clock from the attached socket (defaults to a
   /// [SocketServerClock] driving `clock:ping`). Tests inject a [ManualServerClock].
@@ -53,17 +54,8 @@ class SyncEngineImpl implements SyncEngine {
   bool _userSeeking = false;
   Timer? _userSeekTimer;
   double _lastAppliedVersion = double.negativeInfinity;
-
-  /// A pause the local user just authored, not yet acknowledged by the server.
-  ///
-  /// Without this, a host's pause un-paused itself roughly every other press:
-  /// [_kickHostPlay] runs on the 200ms tick, sees a schedule still reading
-  /// `phase: 'playing'` (the round trip has not landed) against a stopped
-  /// player, and calls `play()` — which is exactly the state a fresh pause
-  /// leaves behind. Cleared by the next schedule from the server, whatever it
-  /// says: at that point the timeline, not this flag, is the authority.
-  String? _pendingCommand;
-  int _pendingUntilMs = 0;
+  _PendingCommand? _pendingCommand;
+  int _nextCommandId = 0;
   int? _lastMediaGen;
   int _lastReportMs = 0;
   int _lastHardSeekAtMs = 0;
@@ -72,7 +64,12 @@ class SyncEngineImpl implements SyncEngine {
   final List<void Function()> _unsubs = [];
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _bufferingSub;
-  bool? _lastStalled;
+  bool _stalled = false;
+  bool? _reportedStalled;
+  int? _reportedStallGeneration;
+  Future<void> _lifecycle = Future.value();
+  int _attachmentGeneration = 0;
+  bool _disposeRequested = false;
   bool _disposed = false;
 
   int Function()? downloadedChunks;
@@ -99,36 +96,49 @@ class SyncEngineImpl implements SyncEngine {
     required SocketClient socket,
     required String partyId,
     required bool canControl,
-  }) async {
-    if (_disposed) return;
-    await detach();
-    _player = player;
-    _socket = socket;
+  }) {
+    if (_disposeRequested) return _lifecycle;
     _canControl = canControl;
+    return _serializeLifecycle(() async {
+      await _detachNow();
+      if (_disposeRequested) return;
+      _player = player;
+      _socket = socket;
 
-    final clock = _injectedClock ??
-        (clockFactory?.call(socket) ?? SocketServerClock(socket));
-    _clock = clock;
-    if (clock is SocketServerClock) clock.start();
+      final clock =
+          _injectedClock ??
+          (clockFactory?.call(socket) ?? SocketServerClock(socket));
+      _clock = clock;
+      if (clock is SocketServerClock) clock.start();
 
-    _unsubs.add(socket.on(ServerEvent.syncSchedule, _onSchedule));
-    _unsubs.add(socket.on(ServerEvent.syncHostGone, (_) => _onHostGone()));
+      _unsubs.add(socket.on(ServerEvent.syncSchedule, _onSchedule));
+      _unsubs.add(socket.on(ServerEvent.syncHostGone, (_) => _onHostGone()));
 
-    // Author play/pause from the player's own transitions (the Dart analog of
-    // the web media element's 'play'/'pause' events wired to request*).
-    _playingSub = player.playing.listen(_onPlayingChanged);
-    _bufferingSub = player.buffering.listen(_onBufferingChanged);
+      // Author play/pause from the player's own transitions (the Dart analog of
+      // the web media element's 'play'/'pause' events wired to request*).
+      _playingSub = player.playing.listen(_onPlayingChanged);
+      _stalled = player.isBufferingNow;
+      _bufferingSub = player.buffering.listen(_onBufferingChanged);
 
-    // Ask the server for the current timeline once we're listening (avoids the
-    // race where a pushed schedule arrives before we subscribed).
-    socket.emit(ClientEvent.syncHello);
+      // Ask the server for the current timeline once we're listening (avoids the
+      // race where a pushed schedule arrives before we subscribed).
+      socket.emit(ClientEvent.syncHello);
 
-    _controlLoop = Timer.periodic(
-        const Duration(milliseconds: controlMs), (_) => _tick());
+      _controlLoop = Timer.periodic(
+        const Duration(milliseconds: controlMs),
+        (_) => _tick(),
+      );
+    });
   }
 
   @override
-  Future<void> detach() async {
+  Future<void> detach() {
+    if (_disposeRequested) return _lifecycle;
+    return _serializeLifecycle(_detachNow);
+  }
+
+  Future<void> _detachNow() async {
+    _attachmentGeneration++;
     _controlLoop?.cancel();
     _controlLoop = null;
     for (final u in _unsubs) {
@@ -139,13 +149,15 @@ class SyncEngineImpl implements SyncEngine {
     _playingSub = null;
     await _bufferingSub?.cancel();
     _bufferingSub = null;
-    if (_lastStalled == true) {
+    if (_reportedStalled == true && _reportedStallGeneration != null) {
       _socket?.emit(ClientEvent.syncStall, {
         'stalled': false,
-        'mediaGeneration': _schedule?.mediaGeneration,
+        'mediaGeneration': _reportedStallGeneration,
       });
     }
-    _lastStalled = null;
+    _stalled = false;
+    _reportedStalled = null;
+    _reportedStallGeneration = null;
     _userSeekTimer?.cancel();
     _userSeekTimer = null;
     for (final t in _applyingTimers) {
@@ -161,8 +173,13 @@ class SyncEngineImpl implements SyncEngine {
     _schedule = null;
     _lastAppliedVersion = double.negativeInfinity;
     _pendingCommand = null;
-    _pendingUntilMs = 0;
     _lastMediaGen = null;
+  }
+
+  Future<void> _serializeLifecycle(Future<void> Function() operation) {
+    final next = _lifecycle.then((_) => operation());
+    _lifecycle = next.then<void>((_) {}, onError: (_, _) {});
+    return next;
   }
 
   // ── Applying-guard (feedback-loop suppression), refcounted like the web ──
@@ -183,8 +200,10 @@ class SyncEngineImpl implements SyncEngine {
   void _notifyUserSeeking() {
     _userSeeking = true;
     _userSeekTimer?.cancel();
-    _userSeekTimer =
-        Timer(const Duration(seconds: 3), () => _userSeeking = false);
+    _userSeekTimer = Timer(
+      const Duration(seconds: 3),
+      () => _userSeeking = false,
+    );
   }
 
   // ── Incoming server schedule ─────────────────────────────────────────────
@@ -196,7 +215,10 @@ class SyncEngineImpl implements SyncEngine {
     // back-to-lobby); schedule.version keeps climbing across generations
     // within one party session, it does not restart.
     final gen = s.mediaGeneration;
-    if (gen != _lastMediaGen) {
+    final previousGen = _lastMediaGen;
+    if (previousGen != null && gen < previousGen) return;
+    final generationChanged = gen != previousGen;
+    if (generationChanged) {
       _lastMediaGen = gen;
       _lastAppliedVersion = double.negativeInfinity;
     }
@@ -208,11 +230,11 @@ class SyncEngineImpl implements SyncEngine {
     _userSeeking = false;
     _userSeekTimer?.cancel();
     final pending = _pendingCommand;
-    if ((pending == 'play' && s.phase == 'playing') ||
-        (pending == 'pause' && s.phase != 'playing')) {
+    if (pending != null &&
+        (generationChanged || s.version > pending.observedVersion)) {
       _pendingCommand = null;
-      _pendingUntilMs = 0;
     }
+    _reportStall(force: generationChanged);
     _scheduleCtrl.add(s);
 
     _kickHostPlay();
@@ -233,19 +255,31 @@ class SyncEngineImpl implements SyncEngine {
     final phase = _schedule?.phase;
     final posTicks = (_player?.positionNow.inMilliseconds ?? 0) * ticksPerMs;
     if (playing && phase != 'playing') {
-      _emitPlay(posTicks);
+      _sendTransportCommand('play', posTicks, includeT0: true);
     } else if (!playing && phase == 'playing') {
-      _emitPause(posTicks);
+      _sendTransportCommand('pause', posTicks);
     }
   }
 
   void _onBufferingChanged(bool stalled) {
-    if (_lastStalled == stalled) return;
-    _lastStalled = stalled;
+    _stalled = stalled;
+    _reportStall();
+  }
+
+  void _reportStall({bool force = false}) {
+    final generation = _schedule?.mediaGeneration;
+    if (generation == null) return;
+    if (!force &&
+        _reportedStalled == _stalled &&
+        _reportedStallGeneration == generation) {
+      return;
+    }
     _socket?.emit(ClientEvent.syncStall, {
-      'stalled': stalled,
-      'mediaGeneration': _schedule?.mediaGeneration,
+      'stalled': _stalled,
+      'mediaGeneration': generation,
     });
+    _reportedStalled = _stalled;
+    _reportedStallGeneration = generation;
   }
 
   // Idempotently (re)start a hopping host's own player. decideSyncAction returns
@@ -256,7 +290,7 @@ class SyncEngineImpl implements SyncEngine {
     final p = _player;
     if (p == null) return;
     if (!(_isHost &&
-        _pendingCommand != 'pause' &&
+        _pendingCommand?.kind != 'pause' &&
         _mode != 'dragging' &&
         _schedule?.phase == 'playing' &&
         !p.isPlayingNow)) {
@@ -273,10 +307,10 @@ class SyncEngineImpl implements SyncEngine {
     // A locally-authored command is in flight and hasn't round-tripped yet —
     // scheduleRef is still stale. Skip so our own change isn't fought.
     if (_applying > 0) return;
-    if (_pendingCommand != null) {
-      if (_pendingUntilMs > DateTime.now().millisecondsSinceEpoch) return;
+    final pending = _pendingCommand;
+    if (pending != null) {
+      if (pending.untilMs > DateTime.now().millisecondsSinceEpoch) return;
       _pendingCommand = null;
-      _pendingUntilMs = 0;
     }
 
     _kickHostPlay();
@@ -337,9 +371,7 @@ class SyncEngineImpl implements SyncEngine {
     // Drift telemetry — guests only (a hopping host returned null above).
     if (!_isHost && intent.drift != null) {
       _driftCtrl.add(_sec(intent.drift!));
-      _emitCatchUp(
-        CatchUp(rate: intent.rate ?? 1, drift: _sec(intent.drift!)),
-      );
+      _emitCatchUp(CatchUp(rate: intent.rate ?? 1, drift: _sec(intent.drift!)));
     }
   }
 
@@ -352,13 +384,16 @@ class SyncEngineImpl implements SyncEngine {
       'drift': drift ?? 0,
       'rate': _catchUp.rate,
       'downloadedChunks': downloadedChunks?.call() ?? 0,
+      'mediaGeneration': _schedule?.mediaGeneration,
     });
   }
 
   /// Only on a CHANGE. The correction loop runs every CONTROL_MS, and pushing
   /// an identical value 5x a second would rebuild the badge for nothing.
   void _emitCatchUp(CatchUp next) {
-    if (next.active == _catchUp.active && next.behind == _catchUp.behind) {
+    if (next.active == _catchUp.active &&
+        next.behind == _catchUp.behind &&
+        next.rate == _catchUp.rate) {
       _catchUp = next;
       return;
     }
@@ -388,17 +423,58 @@ class SyncEngineImpl implements SyncEngine {
 
   /// Host toggles hopping ↔ dragging (E5.2 wires party:setSyncMode). Kept off
   /// the frozen interface; the engine reads it in the control loop.
-  set syncMode(String mode) => _mode = mode == 'dragging' ? 'dragging' : 'hopping';
+  set syncMode(String mode) =>
+      _mode = mode == 'dragging' ? 'dragging' : 'hopping';
   String get syncMode => _mode;
 
   // ── Local user intents (only take effect while canControl) ───────────────
-  void _emitPlay(int positionTicks) {
-    _socket?.emit(ClientEvent.syncPlay,
-        {'positionTicks': positionTicks, 't0': _serverNow()});
+  void _sendTransportCommand(
+    String kind,
+    int positionTicks, {
+    bool includeT0 = false,
+  }) {
+    final socket = _socket;
+    if (socket == null) return;
+    final schedule = _schedule;
+    final command = _PendingCommand(
+      kind: kind,
+      id: '${DateTime.now().microsecondsSinceEpoch}-${_nextCommandId++}',
+      observedVersion: schedule?.version ?? -1,
+      untilMs: DateTime.now().millisecondsSinceEpoch + 2000,
+    );
+    _pendingCommand = command;
+    final payload = <String, Object>{
+      'positionTicks': positionTicks,
+      'commandId': command.id,
+      if (includeT0) 't0': _serverNow(),
+    };
+    unawaited(_awaitCommandAck(socket, command, 'sync:$kind', payload));
   }
 
-  void _emitPause(int positionTicks) {
-    _socket?.emit(ClientEvent.syncPause, {'positionTicks': positionTicks});
+  Future<void> _awaitCommandAck(
+    SocketClient socket,
+    _PendingCommand command,
+    String event,
+    Map<String, Object> payload,
+  ) async {
+    dynamic response;
+    try {
+      response = await socket
+          .emitWithAck(event, payload)
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {
+      if (identical(_pendingCommand, command)) _pendingCommand = null;
+      return;
+    }
+    if (!identical(_pendingCommand, command)) return;
+    if (response is! Map || response['ok'] != true) {
+      _pendingCommand = null;
+      return;
+    }
+    final version = response['version'];
+    if (version is! num || (_schedule?.version ?? -1) >= version.toInt()) {
+      _pendingCommand = null;
+    }
   }
 
   /// The transport's play, authored.
@@ -414,37 +490,57 @@ class SyncEngineImpl implements SyncEngine {
   @override
   Future<void> requestPlay() async {
     if (!_canControl) return;
-    _pendingCommand = 'play';
-    _pendingUntilMs = DateTime.now().millisecondsSinceEpoch + 2000;
     final p = _player;
+    final socket = _socket;
+    final attachment = _attachmentGeneration;
     if (p != null && !p.isPlayingNow) {
       _markApplying();
       await p.play();
     }
-    _emitPlay((p?.positionNow.inMilliseconds ?? 0) * ticksPerMs);
+    if (attachment != _attachmentGeneration ||
+        !identical(_player, p) ||
+        !identical(_socket, socket) ||
+        !_canControl) {
+      return;
+    }
+    _sendTransportCommand(
+      'play',
+      (p?.positionNow.inMilliseconds ?? 0) * ticksPerMs,
+      includeT0: true,
+    );
   }
 
   @override
   Future<void> requestPause() async {
     if (!_canControl) return;
-    _pendingCommand = 'pause';
-    _pendingUntilMs = DateTime.now().millisecondsSinceEpoch + 2000;
     final p = _player;
+    final socket = _socket;
+    final attachment = _attachmentGeneration;
     if (p != null && p.isPlayingNow) {
       _markApplying();
       await p.pause();
     }
-    _emitPause((p?.positionNow.inMilliseconds ?? 0) * ticksPerMs);
+    if (attachment != _attachmentGeneration ||
+        !identical(_player, p) ||
+        !identical(_socket, socket) ||
+        !_canControl) {
+      return;
+    }
+    _sendTransportCommand(
+      'pause',
+      (p?.positionNow.inMilliseconds ?? 0) * ticksPerMs,
+    );
   }
 
   @override
   Future<void> requestSeek(Duration position) async {
     if (_applying > 0 || !_canControl) return;
     _notifyUserSeeking();
-    _socket?.emit(ClientEvent.syncSeek, {
-      'positionTicks': position.inMilliseconds * ticksPerMs,
-      't0': _serverNow(),
-    });
+    _sendTransportCommand(
+      'seek',
+      position.inMilliseconds * ticksPerMs,
+      includeT0: true,
+    );
   }
 
   @override
@@ -470,11 +566,29 @@ class SyncEngineImpl implements SyncEngine {
   /// player and socket nobody owns anymore. Kept off the frozen [SyncEngine]
   /// interface — the provider builds the concrete engine.
   Future<void> dispose() async {
-    if (_disposed) return;
-    _disposed = true;
-    await detach();
-    await _scheduleCtrl.close();
-    await _driftCtrl.close();
-    await _catchUpCtrl.close();
+    if (_disposeRequested) return _lifecycle;
+    _disposeRequested = true;
+    return _serializeLifecycle(() async {
+      if (_disposed) return;
+      await _detachNow();
+      _disposed = true;
+      await _scheduleCtrl.close();
+      await _driftCtrl.close();
+      await _catchUpCtrl.close();
+    });
   }
+}
+
+class _PendingCommand {
+  const _PendingCommand({
+    required this.kind,
+    required this.id,
+    required this.observedVersion,
+    required this.untilMs,
+  });
+
+  final String kind;
+  final String id;
+  final int observedVersion;
+  final int untilMs;
 }

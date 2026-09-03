@@ -1,10 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { decideSyncAction } from './syncCore.ts'
+import { acceptsSchedule, decideSyncAction } from './syncCore.ts'
 import { selectBufferedResumeTarget } from './bufferSeek.ts'
 
 const playing = { positionTicks: 100_000_000, t0: 1_000, phase: 'playing', version: 7 }
+
+test('schedule ordering rejects a delayed older media generation', () => {
+  assert.equal(acceptsSchedule(2, 10, { ...playing, mediaGeneration: 1, version: 11 }), false)
+  assert.equal(acceptsSchedule(2, 10, { ...playing, mediaGeneration: 2, version: 10 }), false)
+  assert.equal(acceptsSchedule(2, 10, { ...playing, mediaGeneration: 3, version: 1 }), true)
+})
 
 test('paused hopping guest with material drift requests buffer-aware catch-up', () => {
   const intent = decideSyncAction({

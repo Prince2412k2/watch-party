@@ -13,7 +13,9 @@ import 'package:watchparty/sync/sync_engine_impl.dart';
 class FakePlayer implements PlayerController {
   Duration pos = Duration.zero;
   bool playingNow = false;
+  bool bufferingNow = false;
   double rate = 1.0;
+  Completer<void>? playGate;
 
   final _playingCtrl = StreamController<bool>.broadcast();
   final _bufferingCtrl = StreamController<bool>.broadcast();
@@ -22,6 +24,8 @@ class FakePlayer implements PlayerController {
   @override
   Future<void> play() async {
     calls.add('play');
+    final gate = playGate;
+    if (gate != null) await gate.future;
     if (!playingNow) {
       playingNow = true;
       _playingCtrl.add(true);
@@ -54,7 +58,10 @@ class FakePlayer implements PlayerController {
     _playingCtrl.add(v);
   }
 
-  void setBuffering(bool value) => _bufferingCtrl.add(value);
+  void setBuffering(bool value) {
+    bufferingNow = value;
+    _bufferingCtrl.add(value);
+  }
 
   @override
   Stream<bool> get playing => _playingCtrl.stream;
@@ -65,7 +72,7 @@ class FakePlayer implements PlayerController {
   @override
   Duration get durationNow => const Duration(minutes: 90);
   @override
-  bool get isBufferingNow => false;
+  bool get isBufferingNow => bufferingNow;
 
   @override
   Future<void> open(
@@ -95,6 +102,18 @@ class FakePlayer implements PlayerController {
   Stream<bool> get completed => const Stream.empty();
   @override
   Stream<PlayerTracks> get tracks => const Stream.empty();
+}
+
+class DelayedAckSocket extends MockSocketClient {
+  final acks = <Completer<dynamic>>[];
+
+  @override
+  Future<dynamic> emitWithAck(String event, [Object? data]) {
+    emitted.add((event, data));
+    final ack = Completer<dynamic>();
+    acks.add(ack);
+    return ack.future;
+  }
 }
 
 Map<String, dynamic> playingSchedule({
@@ -251,10 +270,13 @@ void main() {
         (e) => e.$1 == ClientEvent.syncSeek,
       );
       expect((seek.$2 as Map)['positionTicks'], 30 * 1000 * ticksPerMs);
+      expect((seek.$2 as Map)['baseVersion'], isNull);
+      expect((seek.$2 as Map)['commandId'], isNotEmpty);
       final pause = socket.emitted.firstWhere(
         (e) => e.$1 == ClientEvent.syncPause,
       );
       expect((pause.$2 as Map)['positionTicks'], 42 * 1000 * ticksPerMs);
+      expect((pause.$2 as Map)['commandId'], isNotEmpty);
 
       // A UI-driven play transition authors sync:play at the player position.
       player.userSetPlaying(true);
@@ -377,12 +399,59 @@ void main() {
           .map((event) => event.$2 as Map)
           .toList();
       expect(stalls, [
+        {'stalled': false, 'mediaGeneration': 4},
         {'stalled': true, 'mediaGeneration': 4},
         {'stalled': false, 'mediaGeneration': 4},
       ]);
       engine.detach();
     });
   });
+
+  test(
+    'buffering waits for a generation, then samples and resends on change',
+    () {
+      fakeAsync((fa) {
+        final engine = engineWith(() => 2000.0);
+        final player = FakePlayer()..bufferingNow = true;
+        final socket = MockSocketClient();
+        engine.attach(
+          player: player,
+          socket: socket,
+          partyId: 'p',
+          canControl: false,
+        );
+        fa.flushMicrotasks();
+
+        player.setBuffering(false);
+        player.setBuffering(true);
+        fa.flushMicrotasks();
+        expect(
+          socket.emitted.where((event) => event.$1 == ClientEvent.syncStall),
+          isEmpty,
+        );
+
+        socket.inject(ServerEvent.syncSchedule, pausedSchedule(gen: 4));
+        socket.inject(
+          ServerEvent.syncSchedule,
+          pausedSchedule(version: 2, gen: 5),
+        );
+
+        final stalls = socket.emitted
+            .where((event) => event.$1 == ClientEvent.syncStall)
+            .map((event) => event.$2 as Map)
+            .toList();
+        expect(stalls, [
+          {'stalled': true, 'mediaGeneration': 4},
+          {'stalled': true, 'mediaGeneration': 5},
+        ]);
+        expect(
+          stalls.every((payload) => payload['mediaGeneration'] != null),
+          isTrue,
+        );
+        engine.detach();
+      });
+    },
+  );
 
   test('peer telemetry includes position and downloaded chunks', () {
     fakeAsync((fa) {
@@ -412,15 +481,16 @@ void main() {
               as Map;
       expect(report['position'], 12.0);
       expect(report['downloadedChunks'], 7);
+      expect(report['mediaGeneration'], 0);
       engine.detach();
     });
   });
 
-  test('a local play is not undone by a stale paused schedule', () {
+  test('a local play ignores an old schedule but obeys a newer authority', () {
     fakeAsync((fa) {
       final engine = engineWith(() => 2000.0)..isHost = true;
       final player = FakePlayer();
-      final socket = MockSocketClient();
+      final socket = DelayedAckSocket();
       engine.attach(
         player: player,
         socket: socket,
@@ -433,14 +503,160 @@ void main() {
       engine.requestPlay();
       fa.flushMicrotasks();
       expect(player.playingNow, isTrue);
-      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 2));
+      final command = socket.emitted.firstWhere(
+        (event) => event.$1 == ClientEvent.syncPlay,
+      );
+      expect((command.$2 as Map)['baseVersion'], isNull);
+      expect((command.$2 as Map)['commandId'], isNotEmpty);
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 1));
       fa.elapse(const Duration(milliseconds: 500));
       fa.flushMicrotasks();
 
       expect(player.playingNow, isTrue);
-      socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 3));
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 2));
+      fa.elapse(const Duration(milliseconds: 250));
+      fa.flushMicrotasks();
+
+      expect(player.playingNow, isFalse);
+      socket.acks.single.complete({'ok': true, 'version': 2});
+      fa.flushMicrotasks();
       engine.detach();
     });
+  });
+
+  test('rapid transport commands do not share an optimistic base version', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000.0)..isHost = true;
+      final player = FakePlayer();
+      final socket = DelayedAckSocket();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 1));
+
+      engine.requestPlay();
+      fa.flushMicrotasks();
+      engine.requestPause();
+      fa.flushMicrotasks();
+
+      final commands = socket.emitted
+          .where(
+            (event) =>
+                event.$1 == ClientEvent.syncPlay ||
+                event.$1 == ClientEvent.syncPause,
+          )
+          .map((event) => event.$2 as Map)
+          .toList();
+      expect(commands, hasLength(2));
+      expect(
+        commands.every((command) => !command.containsKey('baseVersion')),
+        isTrue,
+      );
+      expect(commands[0]['commandId'], isNot(commands[1]['commandId']));
+
+      socket.acks[0].complete({'ok': true, 'version': 2});
+      socket.acks[1].complete({'ok': true, 'version': 3});
+      fa.flushMicrotasks();
+      engine.detach();
+    });
+  });
+
+  test('a delayed play cannot emit into a replacement attachment', () async {
+    final engine = engineWith(() => 2000.0)..isHost = true;
+    final firstPlayer = FakePlayer()..playGate = Completer<void>();
+    final firstSocket = MockSocketClient();
+    final secondSocket = MockSocketClient();
+
+    await engine.attach(
+      player: firstPlayer,
+      socket: firstSocket,
+      partyId: 'one',
+      canControl: true,
+    );
+    final play = engine.requestPlay();
+    await Future<void>.delayed(Duration.zero);
+    await engine.attach(
+      player: FakePlayer(),
+      socket: secondSocket,
+      partyId: 'two',
+      canControl: true,
+    );
+    firstPlayer.playGate!.complete();
+    await play;
+
+    expect(
+      firstSocket.emitted.where((event) => event.$1 == ClientEvent.syncPlay),
+      isEmpty,
+    );
+    expect(
+      secondSocket.emitted.where((event) => event.$1 == ClientEvent.syncPlay),
+      isEmpty,
+    );
+    await engine.dispose();
+  });
+
+  test('a pending local pause yields to a newer playing schedule', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000.0)..isHost = true;
+      final player = FakePlayer()..playingNow = true;
+      final socket = DelayedAckSocket();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 1));
+
+      engine.requestPause();
+      fa.flushMicrotasks();
+      expect(player.playingNow, isFalse);
+
+      socket.inject(ServerEvent.syncSchedule, playingSchedule(version: 2));
+      fa.elapse(const Duration(milliseconds: 250));
+      fa.flushMicrotasks();
+
+      expect(player.playingNow, isTrue);
+      socket.acks.single.complete({'ok': true, 'version': 2});
+      fa.flushMicrotasks();
+      engine.detach();
+    });
+  });
+
+  test('attach, detach, and dispose are serialized', () async {
+    final engine = engineWith(() => 2000.0);
+    final firstPlayer = FakePlayer();
+    final secondPlayer = FakePlayer();
+    final firstSocket = MockSocketClient();
+    final secondSocket = MockSocketClient();
+
+    await engine.attach(
+      player: firstPlayer,
+      socket: firstSocket,
+      partyId: 'one',
+      canControl: false,
+    );
+    final detach = engine.detach();
+    final secondAttach = engine.attach(
+      player: secondPlayer,
+      socket: secondSocket,
+      partyId: 'two',
+      canControl: false,
+    );
+    await secondAttach;
+    final dispose = engine.dispose();
+    await Future.wait([detach, dispose]);
+
+    firstSocket.inject(ServerEvent.syncHostGone, null);
+    secondSocket.inject(ServerEvent.syncHostGone, null);
+    expect(firstPlayer.calls, isEmpty);
+    expect(secondPlayer.calls, isEmpty);
+    expect(engine.isDisposed, isTrue);
   });
 
   test('hopping host is not corrected but is kicked into play', () {

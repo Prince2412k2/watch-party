@@ -51,6 +51,7 @@ export async function refreshPlayback(session, {
     sourceId: playback.mediaSourceId ?? null,
     streamUrl: playback.transcodingUrl || playback.directStreamUrl || null,
   }
+  session.playbackRevision = (session.playbackRevision ?? 0) + 1
   return session.playback
 }
 

@@ -137,6 +137,21 @@ export interface SyncSchedule {
   mediaGeneration?: string | number | null
 }
 
+export function acceptsSchedule(
+  lastGeneration: SyncSchedule['mediaGeneration'],
+  lastVersion: number,
+  next: SyncSchedule,
+) {
+  const nextGeneration = next.mediaGeneration
+  if (lastGeneration != null &&
+      nextGeneration != null &&
+      Number(nextGeneration) < Number(lastGeneration)) return false
+  if (nextGeneration === lastGeneration &&
+      next.version != null &&
+      next.version <= lastVersion) return false
+  return true
+}
+
 export interface SyncIntent {
   seekTo?: number
   rate?: number

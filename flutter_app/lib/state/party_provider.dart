@@ -189,7 +189,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       socket.on(ServerEvent.syncPeerReport, (data) {
         if (data is! Map) return;
         final report = PeerPlayback.fromJson(Map<String, dynamic>.from(data));
-        if (report != null) {
+        if (report != null &&
+            report.mediaGeneration == state?.schedule.mediaGeneration) {
           _ref.read(peerPlaybackProvider.notifier).put(report);
         }
       }),
@@ -254,6 +255,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   /// frozen [PartyState] — field names differ (`guests` → `participants`) and
   /// the host isn't itself in `guests`, so it's synthesized as a participant.
   void _applySession(Map<String, dynamic> json) {
+    final previousPartyId = state?.id;
+    final previousMediaGeneration = state?.schedule.mediaGeneration;
     final hostId = json['hostId']?.toString() ?? '';
     final hostName = json['hostName']?.toString();
     final guestsJson = (json['guests'] as List?) ?? const [];
@@ -292,11 +295,18 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       playback: playbackJson is Map
           ? PlaybackInfo.fromJson(Map<String, dynamic>.from(playbackJson))
           : null,
+      playbackRevision: json['playbackRevision'] is int
+          ? json['playbackRevision'] as int
+          : 0,
       participants: participants,
       schedule: scheduleJson is Map
           ? SyncSchedule.fromJson(Map<String, dynamic>.from(scheduleJson))
           : const SyncSchedule(),
     );
+    if (previousPartyId != state?.id ||
+        previousMediaGeneration != state?.schedule.mediaGeneration) {
+      _ref.read(peerPlaybackProvider.notifier).clear();
+    }
     final partyId = state?.id;
     if (partyId != null && partyId.isNotEmpty) {
       _ref.read(chatProvider.notifier).activate(partyId);
@@ -563,6 +573,20 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     'resumePositionTicks': ?resumePositionTicks,
   });
 
+  Future<void> setPlaybackTracks({
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) => _ack(ClientEvent.partySetPlaybackTracks, {
+    'audioStreamIndex': audioStreamIndex,
+    'subtitleStreamIndex': subtitleStreamIndex,
+  });
+
+  Future<void> setAudioStream(int? index) =>
+      _ack(ClientEvent.partySetPlaybackTracks, {'audioStreamIndex': index});
+
+  Future<void> setSubtitleStream(int? index) =>
+      _ack(ClientEvent.partySetPlaybackTracks, {'subtitleStreamIndex': index});
+
   Future<void> setSyncMode(String mode) => _ack(ClientEvent.partySetSyncMode, {
     'mode': mode == 'hopping' ? 'hopping' : 'dragging',
   });
@@ -693,7 +717,8 @@ class PeerPlayback {
     required this.drift,
     required this.rate,
     required this.downloadedChunks,
-    required this.at,
+    required this.mediaGeneration,
+    required this.receivedAt,
   });
 
   final String userId;
@@ -702,7 +727,8 @@ class PeerPlayback {
   final Duration drift;
   final double rate;
   final int downloadedChunks;
-  final int at;
+  final int mediaGeneration;
+  final int receivedAt;
 
   static PeerPlayback? fromJson(Map<String, dynamic> json) {
     final userId = json['userId'];
@@ -711,7 +737,8 @@ class PeerPlayback {
     final drift = json['drift'];
     final rate = json['rate'];
     final chunks = json['downloadedChunks'];
-    final at = json['at'];
+    final mediaGeneration = json['mediaGeneration'];
+    if (mediaGeneration is! int) return null;
     return PeerPlayback(
       userId: userId,
       name: json['name']?.toString() ?? userId,
@@ -721,7 +748,8 @@ class PeerPlayback {
       ),
       rate: rate is num ? rate.toDouble() : 1,
       downloadedChunks: chunks is int && chunks >= 0 ? chunks : 0,
-      at: at is int ? at : DateTime.now().millisecondsSinceEpoch,
+      mediaGeneration: mediaGeneration,
+      receivedAt: DateTime.now().millisecondsSinceEpoch,
     );
   }
 }
@@ -739,7 +767,7 @@ class PeerPlaybackNotifier extends StateNotifier<Map<String, PeerPlayback>> {
     final now = DateTime.now().millisecondsSinceEpoch;
     state = {
       for (final entry in state.entries)
-        if (now - entry.value.at < 5000) entry.key: entry.value,
+        if (now - entry.value.receivedAt < 5000) entry.key: entry.value,
       report.userId: report,
     };
   }
@@ -759,7 +787,7 @@ class PeerPlaybackNotifier extends StateNotifier<Map<String, PeerPlayback>> {
     final now = DateTime.now().millisecondsSinceEpoch;
     final next = {
       for (final entry in state.entries)
-        if (now - entry.value.at < 5000) entry.key: entry.value,
+        if (now - entry.value.receivedAt < 5000) entry.key: entry.value,
     };
     if (next.length != state.length) state = next;
     if (next.isEmpty) _stopExpiry();

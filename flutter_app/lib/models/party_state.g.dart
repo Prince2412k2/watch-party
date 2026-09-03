@@ -41,6 +41,7 @@ _$PartyStateImpl _$$PartyStateImplFromJson(Map<String, dynamic> json) =>
       playback: json['playback'] == null
           ? null
           : PlaybackInfo.fromJson(json['playback'] as Map<String, dynamic>),
+      playbackRevision: (json['playbackRevision'] as num?)?.toInt() ?? 0,
       participants:
           (json['participants'] as List<dynamic>?)
               ?.map((e) => Participant.fromJson(e as Map<String, dynamic>))
@@ -62,6 +63,7 @@ Map<String, dynamic> _$$PartyStateImplToJson(_$PartyStateImpl instance) =>
       'collaborativeControl': instance.collaborativeControl,
       'syncMode': instance.syncMode,
       'playback': instance.playback,
+      'playbackRevision': instance.playbackRevision,
       'participants': instance.participants,
       'schedule': instance.schedule,
     };

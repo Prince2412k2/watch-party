@@ -21,8 +21,15 @@ const read = (name: string) =>
 
 const syncContract = read('sync-core.json')
 const eventContract = read('socket-events.json')
+const harnessSource = readFileSync(new URL('../../../harness/client.js', import.meta.url), 'utf8')
 
 const EPSILON = 1e-9
+
+test('the headless parity client scopes sync telemetry to media generation', () => {
+  assert.match(harnessSource, /sync:stall[\s\S]{0,300}mediaGeneration/)
+  assert.match(harnessSource, /sync:report[\s\S]{0,300}mediaGeneration/)
+  assert.match(harnessSource, /Number\(gen\) < Number\(this\._lastMediaGen\)/)
+})
 
 /** Both languages compare through this shape, so the fixture pins semantics
  *  rather than either language's way of spelling "field not set". */

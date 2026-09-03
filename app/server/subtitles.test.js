@@ -5,11 +5,19 @@ import {
   findExternalSubtitleStream,
   findNewExternalSubtitle,
   pollForNewExternalSubtitle,
+  registerSubtitleRoutes,
   resolveJellyfinDeliveryUrl,
   srtToVtt,
   subtitleTextToVtt,
   subtitleMutationError,
 } from './subtitles.js'
+import { createSession, deleteSession } from './session.js'
+
+function deferred() {
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  return { promise, resolve }
+}
 
 test('srtToVtt removes sequence numbers and converts comma timestamps', () => {
   const result = srtToVtt('\uFEFF1\r\n00:00:01,250 --> 00:00:03,500\r\nHello!\r\n\r\n2\r\n00:01:02,000 --> 00:01:05,125\r\nAgain')
@@ -71,4 +79,98 @@ test('subtitleMutationError maps Jellyfin client and server failures safely', ()
   assert.equal(subtitleMutationError(404).status, 404)
   assert.equal(subtitleMutationError(500).status, 502)
   assert.equal(subtitleMutationError(undefined).status, 502)
+})
+
+test('party subtitle uploads serialize their Jellyfin snapshot and mutation', async () => {
+  const routes = new Map()
+  const app = {
+    get() {},
+    delete() {},
+    post(path, ...handlers) { routes.set(path, handlers.at(-1)) },
+  }
+  let queue = Promise.resolve()
+  const enqueuePlaybackMutation = (_session, operation) => {
+    const current = queue.then(operation, operation)
+    queue = current.catch(() => {})
+    return current
+  }
+  registerSubtitleRoutes(app, { to: () => ({ emit() {} }) }, { enqueuePlaybackMutation })
+
+  const session = createSession({
+    hostId: 'subtitle-host',
+    hostToken: 'token',
+    hostDeviceId: 'device',
+    hostName: 'Host',
+    hostSocketId: 'socket',
+    mediaItemId: 'movie',
+    mediaSourceId: 'source',
+  })
+  session.playback = { selectedAudioIndex: null, playSessionId: 'play' }
+  const mutationStarted = deferred()
+  const releaseMutation = deferred()
+  const originalFetch = globalThis.fetch
+  const subtitles = []
+  let playbackReads = 0
+  let mutations = 0
+  globalThis.fetch = async (input, init = {}) => {
+    const path = new URL(input).pathname
+    if (path.endsWith('/Subtitles')) {
+      mutations++
+      if (mutations === 1) {
+        mutationStarted.resolve()
+        await releaseMutation.promise
+      }
+      subtitles.push(9 + mutations)
+      return new Response(null, { status: 204 })
+    }
+    if (path.endsWith('/PlaybackInfo')) {
+      playbackReads++
+      return Response.json({
+        PlaySessionId: 'play',
+        MediaSources: [{
+          Id: 'source',
+          DirectStreamUrl: '/Videos/movie/stream',
+          MediaStreams: subtitles.map(Index => ({ Type: 'Subtitle', Index, IsExternal: true })),
+        }],
+      })
+    }
+    throw new Error(`unexpected fetch ${init.method ?? 'GET'} ${path}`)
+  }
+
+  const request = filename => ({
+    session: { jellyfin: { userId: 'subtitle-host', accessToken: 'token', deviceId: 'device' } },
+    query: { mediaItemId: 'movie' },
+    body: Buffer.from('WEBVTT\n\n00:00.000 --> 00:01.000\nHello'),
+    get: name => ({
+      'content-type': 'text/vtt',
+      'x-subtitle-filename': filename,
+      'x-subtitle-language': 'eng',
+    })[name.toLowerCase()] ?? '',
+  })
+  const response = () => ({
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this },
+    json(body) { this.body = body; return this },
+  })
+  const upload = routes.get('/api/library/subtitles/upload')
+  const firstResponse = response()
+  const secondResponse = response()
+
+  try {
+    const first = upload(request('first.vtt'), firstResponse)
+    await mutationStarted.promise
+    const second = upload(request('second.vtt'), secondResponse)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(playbackReads, 1)
+
+    releaseMutation.resolve()
+    await Promise.all([first, second])
+    assert.equal(firstResponse.statusCode, 201)
+    assert.equal(secondResponse.statusCode, 201)
+    assert.equal(firstResponse.body.subtitleStreamIndex, 10)
+    assert.equal(secondResponse.body.subtitleStreamIndex, 11)
+  } finally {
+    globalThis.fetch = originalFetch
+    deleteSession(session.id)
+  }
 })
