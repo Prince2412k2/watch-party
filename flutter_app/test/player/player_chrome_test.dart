@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/player/player_chrome.dart';
+import 'package:watchparty/player/player_view.dart';
 import 'package:watchparty/player/player_controller.dart';
+import 'package:watchparty/player/video_view.dart';
+import 'package:watchparty/player/media_kit_player_controller.dart';
+import 'package:watchparty/analog/player/auto_hide_controller.dart';
 import 'package:watchparty/player/party_track_mapping.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/playback_info.dart';
@@ -92,6 +96,69 @@ class _SpyController implements PlayerController {
   bool get isBufferingNow => false;
 }
 
+class _NativeSubtitleController extends _SpyController
+    implements MediaKitPlayerController {
+  bool failSubtitle = false;
+  int loads = 0;
+  Completer<void>? loadGate;
+  String nativeTrackId = 'subtitle data, not a native track ID';
+  String? selectedNativeTrack;
+  List<PlayerTrack> nativeTracks = const [];
+  bool ignoreNativeSelection = false;
+
+  @override
+  Future<void> addExternalSubtitle(
+    String data, {
+    String? title,
+    String? language,
+  }) async {
+    loads++;
+    await loadGate?.future;
+    if (failSubtitle) throw StateError('Native subtitle load failed');
+    selectedNativeTrack = nativeTrackId;
+  }
+
+  @override
+  Future<void> setSubtitle(String? trackId) async {
+    await super.setSubtitle(trackId);
+    // Match the real controller: unknown IDs silently leave selection alone.
+    if (trackId == null ||
+        (!ignoreNativeSelection &&
+            nativeTracks.any((track) => track.id == trackId))) {
+      selectedNativeTrack = trackId;
+    }
+  }
+
+  @override
+  String? get lastError => null;
+  @override
+  PlayerTracks get latestTracks => PlayerTracks(subtitle: nativeTracks);
+  @override
+  double get volumeNow => 100;
+  @override
+  String? get currentAudioTrackId => null;
+  @override
+  String? get currentSubtitleTrackId => selectedNativeTrack;
+  @override
+  bool get hardwareDecodingEnabled => true;
+  @override
+  double get subtitleScale => 1;
+  @override
+  int get subtitlePosition => 100;
+  @override
+  double get subtitleDelay => 0;
+  @override
+  String get subtitleFont => 'sans-serif';
+  @override
+  String get subtitleColor => '#FFFFFF';
+  @override
+  int get subtitleBackgroundOpacity => 65;
+  @override
+  Stream<String> get errors => const Stream.empty();
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _MutableSubtitleApi extends MockApiClient {
   PlaybackInfo info = const PlaybackInfo(
     subtitleStreams: [
@@ -144,6 +211,265 @@ class _GatedSubtitleApi extends MockApiClient {
 }
 
 void main() {
+  for (final key in [
+    LogicalKeyboardKey.arrowLeft,
+    LogicalKeyboardKey.arrowRight,
+    LogicalKeyboardKey.keyJ,
+    LogicalKeyboardKey.keyL,
+    null,
+  ]) {
+    testWidgets('delegated seek is awaited without local writes: $key', (
+      tester,
+    ) async {
+      final c = _SpyController()..positionNow = const Duration(seconds: 30);
+      final gate = Completer<void>();
+      final seeks = <Duration>[];
+      final reports = <Duration>[];
+      var wakes = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerView(
+            controller: c,
+            visible: true,
+            onWake: () => wakes++,
+            onSeekAuthored: reports.add,
+            onSeek: (position) async {
+              seeks.add(position);
+              await gate.future;
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+      if (key == null) {
+        await tester.drag(
+          find.byKey(const Key('playbackScrubber')),
+          const Offset(100, 0),
+        );
+      } else {
+        await tester.sendKeyEvent(key);
+      }
+      await tester.pump();
+      expect(seeks, hasLength(1));
+      expect(c.seeks, isEmpty);
+      expect(reports, isEmpty);
+      final pendingWakes = wakes;
+      gate.complete();
+      await tester.pump();
+      expect(wakes, pendingWakes + 1);
+      expect(c.seeks, isEmpty);
+      expect(reports, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await c.dispose();
+    });
+  }
+
+  test('movies preserve their full frame by default', () {
+    expect(VideoView(controller: _SpyController()).fit, BoxFit.contain);
+  });
+
+  for (final release in ['focus', 'lifecycle', 'dispose', 'key up']) {
+    testWidgets('PTT releases once on $release', (tester) async {
+      final c = _SpyController();
+      final otherFocus = FocusNode();
+      addTearDown(otherFocus.dispose);
+      var starts = 0;
+      var stops = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                PlayerChrome(
+                  controller: c,
+                  onPushToTalkStart: () => starts++,
+                  onPushToTalkStop: () => stops++,
+                ),
+                Align(
+                  alignment: Alignment.center,
+                  child: SizedBox(
+                    width: 200,
+                    child: TextField(focusNode: otherFocus),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyT);
+      expect(starts, 1);
+      switch (release) {
+        case 'focus':
+          otherFocus.requestFocus();
+          await tester.pump();
+        case 'lifecycle':
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.inactive,
+          );
+          await tester.pump();
+        case 'dispose':
+          await tester.pumpWidget(const SizedBox.shrink());
+        case 'key up':
+          break;
+      }
+      if (release != 'key up') expect(stops, 1);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyT);
+      expect(stops, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(stops, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await c.dispose();
+    });
+  }
+
+  testWidgets('unowned T release never calls mic stop', (tester) async {
+    var stops = 0;
+    final c = _SpyController();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerChrome(controller: c, onPushToTalkStop: () => stops++),
+      ),
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(stops, 0);
+    await c.dispose();
+  });
+
+  testWidgets('parent auto-hide stays held throughout an open settings menu', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final hide = AnalogAutoHideController();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerChrome(
+          controller: c,
+          visible: true,
+          onHold: hide.hold,
+          onRelease: hide.release,
+          onWake: () => hide.noteInput(PlayerInputKind.pointer),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.settings));
+    await tester.pump(const Duration(seconds: 4));
+    expect(hide.holds, contains('settingsStack'));
+    expect(hide.visible, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(hide.holds, isEmpty);
+    await tester.pump(const Duration(seconds: 4));
+    expect(hide.visible, isFalse);
+    hide.dispose();
+    await c.dispose();
+  });
+
+  for (final fail in [false, true]) {
+    testWidgets(
+      'external subtitles use only ${fail ? 'fallback after failure' : 'native rendering'}',
+      (tester) async {
+        final c = _NativeSubtitleController()
+          ..failSubtitle = fail
+          ..positionNow = const Duration(seconds: 2)
+          ..loadGate = Completer<void>();
+        final api = _MutableSubtitleApi();
+        if (!fail) api.content = '[Script Info]\nTitle: Native ASS';
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PlayerChrome(
+              controller: c,
+              itemId: 'movie',
+              apiClient: api,
+              preferredSubtitleStreamIndex: 4,
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(c.loads, 1);
+        expect(
+          find.byKey(const Key('externalSubtitleOverlay')),
+          findsNothing,
+          reason: 'a pending native load is not a failure',
+        );
+        c.loadGate!.complete();
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('externalSubtitleOverlay')),
+          fail ? findsOneWidget : findsNothing,
+        );
+        expect(c.subtitles, fail ? [null] : isEmpty);
+        if (fail) {
+          expect(
+            tester
+                .getBottomLeft(find.byKey(const Key('externalSubtitleOverlay')))
+                .dy,
+            lessThan(tester.getTopLeft(find.byIcon(Icons.settings)).dy),
+          );
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await c.dispose();
+      },
+    );
+  }
+
+  for (final scenario in [
+    'data ID',
+    'native ID',
+    'native no-op',
+    'reload failure',
+  ]) {
+    testWidgets('external subtitle Off then reselect: $scenario', (
+      tester,
+    ) async {
+      final selectable = scenario == 'native ID' || scenario == 'native no-op';
+      final c = _NativeSubtitleController()
+        ..positionNow = const Duration(seconds: 2)
+        ..ignoreNativeSelection = scenario == 'native no-op';
+      if (selectable) {
+        c.nativeTrackId = '7';
+        c.nativeTracks = const [
+          PlayerTrack(id: '7', type: 'subtitle', title: 'Uploaded'),
+        ];
+      }
+      final api = _MutableSubtitleApi();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerChrome(
+            controller: c,
+            itemId: 'movie',
+            apiClient: api,
+            preferredSubtitleStreamIndex: 4,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(c.selectedNativeTrack, c.nativeTrackId);
+      await tester.tap(find.byIcon(Icons.subtitles));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Off'));
+      await tester.pumpAndSettle();
+      expect(c.selectedNativeTrack, isNull);
+      c.failSubtitle = scenario == 'reload failure';
+      await tester.tap(find.byIcon(Icons.subtitles));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Uploaded'));
+      await tester.pumpAndSettle();
+      expect(c.selectedNativeTrack, c.failSubtitle ? isNull : c.nativeTrackId);
+      expect(c.loads, scenario == 'native ID' ? 1 : 2);
+      expect(api.contentCalls, 1);
+      expect(
+        find.byKey(const Key('externalSubtitleOverlay')),
+        c.failSubtitle ? findsOneWidget : findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await c.dispose();
+    });
+  }
   test(
     'Jellyfin global indices map by metadata then preserve subtitle off',
     () {
@@ -351,13 +677,17 @@ void main() {
 
     expect(find.byKey(const Key('externalSubtitleOverlay')), findsOneWidget);
     expect(find.text('First\nSecond'), findsOneWidget);
+    expect(
+      tester.getBottomLeft(find.text('First\nSecond')).dy,
+      lessThan(tester.getTopLeft(find.byIcon(Icons.settings)).dy),
+    );
 
     await tester.tap(find.byIcon(Icons.subtitles));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Off'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('externalSubtitleOverlay')), findsNothing);
-    expect(c.subtitles, [null]);
+    expect(c.subtitles, [null, null]);
   });
 
   testWidgets('subtitle revision replaces same-index cached content', (
@@ -768,6 +1098,7 @@ void main() {
     final c = _SpyController();
     var chatToggles = 0;
     var pttStarts = 0;
+    var pttStops = 0;
     var fullscreenToggles = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -777,6 +1108,7 @@ void main() {
             controller: c,
             onToggleChat: () => chatToggles++,
             onPushToTalkStart: () => pttStarts++,
+            onPushToTalkStop: () => pttStops++,
             onToggleFullscreen: () => fullscreenToggles++,
           ),
         ),
@@ -804,11 +1136,13 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
     await tester.pump();
     expect(pttStarts, 0);
+    expect(pttStops, 0);
 
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
     await tester.pump();
     expect(pttStarts, 1);
+    expect(pttStops, 1);
   });
 
   testWidgets('Ctrl+C inside a text field leaves copy alone', (tester) async {

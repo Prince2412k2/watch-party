@@ -31,8 +31,10 @@ class _NoopLiveKitRoomService extends LiveKitRoomService {
 
 void main() {
   late ProviderContainer container;
+  late int peerNowMs;
 
   setUp(() async {
+    peerNowMs = DateTime.now().millisecondsSinceEpoch;
     final socket = MockSocketClient();
     await socket.connect();
     container = ProviderContainer(
@@ -42,6 +44,9 @@ void main() {
         playerControllerProvider.overrideWithValue(MockPlayerController()),
         livekitRoomServiceProvider.overrideWithValue(_NoopLiveKitRoomService()),
         currentUserIdProvider.overrideWithValue('me'),
+        peerPlaybackProvider.overrideWith(
+          (ref) => PeerPlaybackNotifier(nowMs: () => peerNowMs),
+        ),
       ],
     );
   });
@@ -96,6 +101,58 @@ void main() {
     expect(find.text('library'), findsOneWidget);
     expect(find.byType(FloatingCameraLayer), findsNothing);
     expect(find.byType(ChatSlideOver), findsNothing);
+  });
+
+  testWidgets('host sees lag, stall, expiry and fallback without pointers', (
+    tester,
+  ) async {
+    container
+        .read(partyProvider.notifier)
+        .setState(
+          const PartyState(
+            id: 'room',
+            hostId: 'me',
+            mediaItemId: 'movie',
+            participants: [Participant(userId: 'guest', name: 'Grace')],
+          ),
+        );
+    container.read(playerChromeVisibleProvider.notifier).state = false;
+    await pumpOverlay(tester);
+    expect(find.text('Grace: No recent playback report'), findsOneWidget);
+    void report({bool stalled = false}) {
+      final report = PeerPlayback.fromJson({
+        'userId': 'guest',
+        'name': 'Grace',
+        'position': 10,
+        'drift': 2.5,
+        'mediaGeneration': 0,
+        'stalled': stalled,
+      })!;
+      peerNowMs = report.receivedAt;
+      container.read(peerPlaybackProvider.notifier).put(report);
+    }
+
+    report();
+    await tester.pump();
+    expect(find.text('Grace: 2.5s behind'), findsOneWidget);
+    report(stalled: true);
+    await tester.pump();
+    expect(find.text('Grace: Buffering'), findsOneWidget);
+    peerNowMs += 4000;
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('Grace: Buffering'), findsOneWidget);
+    peerNowMs += 2000;
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.text('Grace: No recent playback report'), findsOneWidget);
+    container.read(peerFallbackProvider.notifier).state = {'guest'};
+    await tester.pump();
+    expect(
+      find.text('Grace: Buffering; room resumed without them'),
+      findsOneWidget,
+    );
+    container.read(partyProvider.notifier).clear();
+    await tester.pump();
+    expect(find.byType(PeerPlaybackWarnings), findsNothing);
   });
 
   testWidgets('joining a room brings cameras and chat, without navigating', (

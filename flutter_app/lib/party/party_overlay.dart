@@ -92,6 +92,12 @@ class PartyOverlay extends ConsumerWidget {
           ),
           const Positioned(top: 64, right: 12, child: JoinRequestsLayer()),
           const Positioned(
+            bottom: 110,
+            left: 56,
+            right: 56,
+            child: PeerPlaybackWarnings(),
+          ),
+          const Positioned(
             top: 70,
             left: 0,
             right: 0,
@@ -105,6 +111,49 @@ class PartyOverlay extends ConsumerWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Independent of cameras, optional timeline pointers, and auto-hidden chrome.
+class PeerPlaybackWarnings extends ConsumerWidget {
+  const PeerPlaybackWarnings({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final party = ref.watch(partyProvider);
+    if (party == null ||
+        party.mediaItemId == null ||
+        party.hostId != ref.watch(currentUserIdProvider)) {
+      return const SizedBox.shrink();
+    }
+    final reports = ref.watch(peerPlaybackProvider);
+    final fallback = ref.watch(peerFallbackProvider);
+    final warnings = <String>[];
+    for (final participant in party.participants) {
+      if (participant.userId == party.hostId) continue;
+      final report = reports[participant.userId];
+      final warning = fallback.contains(participant.userId)
+          ? 'Buffering; room resumed without them'
+          : report?.healthWarning ??
+                (report == null ? 'No recent playback report' : null);
+      if (warning != null) warnings.add('${participant.name}: $warning');
+    }
+    if (warnings.isEmpty) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: Center(
+        child: Material(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Text(
+              warnings.join('\n'),
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

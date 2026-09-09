@@ -58,7 +58,12 @@ abstract class SyncEngine {
 
 /// The correction loop's current nudge, as something the UI can render.
 class CatchUp {
-  const CatchUp({this.rate = 1.0, this.drift = Duration.zero});
+  const CatchUp({
+    this.rate = 1.0,
+    this.drift = Duration.zero,
+    this.waiting = false,
+    this.seeking = false,
+  });
 
   /// The playback rate the correction loop has applied. 1.0 means it is not
   /// correcting at all.
@@ -67,10 +72,18 @@ class CatchUp {
   /// Signed distance from the room's timeline: positive means behind it.
   final Duration drift;
 
+  /// The room is paused while this viewer buffers, or the room is waiting for
+  /// another member to become ready.
+  final bool waiting;
+
+  /// The engine is jumping this viewer back onto the shared timeline.
+  final bool seeking;
+
   /// Deliberately not `rate != 1.0`: the nudge is a float computed from a gain,
   /// so it lands on values like 1.0000000002 and would otherwise flicker the
   /// badge on and off around the release threshold.
-  bool get active => (rate - 1.0).abs() > 0.005;
+  bool get active =>
+      waiting || seeking || (rate - 1.0).abs() > 0.005;
 
   /// Behind the room and being sped up, as opposed to ahead and being held
   /// back. Both are corrections; only one of them is "catching up".

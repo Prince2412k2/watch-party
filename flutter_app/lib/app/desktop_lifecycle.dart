@@ -23,6 +23,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart' show Offset, Rect, Size;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -53,9 +54,19 @@ bool windowBoundsAreVisible(Rect bounds, Iterable<Rect> workAreas) {
 }
 
 Size clampWindowSize(Size saved, Size available) => Size(
-  saved.width.clamp(_minSize.width, available.width),
-  saved.height.clamp(_minSize.height, available.height),
+  saved.width.clamp(math.min(_minSize.width, available.width), available.width),
+  saved.height.clamp(
+    math.min(_minSize.height, available.height),
+    available.height,
+  ),
 );
+
+Size restoredWindowSize(SharedPreferences prefs, Size available) {
+  final w = prefs.getDouble(kWindowWPref);
+  final h = prefs.getDouble(kWindowHPref);
+  final saved = w != null && h != null ? Size(w, h) : _defaultSize;
+  return clampWindowSize(saved, available);
+}
 
 /// A snapshot of what to persist about the window.
 ///
@@ -181,7 +192,6 @@ class DesktopLifecycle with WindowListener {
   static final DesktopLifecycle instance = DesktopLifecycle._();
 
   bool _quitting = false;
-  SharedPreferences? _prefs;
   WindowGeometryRecorder? _geometry;
 
   /// Invoked once, before the process exits: release the LiveKit room (the
@@ -224,8 +234,8 @@ class DesktopLifecycle with WindowListener {
     await windowManager.ensureInitialized();
     final prefs = await SharedPreferences.getInstance();
     final primaryDisplay = await screenRetriever.getPrimaryDisplay();
-    final restoredSize = _restoredSize(primaryDisplay.visibleSize);
-    _prefs = prefs;
+    final available = primaryDisplay.visibleSize ?? primaryDisplay.size;
+    final restoredSize = restoredWindowSize(prefs, available);
     _geometry = WindowGeometryRecorder(
       read: _readGeometry,
       write: (geometry) => persistWindowGeometry(prefs, geometry),
@@ -233,7 +243,7 @@ class DesktopLifecycle with WindowListener {
 
     final options = WindowOptions(
       size: restoredSize,
-      minimumSize: _minSize,
+      minimumSize: clampWindowSize(_minSize, available),
       center: prefs.getDouble(kWindowXPref) == null,
       title: 'Watchparty',
       // Windows owns its caption buttons. The Flutter overlay could lose its
@@ -277,14 +287,6 @@ class DesktopLifecycle with WindowListener {
     // Intercept the close request — not to keep the process alive, but so the
     // teardown in onWindowClose gets to run before the process exits.
     await windowManager.setPreventClose(true);
-  }
-
-  Size _restoredSize(Size? available) {
-    final w = _prefs?.getDouble(kWindowWPref);
-    final h = _prefs?.getDouble(kWindowHPref);
-    final saved = w != null && h != null ? Size(w, h) : _defaultSize;
-    if (available == null) return saved;
-    return clampWindowSize(saved, available);
   }
 
   static Future<WindowGeometry> _readGeometry() async => WindowGeometry.from(

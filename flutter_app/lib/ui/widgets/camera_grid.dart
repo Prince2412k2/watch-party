@@ -170,8 +170,12 @@ class _CameraTile extends StatelessWidget {
             CameraVideoView(track: track),
             Positioned(
               left: AppSpacing.xs,
+              right: AppSpacing.xs,
               bottom: AppSpacing.xs,
-              child: _NameTag(track: track),
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: _NameTag(track: track),
+              ),
             ),
             if (track.isSpeaking)
               Positioned(
@@ -218,7 +222,11 @@ class CameraVideoView extends StatelessWidget {
       return Stack(
         fit: StackFit.expand,
         children: [
-          lk.VideoTrackRenderer(videoTrack, key: ValueKey(videoTrack.sid)),
+          lk.VideoTrackRenderer(
+            videoTrack,
+            key: ValueKey(videoTrack.sid),
+            fit: lk.VideoViewFit.contain,
+          ),
           if (track.videoMuted) _CamOffPlaceholder(track: track),
         ],
       );
@@ -277,12 +285,16 @@ class _NameTag extends StatelessWidget {
               padding: EdgeInsets.only(right: 4),
               child: Icon(Icons.mic_off, size: 12, color: AppColors.dim),
             ),
-          Text(
-            track.isLocal ? '${track.name} (you)' : track.name,
-            style: const TextStyle(
-              color: AppColors.text,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              track.isLocal ? '${track.name} (you)' : track.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.text,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -351,9 +363,7 @@ class _ToggleIconButton extends StatelessWidget {
       icon: icon,
       tooltip: tooltip,
       onPressed: onTap,
-      tone: active
-          ? AnalogIconButtonTone.solid
-          : AnalogIconButtonTone.outline,
+      tone: active ? AnalogIconButtonTone.solid : AnalogIconButtonTone.outline,
     );
   }
 }

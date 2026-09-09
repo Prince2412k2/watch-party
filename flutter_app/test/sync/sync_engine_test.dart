@@ -7,6 +7,7 @@ import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/player/player_controller.dart';
 import 'package:watchparty/sync/server_clock.dart';
 import 'package:watchparty/sync/sync_engine_impl.dart';
+import 'package:watchparty/sync/sync_engine.dart';
 
 /// Deterministic, fully-driven [PlayerController] fake: no internal timer, all
 /// state is set explicitly, and every mutation is recorded for assertions.
@@ -16,6 +17,7 @@ class FakePlayer implements PlayerController {
   bool bufferingNow = false;
   double rate = 1.0;
   Completer<void>? playGate;
+  Completer<void>? seekGate;
 
   final _playingCtrl = StreamController<bool>.broadcast();
   final _bufferingCtrl = StreamController<bool>.broadcast();
@@ -44,6 +46,8 @@ class FakePlayer implements PlayerController {
   @override
   Future<void> seek(Duration position) async {
     calls.add('seek:${position.inMilliseconds}');
+    final gate = seekGate;
+    if (gate != null) await gate.future;
     pos = position;
   }
 
@@ -149,6 +153,195 @@ SyncEngineImpl engineWith(double Function() nowMs) =>
     SyncEngineImpl(clock: ManualServerClock(nowMs: nowMs, ready: true));
 
 void main() {
+  test('CatchUp refreshes capped-rate drift and clears on paused seek', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000);
+      final player = FakePlayer()
+        ..playingNow = true
+        ..pos = const Duration(seconds: 10);
+      final socket = MockSocketClient();
+      final seen = <CatchUp>[];
+      engine.catchUp.listen(seen.add);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, playingSchedule());
+      fa.elapse(const Duration(milliseconds: 250));
+      expect(seen.last.rate, 1.1);
+      expect(seen.last.drift, const Duration(seconds: 1));
+      player.pos = const Duration(milliseconds: 9500);
+      fa.elapse(const Duration(milliseconds: 200));
+      expect(seen.last.rate, 1.1);
+      expect(seen.last.drift, const Duration(milliseconds: 1500));
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 2));
+      fa.elapse(const Duration(milliseconds: 600));
+      expect(player.rate, 1);
+      expect(seen.last.active, isFalse);
+      engine.dispose();
+      fa.flushMicrotasks();
+    });
+  });
+
+  for (final mode in ['dragging', 'hopping']) {
+    test(
+      '$mode delayed host play yields to newer authority without authoring',
+      () {
+        fakeAsync((fa) {
+          final engine = engineWith(() => 2000)
+            ..syncMode = mode
+            ..isHost = true;
+          final player = FakePlayer()..playGate = Completer<void>();
+          final socket = MockSocketClient();
+          engine.attach(
+            player: player,
+            socket: socket,
+            partyId: 'p',
+            canControl: true,
+          );
+          fa.flushMicrotasks();
+          socket.inject(ServerEvent.syncSchedule, pausedSchedule());
+          engine.requestPlay();
+          fa.flushMicrotasks();
+          socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 2));
+          fa.elapse(const Duration(seconds: 1));
+          player.playGate!.complete();
+          fa.flushMicrotasks();
+          fa.elapse(const Duration(milliseconds: 500));
+          expect(player.playingNow, isFalse);
+          expect(
+            socket.emitted.where((e) => e.$1 == ClientEvent.syncPlay),
+            isEmpty,
+          );
+          engine.dispose();
+          fa.flushMicrotasks();
+        });
+      },
+    );
+
+    test('$mode delayed seek is serialized and newer pause prevents play', () {
+      fakeAsync((fa) {
+        final engine = engineWith(() => 2000)..syncMode = mode;
+        final player = FakePlayer()..seekGate = Completer<void>();
+        final socket = MockSocketClient();
+        engine.attach(
+          player: player,
+          socket: socket,
+          partyId: 'p',
+          canControl: true,
+        );
+        fa.flushMicrotasks();
+        socket.inject(ServerEvent.syncSchedule, playingSchedule());
+        fa.elapse(const Duration(seconds: 4));
+        expect(player.calls.where((c) => c.startsWith('seek:')), hasLength(1));
+        expect(player.calls, isNot(contains('play')));
+        socket.inject(ServerEvent.syncSchedule, pausedSchedule(version: 2));
+        player.seekGate!.complete();
+        fa.flushMicrotasks();
+        fa.elapse(const Duration(milliseconds: 500));
+        expect(player.playingNow, isFalse);
+        expect(player.rate, 1);
+        expect(
+          socket.emitted.where((e) => e.$1 == ClientEvent.syncPlay),
+          isEmpty,
+        );
+        engine.dispose();
+        fa.flushMicrotasks();
+      });
+    });
+  }
+
+  test('authored seek queues behind correction and wins without echo', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000);
+      final player = FakePlayer()..seekGate = Completer<void>();
+      final socket = MockSocketClient();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, playingSchedule());
+      fa.elapse(const Duration(milliseconds: 250));
+      engine.seekTo(const Duration(seconds: 42));
+      fa.elapse(const Duration(seconds: 3));
+      expect(player.calls.where((c) => c.startsWith('seek:')), hasLength(1));
+      player.seekGate!.complete();
+      fa.flushMicrotasks();
+      expect(player.pos, const Duration(seconds: 42));
+      expect(player.calls, isNot(contains('play')));
+      final seeks = socket.emitted.where((e) => e.$1 == ClientEvent.syncSeek);
+      expect(seeks, hasLength(1));
+      expect((seeks.single.$2 as Map)['positionTicks'], 420000000);
+      engine.dispose();
+      fa.flushMicrotasks();
+    });
+  });
+
+  test(
+    'open drains correction and suppresses delayed native authoring',
+    () async {
+      final engine = engineWith(() => 2000);
+      final player = FakePlayer()..seekGate = Completer<void>();
+      final socket = MockSocketClient();
+      await engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: true,
+      );
+      socket.inject(ServerEvent.syncSchedule, playingSchedule());
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      var drained = false;
+      final opening = engine.beginOpen().then((_) => drained = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(drained, isFalse);
+      player.seekGate!.complete();
+      await opening;
+      player.userSetPlaying(true);
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      player.userSetPlaying(false);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        socket.emitted.where((e) => e.$1 == ClientEvent.syncPause),
+        isEmpty,
+      );
+      expect(player.calls, isNot(contains('play')));
+      engine.endOpen();
+      player.rate = 1.1;
+      await engine.detach();
+      expect(player.rate, 1);
+      await engine.dispose();
+      await player.dispose();
+    },
+  );
+
+  test('detach drains delayed seek before reusing the player', () async {
+    final engine = engineWith(() => 2000);
+    final player = FakePlayer()..seekGate = Completer<void>();
+    final socket = MockSocketClient();
+    await engine.attach(
+      player: player,
+      socket: socket,
+      partyId: 'p',
+      canControl: false,
+    );
+    socket.inject(ServerEvent.syncSchedule, playingSchedule());
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    final detached = engine.detach();
+    player.seekGate!.complete();
+    await detached;
+    expect(player.calls, isNot(contains('play')));
+    expect(player.rate, 1);
+    await engine.dispose();
+    await player.dispose();
+  });
+
   test('dragging is the default sync mode', () {
     expect(engineWith(() => 0).syncMode, 'dragging');
   });
@@ -236,6 +429,7 @@ void main() {
       // Explicit intents are dropped.
       engine.requestPlay();
       engine.requestPause();
+      fa.flushMicrotasks();
       engine.requestSeek(const Duration(seconds: 30));
 
       // And a local UI-driven play transition is not authored either.
@@ -265,6 +459,7 @@ void main() {
 
       engine.requestSeek(const Duration(seconds: 30));
       engine.requestPause();
+      fa.flushMicrotasks();
 
       final seek = socket.emitted.firstWhere(
         (e) => e.$1 == ClientEvent.syncSeek,
@@ -279,6 +474,7 @@ void main() {
       expect((pause.$2 as Map)['commandId'], isNotEmpty);
 
       // A UI-driven play transition authors sync:play at the player position.
+      fa.elapse(const Duration(milliseconds: 160));
       player.userSetPlaying(true);
       fa.flushMicrotasks();
       expect(socket.emitted.any((e) => e.$1 == ClientEvent.syncPlay), isTrue);
@@ -369,6 +565,7 @@ void main() {
       fa.flushMicrotasks();
 
       socket.inject(ServerEvent.syncHostGone, null);
+      fa.flushMicrotasks();
       expect(player.calls, contains('pause'));
       expect(player.playingNow, isFalse);
 
@@ -579,7 +776,7 @@ void main() {
     );
     final play = engine.requestPlay();
     await Future<void>.delayed(Duration.zero);
-    await engine.attach(
+    final replacement = engine.attach(
       player: FakePlayer(),
       socket: secondSocket,
       partyId: 'two',
@@ -587,6 +784,7 @@ void main() {
     );
     firstPlayer.playGate!.complete();
     await play;
+    await replacement;
 
     expect(
       firstSocket.emitted.where((event) => event.$1 == ClientEvent.syncPlay),
@@ -675,6 +873,7 @@ void main() {
       fa.flushMicrotasks();
 
       socket.inject(ServerEvent.syncSchedule, playingSchedule());
+      fa.flushMicrotasks();
       // kickHostPlay runs on the schedule handler (host, hopping, phase playing).
       expect(player.playingNow, isTrue);
 

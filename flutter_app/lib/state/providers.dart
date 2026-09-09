@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api_client.dart';
@@ -82,14 +84,20 @@ final downloaderProvider = Provider<Downloader>((ref) => Downloader());
 /// before overriding this — the default here (built lazily off whatever
 /// [apiClientProvider] resolves to, un-started) only exists so tests that
 /// don't touch playback don't need to override it.
-final mediaCacheProxyProvider = Provider<MediaCacheProxy>(
-  (ref) => MediaCacheProxy(apiClient: ref.watch(apiClientProvider)),
-);
+final mediaCacheProxyProvider = Provider<MediaCacheProxy>((ref) {
+  final proxy = MediaCacheProxy(apiClient: ref.watch(apiClientProvider));
+  ref.onDispose(() => unawaited(proxy.dispose()));
+  return proxy;
+});
 
 /// The proactive whole-title cache-fill engine ("download = fill the
 /// cache", Phase 3b) built off whatever [mediaCacheProxyProvider] resolves
 /// to. This is what [downloadsProvider] drives to fill a title's cache, and
 /// what [offlineProvider] treats as complete-or-not.
-final cacheFillControllerProvider = Provider<CacheFillController>(
-  (ref) => CacheFillController(proxy: ref.watch(mediaCacheProxyProvider)),
-);
+final cacheFillControllerProvider = Provider<CacheFillController>((ref) {
+  final controller = CacheFillController(
+    proxy: ref.watch(mediaCacheProxyProvider),
+  );
+  ref.onDispose(controller.dispose);
+  return controller;
+});

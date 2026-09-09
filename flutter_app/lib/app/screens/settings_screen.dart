@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -195,6 +197,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         300.0,
                         420.0,
                       );
+                      final identity = _Identity(
+                        userId: auth.user?.userId,
+                        face: face,
+                        name: _name.text.isEmpty
+                            ? (auth.user?.name ?? 'Profile')
+                            : _name.text,
+                        controller: _name,
+                        busy: _savingName,
+                        onSave: _saveName,
+                        onEditAvatar: () => context.push(Routes.profile),
+                      );
+                      final connection = _Connection(
+                        url: _url,
+                        current: _current,
+                        next: _next,
+                        username: auth.user?.name ?? '',
+                        savingUrl: _savingUrl,
+                        savingPassword: _savingPassword,
+                        clearing: _clearing,
+                        onSaveUrl: _saveUrl,
+                        onSavePassword: _savePassword,
+                        onClearCache: _clearCache,
+                      );
+                      if (constraints.maxWidth < 760) {
+                        return SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(24, 12, 24, 36),
+                          child: Column(
+                            children: [
+                              SizedBox(height: face + 220, child: identity),
+                              const SizedBox(height: 32),
+                              connection,
+                            ],
+                          ),
+                        );
+                      }
                       return Padding(
                         // The header's room, held open. Settings has no header of
                         // its own, but the editor does, and without this the face
@@ -203,38 +240,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         padding: const EdgeInsets.fromLTRB(44, 12, 52, 36),
                         child: Row(
                           children: [
-                            Expanded(
-                              flex: 4,
-                              child: _Identity(
-                                userId: auth.user?.userId,
-                                face: face,
-                                name: _name.text.isEmpty
-                                    ? (auth.user?.name ?? 'Profile')
-                                    : _name.text,
-                                controller: _name,
-                                busy: _savingName,
-                                onSave: _saveName,
-                                onEditAvatar: () =>
-                                    context.push(Routes.profile),
-                              ),
-                            ),
+                            Expanded(flex: 4, child: identity),
                             const SizedBox(width: 48),
                             Expanded(
                               flex: 6,
-                              child: SingleChildScrollView(
-                                child: _Connection(
-                                  url: _url,
-                                  current: _current,
-                                  next: _next,
-                                  username: auth.user?.name ?? '',
-                                  savingUrl: _savingUrl,
-                                  savingPassword: _savingPassword,
-                                  clearing: _clearing,
-                                  onSaveUrl: _saveUrl,
-                                  onSavePassword: _savePassword,
-                                  onClearCache: _clearCache,
-                                ),
-                              ),
+                              child: SingleChildScrollView(child: connection),
                             ),
                           ],
                         ),
@@ -289,49 +299,51 @@ class _Identity extends StatelessWidget {
         // by child * (1 - (1 + a) / 2), which for this face is 31.5px, and
         // that is exactly how far the two pages disagreed by.
         const a = -0.18;
-        final top = (constraints.maxHeight - face) * (1 + a) / 2;
-        final left = (constraints.maxWidth - face) / 2;
-
-        return Stack(
-          children: [
-            Positioned(
-              left: left,
-              top: top,
-              width: face,
-              height: face,
-              child: _Face(
-                userId: userId,
-                name: name,
-                face: face,
-                onEdit: onEditAvatar,
+        final face = math.min(this.face, constraints.maxWidth);
+        final top = math.max(0.0, (constraints.maxHeight - face) * (1 + a) / 2);
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: EdgeInsets.only(top: top),
+                child: SizedBox(
+                  width: face,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        height: face,
+                        child: _Face(
+                          userId: userId,
+                          name: name,
+                          face: face,
+                          onEdit: onEditAvatar,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xl),
+                      const _Caption('Name'),
+                      const SizedBox(height: AppSpacing.sm),
+                      AppTextField(
+                        controller: controller,
+                        enabled: !busy,
+                        onSubmitted: (_) => onSave(),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                      AppButton(
+                        label: busy ? 'Saving…' : 'Save name',
+                        variant: AppButtonVariant.primary,
+                        busy: busy,
+                        onPressed: busy ? null : onSave,
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-            Positioned(
-              left: left,
-              top: top + face + AppSpacing.xl,
-              width: face,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const _Caption('Name'),
-                  const SizedBox(height: AppSpacing.sm),
-                  AppTextField(
-                    controller: controller,
-                    enabled: !busy,
-                    onSubmitted: (_) => onSave(),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  AppButton(
-                    label: busy ? 'Saving…' : 'Save name',
-                    variant: AppButtonVariant.primary,
-                    busy: busy,
-                    onPressed: busy ? null : onSave,
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         );
       },
     );

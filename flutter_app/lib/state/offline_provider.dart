@@ -14,14 +14,22 @@ import 'providers.dart';
 /// only as a metadata sidecar (title/poster/runtime) — the bytes themselves
 /// live in the cache, not in anything this class writes.
 class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
-  OfflineNotifier(this._proxy, {OfflineManifestStore? manifestStore})
-      : _manifestStore = manifestStore ?? OfflineManifestStore(),
-        super(const []) {
-    _rehydrate();
+  OfflineNotifier(
+    this._proxy, {
+    OfflineManifestStore? manifestStore,
+    void Function(String)? cancelFill,
+  }) : _cancelFill = cancelFill, // ignore: prefer_initializing_formals
+       _origin = _proxy.origin,
+       _manifestStore =
+           manifestStore ?? OfflineManifestStore(namespace: _proxy.origin),
+       super(const []) {
+    _rehydrate().catchError((_) {});
   }
 
   final MediaCacheProxy _proxy;
   final OfflineManifestStore _manifestStore;
+  final String _origin;
+  final void Function(String)? _cancelFill;
 
   /// Serializes every read-modify-write of [state] + the manifest sidecar.
   /// [_rehydrate] runs fire-and-forget from the constructor and takes two
@@ -32,7 +40,10 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   Future<void> _queue = Future<void>.value();
 
   Future<void> _serialize(Future<void> Function() action) {
-    final result = _queue.then((_) => action());
+    final result = _queue.then((_) async {
+      if (!mounted || _origin != _proxy.origin) return;
+      await action();
+    });
     // Only the chain swallows failures (the caller still gets [result]), so one
     // failed persist can't wedge every later mutation behind a rejected future.
     _queue = result.then((_) {}, onError: (_) {});
@@ -40,41 +51,42 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   }
 
   Future<void> _rehydrate() => _serialize(() async {
-        final persisted = await _manifestStore.load();
-        final byId = {for (final r in persisted) r.itemId: r};
-        final completedIds = await _proxy.completedItemIds();
+    final persisted = await _manifestStore.load();
+    final byId = {for (final r in persisted) r.itemId: r};
+    final completedIds = await _proxy.completedItemIds();
 
-        // This runs fire-and-forget from the constructor; bail if the notifier
-        // was disposed while the async scan was in flight (never happens in the
-        // app, where it lives for the whole session, but does in tests).
-        if (!mounted) return;
+    // This runs fire-and-forget from the constructor; bail if the notifier
+    // was disposed while the async scan was in flight (never happens in the
+    // app, where it lives for the whole session, but does in tests).
+    if (!mounted || _origin != _proxy.origin) return;
 
-        // Merge rather than replace: [upsert] is synchronous, so a record added
-        // while the scan was in flight is newer than the scan's snapshot and
-        // wins (a fill that completed mid-scan is genuinely offline, and its
-        // metadata is richer than a bare record).
-        final merged = <String, OfflineRecord>{
-          for (final id in completedIds) id: byId[id] ?? _bareRecord(id),
-        };
-        for (final live in state) {
-          merged[live.itemId] = live;
-        }
-        state = merged.values.toList(growable: false);
+    // Merge rather than replace: [upsert] is synchronous, so a record added
+    // while the scan was in flight is newer than the scan's snapshot and
+    // wins (a fill that completed mid-scan is genuinely offline, and its
+    // metadata is richer than a bare record).
+    final merged = <String, OfflineRecord>{
+      for (final id in completedIds) id: byId[id] ?? _bareRecord(id),
+    };
+    for (final live in state) {
+      merged[live.itemId] = live;
+    }
+    state = merged.values.toList(growable: false);
 
-        // Metadata for a title whose cache entry no longer fully exists
-        // (evicted, manually deleted from disk, …) is stale — drop it so a
-        // future rehydrate doesn't keep re-surfacing it.
-        final drifted = merged.length != persisted.length ||
-            merged.keys.any((id) => !byId.containsKey(id));
-        if (drifted) await _manifestStore.save(state);
-      });
+    // Metadata for a title whose cache entry no longer fully exists
+    // (evicted, manually deleted from disk, …) is stale — drop it so a
+    // future rehydrate doesn't keep re-surfacing it.
+    final drifted =
+        merged.length != persisted.length ||
+        merged.keys.any((id) => !byId.containsKey(id));
+    if (drifted) await _manifestStore.save(state);
+  });
 
   OfflineRecord _bareRecord(String itemId) => OfflineRecord(
-        itemId: itemId,
-        title: itemId,
-        filePath: '',
-        downloadedAt: DateTime.now().millisecondsSinceEpoch,
-      );
+    itemId: itemId,
+    title: itemId,
+    filePath: '',
+    downloadedAt: DateTime.now().millisecondsSinceEpoch,
+  );
 
   /// Called once a [CacheFillController] fill finishes for [itemId] — adds
   /// (or refreshes) its [OfflineRecord] and persists the metadata sidecar.
@@ -86,25 +98,27 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
     required String title,
     String? posterTag,
     int runTimeTicks = 0,
-  }) =>
-      _serialize(() async {
-        if (!mounted) return;
-        upsert(OfflineRecord(
-          itemId: itemId,
-          title: title,
-          filePath: '',
-          runTimeTicks: runTimeTicks,
-          posterTag: posterTag,
-          downloadedAt: DateTime.now().millisecondsSinceEpoch,
-        ));
-        await _manifestStore.save(state);
-      });
+  }) => _serialize(() async {
+    if (!await _proxy.isComplete(itemId) ||
+        !mounted ||
+        _origin != _proxy.origin) {
+      return;
+    }
+    upsert(
+      OfflineRecord(
+        itemId: itemId,
+        title: title,
+        filePath: '',
+        runTimeTicks: runTimeTicks,
+        posterTag: posterTag,
+        downloadedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    await _manifestStore.save(state);
+  });
 
   void upsert(OfflineRecord record) {
-    state = [
-      ...state.where((r) => r.itemId != record.itemId),
-      record,
-    ];
+    state = [...state.where((r) => r.itemId != record.itemId), record];
   }
 
   /// Drop downloads whose title no longer exists on the server.
@@ -127,6 +141,7 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   Future<void> reconcileWithLibrary(ApiClient api) async {
     final ids = state.map((r) => r.itemId).toList();
     for (final itemId in ids) {
+      if (!mounted || _origin != _proxy.origin) return;
       bool gone = false;
       try {
         await api.item(itemId);
@@ -136,21 +151,29 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
         // Not an answer. Say nothing, change nothing.
         continue;
       }
-      if (gone) await remove(itemId);
+      if (gone && mounted && _origin == _proxy.origin) await remove(itemId);
     }
   }
 
-  Future<void> remove(String itemId) => _serialize(() async {
-        await _proxy.deleteEntry(itemId);
-        if (!mounted) return;
-        state = state.where((r) => r.itemId != itemId).toList();
-        await _manifestStore.save(state);
-      });
+  Future<void> remove(String itemId) {
+    _cancelFill?.call(itemId);
+    _proxy.abortItem(itemId);
+    return _serialize(() async {
+      await _proxy.deleteEntry(itemId);
+      if (!mounted) return;
+      state = state.where((r) => r.itemId != itemId).toList();
+      await _manifestStore.save(state);
+    });
+  }
 }
 
 final offlineProvider =
     StateNotifierProvider<OfflineNotifier, List<OfflineRecord>>(
-        (ref) => OfflineNotifier(ref.watch(mediaCacheProxyProvider)));
+      (ref) => OfflineNotifier(
+        ref.watch(mediaCacheProxyProvider),
+        cancelFill: ref.watch(cacheFillControllerProvider).cancel,
+      ),
+    );
 
 /// Playback should prefer the on-device cache once a title is fully offline.
 /// Mirrors the web app's `native/useOffline.js` `resolveOfflinePlayback(itemId,

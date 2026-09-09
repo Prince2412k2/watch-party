@@ -8,6 +8,30 @@ import 'package:watchparty/app/desktop_lifecycle.dart';
 /// of a drag, so everything here is about what happens when the geometry
 /// changes faster than it can be stored.
 void main() {
+  test('size restoration uses persisted preferences on first launch', () async {
+    SharedPreferences.setMockInitialValues({
+      kWindowWPref: 1440.0,
+      kWindowHPref: 810.0,
+    });
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      restoredWindowSize(prefs, const Size(1920, 1080)),
+      const Size(1440, 810),
+    );
+  });
+  test('work areas smaller than the nominal minimum do not throw', () {
+    for (final available in [
+      const Size(800, 500),
+      const Size(960, 400),
+      Size.zero,
+    ]) {
+      expect(clampWindowSize(const Size(1280, 720), available), available);
+    }
+    expect(
+      clampWindowSize(const Size(100, 100), const Size(1920, 1080)),
+      const Size(960, 600),
+    );
+  });
   test('restored bounds must leave a usable area on a current display', () {
     const display = Rect.fromLTWH(0, 0, 1920, 1080);
 

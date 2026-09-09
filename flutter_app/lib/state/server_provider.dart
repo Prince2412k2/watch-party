@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../app/config.dart';
 import 'auth_provider.dart';
 import 'providers.dart';
+import 'downloads_provider.dart';
+import 'offline_provider.dart';
 
 /// SharedPreferences key holding the runtime backend origin.
 const kServerUrlPrefKey = 'server.baseUrl';
@@ -27,6 +29,13 @@ class ServerConfigNotifier extends StateNotifier<String?> {
   ServerConfigNotifier(this._ref, String? initial) : super(initial);
 
   final Ref _ref;
+  Future<void> _changes = Future<void>.value();
+
+  Future<void> _serialize(Future<void> Function() action) {
+    final result = _changes.then((_) => action());
+    _changes = result.then((_) {}, onError: (_) {});
+    return result;
+  }
 
   /// True once a server has been chosen.
   bool get isConfigured => (state ?? '').isNotEmpty;
@@ -34,7 +43,9 @@ class ServerConfigNotifier extends StateNotifier<String?> {
   /// Normalize [raw], persist it, and repoint the API + socket clients at it.
   /// A change of origin drops the old origin's session first — see
   /// [_dropOriginSession].
-  Future<void> setUrl(String raw) async {
+  Future<void> setUrl(String raw) => _serialize(() => _setUrl(raw));
+
+  Future<void> _setUrl(String raw) async {
     final url = normalize(raw);
     final originChanged = url != state;
     final prefs = await SharedPreferences.getInstance();
@@ -42,6 +53,11 @@ class ServerConfigNotifier extends StateNotifier<String?> {
     // Before repointing, so nothing can carry the previous origin's cookie into
     // the first request against the new one.
     if (originChanged) await _dropOriginSession();
+    if (originChanged) {
+      await _ref.read(mediaCacheProxyProvider).changeOrigin(url);
+      _ref.invalidate(offlineProvider);
+      _ref.invalidate(downloadsProvider);
+    }
     _ref.read(apiClientProvider).baseUrl = url;
     _ref.read(socketClientProvider).url = url;
     state = url;
@@ -53,10 +69,18 @@ class ServerConfigNotifier extends StateNotifier<String?> {
   /// A build with an origin baked in falls back to THAT rather than to nothing:
   /// signing out of such a build must not strand the user on a server picker it
   /// does not show, which is what dropping to null did.
-  Future<void> clear() async {
+  Future<void> clear() => _serialize(_clear);
+
+  Future<void> _clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(kServerUrlPrefKey);
     await _dropOriginSession();
+    final url = bakedServerUrl ?? '';
+    await _ref.read(mediaCacheProxyProvider).changeOrigin(url);
+    _ref.read(apiClientProvider).baseUrl = url;
+    _ref.read(socketClientProvider).url = url;
+    _ref.invalidate(offlineProvider);
+    _ref.invalidate(downloadsProvider);
     state = bakedServerUrl;
   }
 
@@ -70,6 +94,10 @@ class ServerConfigNotifier extends StateNotifier<String?> {
   /// `authProvider` would meanwhile still claim a user the new origin has never
   /// seen.
   Future<void> _dropOriginSession() async {
+    _ref.read(downloadsProvider.notifier).clear();
+    _ref.read(cacheFillControllerProvider).cancelAll();
+    _ref.read(mediaCacheProxyProvider).stopTransfers();
+    _ref.read(artworkCacheProvider)?.stopTransfers();
     try {
       await _ref.read(apiClientProvider).clearSession();
     } catch (_) {
@@ -95,5 +123,5 @@ class ServerConfigNotifier extends StateNotifier<String?> {
 
 final serverConfigProvider =
     StateNotifierProvider<ServerConfigNotifier, String?>(
-  (ref) => ServerConfigNotifier(ref, null),
-);
+      (ref) => ServerConfigNotifier(ref, null),
+    );

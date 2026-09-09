@@ -18,9 +18,23 @@ class ArtworkCache {
   final Map<String, Future<Uint8List>> _inflight = {};
   final LinkedHashMap<String, Uint8List> _memory = LinkedHashMap();
   var _memoryBytes = 0;
+  CancelToken _cancelToken = CancelToken();
+
+  void stopTransfers() {
+    _cancelToken.cancel('Session changed');
+    _cancelToken = CancelToken();
+    _inflight.clear();
+    _memory.clear();
+    _memoryBytes = 0;
+  }
+
+  String _absolute(String url) =>
+      Uri.parse(_dio.options.baseUrl).resolve(url).toString();
 
   /// Returns recently displayed artwork without touching the filesystem.
   Uint8List? peek(String url) {
+    if (!isSameOrigin(url)) return null;
+    url = _absolute(url);
     final bytes = _memory.remove(url);
     if (bytes != null) _memory[url] = bytes;
     return bytes;
@@ -52,6 +66,9 @@ class ArtworkCache {
   }
 
   Stream<Uint8List> load(String url) async* {
+    if (!isSameOrigin(url)) throw StateError('Cross-origin artwork');
+    url = _absolute(url);
+    final token = _cancelToken;
     final file = File('${directory.path}/${_hash(url)}.image');
     Uint8List? cached = peek(url);
     if (cached != null) {
@@ -60,6 +77,7 @@ class ArtworkCache {
       try {
         if (await file.exists()) {
           cached = await file.readAsBytes();
+          if (token.isCancelled) return;
           if (cached.isNotEmpty) {
             _remember(url, cached);
             unawaited(
@@ -73,10 +91,12 @@ class ArtworkCache {
       } catch (_) {}
     }
 
+    Future<Uint8List>? pending;
     try {
-      final pending = _inflight.putIfAbsent(
+      if (token.isCancelled) return;
+      pending = _inflight.putIfAbsent(
         url,
-        () => _fetchAndStore(url, file),
+        () => _fetchAndStore(url, file, token),
       );
       // The shared future outlives this subscription: when the only listener is
       // disposed mid-fetch (an episode card scrolled out of view), a failure has
@@ -85,6 +105,7 @@ class ArtworkCache {
       // so that can't happen; our own await below still sees the error.
       pending.ignore();
       final fresh = await pending;
+      if (token.isCancelled) throw token.cancelError!;
       if (cached == null || !listEquals(cached, fresh)) {
         _remember(url, fresh);
         yield fresh;
@@ -98,12 +119,17 @@ class ArtworkCache {
     } catch (_) {
       if (cached == null) rethrow;
     } finally {
-      _inflight.remove(url);
+      if (identical(_inflight[url], pending)) _inflight.remove(url);
     }
   }
 
-  Future<Uint8List> _fetchAndStore(String url, File file) async {
-    final fresh = await _fetch(url);
+  Future<Uint8List> _fetchAndStore(
+    String url,
+    File file,
+    CancelToken token,
+  ) async {
+    final fresh = await _fetch(url, token);
+    if (token.isCancelled) throw token.cancelError!;
     await directory.create(recursive: true);
     final temp = File('${file.path}.tmp');
     await temp.writeAsBytes(fresh, flush: true);
@@ -111,7 +137,7 @@ class ArtworkCache {
     return fresh;
   }
 
-  Future<Uint8List> _fetch(String url) async {
+  Future<Uint8List> _fetch(String url, CancelToken token) async {
     // `_dio` is the app's authenticated client — it carries the session
     // cookie on every request. The server now only ever hands the client a
     // relative same-origin proxy path for artwork (never a raw third-party
@@ -137,6 +163,7 @@ class ArtworkCache {
     try {
       response = await _dio.get<List<int>>(
         url,
+        cancelToken: token,
         options: Options(responseType: ResponseType.bytes),
       );
     } on DioException catch (e) {

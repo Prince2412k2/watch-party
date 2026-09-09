@@ -87,6 +87,7 @@ class PartyPlayback {
   /// after the party ends the film stays open and stops being the room's.
   String? _followed;
   bool _attached = false;
+  String? _attachedPartyId;
   Timer? _introTimer;
   int _openGeneration = 0;
 
@@ -125,6 +126,18 @@ class PartyPlayback {
   void reportSeek(Duration position) {
     if (!_attached || !canDrive) return;
     unawaited(_engine.requestSeek(position));
+  }
+
+  /// Chrome must call this INSTEAD OF controller.seek + reportSeek, so the
+  /// correction loop is suspended before the native seek starts.
+  Future<void> seekTo(Duration position) async {
+    if (!canDrive) return;
+    if (_attached && _engine is SyncEngineImpl) {
+      await _engine.seekTo(position);
+    } else {
+      await _ref.read(playerControllerProvider).seek(position);
+      if (_attached) await _engine.requestSeek(position);
+    }
   }
 
   Future<void> togglePlay() async {
@@ -301,6 +314,7 @@ class PartyPlayback {
     if (!wanted) {
       if (_attached) {
         _attached = false;
+        _attachedPartyId = null;
         unawaited(_engine.detach());
       }
       return;
@@ -324,16 +338,32 @@ class PartyPlayback {
             .length;
       };
     }
-    if (_attached) return;
+    if (_attached && _attachedPartyId == party.id) {
+      if (_engine case final SyncEngineImpl impl) {
+        impl.acceptSchedule(party.schedule);
+      }
+      return;
+    }
 
     _attached = true;
+    _attachedPartyId = party.id;
     unawaited(
-      _engine.attach(
-        player: _ref.read(playerControllerProvider),
-        socket: _ref.read(socketClientProvider),
-        partyId: party.id,
-        canControl: driver,
-      ),
+      _engine
+          .attach(
+            player: _ref.read(playerControllerProvider),
+            socket: _ref.read(socketClientProvider),
+            partyId: party.id,
+            canControl: driver,
+          )
+          .then((_) {
+            if (_attached &&
+                _attachedPartyId == party.id &&
+                _party?.id == party.id) {
+              if (_engine case final SyncEngineImpl impl) {
+                impl.acceptSchedule(_party!.schedule);
+              }
+            }
+          }),
     );
   }
 

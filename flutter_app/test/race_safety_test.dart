@@ -60,7 +60,9 @@ class _GatedManifestStore extends OfflineManifestStore {
 /// Every fill fails on the way in (before the fill loop, so no [FillProgress]
 /// ever reports the failure).
 class _FailingFillController extends CacheFillController {
-  _FailingFillController({required super.proxy});
+  _FailingFillController({required super.proxy, this.resumeGate});
+
+  final Future<void>? resumeGate;
 
   @override
   Future<void> start(String itemId, {RangeFetcher? fetcher}) async {
@@ -69,6 +71,7 @@ class _FailingFillController extends CacheFillController {
 
   @override
   Future<void> resume(String itemId, {RangeFetcher? fetcher}) async {
+    await resumeGate;
     throw StateError('could not open the cache entry');
   }
 }
@@ -196,6 +199,7 @@ void main() {
       addTearDown(notifier.dispose);
 
       // Queued while the scan is still blocked on its manifest load.
+      await completeEntry('marked');
       final marked = notifier.markComplete(itemId: 'marked', title: 'Marked');
       gate.complete();
       await marked;
@@ -204,6 +208,11 @@ void main() {
         notifier.state.map((r) => r.itemId),
         containsAll(<String>['scanned', 'marked']),
       );
+      // The scan can find the bytes too; only the queued mutation knows the title.
+      expect(
+        notifier.state.firstWhere((r) => r.itemId == 'marked').title,
+        'Marked',
+      );
       // And the sidecar reflects both, not just whichever write landed last.
       final persisted = await OfflineManifestStore(
         overrideDir: manifestDir,
@@ -211,6 +220,28 @@ void main() {
       expect(
         persisted.map((r) => r.itemId),
         containsAll(<String>['scanned', 'marked']),
+      );
+      expect(persisted.firstWhere((r) => r.itemId == 'marked').title, 'Marked');
+    });
+
+    test('markComplete does not advertise missing or partial bytes', () async {
+      final notifier = OfflineNotifier(
+        proxy,
+        manifestStore: OfflineManifestStore(overrideDir: manifestDir),
+      );
+      addTearDown(notifier.dispose);
+      final partial = await proxy.openEntry('partial');
+      partial.setTotalLength(8);
+      await partial.write(0, [1]);
+      await partial.flushMetadata();
+
+      await notifier.markComplete(itemId: 'missing', title: 'Missing');
+      await notifier.markComplete(itemId: 'partial', title: 'Partial');
+
+      expect(notifier.state, isEmpty);
+      expect(
+        await OfflineManifestStore(overrideDir: manifestDir).load(),
+        isEmpty,
       );
     });
 
@@ -517,6 +548,26 @@ void main() {
       );
       expect(record.itemId, 'boom');
     });
+
+    test(
+      'cancel during resume suppresses its late startup error and retry',
+      () async {
+        final gate = Completer<void>();
+        final notifier = DownloadsNotifier(
+          _FailingFillController(proxy: proxy, resumeGate: gate.future),
+          offlineNotifier,
+        );
+        addTearDown(notifier.dispose);
+
+        final resumed = notifier.resume('boom');
+        await notifier.cancel('boom');
+        gate.complete();
+        await resumed;
+
+        expect(notifier.state, isEmpty);
+        expect(notifier.attemptsFor('boom'), 0);
+      },
+    );
 
     test('pauseAll pauses the fills that are actually running', () async {
       const itemId = 'title-pause-all';

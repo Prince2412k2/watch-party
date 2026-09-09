@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../state/state.dart';
+import '../sync/sync_engine_impl.dart';
 import 'offline_playback.dart';
 import 'player_controller.dart';
 
@@ -47,7 +48,12 @@ Future<OpenTitleResult> openTitleIntoPlayer(
   int? subtitleStreamIndex,
   required bool Function() isStale,
 }) async {
+  final engine = ref.read(syncEngineProvider);
+  final nativeSync = engine is SyncEngineImpl ? engine : null;
+  final opening = nativeSync?.beginOpen();
   try {
+    await opening;
+    if (isStale()) return const OpenTitleResult.ready(usesCacheProxy: false);
     final isAuthenticated = ref.read(
       authProvider.select((s) => s.isAuthenticated),
     );
@@ -91,10 +97,41 @@ Future<OpenTitleResult> openTitleIntoPlayer(
       await controller.pause();
       return const OpenTitleResult.ready(usesCacheProxy: false);
     }
-    await controller.play();
+    if (ref.read(partyProvider) != null) {
+      // Opening can take seconds. Use the latest authority after it completes,
+      // including for hopping hosts (whose normal loop never corrects them).
+      while (!isStale()) {
+        final party = ref.read(partyProvider);
+        if (party == null) break;
+        nativeSync?.acceptSchedule(party.schedule);
+        final schedule = nativeSync?.currentSchedule ?? party.schedule;
+        await controller.seek(
+          nativeSync?.scheduledPosition ??
+              PlaybackReport.durationOf(schedule.positionTicks),
+        );
+        if (isStale()) break;
+        if (nativeSync != null && nativeSync.currentSchedule != schedule) {
+          continue;
+        }
+        if (schedule.phase == 'playing') {
+          await controller.play();
+        } else {
+          await controller.pause();
+        }
+        if (nativeSync != null && nativeSync.currentSchedule != schedule) {
+          continue;
+        }
+        break;
+      }
+    } else {
+      await controller.play();
+    }
+    if (isStale()) await controller.pause();
     return OpenTitleResult.ready(usesCacheProxy: isAuthenticated);
   } catch (e) {
     return OpenTitleResult.failed(e);
+  } finally {
+    nativeSync?.endOpen();
   }
 }
 

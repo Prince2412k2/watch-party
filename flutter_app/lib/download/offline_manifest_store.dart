@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -11,9 +12,10 @@ import '../models/models.dart';
 /// (see [Downloader]); this store only holds the richer, post-completion
 /// metadata (title/poster/runtime) that isn't part of a bare download task.
 class OfflineManifestStore {
-  OfflineManifestStore({this.overrideDir});
+  OfflineManifestStore({this.overrideDir, this.namespace});
 
   final Directory? overrideDir;
+  final String? namespace;
   static const _fileName = 'offline_manifest.json';
 
   /// Tail of the chain of in-flight [save]s (see [_serialize]).
@@ -22,7 +24,10 @@ class OfflineManifestStore {
   Future<File> _file() async {
     final dir = overrideDir ?? await getApplicationSupportDirectory();
     if (!await dir.exists()) await dir.create(recursive: true);
-    return File('${dir.path}/$_fileName');
+    final prefix = namespace == null
+        ? ''
+        : 'v3-${sha256.convert(utf8.encode(namespace!))}-';
+    return File('${dir.path}/$prefix$_fileName');
   }
 
   Future<List<OfflineRecord>> load() async {
@@ -50,12 +55,12 @@ class OfflineManifestStore {
   /// the same directory would still race. Tests that want isolation should
   /// give each store its own `overrideDir`.
   Future<void> save(List<OfflineRecord> records) => _serialize(() async {
-        final file = await _file();
-        final raw = jsonEncode(records.map((r) => r.toJson()).toList());
-        final temp = File('${file.path}.tmp');
-        await temp.writeAsString(raw, flush: true);
-        await temp.rename(file.path);
-      });
+    final file = await _file();
+    final raw = jsonEncode(records.map((r) => r.toJson()).toList());
+    final temp = File('${file.path}.tmp');
+    await temp.writeAsString(raw, flush: true);
+    await temp.rename(file.path);
+  });
 
   Future<void> _serialize(Future<void> Function() action) {
     final result = _writes.then((_) => action());

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -11,7 +12,8 @@ import 'range_set.dart';
 /// whose bytes can't be trusted. v2 discards v1 caches, which were written
 /// before the per-entry I/O lock and could contain bytes at wrong offsets from
 /// interleaved concurrent writes.
-const _cacheVersion = 2;
+// v3 invalidates unvalidated HTTP bodies from v2; never promote old ranges.
+const _cacheVersion = 3;
 
 /// A cached byte range expressed as a fraction (`0..1`) of a title's total
 /// length — what the player's seek bar overlay draws.
@@ -61,7 +63,7 @@ List<CachedSpan> cachedSpansFromIntervals(
 class CacheEntry {
   CacheEntry._(
     this.itemId,
-    this._raf,
+    this._dataFile,
     this._metaFile,
     this.rangeSet,
     this._totalLength,
@@ -73,8 +75,10 @@ class CacheEntry {
   }
 
   final String itemId;
-  final RandomAccessFile _raf;
+  final File _dataFile;
+  late RandomAccessFile _raf;
   final File _metaFile;
+  bool closed = false;
 
   /// Pure interval bookkeeping for which byte ranges are present. Exposed for
   /// tests; playback code should go through [hasRange]/[missingRanges].
@@ -120,10 +124,21 @@ class CacheEntry {
   Future<void> _operationLock = Future<void>.value();
 
   Future<T> _locked<T>(Future<T> Function() action) {
+    if (closed) return Future.error(StateError('Cache entry closed'));
     final prev = _operationLock;
     final completer = Completer<void>();
     _operationLock = completer.future;
-    return prev.then((_) => action()).whenComplete(completer.complete);
+    return prev
+        .then((_) async {
+          // Handles live only for an I/O operation, not for every title ever opened.
+          _raf = await _dataFile.open(mode: FileMode.append);
+          try {
+            return await action();
+          } finally {
+            await _raf.close();
+          }
+        })
+        .whenComplete(completer.complete);
   }
 
   /// Writes [bytes] at [offset] into the sparse data file and marks that
@@ -188,6 +203,7 @@ class CacheEntry {
   Future<void> flushMetadata() => _locked(_flushMetadataUnlocked);
 
   Future<void> _flushMetadataUnlocked() async {
+    await _raf.flush();
     final tmp = File('${_metaFile.path}.tmp');
     final json = <String, dynamic>{
       'version': _cacheVersion,
@@ -204,7 +220,12 @@ class CacheEntry {
   // Note: does NOT dispose [_cachedSpans] — that notifier is owned by the
   // [RangeCacheStore] (keyed by itemId, outliving any single open/close of
   // this entry), not by this entry.
-  Future<void> close() => _locked(_raf.close);
+  Future<void> close() {
+    if (closed) return _operationLock;
+    final result = _operationLock;
+    closed = true;
+    return result;
+  }
 }
 
 /// A snapshot of one title's cache footprint, as seen by [selectEvictions] —
@@ -283,9 +304,18 @@ List<String> selectEvictions({
 class RangeCacheStore {
   // Keep the public parameter name distinct from the private field.
   // ignore: prefer_initializing_formals
-  RangeCacheStore({Directory? overrideDir}) : _overrideDir = overrideDir;
+  RangeCacheStore({Directory? overrideDir, String? namespace})
+    : _overrideDir = overrideDir, // ignore: prefer_initializing_formals
+      _namespace = namespace == null
+          ? null
+          : sha256.convert(utf8.encode(namespace)).toString();
 
   final Directory? _overrideDir;
+  final String? _namespace;
+  RangeCacheStore forNamespace(String namespace) =>
+      RangeCacheStore(overrideDir: _overrideDir, namespace: namespace);
+  bool _disposed = false;
+  final Map<String, Future<void>> _deleting = {};
   static const _subdirName = 'media-cache';
 
   /// Total on-disk cache size (summed over actually-present bytes, not
@@ -322,7 +352,9 @@ class RangeCacheStore {
 
   Future<Directory> _cacheDir() async {
     final base = _overrideDir ?? await getApplicationSupportDirectory();
-    final dir = Directory('${base.path}/$_subdirName');
+    final dir = Directory(
+      '${base.path}/$_subdirName${_namespace == null ? '' : '/v3/$_namespace'}',
+    );
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
@@ -343,8 +375,16 @@ class RangeCacheStore {
   /// repeatedly — subsequent calls for an already-open entry return the same
   /// instance rather than reopening the file.
   Future<CacheEntry> open(String itemId) {
+    if (_disposed) return Future.error(StateError('Cache store disposed'));
+    if (!RegExp(r'^[a-zA-Z0-9_=.-]+$').hasMatch(itemId) ||
+        itemId == '.' ||
+        itemId == '..') {
+      return Future.error(ArgumentError.value(itemId, 'itemId'));
+    }
+    final deleting = _deleting[itemId];
+    if (deleting != null) return deleting.then((_) => open(itemId));
     final existing = _open[itemId];
-    if (existing != null) return Future.value(existing);
+    if (existing != null) return _validateOpen(itemId, existing);
 
     final inFlight = _opening[itemId];
     if (inFlight != null) return inFlight;
@@ -355,6 +395,18 @@ class RangeCacheStore {
     });
     _opening[itemId] = opening;
     return opening;
+  }
+
+  Future<CacheEntry> _validateOpen(String itemId, CacheEntry entry) async {
+    var valid = !entry.closed && await entry._dataFile.exists();
+    if (valid) {
+      final size = await entry._dataFile.length();
+      valid = !entry.rangeSet.intervals.any((iv) => iv[1] > size);
+    }
+    if (valid && !entry.closed && !_disposed) return entry;
+    await entry.close();
+    if (identical(_open[itemId], entry)) _open.remove(itemId);
+    return open(itemId);
   }
 
   Future<CacheEntry> _openEntry(String itemId) async {
@@ -372,7 +424,7 @@ class RangeCacheStore {
         final raw =
             jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
         final version = (raw['version'] as num?)?.toInt() ?? 1;
-        if (version == _cacheVersion) {
+        if (version == _cacheVersion && raw['itemId'] == itemId) {
           totalLength = (raw['totalLength'] as num?)?.toInt();
           createdAt =
               DateTime.tryParse(raw['createdAt'] as String? ?? '') ?? createdAt;
@@ -393,23 +445,27 @@ class RangeCacheStore {
         // Corrupt sidecar — treat this title as an empty cache rather than
         // failing playback; the proxy will just re-fetch everything.
         rangeSet = RangeSet();
+        totalLength = null;
       }
+    }
+
+    final size = await dataFile.exists() ? await dataFile.length() : 0;
+    if (rangeSet.intervals.any(
+      (iv) =>
+          iv[0] < 0 ||
+          iv[1] > size ||
+          (totalLength != null && iv[1] > totalLength),
+    )) {
+      rangeSet = RangeSet();
+      totalLength = null;
     }
 
     if (!await dataFile.exists()) {
       await dataFile.create(recursive: true);
     }
-    // FileMode.append: created without truncating an existing file (unlike
-    // FileMode.write, which truncates), and the RandomAccessFile it returns
-    // still honours explicit `setPosition` for both reads and writes — it
-    // only affects the *initial* position, not every write like POSIX
-    // O_APPEND — which is exactly the "open once, read/write anywhere"
-    // handle a sparse cache file needs.
-    final raf = await dataFile.open(mode: FileMode.append);
-
     final entry = CacheEntry._(
       itemId,
-      raf,
+      dataFile,
       metaFile,
       rangeSet,
       totalLength,
@@ -437,7 +493,14 @@ class RangeCacheStore {
     final dir = await _cacheDir();
     if (!await dir.exists()) return;
 
-    final effectiveProtected = {...protected, ..._open.keys};
+    // Complete downloads survive automatic cleanup. Only explicit deletion
+    // (or confirmed removal from the library) should remove offline content.
+    final effectiveProtected = {
+      ...protected,
+      ..._open.keys,
+      ..._opening.keys,
+      ...await completedItemIds(),
+    };
 
     final stats = <CacheStat>[];
     for (final entity in await _listSafely(dir)) {
@@ -503,6 +566,7 @@ class RangeCacheStore {
     );
 
     for (final itemId in toEvict) {
+      if (_open.containsKey(itemId) || _opening.containsKey(itemId)) continue;
       final openEntry = _open.remove(itemId);
       if (openEntry != null) {
         try {
@@ -533,20 +597,30 @@ class RangeCacheStore {
   /// directly, so this is cheap to call for every title at boot without
   /// opening a file handle for each.
   Future<bool> isComplete(String itemId) async {
+    final dir = await _cacheDir();
+    final data = File('${dir.path}/$itemId.data');
+    if (!await data.exists()) return false;
+    final size = await data.length();
     final open = _open[itemId];
     if (open != null) {
       final total = open.totalLength;
-      return total != null && total > 0 && open.hasRange(0, total);
+      return !open.closed &&
+          total != null &&
+          total > 0 &&
+          size >= total &&
+          open.hasRange(0, total);
     }
 
-    final dir = await _cacheDir();
     final metaFile = File('${dir.path}/$itemId.meta.json');
     if (!await metaFile.exists()) return false;
     try {
       final raw =
           jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
+      if (raw['version'] != _cacheVersion || raw['itemId'] != itemId) {
+        return false;
+      }
       final total = (raw['totalLength'] as num?)?.toInt();
-      if (total == null || total <= 0) return false;
+      if (total == null || total <= 0 || size < total) return false;
       final rangeSet = RangeSet.fromJson({
         'intervals': raw['ranges'] ?? const [],
       });
@@ -568,7 +642,9 @@ class RangeCacheStore {
       if (entity is! File || !entity.path.endsWith('.meta.json')) continue;
       final name = entity.path.split(Platform.pathSeparator).last;
       final itemId = name.substring(0, name.length - '.meta.json'.length);
-      if (await isComplete(itemId)) result.add(itemId);
+      if (!itemId.startsWith('source-') && await isComplete(itemId)) {
+        result.add(itemId);
+      }
     }
     return result;
   }
@@ -611,7 +687,19 @@ class RangeCacheStore {
   /// handle first if there is one. Used when the user removes an offline
   /// title — unlike [evict], this is an explicit, unconditional delete of one
   /// title regardless of size/TTL policy.
-  Future<void> delete(String itemId) async {
+  Future<void> delete(String itemId) {
+    return _deleting.putIfAbsent(
+      itemId,
+      () => _delete(itemId).whenComplete(() {
+        _deleting.remove(itemId);
+      }),
+    );
+  }
+
+  Future<void> _delete(String itemId) async {
+    try {
+      await _opening[itemId];
+    } catch (_) {}
     final dir = await _cacheDir();
 
     final openEntry = _open.remove(itemId);
@@ -622,7 +710,7 @@ class RangeCacheStore {
         // Best-effort — the files are being deleted regardless.
       }
     }
-    _cachedSpansNotifiers.remove(itemId);
+    _cachedSpansNotifiers[itemId]?.value = const [];
 
     final dataFile = File('${dir.path}/$itemId.data');
     final metaFile = File('${dir.path}/$itemId.meta.json');
@@ -632,5 +720,22 @@ class RangeCacheStore {
     try {
       if (await metaFile.exists()) await metaFile.delete();
     } catch (_) {}
+  }
+
+  Future<void> dispose() async {
+    _disposed = true;
+    for (final opening in _opening.values.toList()) {
+      try {
+        await opening;
+      } catch (_) {}
+    }
+    for (final entry in _open.values.toList()) {
+      await entry.close();
+    }
+    _open.clear();
+    for (final notifier in _cachedSpansNotifiers.values) {
+      notifier.dispose();
+    }
+    _cachedSpansNotifiers.clear();
   }
 }

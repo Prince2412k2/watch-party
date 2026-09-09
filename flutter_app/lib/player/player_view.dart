@@ -22,6 +22,7 @@ class PlayerView extends StatelessWidget {
     required this.controller,
     this.canControl = true,
     this.canManageTracks = true,
+    this.onSeek,
     this.onSeekAuthored,
     this.onTogglePlay,
     this.onAudioStreamSelected,
@@ -42,6 +43,8 @@ class PlayerView extends StatelessWidget {
     this.catchUp,
     this.visible,
     this.onWake,
+    this.onHold,
+    this.onRelease,
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
@@ -60,8 +63,10 @@ class PlayerView extends StatelessWidget {
   final bool canControl;
   final bool canManageTracks;
 
-  /// Called with every seek this viewer authors, so a party can publish it to
-  /// the room. Null when nothing is listening (solo playback).
+  /// Owns seeking and publication for party playback; null uses the controller.
+  final Future<void> Function(Duration)? onSeek;
+
+  /// Reports local seeks only when [onSeek] is absent.
   final ValueChanged<Duration>? onSeekAuthored;
   final Future<void> Function()? onTogglePlay;
   final Future<void> Function(int? index)? onAudioStreamSelected;
@@ -96,6 +101,8 @@ class PlayerView extends StatelessWidget {
   /// [PlayerChrome]. Null for solo playback (chrome self-manages, keys no-op).
   final bool? visible;
   final VoidCallback? onWake;
+  final ValueChanged<String>? onHold;
+  final ValueChanged<String>? onRelease;
   final VoidCallback? onToggleChat;
   final VoidCallback? onPushToTalkStart;
   final VoidCallback? onPushToTalkStop;
@@ -117,6 +124,7 @@ class PlayerView extends StatelessWidget {
             controller: controller,
             canControl: canControl,
             canManageTracks: canManageTracks,
+            onSeek: onSeek,
             onSeekAuthored: onSeekAuthored,
             onTogglePlay: onTogglePlay,
             onAudioStreamSelected: onAudioStreamSelected,
@@ -136,6 +144,8 @@ class PlayerView extends StatelessWidget {
             peerPositions: peerPositions,
             visible: visible,
             onWake: onWake,
+            onHold: onHold,
+            onRelease: onRelease,
             onToggleChat: onToggleChat,
             onPushToTalkStart: onPushToTalkStart,
             onPushToTalkStop: onPushToTalkStop,
@@ -167,6 +177,13 @@ class _CatchUpBadge extends StatelessWidget {
     builder: (context, snapshot) {
       final catchUp = snapshot.data ?? CatchUp.idle;
       if (!catchUp.active) return const SizedBox.shrink();
+      final label = catchUp.waiting
+          ? 'Waiting for playback'
+          : catchUp.seeking
+          ? 'Resynchronizing'
+          : catchUp.behind
+          ? 'Catching up'
+          : 'Synchronizing';
       return Center(
         child: DecoratedBox(
           decoration: BoxDecoration(
@@ -176,9 +193,7 @@ class _CatchUpBadge extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             child: Text(
-              catchUp.behind
-                  ? 'Tailing · ${catchUp.rate.toStringAsFixed(2)}×'
-                  : 'Synchronizing · ${catchUp.rate.toStringAsFixed(2)}×',
+              '$label · ${catchUp.drift.inMilliseconds.abs() / 1000.0}s',
               style: const TextStyle(color: Color(0xFFF4F4F5), fontSize: 12),
             ),
           ),

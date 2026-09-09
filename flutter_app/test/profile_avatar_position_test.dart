@@ -10,19 +10,37 @@ import 'package:watchparty/ui/ui.dart';
 /// ends somewhere other than where it started reads as a mistake, so the two
 /// pages have to put the face in exactly the same rectangle.
 void main() {
+  for (final size in const [Size(960, 600), Size(390, 600)]) {
+    testWidgets('settings actions are reachable at $size', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        const ProviderScope(child: MaterialApp(home: SettingsScreen())),
+      );
+      await tester.pump();
+      await tester.ensureVisible(find.text('Save name'));
+      await tester.pumpAndSettle();
+      expect(find.text('Save name').hitTestable(), findsOneWidget);
+      await tester.ensureVisible(find.text('Clear cache'));
+      await tester.pumpAndSettle();
+      expect(find.text('Clear cache').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
   Future<Rect> faceIn(WidgetTester tester, Widget screen, Size size) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
-      ProviderScope(child: MaterialApp(theme: AppTheme.dark, home: screen)),
+      ProviderScope(
+        child: MaterialApp(theme: AppTheme.dark, home: screen),
+      ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     return tester.getRect(
-      find.byWidgetPredicate(
-        (w) => w is Hero && w.tag == profileAvatarHeroTag,
-      ),
+      find.byWidgetPredicate((w) => w is Hero && w.tag == profileAvatarHeroTag),
     );
   }
 

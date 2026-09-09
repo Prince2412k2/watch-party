@@ -9,6 +9,7 @@ import 'party_provider.dart';
 import 'profile_provider.dart';
 import 'providers.dart';
 import 'server_provider.dart';
+import 'downloads_provider.dart';
 
 /// Authentication lifecycle (PLAN §3.8, E2). Backed by the real
 /// [ApiClient.login]/[ApiClient.me]/[ApiClient.logout] on [DioApiClient].
@@ -53,6 +54,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   int _generation = 0;
 
   Future<void> login(String username, String password) async {
+    _stopTransfers();
     final generation = ++_generation;
     state = state.copyWith(loading: true, clearError: true);
     try {
@@ -84,6 +86,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// signs this device out is [_teardownSession], which runs whether or not the
   /// round trip succeeded.
   Future<void> logout() async {
+    _stopTransfers();
     final generation = ++_generation;
     state = const AuthState(initialized: true);
     await Future.wait([
@@ -128,8 +131,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// layer initialized (unauthenticated) without a network probe, so the router
   /// shows the login screen immediately instead of hanging on a dead default.
   void markUnauthenticated() {
+    _stopTransfers();
     _generation++;
     state = const AuthState(initialized: true);
+  }
+
+  void _stopTransfers() {
+    _ref.read(downloadsProvider.notifier).clear();
+    _ref.read(cacheFillControllerProvider).cancelAll();
+    _ref.read(mediaCacheProxyProvider).stopTransfers();
+    _ref.read(artworkCacheProvider)?.stopTransfers();
   }
 
   String _message(Object e) {

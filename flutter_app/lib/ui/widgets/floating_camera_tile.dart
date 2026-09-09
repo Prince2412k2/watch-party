@@ -92,12 +92,21 @@ abstract final class FloatingTileGeometry {
   /// Default first-show position for the tile at [index]: anchored to the
   /// bottom-right and stacked upward so tiles don't start life overlapping.
   static Offset cascadeAnchor(int index, Size tile, Size stage) {
-    final left = stage.width - tile.width - margin;
-    final top =
-        stage.height -
+    final rows = math.max(
+      1,
+      ((stage.height - 2 * margin + AppSpacing.sm) /
+              (tile.height + AppSpacing.sm))
+          .floor(),
+    );
+    final column = index ~/ rows;
+    final row = index % rows;
+    final left =
+        stage.width -
+        tile.width -
         margin -
-        (index + 1) * tile.height -
-        index * AppSpacing.sm;
+        column * (tile.width + AppSpacing.sm);
+    final top =
+        stage.height - margin - (row + 1) * tile.height - row * AppSpacing.sm;
     return clamp(Offset(left, top), tile, stage);
   }
 
@@ -135,6 +144,7 @@ class _TileLayout {
   Offset offset;
   double width;
   bool collapsed = false;
+  bool customized = false;
 }
 
 /// Overlay that renders each LiveKit participant as a floating, draggable and
@@ -148,7 +158,13 @@ class _TileLayout {
 /// animated ([AnimatedPositioned] with a spring curve); live drag/resize follow
 /// the pointer instantly.
 class FloatingCameraLayer extends ConsumerStatefulWidget {
-  const FloatingCameraLayer({super.key});
+  const FloatingCameraLayer({
+    super.key,
+    this.reservedInsets = const EdgeInsets.fromLTRB(16, 64, 64, 112),
+  });
+
+  /// Keep cameras out of the title/drag strip, volume, and transport controls.
+  final EdgeInsets reservedInsets;
 
   @override
   ConsumerState<FloatingCameraLayer> createState() =>
@@ -178,83 +194,115 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     final live = tiles.map((t) => t.identity).toSet();
     _layouts.removeWhere((id, _) => !live.contains(id));
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) {
-          return const SizedBox.shrink();
-        }
-        _stage = Size(constraints.maxWidth, constraints.maxHeight);
+    return Padding(
+      padding: widget.reservedInsets,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) {
+            return const SizedBox.shrink();
+          }
+          _stage = Size(constraints.maxWidth, constraints.maxHeight);
 
-        final children = <Widget>[];
-        for (var i = 0; i < tiles.length; i++) {
-          final track = tiles[i];
-          final layout = _layouts.putIfAbsent(track.identity, () {
-            final w = FloatingTileGeometry.clampWidth(
-              FloatingTileGeometry.defaultWidth,
+          final rows = math.max(
+            0,
+            ((_stage.height - 2 * FloatingTileGeometry.margin + AppSpacing.sm) /
+                    (FloatingTileGeometry.defaultWidth /
+                            FloatingTileGeometry.aspect +
+                        AppSpacing.sm))
+                .floor(),
+          );
+          final columns = math.max(
+            0,
+            ((_stage.width - 2 * FloatingTileGeometry.margin + AppSpacing.sm) /
+                    (FloatingTileGeometry.defaultWidth + AppSpacing.sm))
+                .floor(),
+          );
+          // Once the stage is full, use the established scrollable camera rail
+          // rather than clamping additional people onto the same top-left tile.
+          if (tiles.length > rows * columns) {
+            return Align(
+              alignment: Alignment.centerRight,
+              child: SizedBox(
+                width: FloatingTileGeometry.defaultWidth,
+                child: const CameraGrid(layout: CameraGridLayout.strip),
+              ),
+            );
+          }
+
+          final children = <Widget>[];
+          for (var i = 0; i < tiles.length; i++) {
+            final track = tiles[i];
+            final layout = _layouts.putIfAbsent(track.identity, () {
+              final w = FloatingTileGeometry.clampWidth(
+                FloatingTileGeometry.defaultWidth,
+                _stage,
+                headerOverlay: true,
+              );
+              final size = FloatingTileGeometry.tileSize(
+                w,
+                collapsed: false,
+                headerOverlay: true,
+              );
+              return _TileLayout(
+                FloatingTileGeometry.cascadeAnchor(i, size, _stage),
+                w,
+              );
+            });
+
+            final width = FloatingTileGeometry.clampWidth(
+              layout.width,
               _stage,
               headerOverlay: true,
             );
+            layout.width = width;
             final size = FloatingTileGeometry.tileSize(
-              w,
-              collapsed: false,
+              width,
+              collapsed: layout.collapsed,
               headerOverlay: true,
             );
-            return _TileLayout(
-              FloatingTileGeometry.cascadeAnchor(i, size, _stage),
-              w,
-            );
-          });
+            final pos = layout.customized
+                ? FloatingTileGeometry.clamp(layout.offset, size, _stage)
+                : FloatingTileGeometry.cascadeAnchor(i, size, _stage);
+            layout.offset = pos;
 
-          final width = FloatingTileGeometry.clampWidth(
-            layout.width,
-            _stage,
-            headerOverlay: true,
-          );
-          layout.width = width;
-          final size = FloatingTileGeometry.tileSize(
-            width,
-            collapsed: layout.collapsed,
-            headerOverlay: true,
-          );
-          final pos = FloatingTileGeometry.clamp(layout.offset, size, _stage);
-
-          children.add(
-            AnimatedPositioned(
-              duration: _animate ? AppMotion.snap : Duration.zero,
-              curve: AppMotion.spring,
-              left: pos.dx,
-              top: pos.dy,
-              width: size.width,
-              height: size.height,
-              child: FloatingCameraTile(
-                key: ValueKey('floating-cam-${track.identity}'),
-                track: track,
-                collapsed: layout.collapsed,
-                onDrag: (delta) => _onDrag(track.identity, delta),
-                onDragEnd: () => _onDragEnd(track.identity),
-                onResize: (delta) => _onResize(track.identity, delta),
-                onToggleCollapse: () => _toggleCollapse(track.identity),
+            children.add(
+              AnimatedPositioned(
+                duration: _animate ? AppMotion.snap : Duration.zero,
+                curve: AppMotion.spring,
+                left: pos.dx,
+                top: pos.dy,
+                width: size.width,
+                height: size.height,
+                child: FloatingCameraTile(
+                  key: ValueKey('floating-cam-${track.identity}'),
+                  track: track,
+                  collapsed: layout.collapsed,
+                  onDrag: (delta) => _onDrag(track.identity, delta),
+                  onDragEnd: () => _onDragEnd(track.identity),
+                  onResize: (delta) => _onResize(track.identity, delta),
+                  onToggleCollapse: () => _toggleCollapse(track.identity),
+                ),
               ),
-            ),
-          );
-        }
+            );
+          }
 
-        return Stack(children: children);
-      },
+          return Stack(children: children);
+        },
+      ),
     );
   }
 
-  Size _sizeOf(_TileLayout l) =>
-      FloatingTileGeometry.tileSize(
-        l.width,
-        collapsed: l.collapsed,
-        headerOverlay: true,
-      );
+  Size _sizeOf(_TileLayout l) => FloatingTileGeometry.tileSize(
+    l.width,
+    collapsed: l.collapsed,
+    headerOverlay: true,
+  );
 
   void _onDrag(String id, Offset delta) {
     final l = _layouts[id];
     if (l == null) return;
     setState(() {
+      l.customized = true;
       _animate = false;
       l.offset = FloatingTileGeometry.clamp(
         l.offset + delta,
@@ -277,6 +325,7 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     final l = _layouts[id];
     if (l == null) return;
     setState(() {
+      l.customized = true;
       _animate = false;
       l.width = FloatingTileGeometry.clampWidth(
         l.width + delta.dx,
@@ -291,6 +340,7 @@ class _FloatingCameraLayerState extends ConsumerState<FloatingCameraLayer> {
     final l = _layouts[id];
     if (l == null) return;
     setState(() {
+      l.customized = true;
       _animate = true;
       l.collapsed = !l.collapsed;
       l.offset = FloatingTileGeometry.clamp(l.offset, _sizeOf(l), _stage);

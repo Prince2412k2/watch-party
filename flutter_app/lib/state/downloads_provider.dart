@@ -32,8 +32,8 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
     this._fillController,
     this._offlineNotifier, {
     Duration Function(int attempt)? backoff,
-  })  : _backoff = backoff ?? retryDelay,
-        super(const []);
+  }) : _backoff = backoff ?? retryDelay,
+       super(const []);
 
   /// Injectable so a test can exercise the retry without spending the real
   /// first backoff. Waiting two wall-clock seconds made the test pass alone and
@@ -45,6 +45,7 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
 
   final Map<String, _Meta> _meta = {};
   final Map<String, VoidCallback> _listeners = {};
+  final Map<String, Object> _intents = {};
 
   /// Retries already spent per item, and the timers waiting to spend the next.
   ///
@@ -67,13 +68,12 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
       Duration(seconds: 2 << attempt.clamp(0, 4));
 
   void upsert(DownloadRecord record) {
-    state = [
-      ...state.where((r) => r.itemId != record.itemId),
-      record,
-    ];
+    state = [...state.where((r) => r.itemId != record.itemId), record];
   }
 
   void remove(String itemId) {
+    _intents.remove(itemId);
+    _meta.remove(itemId);
     final listener = _listeners.remove(itemId);
     if (listener != null) {
       _fillController.progressFor(itemId).removeListener(listener);
@@ -83,7 +83,13 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
     state = state.where((r) => r.itemId != itemId).toList();
   }
 
-  void clear() => state = const [];
+  void clear() {
+    for (final id in _listeners.keys.toList()) {
+      _fillController.cancel(id);
+      remove(id);
+    }
+    state = const [];
+  }
 
   /// Starts (or restarts) filling [itemId]'s cache. `api` is accepted for
   /// call-site compatibility with the previous background_downloader-backed
@@ -97,7 +103,12 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
     int? runTimeTicks,
     String? container,
   }) async {
-    _meta[itemId] = _Meta(title: title, posterTag: posterTag, runTimeTicks: runTimeTicks);
+    _intents[itemId] = Object();
+    _meta[itemId] = _Meta(
+      title: title,
+      posterTag: posterTag,
+      runTimeTicks: runTimeTicks,
+    );
     // A hand-started download is a fresh intent: whatever the last attempt
     // spent, this one starts its retry budget over.
     _attempts.remove(itemId);
@@ -106,15 +117,22 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
 
     unawaited(_runFill(() => _fillController.start(itemId), itemId));
 
-    final record = _recordFor(itemId, _fillController.progressFor(itemId).value);
+    final record = _recordFor(
+      itemId,
+      _fillController.progressFor(itemId).value,
+    );
     upsert(record);
     return record;
   }
 
-  Future<void> pause(String itemId) async => _fillController.pause(itemId);
+  Future<void> pause(String itemId) async {
+    _retryTimers.remove(itemId)?.cancel();
+    _fillController.pause(itemId);
+  }
 
   /// `api` is accepted for call-site compatibility; unused (see [start]).
   Future<void> resume(String itemId, {ApiClient? api}) async {
+    _intents.putIfAbsent(itemId, Object.new);
     _attachListener(itemId);
     await _runFill(() => _fillController.resume(itemId), itemId);
   }
@@ -126,17 +144,23 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
   /// URL) escaped the `unawaited` call as an unhandled async error and left the
   /// record sitting at "enqueued" forever, with no way to retry it.
   Future<void> _runFill(Future<void> Function() begin, String itemId) async {
+    final intent = _intents[itemId];
     try {
       await begin();
     } catch (_) {
-      if (!mounted) return;
-      upsert(_recordFor(
-        itemId,
-        _fillController
-            .progressFor(itemId)
-            .value
-            .copyWith(state: FillState.error),
-      ));
+      if (!mounted || intent == null || !identical(_intents[itemId], intent)) {
+        return;
+      }
+      upsert(
+        _recordFor(
+          itemId,
+          _fillController
+              .progressFor(itemId)
+              .value
+              .copyWith(state: FillState.error),
+        ),
+      );
+      _scheduleRetry(itemId);
     }
   }
 
@@ -154,6 +178,7 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
   }
 
   void _onProgress(String itemId, FillProgress progress) {
+    if (!mounted || !_intents.containsKey(itemId)) return;
     upsert(_recordFor(itemId, progress));
     if (progress.state == FillState.complete) {
       unawaited(_onComplete(itemId));
@@ -188,20 +213,28 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
   bool exhausted(String itemId) => (_attempts[itemId] ?? 0) >= maxAutoRetries;
 
   Future<void> _onComplete(String itemId) async {
+    final intent = _intents[itemId];
     final meta = _meta[itemId];
-    await _offlineNotifier.markComplete(
-      itemId: itemId,
-      title: meta?.title ?? itemId,
-      posterTag: meta?.posterTag,
-      runTimeTicks: meta?.runTimeTicks ?? 0,
-    );
+    try {
+      await _offlineNotifier.markComplete(
+        itemId: itemId,
+        title: meta?.title ?? itemId,
+        posterTag: meta?.posterTag,
+        runTimeTicks: meta?.runTimeTicks ?? 0,
+      );
+    } catch (_) {
+      if (mounted && identical(_intents[itemId], intent)) {
+        _scheduleRetry(itemId);
+      }
+      return;
+    }
     // The manifest write is an await, and this whole method runs unawaited off
     // a progress callback — so the notifier can be disposed (logout teardown,
     // the container going away) between a fill finishing and this line. Writing
     // `state` then throws "Tried to use DownloadsNotifier after dispose" out of
     // a future nobody is holding. The offline record is already persisted
     // above; there is simply no longer any in-flight list to take it out of.
-    if (!mounted) return;
+    if (!mounted || !identical(_intents[itemId], intent)) return;
     remove(itemId);
   }
 
@@ -230,6 +263,7 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
       t.cancel();
     }
     _retryTimers.clear();
+    _intents.clear();
     super.dispose();
   }
 }
@@ -238,17 +272,18 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
 /// download UI already switches on. Top-level and pure so it's covered by a
 /// focused unit test without any provider wiring.
 DownloadStatus statusForFillState(FillState state) => switch (state) {
-      FillState.idle => DownloadStatus.enqueued,
-      FillState.running => DownloadStatus.running,
-      FillState.paused => DownloadStatus.paused,
-      FillState.complete => DownloadStatus.complete,
-      FillState.error => DownloadStatus.failed,
-      FillState.cancelled => DownloadStatus.canceled,
-    };
+  FillState.idle => DownloadStatus.enqueued,
+  FillState.running => DownloadStatus.running,
+  FillState.paused => DownloadStatus.paused,
+  FillState.complete => DownloadStatus.complete,
+  FillState.error => DownloadStatus.failed,
+  FillState.cancelled => DownloadStatus.canceled,
+};
 
 final downloadsProvider =
     StateNotifierProvider<DownloadsNotifier, List<DownloadRecord>>(
-        (ref) => DownloadsNotifier(
-              ref.watch(cacheFillControllerProvider),
-              ref.watch(offlineProvider.notifier),
-            ));
+      (ref) => DownloadsNotifier(
+        ref.watch(cacheFillControllerProvider),
+        ref.watch(offlineProvider.notifier),
+      ),
+    );

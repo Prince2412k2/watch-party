@@ -2,11 +2,86 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
+import 'package:watchparty/state/livekit_provider.dart';
+import 'package:watchparty/ui/widgets/camera_grid.dart';
 import 'package:watchparty/ui/widgets/floating_camera_tile.dart';
 
+class _CameraNotifier extends LiveKitNotifier {
+  _CameraNotifier(super.service, int count) {
+    state = LiveKitState(
+      connected: true,
+      tracks: [
+        for (var i = 0; i < count; i++)
+          ParticipantTrack(
+            identity: 'p$i',
+            name: 'Participant $i',
+            isLocal: false,
+          ),
+      ],
+    );
+  }
+}
+
 void main() {
+  for (final count in [4, 40]) {
+    testWidgets('$count cameras respect reserved bounds without piling up', (
+      tester,
+    ) async {
+      // LiveKitNotifier owns disposal when the ProviderScope unmounts.
+      final service = LiveKitRoomService();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            livekitProvider.overrideWith(
+              (ref) => _CameraNotifier(service, count),
+            ),
+          ],
+          child: const MaterialApp(home: Scaffold(body: FloatingCameraLayer())),
+        ),
+      );
+      await tester.pump();
+      const safe = Rect.fromLTRB(16, 64, 736, 488);
+      if (count == 4) {
+        final rects = [
+          for (var i = 0; i < count; i++)
+            tester.getRect(find.byKey(ValueKey('floating-cam-p$i'))),
+        ];
+        for (var i = 0; i < rects.length; i++) {
+          expect(safe.contains(rects[i].topLeft), isTrue);
+          expect(safe.contains(rects[i].bottomRight), isTrue);
+          for (var j = 0; j < i; j++) {
+            expect(rects[i].overlaps(rects[j]), isFalse);
+          }
+        }
+      } else {
+        expect(find.byType(FloatingCameraTile), findsNothing);
+        expect(find.byType(CameraGrid), findsOneWidget);
+        await tester.scrollUntilVisible(
+          find.text('Participant 39'),
+          300,
+          scrollable: find.byType(Scrollable),
+        );
+        expect(find.text('Participant 39').hitTestable(), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
   group('FloatingTileGeometry', () {
     const stage = Size(800, 450);
+    test('default cascade wraps into non-overlapping columns', () {
+      const tile = Size(168, 126);
+      final rects = [
+        for (var i = 0; i < 12; i++)
+          FloatingTileGeometry.cascadeAnchor(i, tile, stage) & tile,
+      ];
+      for (var i = 0; i < rects.length; i++) {
+        expect((Offset.zero & stage).contains(rects[i].topLeft), isTrue);
+        for (var j = 0; j < i; j++) {
+          expect(rects[i].overlaps(rects[j]), isFalse);
+        }
+      }
+    });
 
     test('tile keeps 4:3 aspect (plus header) when expanded', () {
       final size = FloatingTileGeometry.tileSize(160, collapsed: false);

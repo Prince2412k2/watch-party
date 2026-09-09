@@ -205,6 +205,7 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
       position: 12.5,
       rate: 1.01,
       downloadedChunks: 7,
+      stalled: true,
       mediaGeneration: 0,
     })
     const report = await peerReport
@@ -214,7 +215,18 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     assert.equal(report.drift, 0)
     assert.equal(report.rate, 1.01)
     assert.equal(report.downloadedChunks, 7)
+    assert.equal(report.stalled, true)
+    assert.equal(report.fallback, false)
     assert.equal(Number.isFinite(report.at), true)
+
+    const hostHealth = nextMatching(hostBackup, 'sync:peer_report', value => value.userId === guestId)
+    guestTwo.emit('sync:report', {
+      position: 10, drift: 2.5, stalled: true, mediaGeneration: 0,
+    })
+    const health = await hostHealth
+    assert.equal(health.stalled, true)
+    assert.equal(health.drift, 2.5)
+    assert.equal(health.fallback, false)
 
     guestOne.disconnect()
     const remainingGuest = nextMatching(guestTwo, 'chat:message', message => message.text === 'guest-remains')

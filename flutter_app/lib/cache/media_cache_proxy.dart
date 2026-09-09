@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter/foundation.dart';
 
@@ -44,14 +46,53 @@ class _Segment {
 /// Phase 3 will teach the downloader to fill this same [RangeCacheStore]
 /// instead of writing a separate file, and add eviction; neither exists yet.
 class MediaCacheProxy {
-  MediaCacheProxy({required ApiClient apiClient, RangeCacheStore? store})
-    : // Keep the public parameter name distinct from the private field.
-      // ignore: prefer_initializing_formals
-      _apiClient = apiClient,
-      _store = store ?? RangeCacheStore();
+  MediaCacheProxy({
+    required ApiClient apiClient,
+    RangeCacheStore? store,
+    this.requestTimeout = const Duration(seconds: 30),
+  }) : // Keep the public parameter name distinct from the private field.
+       // ignore: prefer_initializing_formals
+       _apiClient = apiClient,
+       _origin = apiClient.baseUrl,
+       _store = store ?? RangeCacheStore(namespace: apiClient.baseUrl);
 
   final ApiClient _apiClient;
-  final RangeCacheStore _store;
+  RangeCacheStore _store;
+  final Duration requestTimeout;
+  int _generation = 0;
+  final Map<HttpClient, String> _clients = {};
+  final Map<String, int> _itemGenerations = {};
+  final Map<CacheEntry, int> _entryGenerations = {};
+  String _origin;
+  String get origin => _origin;
+
+  String _key(String itemId, String? source) => source == null
+      ? itemId
+      : 'source-${sha256.convert(utf8.encode(jsonEncode([itemId, source])))}';
+
+  void abortItem(String itemId) {
+    _itemGenerations[itemId] = (_itemGenerations[itemId] ?? 0) + 1;
+    for (final client in _clients.keys.toList()) {
+      if (_clients[client] == itemId) client.close(force: true);
+    }
+  }
+
+  void stopTransfers() {
+    _generation++;
+    for (final client in _clients.keys.toList()) {
+      client.close(force: true);
+    }
+    _clients.clear();
+  }
+
+  Future<void> changeOrigin(String origin) async {
+    stopTransfers();
+    final old = _store;
+    _store = old.forNamespace(origin);
+    _origin = origin;
+    _entryGenerations.clear();
+    await old.dispose();
+  }
 
   HttpServer? _server;
 
@@ -59,11 +100,11 @@ class MediaCacheProxy {
   /// next chunk of playback is already cached by the time mpv asks for it.
   static const _readAheadWindow = 96 * 1024 * 1024; // 96 MiB
 
-  /// 1 MiB per upstream call. Public so other cache-filling code (the
-  /// download-fill controller) can default to the same chunk size without
-  /// duplicating the constant.
+  /// Default read-ahead chunk size; independent of proactive downloads.
   static const fetchChunkSize = 1 * 1024 * 1024;
-  static const _fetchChunkSize = fetchChunkSize;
+
+  /// Amortizes URL minting and connection setup without parallel fetches.
+  static const downloadChunkSize = 8 * 1024 * 1024;
 
   /// Titles with a read-ahead pass currently running — guards against
   /// stacking up unbounded background fetches for the same title (one
@@ -86,8 +127,10 @@ class MediaCacheProxy {
   }
 
   Future<void> dispose() async {
+    stopTransfers();
     await _server?.close(force: true);
     _server = null;
+    await _store.dispose();
   }
 
   /// The URL the player should open for [itemId] in place of a direct signed
@@ -103,8 +146,8 @@ class MediaCacheProxy {
       port: p,
       pathSegments: ['m', itemId],
       queryParameters: mediaSourceId == null
-          ? null
-          : {'mediaSourceId': mediaSourceId},
+          ? {'session': '$_generation'}
+          : {'mediaSourceId': mediaSourceId, 'session': '$_generation'},
     ).toString();
   }
 
@@ -119,7 +162,13 @@ class MediaCacheProxy {
   /// so callers that need to plan fetches against the raw entry (the
   /// download-fill controller, in particular) don't need their own
   /// [RangeCacheStore] — there's exactly one per proxy.
-  Future<CacheEntry> openEntry(String itemId) => _store.open(itemId);
+  Future<CacheEntry> openEntry(String itemId, {String? mediaSourceId}) async {
+    final generation = _generation;
+    final entry = await _store.open(_key(itemId, mediaSourceId));
+    if (generation != _generation) throw StateError('Cache session changed');
+    _entryGenerations[entry] = generation;
+    return entry;
+  }
 
   /// Bumps [itemId]'s [CacheEntry.lastAccess] to now, without touching cache
   /// contents — used by the fill controller to mark a just-completed
@@ -140,7 +189,10 @@ class MediaCacheProxy {
 
   /// Deletes [itemId]'s cached bytes entirely — used when the user removes an
   /// offline title.
-  Future<void> deleteEntry(String itemId) => _store.delete(itemId);
+  Future<void> deleteEntry(String itemId) {
+    abortItem(itemId);
+    return _store.delete(itemId);
+  }
 
   /// Runs one size-cap + 30-day-TTL eviction pass over the on-device cache
   /// (see [RangeCacheStore.evict]). Called once at boot (after [start]) so
@@ -161,6 +213,11 @@ class MediaCacheProxy {
   Future<void> _handleRequest(HttpRequest request) async {
     try {
       final segments = request.uri.pathSegments;
+      if (request.uri.queryParameters['session'] != '$_generation') {
+        request.response.statusCode = HttpStatus.gone;
+        await request.response.close();
+        return;
+      }
       if (segments.length != 2 || segments[0] != 'm' || segments[1].isEmpty) {
         request.response.statusCode = HttpStatus.notFound;
         await request.response.close();
@@ -186,8 +243,10 @@ class MediaCacheProxy {
     String itemId, {
     String? mediaSourceId,
   }) async {
-    final entry = await _store.open(itemId);
+    final generation = _generation;
+    final entry = await openEntry(itemId, mediaSourceId: mediaSourceId);
     await entry.touch();
+    if (generation != _generation) throw StateError('Cache session changed');
 
     var total = entry.totalLength;
     if (total == null) {
@@ -203,6 +262,7 @@ class MediaCacheProxy {
       }
     }
 
+    if (generation != _generation) throw StateError('Cache session changed');
     final rangeHeader = request.headers.value(HttpHeaders.rangeHeader);
     int start;
     int end; // exclusive
@@ -258,6 +318,7 @@ class MediaCacheProxy {
     }
 
     // Fire-and-forget: keep filling the cache beyond what was just served.
+    if (generation != _generation) return;
     unawaited(
       _readAhead(entry, itemId, end, total, mediaSourceId: mediaSourceId),
     );
@@ -273,6 +334,7 @@ class MediaCacheProxy {
     HttpResponse response, {
     String? mediaSourceId,
   }) async {
+    final generation = _generation;
     final gaps = entry.missingRanges(start, end);
     final segments = <_Segment>[];
     var cursor = start;
@@ -284,14 +346,18 @@ class MediaCacheProxy {
     if (cursor < end) segments.add(_Segment.present(cursor, end));
 
     for (final segment in segments) {
+      if (generation != _generation) throw StateError('Cache session changed');
       if (segment.isPresent) {
         await for (final data in entry.readChunks(
           segment.start,
           segment.end,
           chunkSize: fetchChunkSize,
         )) {
+          if (generation != _generation) {
+            throw StateError('Cache session changed');
+          }
           response.add(data);
-          await response.flush();
+          await response.flush().timeout(requestTimeout);
         }
       } else {
         await _fetchAndForward(
@@ -314,23 +380,20 @@ class MediaCacheProxy {
     HttpResponse response, {
     String? mediaSourceId,
   }) async {
-    final upstream = await _fetchRemoteRange(
-      itemId,
-      start,
-      end,
-      mediaSourceId: mediaSourceId,
-    );
-    try {
-      var offset = start;
-      await for (final chunk in upstream.response) {
-        await entry.write(offset, chunk);
-        offset += chunk.length;
-        response.add(chunk);
-        await response.flush();
-      }
-      await entry.flushMetadata();
-    } finally {
-      upstream.close();
+    final generation = _generation;
+    for (var pos = start; pos < end;) {
+      if (generation != _generation) throw StateError('Cache session changed');
+      final next = (pos + fetchChunkSize).clamp(0, end);
+      await fetchAndStore(
+        itemId,
+        entry,
+        pos,
+        next,
+        mediaSourceId: mediaSourceId,
+      );
+      response.add(await entry.read(pos, next));
+      await response.flush().timeout(requestTimeout);
+      pos = next;
     }
   }
 
@@ -345,13 +408,16 @@ class MediaCacheProxy {
     int total, {
     String? mediaSourceId,
   }) async {
-    if (_readAheadInFlight.contains(itemId)) return;
-    _readAheadInFlight.add(itemId);
+    final generation = _generation;
+    final key = _key(itemId, mediaSourceId);
+    if (_readAheadInFlight.contains(key)) return;
+    _readAheadInFlight.add(key);
     try {
       final windowEnd = (from + _readAheadWindow).clamp(0, total);
       if (windowEnd <= from) return;
       final gaps = entry.missingRanges(from, windowEnd);
       for (final gap in gaps) {
+        if (generation != _generation) return;
         try {
           await fetchAndStore(
             itemId,
@@ -365,7 +431,7 @@ class MediaCacheProxy {
         }
       }
     } finally {
-      _readAheadInFlight.remove(itemId);
+      _readAheadInFlight.remove(key);
     }
   }
 
@@ -383,7 +449,7 @@ class MediaCacheProxy {
   }
 
   /// Fetches `[start, end)` from the remote and writes it into [entry],
-  /// chunked at [_fetchChunkSize] per upstream call (so a single caller-sized
+  /// chunked at [chunkSize] per upstream call (so a single caller-sized
   /// gap doesn't hold one giant HTTP response open, and a failure partway
   /// through still leaves earlier chunks cached). Persists metadata once at
   /// the end. Extracted out of the read-ahead loop so both it and the
@@ -391,38 +457,35 @@ class MediaCacheProxy {
   /// and store it" implementation, including the single re-mint-on-401/403
   /// baked into [_fetchRemoteRange].
   ///
-  /// Does NOT forward bytes anywhere — this is the cache-filling half only.
-  /// The live-request path (`_fetchAndForward`) stays as its own thing since
-  /// it also has to stream bytes to the client response as they arrive;
-  /// unifying that with this method isn't worth the risk of changing live
-  /// playback's fetch cadence.
+  /// Foreground playback uses this same validator in 1 MiB chunks before
+  /// forwarding bytes; proactive downloads retain their 8 MiB cadence.
   Future<void> fetchAndStore(
     String itemId,
     CacheEntry entry,
     int start,
     int end, {
     String? mediaSourceId,
+    int chunkSize = fetchChunkSize,
   }) async {
+    final generation = _generation;
+    final itemGeneration = _itemGenerations[itemId] ?? 0;
+    if (chunkSize <= 0 || chunkSize > downloadChunkSize) {
+      throw ArgumentError.value(chunkSize, 'chunkSize');
+    }
     var pos = start;
     while (pos < end) {
-      final chunkEnd = (pos + _fetchChunkSize) > end
-          ? end
-          : pos + _fetchChunkSize;
-      final upstream = await _fetchRemoteRange(
+      if (generation != _generation ||
+          itemGeneration != (_itemGenerations[itemId] ?? 0)) {
+        throw StateError('Cache transfer cancelled');
+      }
+      final chunkEnd = (pos + chunkSize) > end ? end : pos + chunkSize;
+      await _validatedWrite(
         itemId,
+        entry,
         pos,
         chunkEnd,
         mediaSourceId: mediaSourceId,
       );
-      try {
-        var offset = pos;
-        await for (final chunk in upstream.response) {
-          await entry.write(offset, chunk);
-          offset += chunk.length;
-        }
-      } finally {
-        upstream.close();
-      }
       pos = chunkEnd;
     }
     await entry.flushMetadata();
@@ -438,40 +501,78 @@ class MediaCacheProxy {
     CacheEntry entry, {
     String? mediaSourceId,
   }) async {
+    await _validatedWrite(itemId, entry, 0, 1, mediaSourceId: mediaSourceId);
+    await entry.flushMetadata();
+    return entry.totalLength;
+  }
+
+  Future<void> _validatedWrite(
+    String itemId,
+    CacheEntry entry,
+    int start,
+    int end, {
+    String? mediaSourceId,
+  }) async {
+    final generation = _generation;
+    final itemGeneration = _itemGenerations[itemId] ?? 0;
+    void check() {
+      if (generation != _generation ||
+          _origin != _apiClient.baseUrl ||
+          entry.itemId != _key(itemId, mediaSourceId) ||
+          itemGeneration != (_itemGenerations[itemId] ?? 0) ||
+          (_entryGenerations[entry] ?? generation) != generation ||
+          entry.closed) {
+        throw StateError('Cache transfer cancelled');
+      }
+    }
+
+    check();
     final upstream = await _fetchRemoteRange(
       itemId,
-      0,
-      1,
+      start,
+      end,
       mediaSourceId: mediaSourceId,
     );
     try {
       final res = upstream.response;
-      if (res.statusCode != HttpStatus.ok &&
-          res.statusCode != HttpStatus.partialContent) {
-        return null;
+      final range = RegExp(
+        r'^bytes (\d+)-(\d+)/(\d+)$',
+      ).firstMatch(res.headers.value(HttpHeaders.contentRangeHeader) ?? '');
+      final total = range == null ? null : int.tryParse(range.group(3)!);
+      if (res.statusCode != HttpStatus.partialContent ||
+          range == null ||
+          int.tryParse(range.group(1)!) != start ||
+          int.tryParse(range.group(2)!) != end - 1 ||
+          total == null ||
+          total < end ||
+          (entry.totalLength != null && entry.totalLength != total) ||
+          (res.contentLength >= 0 && res.contentLength != end - start) ||
+          res.headers.value(HttpHeaders.contentEncodingHeader) != null) {
+        throw HttpException('Invalid upstream range response');
       }
-      final total = _totalFromHeaders(res);
-      if (total == null) return null;
+      final bytes = BytesBuilder(copy: false);
+      await (() async {
+        await for (final chunk in res) {
+          check();
+          if (bytes.length + chunk.length > end - start) {
+            throw HttpException('Upstream range body is too long');
+          }
+          bytes.add(chunk);
+        }
+      })().timeout(requestTimeout);
+      check();
+      if (bytes.length != end - start) {
+        throw HttpException('Upstream range body is too short');
+      }
+      if (entry.totalLength != null && entry.totalLength != total) {
+        throw HttpException('Media length changed during range request');
+      }
       entry.setTotalLength(total);
-      final probeByte = await _drain(res);
-      if (probeByte.isNotEmpty) await entry.write(0, probeByte);
-      await entry.flushMetadata();
-      return total;
+      await entry.write(start, bytes.takeBytes());
     } finally {
+      _clients.remove(upstream.client);
       upstream.close();
     }
-  }
-
-  int? _totalFromHeaders(HttpClientResponse res) {
-    final contentRange = res.headers.value(HttpHeaders.contentRangeHeader);
-    if (contentRange != null) {
-      final match = RegExp(r'/(\d+)$').firstMatch(contentRange);
-      if (match != null) return int.tryParse(match.group(1)!);
-    }
-    if (res.statusCode == HttpStatus.ok && res.contentLength >= 0) {
-      return res.contentLength;
-    }
-    return null;
   }
 
   /// Fetches `[start, end)` from the remote signed URL, re-minting once if
@@ -484,44 +585,50 @@ class MediaCacheProxy {
     int end, {
     String? mediaSourceId,
   }) async {
+    final generation = _generation;
+    final itemGeneration = _itemGenerations[itemId] ?? 0;
     Future<_Upstream> attempt(String url) async {
-      final client = HttpClient();
+      if (generation != _generation ||
+          itemGeneration != (_itemGenerations[itemId] ?? 0)) {
+        throw StateError('Cache transfer cancelled');
+      }
+      final client = HttpClient()..autoUncompress = false;
+      _clients[client] = itemId;
       try {
-        final req = await client.getUrl(Uri.parse(url));
+        final req = await client.getUrl(Uri.parse(url)).timeout(requestTimeout);
+        req.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
         req.headers.set(HttpHeaders.rangeHeader, 'bytes=$start-${end - 1}');
-        final res = await req.close();
+        final res = await req.close().timeout(requestTimeout);
         return _Upstream(res, client);
       } catch (_) {
+        _clients.remove(client);
         client.close(force: true);
         rethrow;
       }
     }
 
-    var signed = await _apiClient.nativeStreamUrl(
-      itemId,
-      purpose: 'stream',
-      mediaSourceId: mediaSourceId,
-    );
+    var signed = await _apiClient
+        .nativeStreamUrl(
+          itemId,
+          purpose: 'stream',
+          mediaSourceId: mediaSourceId,
+        )
+        .timeout(requestTimeout);
     var upstream = await attempt(signed.url);
     if (upstream.response.statusCode == HttpStatus.unauthorized ||
         upstream.response.statusCode == HttpStatus.forbidden) {
+      _clients.remove(upstream.client);
       upstream.close();
-      signed = await _apiClient.nativeStreamUrl(
-        itemId,
-        purpose: 'stream',
-        mediaSourceId: mediaSourceId,
-      );
+      signed = await _apiClient
+          .nativeStreamUrl(
+            itemId,
+            purpose: 'stream',
+            mediaSourceId: mediaSourceId,
+          )
+          .timeout(requestTimeout);
       upstream = await attempt(signed.url);
     }
     return upstream;
-  }
-
-  Future<List<int>> _drain(Stream<List<int>> stream) async {
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in stream) {
-      builder.add(chunk);
-    }
-    return builder.takeBytes();
   }
 
   // ── Range header parsing ──────────────────────────────────────────────

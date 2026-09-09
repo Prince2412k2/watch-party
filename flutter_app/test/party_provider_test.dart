@@ -31,7 +31,8 @@ class _NoopLiveKitRoomService extends LiveKitRoomService {
 /// A socket whose acks are scripted per-event, so `party:create`/`party:join`
 /// can be exercised without a real server.
 class _ScriptedSocket extends MockSocketClient {
-  final Map<String, dynamic> Function(String event, Object? data) responder;
+  final FutureOr<Map<String, dynamic>> Function(String event, Object? data)
+  responder;
   _ScriptedSocket(this.responder);
 
   @override
@@ -172,7 +173,7 @@ void main() {
 
   ProviderContainer build(
     String myUserId,
-    Map<String, dynamic> Function(String, Object?) responder, {
+    FutureOr<Map<String, dynamic>> Function(String, Object?) responder, {
     MediaCacheProxy? proxy,
     _NoopPlayer? withPlayer,
     ApiClient? api,
@@ -410,6 +411,138 @@ void main() {
       isNotEmpty,
     );
   });
+
+  for (final needsApproval in [false, true]) {
+    test('guest null resume rejoins with approval=$needsApproval', () async {
+      var joins = 0;
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyResume) return {'session': null};
+        if (event == ClientEvent.partyJoin) {
+          joins++;
+          expect(data, {'partyId': 'party-1'});
+          if (joins > 1 && needsApproval) return {'status': 'waiting'};
+          return {'status': 'joined', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
+      await container.read(partyProvider.notifier).join('party-1');
+      await socket.disconnect();
+      await socket.connect();
+      await Future<void>.delayed(Duration.zero);
+      expect(joins, 2);
+      expect(container.read(partyProvider) == null, needsApproval);
+      expect(
+        container.read(partyPendingProvider),
+        needsApproval ? 'party-1' : null,
+      );
+      if (needsApproval) {
+        socket.inject(ServerEvent.partyApproved, {
+          'session': _session(hostId: 'host1'),
+        });
+        await Future<void>.delayed(Duration.zero);
+        expect(container.read(partyProvider)?.id, 'party-1');
+        expect(container.read(partyPendingProvider), isNull);
+      }
+    });
+  }
+
+  test(
+    'leaving during delayed reconnect join cannot resurrect the room',
+    () async {
+      var joins = 0;
+      final rejoin = Completer<Map<String, dynamic>>();
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyResume) return {'session': null};
+        if (event == ClientEvent.partyJoin) {
+          if (++joins > 1) return rejoin.future;
+          return {'status': 'joined', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
+      final notifier = container.read(partyProvider.notifier);
+      await notifier.join('party-1');
+      await socket.disconnect();
+      await socket.connect();
+      await Future<void>.delayed(Duration.zero);
+      expect(joins, 2);
+      await notifier.leave();
+      rejoin.complete({
+        'status': 'joined',
+        'session': _session(hostId: 'host1'),
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(container.read(partyProvider), isNull);
+      expect(container.read(partyPendingProvider), isNull);
+    },
+  );
+
+  test(
+    'approval before reconnect join ack is not rolled back to waiting',
+    () async {
+      var joins = 0;
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyResume) return {'session': null};
+        if (event == ClientEvent.partyJoin) {
+          if (++joins > 1) {
+            socket.inject(ServerEvent.partyApproved, {
+              'session': _session(hostId: 'host1'),
+            });
+            return {'status': 'waiting'};
+          }
+          return {'status': 'joined', 'session': _session(hostId: 'host1')};
+        }
+        return {'ok': true};
+      });
+      await container.read(partyProvider.notifier).join('party-1');
+      await socket.disconnect();
+      await socket.connect();
+      await Future<void>.delayed(Duration.zero);
+      expect(joins, 2);
+      expect(container.read(partyProvider)?.id, 'party-1');
+      expect(container.read(partyPendingProvider), isNull);
+    },
+  );
+
+  test(
+    'reconnect acknowledgement schedule reaches an already attached engine',
+    () async {
+      var version = 1;
+      container = build('guest1', (event, data) {
+        if (event == ClientEvent.partyJoin ||
+            event == ClientEvent.partyResume) {
+          return {
+            'status': 'joined',
+            'session': _session(
+              hostId: 'host1',
+              mediaItemId: 'movie',
+              stage: 'watching',
+              schedule: {
+                'version': version,
+                'mediaGeneration': 1,
+                'positionTicks': version * 100000000,
+                'phase': 'paused',
+              },
+            ),
+          };
+        }
+        return {'ok': true};
+      });
+      container.read(partyPlaybackProvider);
+      await container.read(partyProvider.notifier).join('party-1');
+      await Future<void>.delayed(Duration.zero);
+      expect(container.read(syncEngineProvider).currentSchedule.version, 1);
+      version = 5;
+      await socket.disconnect();
+      await socket.connect();
+      await Future<void>.delayed(Duration.zero);
+      expect(container.read(syncEngineProvider).currentSchedule.version, 5);
+      expect(
+        container.read(syncEngineProvider).currentSchedule.positionTicks,
+        500000000,
+      );
+      await container.read(partyProvider.notifier).leave();
+    },
+  );
 
   test(
     'waiting guest repeats join with its new socket after reconnect',

@@ -91,4 +91,19 @@ void main() {
       tester.getSize(find.byType(DesktopWindowChrome)),
     );
   });
+
+  testWidgets(
+    'caption drag region avoids traffic lights and tolerates narrow bounds',
+    (tester) async {
+      await pump(tester, fullscreen: false);
+      expect(tester.getTopLeft(find.byType(DragToMoveArea)).dx, 78);
+      tester.view.physicalSize = const Size(200, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(tester.getSize(find.byType(DragToMoveArea)).width, 0);
+      expect(_Mounts.count, 1);
+    },
+  );
 }

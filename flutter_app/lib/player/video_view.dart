@@ -51,7 +51,7 @@ const _netflixSubtitleStyle = TextStyle(
 const _netflixSubtitleViewConfiguration = SubtitleViewConfiguration(
   style: _netflixSubtitleStyle,
   textAlign: TextAlign.center,
-  padding: EdgeInsets.fromLTRB(48, 0, 48, 56),
+  padding: EdgeInsets.fromLTRB(48, 0, 48, 112),
 );
 
 /// Renders the media_kit GPU-texture video surface for a [PlayerController].

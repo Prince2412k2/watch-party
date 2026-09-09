@@ -26,6 +26,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   StreamSubscription<bool>? _connectionSubscription;
   bool _subscribed = false;
   bool _recoveringConnection = false;
+  int _connectionGeneration = 0;
   int _generation = 0;
   Future<void>? _teardown;
   String? __pendingPartyId;
@@ -95,6 +96,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _subscribed = true;
     final socket = _socket;
     _connectionSubscription = socket.connectionState.listen((connected) {
+      if (!connected) _connectionGeneration++;
       if (connected && (state != null || _pendingPartyId != null)) {
         unawaited(_recoverAfterReconnect());
       }
@@ -192,7 +194,44 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         if (report != null &&
             report.mediaGeneration == state?.schedule.mediaGeneration) {
           _ref.read(peerPlaybackProvider.notifier).put(report);
+          if (data['fallback'] == false) {
+            final fallback = _ref.read(peerFallbackProvider);
+            if (fallback.contains(report.userId)) {
+              _ref.read(peerFallbackProvider.notifier).state = {...fallback}
+                ..remove(report.userId);
+            }
+          }
         }
+      }),
+    );
+    _unsubs.add(
+      socket.on('sync:stall_fallback', (data) {
+        if (data is! Map ||
+            data['mediaGeneration'] != state?.schedule.mediaGeneration) {
+          return;
+        }
+        final ids = data['memberIds'];
+        if (ids is List) {
+          _ref.read(peerFallbackProvider.notifier).state = ids
+              .whereType<String>()
+              .toSet();
+        }
+      }),
+    );
+    _unsubs.add(
+      socket.on(ServerEvent.syncSchedule, (data) {
+        if (data is! Map || state == null) return;
+        final schedule = SyncSchedule.fromJson(Map<String, dynamic>.from(data));
+        final old = state!.schedule;
+        if (schedule.mediaGeneration < old.mediaGeneration ||
+            (schedule.mediaGeneration == old.mediaGeneration &&
+                schedule.version <= old.version)) {
+          return;
+        }
+        if (schedule.mediaGeneration != old.mediaGeneration) {
+          _ref.read(peerPlaybackProvider.notifier).clear();
+        }
+        state = state!.copyWith(schedule: schedule);
       }),
     );
   }
@@ -211,13 +250,16 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     if (_recoveringConnection) return;
     _recoveringConnection = true;
     final generation = _generation;
+    final connection = _connectionGeneration;
     try {
       final pendingPartyId = _pendingPartyId;
       if (pendingPartyId != null) {
         final resp = await _socket
             .emitWithAck(ClientEvent.partyJoin, {'partyId': pendingPartyId})
             .timeout(const Duration(seconds: 5));
-        if (generation != _generation || _pendingPartyId != pendingPartyId) {
+        if (generation != _generation ||
+            connection != _connectionGeneration ||
+            _pendingPartyId != pendingPartyId) {
           return;
         }
         if (resp is Map &&
@@ -229,6 +271,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
           if (partyId != null && partyId.isNotEmpty) {
             await _postJoinSetup(generation, partyId);
           }
+        } else if (resp is Map && resp['error'] != null) {
+          await _leaveLocal();
         }
         return;
       }
@@ -236,11 +280,45 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       final resp = await _socket
           .emitWithAck(ClientEvent.partyResume)
           .timeout(const Duration(seconds: 5));
-      if (generation != _generation || state == null) return;
+      if (generation != _generation ||
+          connection != _connectionGeneration ||
+          state == null) {
+        return;
+      }
       if (resp is Map && resp['session'] is Map) {
         _applySession(Map<String, dynamic>.from(resp['session'] as Map));
       } else {
-        await _leaveLocal();
+        // Guest disconnect removes membership on the server. Resume cannot
+        // restore it; join the same existing room through its approval gate.
+        final partyId = state!.id;
+        _pendingPartyId = partyId;
+        state = null;
+        _ref.read(peerPlaybackProvider.notifier).clear();
+        _ref.read(chatProvider.notifier).deactivate();
+        await _bestEffort(() => _ref.read(livekitProvider.notifier).leave());
+        if (generation != _generation || connection != _connectionGeneration) {
+          return;
+        }
+        final joined = await _socket
+            .emitWithAck(ClientEvent.partyJoin, {'partyId': partyId})
+            .timeout(ackTimeout);
+        if (generation != _generation ||
+            connection != _connectionGeneration ||
+            _pendingPartyId != partyId) {
+          return;
+        }
+        if (joined is Map &&
+            joined['status'] == 'joined' &&
+            joined['session'] is Map) {
+          _pendingPartyId = null;
+          _applySession(Map<String, dynamic>.from(joined['session'] as Map));
+          await _postJoinSetup(generation, partyId);
+        } else if (joined is Map && joined['status'] == 'waiting') {
+          // Keep waiting. Approval may arrive before the acknowledgement;
+          // the pending-id guard above prevents rolling that admission back.
+        } else {
+          await _leaveLocal();
+        }
       }
     } on TimeoutException {
       // A later Socket.IO reconnect will retry with a fresh acknowledgement.
@@ -248,6 +326,12 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       // The connection lifecycle will trigger another attempt after recovery.
     } finally {
       _recoveringConnection = false;
+      if (generation == _generation &&
+          connection != _connectionGeneration &&
+          _socket.isConnected &&
+          (state != null || _pendingPartyId != null)) {
+        unawaited(_recoverAfterReconnect());
+      }
     }
   }
 
@@ -700,6 +784,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   @override
   void dispose() {
+    _generation++;
     _unsubscribe();
     super.dispose();
   }
@@ -719,6 +804,8 @@ class PeerPlayback {
     required this.downloadedChunks,
     required this.mediaGeneration,
     required this.receivedAt,
+    this.stalled = false,
+    this.fallback = false,
   });
 
   final String userId;
@@ -729,13 +816,29 @@ class PeerPlayback {
   final int downloadedChunks;
   final int mediaGeneration;
   final int receivedAt;
+  final bool stalled;
+  final bool fallback;
+
+  String? get healthWarning {
+    if (fallback) return 'Buffering; room resumed without them';
+    if (stalled) return 'Buffering';
+    if (drift.inMilliseconds > 1000) {
+      return '${(drift.inMilliseconds / 1000).toStringAsFixed(1)}s behind';
+    }
+    return null;
+  }
 
   static PeerPlayback? fromJson(Map<String, dynamic> json) {
     final userId = json['userId'];
     final position = json['position'];
-    if (userId is! String || position is! num) return null;
+    if (userId is! String || position is! num || !position.isFinite) {
+      return null;
+    }
     final drift = json['drift'];
     final rate = json['rate'];
+    if (drift is num && !drift.isFinite || rate is num && !rate.isFinite) {
+      return null;
+    }
     final chunks = json['downloadedChunks'];
     final mediaGeneration = json['mediaGeneration'];
     if (mediaGeneration is! int) return null;
@@ -750,13 +853,18 @@ class PeerPlayback {
       downloadedChunks: chunks is int && chunks >= 0 ? chunks : 0,
       mediaGeneration: mediaGeneration,
       receivedAt: DateTime.now().millisecondsSinceEpoch,
+      stalled: json['stalled'] == true,
+      fallback: json['fallback'] == true,
     );
   }
 }
 
 class PeerPlaybackNotifier extends StateNotifier<Map<String, PeerPlayback>> {
-  PeerPlaybackNotifier() : super(const {});
+  PeerPlaybackNotifier({int Function()? nowMs})
+    : _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch),
+      super(const {});
 
+  final int Function() _nowMs;
   Timer? _expiry;
 
   void put(PeerPlayback report) {
@@ -764,7 +872,7 @@ class PeerPlaybackNotifier extends StateNotifier<Map<String, PeerPlayback>> {
       const Duration(seconds: 1),
       (_) => _removeStale(),
     );
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = _nowMs();
     state = {
       for (final entry in state.entries)
         if (now - entry.value.receivedAt < 5000) entry.key: entry.value,
@@ -784,7 +892,7 @@ class PeerPlaybackNotifier extends StateNotifier<Map<String, PeerPlayback>> {
   }
 
   void _removeStale() {
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = _nowMs();
     final next = {
       for (final entry in state.entries)
         if (now - entry.value.receivedAt < 5000) entry.key: entry.value,
@@ -809,6 +917,12 @@ final peerPlaybackProvider =
     StateNotifierProvider<PeerPlaybackNotifier, Map<String, PeerPlayback>>(
       (ref) => PeerPlaybackNotifier(),
     );
+
+/// Immediate fallback notification, even if that peer has stopped reporting.
+final peerFallbackProvider = StateProvider<Set<String>>((ref) {
+  ref.watch(partyProvider.select((p) => (p?.id, p?.schedule.mediaGeneration)));
+  return {};
+});
 
 final showPeerPointersProvider = StateProvider<bool>((ref) => false);
 

@@ -121,8 +121,10 @@ Future<void> main() async {
             .timeout(const Duration(seconds: 2))
             .catchError((_) {}),
         Future<void>.sync(
-          container.read(cacheFillControllerProvider).pauseAll,
+          container.read(cacheFillControllerProvider).cancelAll,
         ).catchError((_) {}),
+        mediaCacheProxy.dispose().catchError((_) {}),
+        Future<void>.sync(artworkCache.stopTransfers),
         container
             .read(watchHistoryProvider)
             .close()

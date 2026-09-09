@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../analog/chrome/analog_select.dart';
 import '../analog/chrome/chrome.dart';
+
 import 'package:flutter/services.dart';
 
 import '../analog/player/analog_settings_stack.dart';
@@ -56,6 +57,7 @@ class PlayerChrome extends StatefulWidget {
     this.onBack,
     this.onToggleFullscreen,
     this.isFullscreen = false,
+    this.onSeek,
     this.onSeekAuthored,
     this.onTogglePlay,
     this.onAudioStreamSelected,
@@ -71,6 +73,8 @@ class PlayerChrome extends StatefulWidget {
     this.peerPositions = const [],
     this.visible,
     this.onWake,
+    this.onHold,
+    this.onRelease,
     this.onToggleChat,
     this.onPushToTalkStart,
     this.onPushToTalkStop,
@@ -90,6 +94,11 @@ class PlayerChrome extends StatefulWidget {
   /// playback / detail screen) keeps the built-in idle behaviour intact.
   final bool? visible;
   final VoidCallback? onWake;
+
+  /// Forward interaction reasons to the parent's auto-hide controller. Reasons
+  /// are paired, including when this chrome is removed with an interaction open.
+  final ValueChanged<String>? onHold;
+  final ValueChanged<String>? onRelease;
 
   /// Party-only key bindings, independent of playback control: `c` toggles chat,
   /// hold-`T` is push-to-talk. Null in solo playback (the keys do nothing).
@@ -125,8 +134,10 @@ class PlayerChrome extends StatefulWidget {
   final VoidCallback? onToggleFullscreen;
   final bool isFullscreen;
 
-  /// Reports a seek this viewer authored, after it has been applied locally.
-  /// A party publishes it to the room from here.
+  /// Owns the native seek and publication when supplied (party playback).
+  final Future<void> Function(Duration)? onSeek;
+
+  /// Reports a local seek only when [onSeek] is absent.
   final ValueChanged<Duration>? onSeekAuthored;
   final Future<void> Function()? onTogglePlay;
   final Future<void> Function(int? index)? onAudioStreamSelected;
@@ -141,6 +152,8 @@ class PlayerChrome extends StatefulWidget {
 class _PlayerChromeState extends State<PlayerChrome>
     with WidgetsBindingObserver {
   final _focusNode = FocusNode();
+  VoidCallback? _pushToTalkStop;
+  final Set<String> _holds = {};
 
   /// The single auto-hide clock, driven by `analog/player_core.dart`. Only
   /// armed on the solo path — the party screen owns an identical controller and
@@ -301,6 +314,12 @@ class _PlayerChromeState extends State<PlayerChrome>
   @override
   void didUpdateWidget(PlayerChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.onPushToTalkStart != widget.onPushToTalkStart ||
+        oldWidget.onPushToTalkStop != widget.onPushToTalkStop ||
+        oldWidget.controller != widget.controller ||
+        (!oldWidget.chatOpen && widget.chatOpen)) {
+      _stopPushToTalk();
+    }
     if (oldWidget.controller != widget.controller) {
       // A replaced controller left this chrome subscribed to the OLD player: the
       // transport bar kept mirroring a position/duration/track set nobody was
@@ -448,6 +467,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     // "Message content must not remain visible on a locked or backgrounded
     // device." Anything queued is dropped rather than held for the return.
     if (state == AppLifecycleState.resumed) return;
+    _stopPushToTalk();
     if (_toasts.queue.isEmpty) return;
     _cancelToastTimers();
     setState(() => _toasts = ToastQueueState(chatOpen: _toasts.chatOpen));
@@ -628,6 +648,13 @@ class _PlayerChromeState extends State<PlayerChrome>
 
   @override
   void dispose() {
+    _stopPushToTalk();
+    if (widget.visible != null) {
+      for (final reason in _holds) {
+        widget.onRelease?.call(reason);
+      }
+    }
+    _holds.clear();
     WidgetsBinding.instance.removeObserver(this);
     FocusManager.instance.removeListener(_onGlobalFocusChange);
     _cancelToastTimers();
@@ -645,6 +672,8 @@ class _PlayerChromeState extends State<PlayerChrome>
   /// platform beeps at every one. Deliberately narrow: a live focus on any real
   /// widget, including another button or a text field, is left alone.
   void _onGlobalFocusChange() {
+    // Key-up can now belong to a dialog, chat field, or another window.
+    _stopPushToTalk();
     final pf = FocusManager.instance.primaryFocus;
     final stranded = pf == null || pf.context == null || pf is FocusScopeNode;
     if (stranded) _reclaimKeyboard();
@@ -662,6 +691,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   /// uses the one this state owns. When the parent owns it, activity is
   /// forwarded so its timer re-arms.
   void _wake([PlayerInputKind kind = PlayerInputKind.pointer]) {
+    if (!mounted) return;
     if (widget.visible != null) {
       widget.onWake?.call();
       return;
@@ -673,7 +703,9 @@ class _PlayerChromeState extends State<PlayerChrome>
   /// settings stack). Without it the surface you are using vanishes under the
   /// cursor after three seconds.
   void _hold(String reason) {
+    if (!mounted || !_holds.add(reason)) return;
     if (widget.visible != null) {
+      widget.onHold?.call(reason);
       widget.onWake?.call();
       return;
     }
@@ -681,7 +713,9 @@ class _PlayerChromeState extends State<PlayerChrome>
   }
 
   void _release(String reason) {
+    if (!mounted || !_holds.remove(reason)) return;
     if (widget.visible != null) {
+      widget.onRelease?.call(reason);
       widget.onWake?.call();
       return;
     }
@@ -712,15 +746,19 @@ class _PlayerChromeState extends State<PlayerChrome>
         : (_duration > Duration.zero && target > _duration
               ? _duration
               : target);
-    await widget.controller.seek(clamped);
-    widget.onSeekAuthored?.call(clamped);
-    _wake();
+    await _seekTo(clamped);
   }
 
   Future<void> _seekTo(Duration position) async {
     if (!widget.canControl) return;
-    await widget.controller.seek(position);
-    widget.onSeekAuthored?.call(position);
+    final seek = widget.onSeek;
+    if (seek != null) {
+      await seek(position);
+    } else {
+      final report = widget.onSeekAuthored;
+      await widget.controller.seek(position);
+      report?.call(position);
+    }
     _wake();
   }
 
@@ -921,18 +959,22 @@ class _PlayerChromeState extends State<PlayerChrome>
             widget.controller != c) {
           return;
         }
-        final cues = parseSubtitleCues(content);
-        if (cues.isEmpty) throw const FormatException('No valid subtitle cues');
-        setState(() {
-          _subtitleCues = cues;
-          _selectedSubtitle = id;
-        });
+        setState(() => _subtitleCues = const []);
+        var nativeRendered = false;
         if (c is MediaKitPlayerController) {
           try {
             final loadedTrackId = _loadedExternalSubtitleTrackIds[id];
-            if (loadedTrackId != null) {
+            // SubtitleTrack.data reports its content as the current ID, not
+            // necessarily an ID the controller's native track map can select.
+            final canSelect =
+                loadedTrackId != null &&
+                c.latestTracks.subtitle.any(
+                  (track) => track.id == loadedTrackId,
+                );
+            if (canSelect) {
               await c.setSubtitle(loadedTrackId);
-            } else {
+            }
+            if (!canSelect || c.currentSubtitleTrackId != loadedTrackId) {
               await c.addExternalSubtitle(
                 content,
                 title: external.displayTitle ?? external.title,
@@ -943,9 +985,21 @@ class _PlayerChromeState extends State<PlayerChrome>
                 _loadedExternalSubtitleTrackIds[id!] = nativeId;
               }
             }
+            nativeRendered = true;
           } catch (_) {
-            // The Flutter overlay remains the rendering fallback.
+            // Fall back only after an actual native load failure.
           }
+        }
+        if (!mounted || version != _subtitleSelectionVersion) return;
+        if (!nativeRendered) {
+          final cues = parseSubtitleCues(content);
+          if (cues.isEmpty) {
+            throw const FormatException('No valid subtitle cues');
+          }
+          // Disable any previous or partially selected native track first.
+          await c.setSubtitle(null);
+          if (!mounted || version != _subtitleSelectionVersion) return;
+          setState(() => _subtitleCues = cues);
         }
       } catch (e) {
         if (mounted && version == _subtitleSelectionVersion) {
@@ -1003,7 +1057,15 @@ class _PlayerChromeState extends State<PlayerChrome>
       final file = picked?.files.single;
       if (file == null) return;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
+      if (!mounted || widget.controller != c) return;
+      final version = ++_subtitleSelectionVersion;
       await c.addExternalSubtitle(_subtitleToUtf8(bytes), title: file.name);
+      if (mounted && version == _subtitleSelectionVersion) {
+        setState(() {
+          _subtitleCues = const [];
+          _selectedSubtitle = c.currentSubtitleTrackId;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = 'Failed to load subtitle: $e');
       return;
@@ -1042,13 +1104,16 @@ class _PlayerChromeState extends State<PlayerChrome>
     // Push-to-talk releases on key up — independent of playback-control rights.
     if (event is KeyUpEvent) {
       if (event.logicalKey == LogicalKeyboardKey.keyT &&
-          widget.onPushToTalkStop != null) {
-        widget.onPushToTalkStop!();
+          _pushToTalkStop != null) {
+        _stopPushToTalk();
         return KeyEventResult.handled;
       }
       return KeyEventResult.ignored;
     }
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (_editableFocus.$1 && event.logicalKey == LogicalKeyboardKey.keyT) {
+      return KeyEventResult.ignored;
+    }
 
     // Every binding below is a BARE key. Holding Ctrl/Cmd turns the same
     // keystroke into a platform or application command — Ctrl+C copy, Ctrl+T
@@ -1093,8 +1158,12 @@ class _PlayerChromeState extends State<PlayerChrome>
     // they run before the canControl transport gate. Key-repeat arrives as a
     // KeyRepeatEvent (not KeyDownEvent), so hold-T fires start exactly once.
     if (event.logicalKey == LogicalKeyboardKey.keyT &&
-        widget.onPushToTalkStart != null) {
-      widget.onPushToTalkStart!();
+        widget.onPushToTalkStart != null &&
+        widget.onPushToTalkStop != null) {
+      if (_pushToTalkStop == null) {
+        _pushToTalkStop = widget.onPushToTalkStop;
+        widget.onPushToTalkStart!();
+      }
       return KeyEventResult.handled;
     }
 
@@ -1137,6 +1206,12 @@ class _PlayerChromeState extends State<PlayerChrome>
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  void _stopPushToTalk() {
+    final stop = _pushToTalkStop;
+    _pushToTalkStop = null;
+    stop?.call();
   }
 
   /// Speeds offered by the settings stack. Deliberately short: a rate picker
@@ -1391,13 +1466,16 @@ class _PlayerChromeState extends State<PlayerChrome>
               // (ChatNotifications -> AnalogToastHost), mounted above the
               // router, so nothing the player or the party draws can cover it.
               if (activeCues.isNotEmpty)
-                _SubtitleOverlay(
-                  text: activeCues.map((cue) => cue.text).join('\n'),
-                  scale: _subScale,
-                  position: _subPos,
-                  font: _subFont,
-                  color: _subColor,
-                  backgroundOpacity: _subBackgroundOpacity,
+                Padding(
+                  padding: EdgeInsets.only(bottom: visible ? 112 : 0),
+                  child: _SubtitleOverlay(
+                    text: activeCues.map((cue) => cue.text).join('\n'),
+                    scale: _subScale,
+                    position: _subPos,
+                    font: _subFont,
+                    color: _subColor,
+                    backgroundOpacity: _subBackgroundOpacity,
+                  ),
                 ),
             ],
           ),

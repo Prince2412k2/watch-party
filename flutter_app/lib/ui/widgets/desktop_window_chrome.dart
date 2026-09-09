@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 const double integratedDesktopChromeHeight = 32;
+const double _macOSLeadingControlInset = 78;
 
-double get desktopLeadingControlInset => Platform.isMacOS ? 78 : 0;
+double get desktopLeadingControlInset =>
+    Platform.isMacOS ? _macOSLeadingControlInset : 0;
 
 /// Transparent desktop window controls layered over edge-to-edge app content.
 ///
@@ -96,10 +98,18 @@ class _DesktopWindowChromeState extends State<DesktopWindowChrome>
         if (_isMacOS && !_isFullscreen)
           Positioned(
             top: 0,
-            left: desktopLeadingControlInset,
-            right: 160,
+            left: 0,
+            right: 0,
             height: integratedDesktopChromeHeight,
-            child: const DragToMoveArea(child: SizedBox.expand()),
+            child: const Padding(
+              // Padding safely shrinks to zero on a very narrow work area;
+              // opposing Positioned offsets can produce a negative width.
+              padding: EdgeInsets.only(
+                left: _macOSLeadingControlInset,
+                right: 160,
+              ),
+              child: DragToMoveArea(child: SizedBox.expand()),
+            ),
           ),
       ],
     );

@@ -61,11 +61,8 @@ class FillProgress {
 /// [MediaCacheProxy.fetchAndStore] but is injectable so tests can drive the
 /// fill loop's control flow (pause/resume/cancel/progress) without any real
 /// network or [MediaCacheProxy] at all.
-typedef RangeFetcher = Future<void> Function(
-  CacheEntry entry,
-  int start,
-  int end,
-);
+typedef RangeFetcher =
+    Future<void> Function(CacheEntry entry, int start, int end);
 
 /// Per-itemId bookkeeping for an in-progress (or paused/finished) fill.
 class _Fill {
@@ -88,7 +85,7 @@ class _Fill {
 /// Proactively fills a title's entire on-device cache — the "download"
 /// engine sitting underneath (but decoupled from) the existing download
 /// UI/providers. Fetches whatever [CacheEntry.missingRanges] reports missing
-/// across the *whole* file, in [MediaCacheProxy._fetchChunkSize]-ish pieces,
+/// across the *whole* file, in at most 8 MiB pieces by default,
 /// sequentially, one active fill per itemId.
 ///
 /// This class does not know about `background_downloader`, the offline
@@ -98,18 +95,24 @@ class _Fill {
 class CacheFillController {
   CacheFillController({
     required MediaCacheProxy proxy,
-    int chunkSize = MediaCacheProxy.fetchChunkSize,
+    int chunkSize = MediaCacheProxy.downloadChunkSize,
     // Keep the public parameter names distinct from private storage fields.
-  })  :
-        // ignore: prefer_initializing_formals
-        _proxy = proxy,
-        // ignore: prefer_initializing_formals
-        _chunkSize = chunkSize;
+  }) : // ignore: prefer_initializing_formals
+       _proxy = proxy, // ignore: prefer_initializing_formals
+       // ignore: prefer_initializing_formals
+       _chunkSize = chunkSize {
+    if (chunkSize <= 0 || chunkSize > MediaCacheProxy.downloadChunkSize) {
+      throw ArgumentError.value(chunkSize, 'chunkSize');
+    }
+  }
 
   final MediaCacheProxy _proxy;
   final int _chunkSize;
 
   final Map<String, _Fill> _fills = {};
+  final Map<String, Future<void>> _jobs = {};
+  final Map<String, int> _generations = {};
+  bool _disposed = false;
 
   /// Progress notifiers for itemIds that have never had [start]/[resume]
   /// called yet — [progressFor] hands these out so a UI can attach a
@@ -134,33 +137,53 @@ class CacheFillController {
 
   /// Starts (or resumes, if already paused) filling [itemId]'s entire cache.
   /// Idempotent while already running.
-  Future<void> start(String itemId, {RangeFetcher? fetcher}) async {
-    final entry = await _openEntry(itemId);
-    final fill = _fills.putIfAbsent(itemId, () {
-      final notifier = _idleProgress.remove(itemId) ??
-          ValueNotifier(FillProgress.initial);
-      notifier.value = notifier.value.copyWith(
-        cachedBytes: _cachedBytesOf(entry),
-        totalBytes: entry.totalLength,
-      );
-      return _Fill(entry, notifier);
-    });
-    if (fill.loopRunning) return;
-
-    fill.pauseRequested = false;
-    fill.cancelRequested = false;
-
-    final total = await _proxy.ensureTotalLength(itemId, entry);
-    if (total == null) {
-      fill.progress.value = fill.progress.value.copyWith(state: FillState.error);
-      return;
-    }
-
-    await _runLoop(itemId, fill, total, fetcher ?? _defaultFetcher(itemId));
+  Future<void> start(String itemId, {RangeFetcher? fetcher}) {
+    if (_disposed) return Future.value();
+    final existing = _jobs[itemId];
+    if (existing != null) return existing;
+    final generation = _generations[itemId] ?? 0;
+    bool current() => !_disposed && generation == (_generations[itemId] ?? 0);
+    final notifier = progressFor(itemId) as ValueNotifier<FillProgress>;
+    late final Future<void> job;
+    job = (() async {
+      try {
+        final entry = await _openEntry(itemId);
+        if (!current()) return;
+        // Reopen on every intent: deletion may have closed the previous entry.
+        final fill = _Fill(entry, notifier)..loopRunning = true;
+        _fills[itemId] = fill;
+        _idleProgress.remove(itemId);
+        notifier.value = FillProgress(
+          cachedBytes: _cachedBytesOf(entry),
+          totalBytes: entry.totalLength,
+          state: FillState.running,
+        );
+        if (!current()) return;
+        final total = await _proxy.ensureTotalLength(itemId, entry);
+        if (!current()) return;
+        if (total == null) throw StateError('Missing media length');
+        await _runLoop(itemId, fill, total, fetcher ?? _defaultFetcher(itemId));
+      } catch (_) {
+        if (current()) {
+          notifier.value = notifier.value.copyWith(state: FillState.error);
+        }
+      } finally {
+        if (identical(_jobs[itemId], job)) _jobs.remove(itemId);
+        if (current()) _fills[itemId]?.loopRunning = false;
+      }
+    })();
+    _jobs[itemId] = job;
+    return job;
   }
 
   RangeFetcher _defaultFetcher(String itemId) =>
-      (entry, start, end) => _proxy.fetchAndStore(itemId, entry, start, end);
+      (entry, start, end) => _proxy.fetchAndStore(
+        itemId,
+        entry,
+        start,
+        end,
+        chunkSize: _chunkSize,
+      );
 
   Future<CacheEntry> _openEntry(String itemId) => _proxy.openEntry(itemId);
 
@@ -179,11 +202,12 @@ class CacheFillController {
     try {
       while (true) {
         if (fill.cancelRequested) {
-          fill.progress.value = fill.progress.value.copyWith(state: FillState.cancelled);
           return;
         }
         if (fill.pauseRequested) {
-          fill.progress.value = fill.progress.value.copyWith(state: FillState.paused);
+          fill.progress.value = fill.progress.value.copyWith(
+            state: FillState.paused,
+          );
           return;
         }
 
@@ -194,16 +218,22 @@ class CacheFillController {
         }
 
         final gap = gaps.first;
-        final chunkEnd =
-            (gap.start + _chunkSize) > gap.end ? gap.end : gap.start + _chunkSize;
+        final chunkEnd = (gap.start + _chunkSize) > gap.end
+            ? gap.end
+            : gap.start + _chunkSize;
 
         try {
           await fetch(fill.entry, gap.start, chunkEnd);
         } catch (_) {
-          fill.progress.value = fill.progress.value.copyWith(state: FillState.error);
+          if (!fill.cancelRequested) {
+            fill.progress.value = fill.progress.value.copyWith(
+              state: FillState.error,
+            );
+          }
           return;
         }
 
+        if (fill.cancelRequested) return;
         fill.progress.value = fill.progress.value.copyWith(
           cachedBytes: _cachedBytesOf(fill.entry),
         );
@@ -214,11 +244,13 @@ class CacheFillController {
   }
 
   Future<void> _onComplete(String itemId, _Fill fill) async {
+    await fill.entry.touch();
+    if (fill.cancelRequested) return;
     fill.progress.value = fill.progress.value.copyWith(
       state: FillState.complete,
       cachedBytes: _cachedBytesOf(fill.entry),
     );
-    await _proxy.touch(itemId);
+    if (fill.cancelRequested) return;
     await _proxy.evict(protected: _activeFillItemIds());
   }
 
@@ -227,7 +259,8 @@ class CacheFillController {
       .map((e) => e.key)
       .toSet();
 
-  /// Requests the fill loop for [itemId] stop after its current chunk.
+  /// Requests the fill loop for [itemId] stop after its current chunk (up to
+  /// 8 MiB by default; does not abort the in-flight request).
   /// No-op if there's no active fill.
   void pause(String itemId) {
     _fills[itemId]?.pauseRequested = true;
@@ -250,34 +283,30 @@ class CacheFillController {
 
   /// Resumes a paused (or errored) fill for [itemId] from wherever
   /// [CacheEntry.missingRanges] says it left off. No-op if already running.
-  Future<void> resume(String itemId, {RangeFetcher? fetcher}) async {
-    final fill = _fills[itemId];
-    if (fill == null) {
-      await start(itemId, fetcher: fetcher);
-      return;
-    }
-    if (fill.loopRunning) return;
-
-    fill.pauseRequested = false;
-    fill.cancelRequested = false;
-
-    final total = await _proxy.ensureTotalLength(itemId, fill.entry);
-    if (total == null) {
-      fill.progress.value = fill.progress.value.copyWith(state: FillState.error);
-      return;
-    }
-
-    await _runLoop(itemId, fill, total, fetcher ?? _defaultFetcher(itemId));
-  }
+  Future<void> resume(String itemId, {RangeFetcher? fetcher}) =>
+      start(itemId, fetcher: fetcher);
 
   /// Stops filling [itemId] (after the current chunk) and marks it
   /// cancelled. Already-cached bytes are left in place.
   void cancel(String itemId) {
+    _generations[itemId] = (_generations[itemId] ?? 0) + 1;
+    _jobs.remove(itemId);
+    _proxy.abortItem(itemId);
     final fill = _fills[itemId];
-    if (fill == null) return;
-    fill.cancelRequested = true;
-    if (!fill.loopRunning) {
-      fill.progress.value = fill.progress.value.copyWith(state: FillState.cancelled);
+    if (fill != null) fill.cancelRequested = true;
+    final notifier = progressFor(itemId) as ValueNotifier<FillProgress>;
+    notifier.value = notifier.value.copyWith(state: FillState.cancelled);
+  }
+
+  void cancelAll() {
+    for (final id in {..._jobs.keys, ..._fills.keys}) {
+      cancel(id);
     }
+  }
+
+  void dispose() {
+    cancelAll();
+    _disposed = true;
+    // Jobs may still hold notifiers until their aborted request unwinds.
   }
 }

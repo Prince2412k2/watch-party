@@ -926,7 +926,7 @@ io.on('connection', (socket) => {
 
   // sync:report — live position and buffer telemetry for sync diagnostics and
   // optional participant pointers in the player timeline.
-  socket.on('sync:report', ({ position, drift, rate, downloadedChunks, mediaGeneration } = {}) => {
+  socket.on('sync:report', ({ position, drift, rate, downloadedChunks, mediaGeneration, stalled } = {}) => {
     const sess = findSessionForMember(userId)
     if (!sess || !Number.isFinite(position) || mediaGeneration !== sess.mediaGeneration) return
     const report = {
@@ -937,6 +937,8 @@ io.on('connection', (socket) => {
       rate: Number.isFinite(rate) ? rate : 1,
       downloadedChunks: Number.isSafeInteger(downloadedChunks) && downloadedChunks >= 0 ? downloadedChunks : 0,
       mediaGeneration,
+      stalled: stalled === true || sess.stalled.has(userId) || sess.stallFallback.has(userId),
+      fallback: sess.stallFallback.has(userId),
       at: Date.now(),
     }
     sess.reports.set(userId, report)

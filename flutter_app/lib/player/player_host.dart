@@ -54,6 +54,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   late final AnalogAutoHideController _autoHide;
   static const String _kFloatingHold = 'floating';
   bool _pttHolding = false;
+  bool _disposed = false;
 
   /// OS-level window fullscreen for the film. Carried over from the deleted
   /// party route, which owned it — dropping it here is why the fullscreen
@@ -70,6 +71,22 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   Future<void> _exitFullscreen() async {
     if (!_isFullscreen) return;
     await windowManager.setFullScreen(false);
+    if (mounted && !_disposed) setState(() => _isFullscreen = false);
+  }
+
+  Future<void> _minimise() async {
+    await _exitFullscreen();
+    if (!mounted || _disposed) return;
+    ref.read(nowPlayingProvider.notifier).minimise();
+  }
+
+  void _holdChrome(String reason) {
+    if (!_disposed) _autoHide.hold(reason);
+  }
+
+  void _releaseChrome(String reason) {
+    // Descendants can release their holds after this host has been disposed.
+    if (!_disposed) _autoHide.release(reason);
   }
 
   @override
@@ -124,9 +141,12 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
     }
     // A title can already be set before the first build (a resumed party, a
     // deep link), so react on mount as well as on change.
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _syncOpen(ref.read(nowPlayingProvider)),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _disposed) return;
+      final now = ref.read(nowPlayingProvider);
+      _syncChromeHold(now);
+      _syncOpen(now);
+    });
   }
 
   Future<void> _syncOpen(NowPlaying now) async {
@@ -221,11 +241,13 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   void _pttStop() {
     if (!_pttHolding) return;
     _pttHolding = false;
+    if (_disposed) return;
     ref.read(livekitProvider.notifier).setMic(false);
   }
 
   @override
   void dispose() {
+    _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _playingSubscription?.cancel();
     _retryTimer?.cancel();
@@ -250,9 +272,9 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
 
   @override
   Future<bool> didPopRoute() async {
+    if (!mounted || _disposed) return false;
     if (!ref.read(nowPlayingProvider).isExpanded) return false;
-    await _exitFullscreen();
-    ref.read(nowPlayingProvider.notifier).minimise();
+    await _minimise();
     return true;
   }
 
@@ -390,10 +412,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                           // A guest cannot take the room's film away — see
                           // [PartyPlayback]. Minimising is always theirs.
                           canClose: playback.canClose,
-                          onMinimise: () {
-                            unawaited(_exitFullscreen());
-                            notifier.minimise();
-                          },
+                          onMinimise: _minimise,
                           onExpand: notifier.expand,
                           onClose: () {
                             unawaited(_exitFullscreen());
@@ -448,7 +467,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                                   ]
                                 : const [],
                             catchUp: party == null ? null : playback.catchUp,
-                            onBack: notifier.minimise,
+                            onBack: _minimise,
                             onToggleFullscreen: _toggleFullscreen,
                             isFullscreen: _isFullscreen,
                             // Dead controls for a passenger rather than
@@ -458,7 +477,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             onTogglePlay: playback.togglePlay,
                             onRetryPlayback: () => _retry(),
                             playbackAttempt: _playbackAttempt,
-                            onSeekAuthored: playback.reportSeek,
+                            onSeek: party == null ? null : playback.seekTo,
                             onPushToTalkStart: party != null ? _pttStart : null,
                             onPushToTalkStop: party != null ? _pttStop : null,
                             chatOpen: ref.watch(chatDrawerOpenProvider),
@@ -492,8 +511,13 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             // Unified chrome visibility: one clock for the
                             // transport bar and everything floating over it.
                             visible: now.isExpanded ? _autoHide.visible : false,
-                            onWake: () =>
-                                _autoHide.noteInput(PlayerInputKind.pointer),
+                            onWake: () {
+                              if (!_disposed) {
+                                _autoHide.noteInput(PlayerInputKind.pointer);
+                              }
+                            },
+                            onHold: _holdChrome,
+                            onRelease: _releaseChrome,
                           ),
                         ),
                       ),

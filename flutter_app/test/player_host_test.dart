@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -146,6 +148,70 @@ void main() {
     await tester.pump();
 
     expect(container.read(nowPlayingProvider).isFloating, isTrue);
+  });
+
+  for (final path in ['back', 'escape', 'platform']) {
+    testWidgets('$path awaits fullscreen exit before minimising', (
+      tester,
+    ) async {
+      final exit = Completer<void>();
+      const channel = MethodChannel('window_manager');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'isFullScreen') return false;
+        if (call.method == 'setFullScreen' &&
+            (call.arguments as Map)['isFullScreen'] == false) {
+          await exit.future;
+        }
+        return null;
+      });
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        );
+      });
+      await pumpHost(tester);
+      container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+      await tester.pump();
+      tester.widget<PlayerView>(find.byType(PlayerView)).onToggleFullscreen!();
+      await tester.pump();
+      expect(
+        tester.widget<PlayerView>(find.byType(PlayerView)).isFullscreen,
+        true,
+      );
+      switch (path) {
+        case 'back':
+          tester.widget<PlayerView>(find.byType(PlayerView)).onBack!();
+        case 'escape':
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        case 'platform':
+          unawaited(tester.binding.handlePopRoute());
+      }
+      await tester.pump();
+      expect(container.read(nowPlayingProvider).isExpanded, true);
+      exit.complete();
+      await tester.pump();
+      expect(container.read(nowPlayingProvider).isFloating, true);
+    });
+  }
+
+  testWidgets('host teardown tolerates outstanding child holds', (
+    tester,
+  ) async {
+    await pumpHost(tester);
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+    await tester.pump();
+    final view = tester.widget<PlayerView>(find.byType(PlayerView));
+    expect(view.onHold, isNotNull);
+    expect(view.onRelease, isNotNull);
+    view.onHold!('settingsStack');
+    await tester.pumpWidget(const SizedBox.shrink());
+    view.onRelease!('settingsStack');
+    view.onWake!();
+    await tester.pump(const Duration(seconds: 4));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the whole floating movie drags and snaps to a corner', (

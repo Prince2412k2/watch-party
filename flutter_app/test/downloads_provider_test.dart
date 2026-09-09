@@ -30,9 +30,22 @@ class _FakeFillController extends CacheFillController {
       super.resume(itemId, fetcher: fetcher ?? this.fetcher);
 }
 
+class _StartupFailure extends CacheFillController {
+  _StartupFailure({required super.proxy, this.gate});
+  final Completer<void>? gate;
+  int attempts = 0;
+
+  @override
+  Future<void> start(String itemId, {RangeFetcher? fetcher}) async {
+    attempts++;
+    await gate?.future;
+    throw const SocketException('startup failed');
+  }
+}
+
 RangeFetcher _fakeFetcher() => (entry, start, end) async {
-      await entry.write(start, List<int>.filled(end - start, 1));
-    };
+  await entry.write(start, List<int>.filled(end - start, 1));
+};
 
 void main() {
   _reconcileTests();
@@ -54,9 +67,12 @@ void main() {
     late OfflineNotifier offlineNotifier;
 
     setUp(() async {
-      cacheDir = Directory.systemTemp.createTempSync('downloads_provider_cache_');
-      manifestDir =
-          Directory.systemTemp.createTempSync('downloads_provider_manifest_');
+      cacheDir = Directory.systemTemp.createTempSync(
+        'downloads_provider_cache_',
+      );
+      manifestDir = Directory.systemTemp.createTempSync(
+        'downloads_provider_manifest_',
+      );
       proxy = MediaCacheProxy(
         apiClient: MockApiClient(),
         store: RangeCacheStore(overrideDir: cacheDir),
@@ -81,68 +97,143 @@ void main() {
       } catch (_) {}
     });
 
-    test('a completed fill drops the in-flight record and adds an OfflineRecord',
-        () async {
-      const itemId = 'title-1';
-      final entry = await proxy.openEntry(itemId);
-      entry.setTotalLength(30); // known total ⇒ no network probe needed
+    test(
+      'a completed fill drops the in-flight record and adds an OfflineRecord',
+      () async {
+        const itemId = 'title-1';
+        final entry = await proxy.openEntry(itemId);
+        entry.setTotalLength(30); // known total ⇒ no network probe needed
 
-      final downloadsNotifier = DownloadsNotifier(
-        _FakeFillController(proxy: proxy, chunkSize: 10, fetcher: _fakeFetcher()),
-        offlineNotifier,
-      );
-      addTearDown(downloadsNotifier.dispose);
+        final downloadsNotifier = DownloadsNotifier(
+          _FakeFillController(
+            proxy: proxy,
+            chunkSize: 10,
+            fetcher: _fakeFetcher(),
+          ),
+          offlineNotifier,
+        );
+        addTearDown(downloadsNotifier.dispose);
 
-      await downloadsNotifier.start(
-        itemId: itemId,
-        title: 'Arrival',
-        posterTag: 'poster-1',
-        runTimeTicks: 12345,
-      );
+        await downloadsNotifier.start(
+          itemId: itemId,
+          title: 'Arrival',
+          posterTag: 'poster-1',
+          runTimeTicks: 12345,
+        );
 
-      await _waitFor(
-        () => downloadsNotifier.state.any((r) => r.itemId == itemId),
-        (stillTracked) => !stillTracked,
-      );
+        await _waitFor(
+          () => downloadsNotifier.state.any((r) => r.itemId == itemId),
+          (stillTracked) => !stillTracked,
+        );
 
-      final offline = offlineNotifier.state.firstWhere((r) => r.itemId == itemId);
-      expect(offline.title, 'Arrival');
-      expect(offline.posterTag, 'poster-1');
-      expect(offline.runTimeTicks, 12345);
-      expect(await proxy.isComplete(itemId), isTrue);
-    });
+        final offline = offlineNotifier.state.firstWhere(
+          (r) => r.itemId == itemId,
+        );
+        expect(offline.title, 'Arrival');
+        expect(offline.posterTag, 'poster-1');
+        expect(offline.runTimeTicks, 12345);
+        expect(await proxy.isComplete(itemId), isTrue);
+      },
+    );
 
-    test('cancel() stops the fill and removes it from state immediately',
-        () async {
-      const itemId = 'title-2';
-      final entry = await proxy.openEntry(itemId);
-      entry.setTotalLength(50);
+    test(
+      'cancel() stops the fill and removes it from state immediately',
+      () async {
+        const itemId = 'title-2';
+        final entry = await proxy.openEntry(itemId);
+        entry.setTotalLength(50);
 
-      // Blocks the fetch until the test releases it, so `cancel()` is
-      // guaranteed to land while the fill is still in flight. It does NOT
-      // write on release, so nothing touches the cache after cancel/teardown.
-      final released = Completer<void>();
-      final fillController = _FakeFillController(
-        proxy: proxy,
-        chunkSize: 10,
-        fetcher: (entry, start, end) async {
-          await released.future;
-        },
-      );
+        // Blocks the fetch until the test releases it, so `cancel()` is
+        // guaranteed to land while the fill is still in flight. It does NOT
+        // write on release, so nothing touches the cache after cancel/teardown.
+        final released = Completer<void>();
+        final fillController = _FakeFillController(
+          proxy: proxy,
+          chunkSize: 10,
+          fetcher: (entry, start, end) async {
+            await released.future;
+          },
+        );
 
-      final downloadsNotifier = DownloadsNotifier(fillController, offlineNotifier);
-      addTearDown(downloadsNotifier.dispose);
+        final downloadsNotifier = DownloadsNotifier(
+          fillController,
+          offlineNotifier,
+        );
+        addTearDown(downloadsNotifier.dispose);
 
-      // start() returns after the in-flight record is upserted.
-      await downloadsNotifier.start(itemId: itemId, title: 'Heat');
-      expect(downloadsNotifier.state.any((r) => r.itemId == itemId), isTrue);
+        // start() returns after the in-flight record is upserted.
+        await downloadsNotifier.start(itemId: itemId, title: 'Heat');
+        expect(downloadsNotifier.state.any((r) => r.itemId == itemId), isTrue);
 
-      await downloadsNotifier.cancel(itemId);
-      expect(downloadsNotifier.state.any((r) => r.itemId == itemId), isFalse);
+        await downloadsNotifier.cancel(itemId);
+        expect(downloadsNotifier.state.any((r) => r.itemId == itemId), isFalse);
 
-      released.complete();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-    });
+        released.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      },
+    );
+
+    test(
+      'opening errors retry automatically and stop at the retry budget',
+      () async {
+        final controller = _StartupFailure(proxy: proxy);
+        final downloads = DownloadsNotifier(
+          controller,
+          offlineNotifier,
+          backoff: (_) => const Duration(milliseconds: 1),
+        );
+        addTearDown(downloads.dispose);
+        await downloads.start(itemId: 'startup', title: 'Startup');
+        await _waitFor(
+          () => controller.attempts,
+          (attempts) => attempts == DownloadsNotifier.maxAutoRetries + 1,
+        );
+        expect(downloads.exhausted('startup'), isTrue);
+        expect(downloads.state.single.status, DownloadStatus.failed);
+      },
+    );
+
+    test(
+      'late startup error after cancel cannot resurrect a row or retry',
+      () async {
+        final gate = Completer<void>();
+        final controller = _StartupFailure(proxy: proxy, gate: gate);
+        final downloads = DownloadsNotifier(
+          controller,
+          offlineNotifier,
+          backoff: (_) => const Duration(milliseconds: 1),
+        );
+        addTearDown(downloads.dispose);
+        await downloads.start(itemId: 'startup', title: 'Startup');
+        await downloads.cancel('startup');
+        gate.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        expect(downloads.state, isEmpty);
+        expect(controller.attempts, 1);
+      },
+    );
+
+    test(
+      'clear cancels pending retries instead of restarting hidden downloads',
+      () async {
+        final controller = _StartupFailure(proxy: proxy);
+        final downloads = DownloadsNotifier(
+          controller,
+          offlineNotifier,
+          backoff: (_) => const Duration(milliseconds: 30),
+        );
+        addTearDown(downloads.dispose);
+        await downloads.start(itemId: 'startup', title: 'Startup');
+        await _waitFor(
+          () => downloads.state.single.status,
+          (status) => status == DownloadStatus.failed,
+        );
+        downloads.clear();
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(downloads.state, isEmpty);
+        expect(controller.attempts, 1);
+      },
+    );
   });
 }
 
@@ -199,6 +290,10 @@ void _reconcileTests() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       for (final id in ['kept', 'deleted', 'unreachable']) {
+        final entry = await proxy.openEntry(id);
+        entry.setTotalLength(1);
+        await entry.write(0, [1]);
+        await entry.flushMetadata();
         await offline.markComplete(itemId: id, title: id);
       }
     });
@@ -213,11 +308,13 @@ void _reconcileTests() {
       } catch (_) {}
     });
 
-    test('a title deleted from the library is dropped from the device',
-        () async {
-      await offline.reconcileWithLibrary(_LibraryApi(gone: {'deleted'}));
-      expect(offline.state.map((r) => r.itemId), isNot(contains('deleted')));
-    });
+    test(
+      'a title deleted from the library is dropped from the device',
+      () async {
+        await offline.reconcileWithLibrary(_LibraryApi(gone: {'deleted'}));
+        expect(offline.state.map((r) => r.itemId), isNot(contains('deleted')));
+      },
+    );
 
     test('a title that is still there is left alone', () async {
       await offline.reconcileWithLibrary(_LibraryApi(gone: {'deleted'}));
@@ -261,12 +358,12 @@ class _FlakyFillController extends CacheFillController {
   int attempts = 0;
 
   RangeFetcher get _fetcher => (entry, start, end) async {
-        attempts++;
-        if (attempts <= failuresBeforeSuccess) {
-          throw const SocketException('the link dropped');
-        }
-        await entry.write(start, List<int>.filled(end - start, 1));
-      };
+    attempts++;
+    if (attempts <= failuresBeforeSuccess) {
+      throw const SocketException('the link dropped');
+    }
+    await entry.write(start, List<int>.filled(end - start, 1));
+  };
 
   @override
   Future<void> start(String itemId, {RangeFetcher? fetcher}) =>
