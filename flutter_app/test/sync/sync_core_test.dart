@@ -8,7 +8,13 @@ import 'package:watchparty/sync/sync_core.dart';
 void main() {
   // positionTicks 100_000_000 ticks = 10s; t0 = 1000ms.
   const playing = SyncSchedule(
-      positionTicks: 100000000, t0: 1000, phase: 'playing', version: 7, paused: false, rate: 1);
+    positionTicks: 100000000,
+    t0: 1000,
+    phase: 'playing',
+    version: 7,
+    paused: false,
+    rate: 1,
+  );
 
   double at(double ms) => ms;
 
@@ -18,79 +24,174 @@ void main() {
       expect(predictPosition(playing, 2000), 11);
     });
     test('frozen at P0 while paused', () {
-      const paused = SyncSchedule(positionTicks: 100000000, t0: 0, phase: 'paused');
+      const paused = SyncSchedule(
+        positionTicks: 100000000,
+        t0: 0,
+        phase: 'paused',
+      );
       expect(predictPosition(paused, 999999), 10);
     });
     test('null schedule → 0', () => expect(predictPosition(null, 5), 0));
   });
 
-  test('paused hopping guest with material drift requests buffer-aware catch-up', () {
+  test(
+    'paused hopping guest with material drift requests buffer-aware catch-up',
+    () {
+      final intent = decideSyncAction(
+        schedule: playing,
+        serverNowMs: () => at(2000),
+        clockReady: () => true,
+        currentTime: 0,
+        paused: true,
+        isHost: false,
+        mode: 'hopping',
+        userSeeking: false,
+      )!;
+      expect(intent.hardSeek, true);
+      expect(intent.seekToSec, 11);
+      expect(intent.play, true);
+    },
+  );
+
+  test(
+    'hard-seek cooldown keeps a playing guest on bounded rate correction',
+    () {
+      final intent = decideSyncAction(
+        schedule: playing,
+        serverNowMs: () => at(2000),
+        clockReady: () => true,
+        currentTime: 8, // expected 11 → err 3s, would hard-seek but suppressed
+        paused: false,
+        isHost: false,
+        mode: 'hopping',
+        userSeeking: false,
+        suppressHardSeek: true,
+      )!;
+      expect(intent.hardSeek, false);
+      expect(intent.seekToSec, isNull);
+      // Clamped to +maxRateAdj, which is 0.10 now: the catch-up is announced to
+      // the viewer, so it no longer has to stay under the threshold of notice.
+      expect(intent.rate, closeTo(1.1, 1e-9));
+    },
+  );
+
+  test('buffer recovery resumes a paused guest without seeking', () {
     final intent = decideSyncAction(
       schedule: playing,
       serverNowMs: () => at(2000),
       clockReady: () => true,
-      currentTime: 0,
+      currentTime: 1,
       paused: true,
       isHost: false,
       mode: 'hopping',
       userSeeking: false,
+      suppressHardSeek: true,
     )!;
-    expect(intent.hardSeek, true);
-    expect(intent.seekToSec, 11);
     expect(intent.play, true);
+    expect(intent.seekToSec, isNull);
+    expect(intent.hardSeek, false);
   });
 
-  test('hard-seek cooldown keeps a playing guest on bounded rate correction', () {
+  test('buffer recovery pauses for a frozen room without seeking', () {
+    const paused = SyncSchedule(
+      positionTicks: 100000000,
+      t0: 0,
+      phase: 'paused',
+    );
     final intent = decideSyncAction(
-      schedule: playing,
-      serverNowMs: () => at(2000),
+      schedule: paused,
+      serverNowMs: () => at(9999),
       clockReady: () => true,
-      currentTime: 8, // expected 11 → err 3s, would hard-seek but suppressed
+      currentTime: 50,
       paused: false,
       isHost: false,
       mode: 'hopping',
       userSeeking: false,
       suppressHardSeek: true,
     )!;
-    expect(intent.hardSeek, false);
+    expect(intent.pause, true);
     expect(intent.seekToSec, isNull);
-    // Clamped to +maxRateAdj, which is 0.10 now: the catch-up is announced to
-    // the viewer, so it no longer has to stay under the threshold of notice.
-    expect(intent.rate, closeTo(1.1, 1e-9));
+  });
+
+  test(
+    'prediction beyond known duration is rejected instead of seeking EOF',
+    () {
+      expect(
+        decideSyncAction(
+          schedule: playing,
+          serverNowMs: () => at(12000),
+          clockReady: () => true,
+          currentTime: 1,
+          paused: false,
+          isHost: false,
+          mode: 'hopping',
+          userSeeking: false,
+          duration: 15,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test('frozen schedule at known duration pauses without seeking EOF', () {
+    const atEof = SyncSchedule(
+      positionTicks: 150000000,
+      t0: 0,
+      phase: 'paused',
+    );
+    final intent = decideSyncAction(
+      schedule: atEof,
+      serverNowMs: () => at(2000),
+      clockReady: () => true,
+      currentTime: 1,
+      paused: false,
+      isHost: false,
+      mode: 'hopping',
+      userSeeking: false,
+      duration: 15,
+    );
+    expect(intent?.pause, isTrue);
+    expect(intent?.seekToSec, isNull);
   });
 
   test('hopping host is exempt (native playback)', () {
     expect(
-        decideSyncAction(
-          schedule: playing,
-          serverNowMs: () => at(2000),
-          clockReady: () => true,
-          currentTime: 0,
-          paused: false,
-          isHost: true,
-          mode: 'hopping',
-          userSeeking: false,
-        ),
-        isNull);
+      decideSyncAction(
+        schedule: playing,
+        serverNowMs: () => at(2000),
+        clockReady: () => true,
+        currentTime: 0,
+        paused: false,
+        isHost: true,
+        mode: 'hopping',
+        userSeeking: false,
+      ),
+      isNull,
+    );
   });
 
   test('userSeeking suppresses correction', () {
     expect(
-        decideSyncAction(
-          schedule: playing,
-          serverNowMs: () => at(2000),
-          clockReady: () => true,
-          currentTime: 0,
-          paused: false,
-          isHost: false,
-          mode: 'hopping',
-          userSeeking: true,
-        ),
-        isNull);
+      decideSyncAction(
+        schedule: playing,
+        serverNowMs: () => at(2000),
+        clockReady: () => true,
+        currentTime: 0,
+        paused: false,
+        isHost: false,
+        mode: 'hopping',
+        userSeeking: true,
+      ),
+      isNull,
+    );
   });
 
   test('paused/stalled schedule holds everyone at the frozen frame', () {
-    const paused = SyncSchedule(positionTicks: 100000000, t0: 0, phase: 'paused');
+    const paused = SyncSchedule(
+      positionTicks: 100000000,
+      t0: 0,
+      phase: 'paused',
+    );
     final intent = decideSyncAction(
       schedule: paused,
       serverNowMs: () => at(9999),
@@ -165,16 +266,17 @@ void main() {
 
   test('clock not ready → no correction while playing', () {
     expect(
-        decideSyncAction(
-          schedule: playing,
-          serverNowMs: () => at(2000),
-          clockReady: () => false,
-          currentTime: 0,
-          paused: false,
-          isHost: false,
-          mode: 'hopping',
-          userSeeking: false,
-        ),
-        isNull);
+      decideSyncAction(
+        schedule: playing,
+        serverNowMs: () => at(2000),
+        clockReady: () => false,
+        currentTime: 0,
+        paused: false,
+        isHost: false,
+        mode: 'hopping',
+        userSeeking: false,
+      ),
+      isNull,
+    );
   });
 }

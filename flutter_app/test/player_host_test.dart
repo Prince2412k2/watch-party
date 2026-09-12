@@ -18,8 +18,27 @@ import 'package:watchparty/ui/ui.dart';
 import 'package:watchparty/ui/widgets/floating_camera_tile.dart';
 
 class _TestPlayer extends MockPlayerController {
+  int openCalls = 0;
+  int seekCalls = 0;
+
+  @override
+  Future<void> open(
+    String url, {
+    Duration startAt = Duration.zero,
+    bool autoplay = false,
+  }) async {
+    openCalls++;
+    await super.open(url, startAt: startAt, autoplay: autoplay);
+  }
+
   @override
   Future<void> play() async {}
+
+  @override
+  Future<void> seek(Duration position) async {
+    seekCalls++;
+    await super.seek(position);
+  }
 }
 
 /// The host exists so there is exactly ONE PlayerView for the life of the
@@ -86,6 +105,44 @@ void main() {
 
     expect(find.byType(PlayerView), findsOneWidget);
     expect(find.text('library'), findsOneWidget);
+  });
+
+  testWidgets('track and title updates never reopen the native media', (
+    tester,
+  ) async {
+    await pumpHost(tester);
+    final notifier = container.read(nowPlayingProvider.notifier);
+    notifier.open(itemId: 'movie-1', title: 'Loading');
+    await tester.pump();
+    await tester.pump();
+    expect(player.openCalls, 1);
+    final seekCalls = player.seekCalls;
+
+    notifier.open(
+      itemId: 'movie-1',
+      title: 'Dune',
+      audioStreamIndex: 2,
+      subtitleStreamIndex: 3,
+    );
+    await tester.pump();
+    notifier.open(
+      itemId: 'movie-1',
+      title: 'Dune',
+      audioStreamIndex: 4,
+      subtitleStreamIndex: -1,
+    );
+    await tester.pump();
+    notifier.open(
+      itemId: 'movie-1',
+      title: 'Dune',
+      audioStreamIndex: 2,
+      subtitleStreamIndex: 3,
+    );
+    await tester.pump();
+
+    expect(player.openCalls, 1);
+    expect(player.seekCalls, seekCalls);
+    expect(container.read(nowPlayingProvider).subtitleStreamIndex, 3);
   });
 
   testWidgets('minimise and expand reuse the same PlayerView safely', (

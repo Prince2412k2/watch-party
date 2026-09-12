@@ -11,7 +11,7 @@
 import { scale2, scale5, scale10 } from './scenarios/scale.js'
 import { jumpMiddle, jumpBackward, scrubStorm, seekPausedThenPlay, playPauseSeek } from './scenarios/hostjump.js'
 import { playPauseStorm, playPauseStormEndPlay, lateJoiner, modeSwitch, staleScheduleVersionRejected } from './scenarios/state.js'
-import { singleStall, multiStall, deadClientDisconnect } from './scenarios/dragging.js'
+import { singleStall, multiStall, deadClientDisconnect, stalledGuestKick } from './scenarios/dragging.js'
 import { clockSkew, hostMigration, longRun, qualityTierReauthor } from './scenarios/advanced.js'
 import { chaseLoopHostJump, chaseLoopLateJoin, pausedFrameBuffers, pausedLateJoinerUsesBufferedCatchup, pausedCatchupAbortsOnHostResume } from './scenarios/hls.js'
 import { guestCannotDrive } from './scenarios/permission.js'
@@ -23,7 +23,7 @@ const ALL = [
   scale2, scale5, scale10,
   jumpMiddle, jumpBackward, scrubStorm, seekPausedThenPlay, playPauseSeek,
   playPauseStorm, playPauseStormEndPlay, lateJoiner, modeSwitch,
-  singleStall, multiStall, deadClientDisconnect,
+  singleStall, multiStall, deadClientDisconnect, stalledGuestKick,
   clockSkew, hostMigration, longRun, qualityTierReauthor,
   chaseLoopHostJump, chaseLoopLateJoin, pausedFrameBuffers,
   guestCannotDrive,

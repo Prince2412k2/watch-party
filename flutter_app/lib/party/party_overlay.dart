@@ -128,15 +128,13 @@ class PeerPlaybackWarnings extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     final reports = ref.watch(peerPlaybackProvider);
-    final fallback = ref.watch(peerFallbackProvider);
     final warnings = <String>[];
     for (final participant in party.participants) {
       if (participant.userId == party.hostId) continue;
       final report = reports[participant.userId];
-      final warning = fallback.contains(participant.userId)
-          ? 'Buffering; room resumed without them'
-          : report?.healthWarning ??
-                (report == null ? 'No recent playback report' : null);
+      final warning =
+          report?.healthWarning ??
+          (report == null ? 'No recent playback report' : null);
       if (warning != null) warnings.add('${participant.name}: $warning');
     }
     if (warnings.isEmpty) return const SizedBox.shrink();

@@ -37,7 +37,6 @@
 /// ── SERVER → CLIENT (on) ─────────────────────────────────────────────────
 ///   sync:schedule       { positionTicks, t0, rate, paused, phase, version, mediaGeneration }
 ///   sync:host_gone      (none)                      host disconnected; room frozen+paused
-///   sync:stall_fallback { memberIds: [], mediaGeneration }
 ///   party:state         publicSession (see PartyState)  full session snapshot
 ///   party:waiting       { userId, name }            (host: a guest is requesting)
 ///   party:approved      { session }                 (guest: admitted)
@@ -54,7 +53,7 @@
 /// The `publicSession` shape (from `app/server/session.js`) contains: id,
 /// hostId, hostName, hostDeviceId, hostSocketId, mediaItemId, mediaSourceId,
 /// stage, browse, guests[], waiting[], messages[], schedule, syncMode,
-/// collaborativeControl, stallFallback[]. Fields hostToken/intent/pos/etc are
+/// collaborativeControl. Fields hostToken/intent/pos/etc are
 /// stripped server-side.
 library;
 
@@ -89,7 +88,6 @@ abstract final class ClientEvent {
 abstract final class ServerEvent {
   static const syncSchedule = 'sync:schedule';
   static const syncHostGone = 'sync:host_gone';
-  static const syncStallFallback = 'sync:stall_fallback';
   static const syncPeerReport = 'sync:peer_report';
   static const partyState = 'party:state';
   static const partyWaiting = 'party:waiting';

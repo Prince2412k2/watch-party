@@ -103,7 +103,7 @@ void main() {
     expect(find.byType(ChatSlideOver), findsNothing);
   });
 
-  testWidgets('host sees lag, stall, expiry and fallback without pointers', (
+  testWidgets('host sees lag, stall and expiry without pointers', (
     tester,
   ) async {
     container
@@ -144,12 +144,6 @@ void main() {
     peerNowMs += 2000;
     await tester.pump(const Duration(seconds: 2));
     expect(find.text('Grace: No recent playback report'), findsOneWidget);
-    container.read(peerFallbackProvider.notifier).state = {'guest'};
-    await tester.pump();
-    expect(
-      find.text('Grace: Buffering; room resumed without them'),
-      findsOneWidget,
-    );
     container.read(partyProvider.notifier).clear();
     await tester.pump();
     expect(find.byType(PeerPlaybackWarnings), findsNothing);

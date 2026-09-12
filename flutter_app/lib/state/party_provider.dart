@@ -194,27 +194,6 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         if (report != null &&
             report.mediaGeneration == state?.schedule.mediaGeneration) {
           _ref.read(peerPlaybackProvider.notifier).put(report);
-          if (data['fallback'] == false) {
-            final fallback = _ref.read(peerFallbackProvider);
-            if (fallback.contains(report.userId)) {
-              _ref.read(peerFallbackProvider.notifier).state = {...fallback}
-                ..remove(report.userId);
-            }
-          }
-        }
-      }),
-    );
-    _unsubs.add(
-      socket.on('sync:stall_fallback', (data) {
-        if (data is! Map ||
-            data['mediaGeneration'] != state?.schedule.mediaGeneration) {
-          return;
-        }
-        final ids = data['memberIds'];
-        if (ids is List) {
-          _ref.read(peerFallbackProvider.notifier).state = ids
-              .whereType<String>()
-              .toSet();
         }
       }),
     );
@@ -805,7 +784,6 @@ class PeerPlayback {
     required this.mediaGeneration,
     required this.receivedAt,
     this.stalled = false,
-    this.fallback = false,
   });
 
   final String userId;
@@ -817,10 +795,8 @@ class PeerPlayback {
   final int mediaGeneration;
   final int receivedAt;
   final bool stalled;
-  final bool fallback;
 
   String? get healthWarning {
-    if (fallback) return 'Buffering; room resumed without them';
     if (stalled) return 'Buffering';
     if (drift.inMilliseconds > 1000) {
       return '${(drift.inMilliseconds / 1000).toStringAsFixed(1)}s behind';
@@ -854,7 +830,6 @@ class PeerPlayback {
       mediaGeneration: mediaGeneration,
       receivedAt: DateTime.now().millisecondsSinceEpoch,
       stalled: json['stalled'] == true,
-      fallback: json['fallback'] == true,
     );
   }
 }
@@ -917,12 +892,6 @@ final peerPlaybackProvider =
     StateNotifierProvider<PeerPlaybackNotifier, Map<String, PeerPlayback>>(
       (ref) => PeerPlaybackNotifier(),
     );
-
-/// Immediate fallback notification, even if that peer has stopped reporting.
-final peerFallbackProvider = StateProvider<Set<String>>((ref) {
-  ref.watch(partyProvider.select((p) => (p?.id, p?.schedule.mediaGeneration)));
-  return {};
-});
 
 final showPeerPointersProvider = StateProvider<bool>((ref) => false);
 

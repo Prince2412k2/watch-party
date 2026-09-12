@@ -14,7 +14,7 @@
 // exactly, which this also asserts).
 
 import { check } from './_helpers.js'
-import { decideSyncAction, SOFT_SEC, SOFT_EXIT_SEC } from '../../client/src/sync/syncCore.js'
+import { decideSyncAction, SOFT_SEC, SOFT_EXIT_SEC } from '../../client/src/sync/syncCore.ts'
 
 // Drift sequence hovering across the SOFT_SEC boundary: alternates between
 // just above SOFT_SEC and just below it but still above SOFT_EXIT_SEC (i.e.

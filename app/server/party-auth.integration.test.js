@@ -216,7 +216,7 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     assert.equal(report.rate, 1.01)
     assert.equal(report.downloadedChunks, 7)
     assert.equal(report.stalled, true)
-    assert.equal(report.fallback, false)
+    assert.equal(report.fallback, undefined)
     assert.equal(Number.isFinite(report.at), true)
 
     const hostHealth = nextMatching(hostBackup, 'sync:peer_report', value => value.userId === guestId)
@@ -226,7 +226,7 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     const health = await hostHealth
     assert.equal(health.stalled, true)
     assert.equal(health.drift, 2.5)
-    assert.equal(health.fallback, false)
+    assert.equal(health.fallback, undefined)
 
     guestOne.disconnect()
     const remainingGuest = nextMatching(guestTwo, 'chat:message', message => message.text === 'guest-remains')

@@ -201,8 +201,8 @@ function Segmented({ value, options, onChange, tap }: {
 }
 
 const SYNC_OPTIONS = [
-  { id: 'hopping', label: 'Tailing', hint: 'Playback continues while slow viewers catch up' },
-  { id: 'dragging', label: 'Dragging', hint: 'Everyone waits for the slowest viewer' },
+  { id: 'dragging', label: 'Follow', hint: 'Everyone waits while a viewer is buffering' },
+  { id: 'hopping', label: 'Lead', hint: 'Playback continues while slow viewers recover locally' },
 ]
 
 /** Sync mode. The two words are jargon, so the active mode's meaning is always

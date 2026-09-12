@@ -378,6 +378,75 @@ void main() {
     });
   });
 
+  test('buffering guest is not chased forward, then recovers without jump', () {
+    fakeAsync((fa) {
+      var serverNow = 2000.0;
+      final engine = engineWith(() => serverNow)..syncMode = 'hopping';
+      final player = FakePlayer()
+        ..playingNow = true
+        ..pos = const Duration(seconds: 1)
+        ..bufferingNow = true;
+      final socket = MockSocketClient();
+      final seen = <CatchUp>[];
+      engine.catchUp.listen(seen.add);
+
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, playingSchedule());
+
+      fa.elapse(const Duration(minutes: 2));
+      expect(player.calls.where((c) => c.startsWith('seek:')), isEmpty);
+      expect(player.playingNow, isTrue);
+      expect(seen.last.waiting, isTrue);
+
+      player.setBuffering(false);
+      fa.flushMicrotasks();
+      fa.elapse(const Duration(milliseconds: 250));
+
+      expect(player.calls.where((c) => c.startsWith('seek:')), isEmpty);
+      expect(player.rate, 1.1);
+      expect(seen.last.waiting, isFalse);
+      expect(seen.last.behind, isTrue);
+
+      engine.dispose();
+      fa.flushMicrotasks();
+    });
+  });
+
+  test('authoritative pause applies while buffering without a seek', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000);
+      final player = FakePlayer()
+        ..playingNow = true
+        ..pos = const Duration(seconds: 50)
+        ..bufferingNow = true;
+      final socket = MockSocketClient();
+
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule());
+      fa.elapse(const Duration(milliseconds: 250));
+      fa.flushMicrotasks();
+
+      expect(player.calls, contains('pause'));
+      expect(player.calls.where((c) => c.startsWith('seek:')), isEmpty);
+      expect(player.playingNow, isFalse);
+
+      engine.dispose();
+      fa.flushMicrotasks();
+    });
+  });
+
   test('applying-guard prevents the engine echoing its own applied change', () {
     fakeAsync((fa) {
       var serverNow = 2000.0;

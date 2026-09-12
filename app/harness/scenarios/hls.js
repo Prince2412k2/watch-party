@@ -9,8 +9,8 @@
 // loop. Hard-seeks are counted on the client via HeadlessClient.hardSeekCount.
 
 import { spawnHost, spawnGuest, startSampler, sleep, check, worstDrift, makeFetchSchedule } from './_helpers.js'
-import { PAUSED_BUFFER_AHEAD_SEC } from '../../client/src/sync/syncCore.js'
-import { isBuffered } from '../../client/src/sync/bufferSeek.js'
+import { PAUSED_BUFFER_AHEAD_SEC } from '../../client/src/sync/syncCore.ts'
+import { isBuffered } from '../../client/src/sync/bufferSeek.ts'
 
 // A slow guest on HLS: seeks stall for 1.5s; buffer fills at 3x realtime so the
 // BUFFER_AHEAD_SEC runway (4s) fills within the routine, letting the re-read
@@ -24,6 +24,7 @@ export const chaseLoopHostJump = {
   async run({ SERVER }) {
     const fetchSchedule = makeFetchSchedule(SERVER)
     const { host, partyId } = await spawnHost(SERVER)
+    await host.setSyncMode('hopping')
     const slow = await spawnGuest(SERVER, host, partyId, SLOW)
     const fast = await spawnGuest(SERVER, host, partyId, { name: 'fast', sendDelayMs: 0 })
     const guests = [slow, fast]
@@ -56,6 +57,7 @@ export const chaseLoopLateJoin = {
   async run({ SERVER }) {
     const fetchSchedule = makeFetchSchedule(SERVER)
     const { host, partyId } = await spawnHost(SERVER)
+    await host.setSyncMode('hopping')
     host.play(0)
     await sleep(6000)              // host well into playback
     const slow = await spawnGuest(SERVER, host, partyId, SLOW)
@@ -83,6 +85,7 @@ export const pausedFrameBuffers = {
   name: 'hls-paused-frame-buffers',
   async run({ SERVER }) {
     const { host, partyId } = await spawnHost(SERVER)
+    await host.setSyncMode('hopping')
     host.play(0)
     await sleep(2000)
     host.pause(400)                // freeze the shared timeline: paused @400
@@ -130,6 +133,7 @@ export const pausedLateJoinerUsesBufferedCatchup = {
   name: 'hls-paused-late-joiner-buffered-catchup',
   async run({ SERVER }) {
     const { host, partyId } = await spawnHost(SERVER)
+    await host.setSyncMode('hopping')
     host.play(0)
     await sleep(6000)              // host well into playback, far from 0
     const slow = await spawnGuest(SERVER, host, partyId, SLOW)
@@ -160,6 +164,7 @@ export const pausedCatchupAbortsOnHostResume = {
   name: 'hls-paused-catchup-aborts-on-resume',
   async run({ SERVER }) {
     const { host, partyId } = await spawnHost(SERVER)
+    await host.setSyncMode('hopping')
     host.play(0)
     await sleep(1500)
     host.pause(400)                 // freeze the shared timeline: paused @400

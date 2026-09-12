@@ -101,7 +101,6 @@ function runtimeState(saved) {
     mediaGeneration,
     syncMode: saved.syncMode ?? 'dragging',
     stalled: new Set(),
-    stallFallback: new Set(),
     seenCommandIds: new Set(),
     reports: new Map(),
     intent: saved.intent ?? { playing: false },
@@ -157,7 +156,6 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     // 'dragging' = group waits for the slowest; any stall freezes everyone.
     syncMode: 'dragging',
     stalled: new Set(),   // members currently buffering (dragging mode)
-    stallFallback: new Set(), // timed-out members temporarily treated as hopping
     seenCommandIds: new Set(),
     intent: { playing: false },  // host's play/pause intent (independent of stalls)
     pos: 0,               // frozen media position (ticks) when not effectively playing
@@ -394,7 +392,6 @@ export function authorizeSyncCommand(session, command) {
 export function beginMediaGeneration(session) {
   session.mediaGeneration++
   session.stalled.clear()
-  session.stallFallback.clear()
   session.seenCommandIds.clear()
   return session.mediaGeneration
 }
@@ -402,10 +399,8 @@ export function beginMediaGeneration(session) {
 export function applyStallReport(session, userId, { stalled = false, mediaGeneration } = {}) {
   if (mediaGeneration !== session.mediaGeneration) return false
   if (!stalled) {
-    const changed = session.stalled.delete(userId) || session.stallFallback.delete(userId)
-    return changed
+    return session.stalled.delete(userId)
   }
-  if (session.stallFallback.has(userId)) return false
   const before = session.stalled.size
   session.stalled.add(userId)
   return session.stalled.size !== before

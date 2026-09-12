@@ -53,8 +53,9 @@ class NowPlaying {
   final int? subtitleStreamIndex;
   final PlayerPresentation presentation;
 
-  /// Changes whenever the requested source or track selection changes, even if
-  /// the library item id stays the same.
+  /// Changes whenever the requested media source changes. Track-only changes do
+  /// not bump this: the native player must switch tracks in place instead of
+  /// reopening the file from the beginning.
   final int revision;
 
   bool get isOpen =>
@@ -105,14 +106,19 @@ class NowPlayingNotifier extends StateNotifier<NowPlaying> {
     int? subtitleStreamIndex,
     PlayerPresentation presentation = PlayerPresentation.expanded,
   }) {
-    final samePlayback =
+    final sameMedia =
         state.itemId == itemId &&
-        state.mediaSourceId == mediaSourceId &&
-        state.title == title &&
-        state.audioStreamIndex == audioStreamIndex &&
-        state.subtitleStreamIndex == subtitleStreamIndex;
-    if (samePlayback) {
-      state = state.copyWith(presentation: presentation);
+        state.mediaSourceId == mediaSourceId;
+    if (sameMedia) {
+      state = NowPlaying(
+        itemId: itemId,
+        mediaSourceId: mediaSourceId,
+        title: title,
+        audioStreamIndex: audioStreamIndex,
+        subtitleStreamIndex: subtitleStreamIndex,
+        presentation: presentation,
+        revision: state.revision,
+      );
       return;
     }
     state = NowPlaying(

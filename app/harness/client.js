@@ -5,8 +5,8 @@
 // without a browser or real Jellyfin media.
 
 import { io } from 'socket.io-client'
-import { decideSyncAction, predictPosition, CONTROL_MS, TICKS, BUFFER_AHEAD_SEC, PAUSED_BUFFER_AHEAD_SEC, SEEK_TIMEOUT_MS, BUFFER_TIMEOUT_MS, HARD_SEEK_COOLDOWN_MS } from '../client/src/sync/syncCore.js'
-import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../client/src/sync/bufferSeek.js'
+import { decideSyncAction, predictPosition, CONTROL_MS, TICKS, BUFFER_AHEAD_SEC, PAUSED_BUFFER_AHEAD_SEC, SEEK_TIMEOUT_MS, BUFFER_TIMEOUT_MS, HARD_SEEK_COOLDOWN_MS } from '../client/src/sync/syncCore.ts'
+import { waitForSeeked, waitForBuffer, isBuffered, ensureHlsLoad, selectBufferedResumeTarget } from '../client/src/sync/bufferSeek.ts'
 
 // ── VirtualPlayer: the minimal HTMLMediaElement surface the sync core uses ──
 // currentTime advances by playbackRate*dt while playing, on a timer.
@@ -464,9 +464,9 @@ export class HeadlessClient {
   // ── Protocol methods (mirror the browser client) ──────────────────────────
   createParty(mediaItemId = 'test-media') {
     return new Promise((resolve) => {
-      this._emit('party:create', { mediaItemId }, (r) => {
+      this._emit('party:create', {}, (r) => {
         if (r?.session) { this._absorb(r.session); this.isHost = true }
-        this._emit('party:selectMedia', { mediaItemId }, () => resolve(r))
+        resolve(r)
       })
     })
   }
@@ -478,6 +478,9 @@ export class HeadlessClient {
   }
   approve(userId) {
     return new Promise((resolve) => this._emit('party:approve', { userId }, resolve))
+  }
+  kick(userId) {
+    return new Promise((resolve) => this._emit('party:kick', { userId }, resolve))
   }
   setSyncMode(mode) {
     this.syncMode = mode === 'dragging' ? 'dragging' : 'hopping'

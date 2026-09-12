@@ -644,26 +644,29 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ error: 'not host' })
     const g = removeGuest(sess, targetId)
     if (!g) return ack?.({ error: 'user not found' })
+    const stallChanged = sess.stalled.delete(targetId)
     sess.approved.delete(targetId)   // revoke — kicked users must re-request
     const revokeTokenTs = BigInt(Math.floor(Date.now() / 1000) + 1)
     sess.livekitRevokedBefore.set(targetId, Number(revokeTokenTs))
     const kickedSockets = partySocketsForUser(targetId, sess.id)
     leavePartySockets(targetId, sess.id)
     for (const kickedSocket of kickedSockets) kickedSocket.emit('party:kicked', { userId: targetId })
+    // Playback membership changed before the external eviction call. Reconcile
+    // now so a LiveKit API failure cannot leave the remaining party stalled.
+    if (stallChanged) reconcile(sess)
+    persistSession(sess)
+    io.to(sess.id).emit('user:left', { userId: targetId, name: effectiveName(targetId, g.name) })
     if (livekitRoomService) {
       const evictionKey = livekitEvictionKey(sess.id, targetId)
       livekitEvictions.add(evictionKey)
       try {
         await livekitRoomService.removeParticipant(sess.id, targetId, { revokeTokenTs })
-        livekitEvictions.delete(evictionKey)
       } catch (error) {
         console.warn('livekit: participant removal failed:', error.message)
-        persistSession(sess)
-        return ack?.({ error: 'participant eviction failed; try again' })
+      } finally {
+        livekitEvictions.delete(evictionKey)
       }
     }
-    io.to(sess.id).emit('user:left', { userId: targetId, name: effectiveName(targetId, g.name) })
-    persistSession(sess)
     ack?.({ ok: true })
   })
 
@@ -937,8 +940,7 @@ io.on('connection', (socket) => {
       rate: Number.isFinite(rate) ? rate : 1,
       downloadedChunks: Number.isSafeInteger(downloadedChunks) && downloadedChunks >= 0 ? downloadedChunks : 0,
       mediaGeneration,
-      stalled: stalled === true || sess.stalled.has(userId) || sess.stallFallback.has(userId),
-      fallback: sess.stallFallback.has(userId),
+      stalled: stalled === true || sess.stalled.has(userId),
       at: Date.now(),
     }
     sess.reports.set(userId, report)
@@ -959,7 +961,6 @@ io.on('connection', (socket) => {
     sess.syncMode = mode === 'dragging' ? 'dragging' : 'hopping'
     if (sess.syncMode === 'hopping') {
       sess.stalled.clear()
-      sess.stallFallback.clear()
     }
     persistSession(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
@@ -1037,7 +1038,7 @@ io.on('connection', (socket) => {
       if (g) io.to(sess.id).emit('user:left', { userId, name: effectiveName(userId, name) })
       if (g) persistSession(sess)
       // A departing member must not keep the group frozen in dragging mode
-      const stallChanged = sess.stalled.delete(userId) || sess.stallFallback.delete(userId)
+      const stallChanged = sess.stalled.delete(userId)
       if (stallChanged) reconcile(sess)
     }
   })
@@ -1046,8 +1047,6 @@ io.on('connection', (socket) => {
 // ── Playback schedule (the shared timeline every client locks onto) ────────
 
 const TICKS_PER_MS = 10_000
-
-const STALL_MAX_MS = 30_000     // dragging: don't let one dead client freeze forever
 
 function setSchedule(sess, next) {
   sess.schedule = {
@@ -1134,20 +1133,10 @@ function reconcile(sess) {
     }
   }
 
-  // Safety: if we've been frozen on a stall too long, force-resume (fall back to
-  // hopping for the laggard) so a dead client can't hold everyone hostage.
+  // Follow mode waits until the stalled member recovers or the host explicitly
+  // changes mode/removes someone. Silently force-resuming here made Follow feel
+  // like Lead after 30s and pushed slow guests into repeated catch-up seeks.
   clearTimeout(sess._stallTimer)
-  if (g && sess.intent.playing) {
-    sess._stallTimer = setTimeout(() => {
-      for (const memberId of sess.stalled) sess.stallFallback.add(memberId)
-      sess.stalled.clear()
-      io.to(sess.id).emit('sync:stall_fallback', {
-        memberIds: [...sess.stallFallback],
-        mediaGeneration: sess.mediaGeneration,
-      })
-      reconcile(sess)
-    }, STALL_MAX_MS)
-  }
 }
 
 // ── Host disconnect grace period ──────────────────────────────────────────

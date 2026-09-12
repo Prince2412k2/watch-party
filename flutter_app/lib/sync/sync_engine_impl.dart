@@ -1,5 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
+import '../diagnostics/reliability_diagnostics.dart';
 import '../models/party_state.dart';
 import '../net/events.dart';
 import '../net/socket_client.dart';
@@ -58,7 +62,10 @@ class SyncEngineImpl implements SyncEngine {
   int _nextCommandId = 0;
   int? _lastMediaGen;
   int _lastReportMs = 0;
-  int _lastHardSeekAtMs = 0;
+  int _lastHardSeekAtMs = -hardSeekCooldownMs;
+  int _bufferRecoveryUntilMs = 0;
+  final Stopwatch _monotonic = Stopwatch()..start();
+  bool _loggedRecoverySuppression = false;
 
   Timer? _controlLoop;
   final List<void Function()> _unsubs = [];
@@ -145,6 +152,16 @@ class SyncEngineImpl implements SyncEngine {
   CatchUp _catchUp = CatchUp.idle;
 
   static const int _reportMs = 1000;
+  static const int _bufferRecoveryNoJumpMs = 30_000;
+  static const _syncDiagnosticsEnabled = bool.fromEnvironment(
+    'WATCHPARTY_SYNC_DIAGNOSTICS',
+  );
+
+  void _logSync(String event, Map<String, Object?> fields) {
+    if (!_syncDiagnosticsEnabled) return;
+    ReliabilityDiagnostics.instance.record('sync', event, fields);
+    debugPrint('[sync] ${jsonEncode({'event': event, ...fields})}');
+  }
 
   // INTERFACE FRICTION (flagged): the frozen [SyncEngine.attach] only carries
   // [canControl] (host OR collaborative), but [decideSyncAction] needs the true
@@ -184,6 +201,11 @@ class SyncEngineImpl implements SyncEngine {
       // the web media element's 'play'/'pause' events wired to request*).
       _playingSub = player.playing.listen(_onPlayingChanged);
       _stalled = player.isBufferingNow;
+      if (_stalled) {
+        _logSync('attach_buffering', {
+          'mediaGeneration': _schedule?.mediaGeneration,
+        });
+      }
       _bufferingSub = player.buffering.listen(_onBufferingChanged);
 
       // Ask the server for the current timeline once we're listening (avoids the
@@ -224,6 +246,8 @@ class SyncEngineImpl implements SyncEngine {
       });
     }
     _stalled = false;
+    _bufferRecoveryUntilMs = 0;
+    _loggedRecoverySuppression = false;
     _reportedStalled = null;
     _reportedStallGeneration = null;
     _userSeekTimer?.cancel();
@@ -250,7 +274,7 @@ class SyncEngineImpl implements SyncEngine {
     _lastMediaGen = null;
     _hostGone = false;
     _userSeeking = false;
-    _lastHardSeekAtMs = 0;
+    _lastHardSeekAtMs = -hardSeekCooldownMs;
     _lastReportMs = 0;
     _emitCatchUp(CatchUp.idle);
   }
@@ -273,6 +297,7 @@ class SyncEngineImpl implements SyncEngine {
   }
 
   double _nowMs() => DateTime.now().millisecondsSinceEpoch.toDouble();
+  int _monotonicMs() => _monotonic.elapsedMilliseconds;
   double _serverNow() => _clock?.serverNow() ?? _nowMs();
   bool _clockReady() => _clock?.ready ?? false;
 
@@ -347,9 +372,27 @@ class SyncEngineImpl implements SyncEngine {
     _stalled = stalled;
     _reportStall();
     if (stalled) {
+      _bufferRecoveryUntilMs = 0;
+      _loggedRecoverySuppression = false;
+      _logSync('buffering_start', {
+        'mediaGeneration': _schedule?.mediaGeneration,
+        'positionMs': _player?.positionNow.inMilliseconds,
+        'driftMs': _currentDrift().inMilliseconds,
+        'phase': _schedule?.phase,
+      });
+      unawaited(_player?.setRate(1).catchError((Object _) {}));
       _emitCatchUp(CatchUp(waiting: true, drift: _currentDrift()));
-    } else if (_schedule?.phase != 'stalled') {
-      _emitCatchUp(CatchUp.idle);
+    } else {
+      _bufferRecoveryUntilMs = _monotonicMs() + _bufferRecoveryNoJumpMs;
+      _logSync('buffering_end', {
+        'mediaGeneration': _schedule?.mediaGeneration,
+        'positionMs': _player?.positionNow.inMilliseconds,
+        'driftMs': _currentDrift().inMilliseconds,
+        'recoveryUntilMs': _bufferRecoveryUntilMs,
+      });
+      if (_schedule?.phase != 'stalled') {
+        _emitCatchUp(CatchUp(rate: 1, drift: _currentDrift()));
+      }
     }
   }
 
@@ -415,6 +458,17 @@ class SyncEngineImpl implements SyncEngine {
     final s = _schedule;
     if (p == null || s == null) return;
     _reportPlayback(p, _currentDrift().inMilliseconds / 1000);
+    if (_stalled) {
+      if (s.phase != 'playing' && p.isPlayingNow && _busy == 0) {
+        unawaited(
+          _operate((valid) async {
+            if (identical(_schedule, s)) await p.pause();
+          }).catchError((Object _) {}),
+        );
+      }
+      _emitCatchUp(CatchUp(waiting: true, drift: _currentDrift()));
+      return;
+    }
     if (_opening > 0 || _busy > 0 || _hostGone) return;
     // A locally-authored command is in flight and hasn't round-tripped yet —
     // scheduleRef is still stale. Skip so our own change isn't fought.
@@ -429,6 +483,10 @@ class SyncEngineImpl implements SyncEngine {
 
     if (_busy > 0) return;
 
+    final nowMs = _monotonicMs();
+    final inBufferRecovery = nowMs < _bufferRecoveryUntilMs;
+    final suppressHardSeek =
+        nowMs - _lastHardSeekAtMs < hardSeekCooldownMs || inBufferRecovery;
     final intent = decideSyncAction(
       schedule: s,
       serverNowMs: _serverNow,
@@ -438,9 +496,25 @@ class SyncEngineImpl implements SyncEngine {
       isHost: _isHost,
       mode: _mode,
       userSeeking: _userSeeking,
-      suppressHardSeek: _nowMs() - _lastHardSeekAtMs < hardSeekCooldownMs,
+      suppressHardSeek: suppressHardSeek,
+      duration: p.durationNow > Duration.zero
+          ? p.durationNow.inMilliseconds / 1000.0
+          : null,
     );
     if (intent == null) {
+      final drift = _currentDrift();
+      if (inBufferRecovery &&
+          !_loggedRecoverySuppression &&
+          drift.inMilliseconds.abs() > (hardSeekSec * 1000).round()) {
+        _loggedRecoverySuppression = true;
+        _logSync('hard_seek_suppressed_for_buffer_recovery', {
+          'mediaGeneration': s.mediaGeneration,
+          'positionMs': p.positionNow.inMilliseconds,
+          'driftMs': drift.inMilliseconds,
+          'phase': s.phase,
+          'recoveryRemainingMs': (_bufferRecoveryUntilMs - nowMs).round(),
+        });
+      }
       _emitCatchUp(CatchUp(waiting: _stalled || s.phase == 'stalled'));
       _reportPlayback(p, null);
       return;
@@ -451,7 +525,7 @@ class SyncEngineImpl implements SyncEngine {
     _reportPlayback(p, intent.drift);
 
     if (intent.hardSeek) {
-      _lastHardSeekAtMs = _nowMs().toInt();
+      _lastHardSeekAtMs = _monotonicMs();
     }
     unawaited(
       _operate((valid) async {

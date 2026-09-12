@@ -109,13 +109,13 @@ void main() {
     expect(player.pauseCalls, 0);
   });
 
-  test('re-opening the same title with new tracks creates a new revision', () {
+  test('re-opening the same title with new tracks keeps media revision', () {
     notifier().open(itemId: 'movie-1', subtitleStreamIndex: 3);
     final revision = now().revision;
     notifier().open(itemId: 'movie-1', subtitleStreamIndex: 4);
 
     expect(now().subtitleStreamIndex, 4);
-    expect(now().revision, greaterThan(revision));
+    expect(now().revision, revision);
   });
 
   test('opening a different title supersedes the old one wholesale', () {

@@ -3,7 +3,7 @@
 // fetchSchedule, sleep, idealPosition} and returns { pass, checks[], notes[] }.
 
 import { HeadlessClient } from '../client.js'
-import { TICKS } from '../../client/src/sync/syncCore.js'
+import { TICKS } from '../../client/src/sync/syncCore.ts'
 
 export const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 

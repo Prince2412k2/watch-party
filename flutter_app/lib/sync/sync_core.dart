@@ -131,6 +131,7 @@ SyncIntent? decideSyncAction({
   required String mode,
   required bool userSeeking,
   bool suppressHardSeek = false,
+  double? duration,
   CorrectionState? correctionState,
 }) {
   final s = schedule;
@@ -138,31 +139,51 @@ SyncIntent? decideSyncAction({
   // A hopping host plays natively and never runs the correction loop.
   if (isHost && mode != 'dragging') return null;
   if (userSeeking) return null;
+  if (!currentTime.isFinite || currentTime < 0) return null;
 
   final p0 = s.positionTicks / ticksPerSecond;
+  if (!p0.isFinite || p0 < 0) return null;
+  final validDuration = duration != null && duration.isFinite && duration > 0;
+  final frozenTargetInRange = !validDuration || p0 < duration;
 
   // paused OR stalled → everyone holds at the frozen position.
   if (s.phase != 'playing') {
     final wantPause = !paused;
     double? seekTo;
     var pausedSeek = false;
-    if ((currentTime - p0).abs() > holdTolerance) {
+    if (frozenTargetInRange &&
+        !suppressHardSeek &&
+        (currentTime - p0).abs() > holdTolerance) {
       seekTo = p0;
       pausedSeek = true;
     }
     return SyncIntent(
-        rate: 1, pause: wantPause, seekToSec: seekTo, pausedSeek: pausedSeek);
+      rate: 1,
+      pause: wantPause,
+      seekToSec: seekTo,
+      pausedSeek: pausedSeek,
+    );
   }
 
+  if (!frozenTargetInRange) return null;
   if (!clockReady()) return null;
   final expected = predictPosition(s, serverNowMs());
-  if (expected < 0) return null;
+  if (!expected.isFinite || expected < 0) return null;
+  if (validDuration && expected >= duration) return null;
 
   if (paused) {
     final drift = expected - currentTime;
+    if (suppressHardSeek) {
+      return SyncIntent(rate: 1, play: true, drift: drift);
+    }
     final hard = !isHost && mode == 'hopping' && drift.abs() > hardSeekSec;
     return SyncIntent(
-        seekToSec: expected, rate: 1, play: true, drift: drift, hardSeek: hard);
+      seekToSec: expected,
+      rate: 1,
+      play: true,
+      drift: drift,
+      hardSeek: hard,
+    );
   }
 
   final err = expected - currentTime;
@@ -171,7 +192,10 @@ SyncIntent? decideSyncAction({
   if (isHost) {
     // dragging host: obey the timeline, correct only gross drift, no nudge.
     return SyncIntent(
-        rate: 1, drift: err, seekToSec: ae > hostDragSeekSec ? expected : null);
+      rate: 1,
+      drift: err,
+      seekToSec: ae > hostDragSeekSec && !suppressHardSeek ? expected : null,
+    );
   }
 
   if (ae > hardSeekSec && !suppressHardSeek) {

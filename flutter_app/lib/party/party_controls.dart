@@ -232,8 +232,8 @@ class _HostControlsDialogState extends ConsumerState<HostControlsDialog> {
                   width: double.infinity,
                   child: SegmentedButton<String>(
                     segments: const [
-                      ButtonSegment(value: 'hopping', label: Text('Tailing')),
-                      ButtonSegment(value: 'dragging', label: Text('Dragging')),
+                      ButtonSegment(value: 'dragging', label: Text('Follow')),
+                      ButtonSegment(value: 'hopping', label: Text('Lead')),
                     ],
                     selected: {party.syncMode},
                     showSelectedIcon: false,
@@ -241,6 +241,15 @@ class _HostControlsDialogState extends ConsumerState<HostControlsDialog> {
                       notifier.setSyncMode(selection.first);
                     },
                   ),
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  party.syncMode == 'dragging'
+                      ? 'Everyone waits while a viewer is buffering.'
+                      : 'Playback continues while slow viewers recover locally.',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: wp.dim),
                 ),
                 const SizedBox(height: AppSpacing.sm),
               ],

@@ -77,15 +77,14 @@ test('stall reports require the current media generation', () => {
   } finally { deleteSession(sess.id) }
 })
 
-test('a timed-out stall remains in fallback until recovery is reported', () => {
+test('a Follow stall remains active until recovery is reported', () => {
   const sess = fresh()
   try {
-    applyStallReport(sess, 'guest', { stalled: true, mediaGeneration: sess.mediaGeneration })
-    sess.stallFallback.add('guest')
-    sess.stalled.delete('guest')
+    assert.equal(applyStallReport(sess, 'guest', { stalled: true, mediaGeneration: sess.mediaGeneration }), true)
+    assert.equal(sess.stalled.has('guest'), true)
     assert.equal(applyStallReport(sess, 'guest', { stalled: true, mediaGeneration: sess.mediaGeneration }), false)
     assert.equal(applyStallReport(sess, 'guest', { stalled: false, mediaGeneration: sess.mediaGeneration }), true)
-    assert.equal(sess.stallFallback.has('guest'), false)
+    assert.equal(sess.stalled.has('guest'), false)
   } finally { deleteSession(sess.id) }
 })
 

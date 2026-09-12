@@ -7,17 +7,27 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import '../data/api_client.dart';
+import '../diagnostics/reliability_diagnostics.dart';
+import '../models/stream_url.dart';
 import 'range_cache_store.dart';
 
-/// A remote HTTP response together with the [HttpClient] that produced it —
-/// the client must stay alive (and get closed) for as long as the response
-/// body is being drained.
+/// A remote HTTP response together with the [HttpClient] that produced it.
 class _Upstream {
-  _Upstream(this.response, this.client);
+  _Upstream(this.response, this.request);
   final HttpClientResponse response;
-  final HttpClient client;
+  final HttpClientRequest request;
+}
 
-  void close() => client.close(force: true);
+class _IntegrityException extends HttpException {
+  _IntegrityException(super.message);
+}
+
+class _RetryableHttpException extends HttpException {
+  _RetryableHttpException(this.statusCode, this.retryAfter)
+    : super('Transient upstream status $statusCode');
+
+  final int statusCode;
+  final Duration retryAfter;
 }
 
 /// One `[present-run | gap | present-run | …]` step of a request's byte
@@ -60,7 +70,10 @@ class MediaCacheProxy {
   RangeCacheStore _store;
   final Duration requestTimeout;
   int _generation = 0;
-  final Map<HttpClient, String> _clients = {};
+  HttpClient? _upstreamClient;
+  final Map<HttpClientRequest, String> _activeRequests = {};
+  final Map<String, StreamUrl> _signedUrls = {};
+  final Map<String, Future<StreamUrl>> _signedUrlFlights = {};
   final Map<String, int> _itemGenerations = {};
   final Map<CacheEntry, int> _entryGenerations = {};
   String _origin;
@@ -70,19 +83,47 @@ class MediaCacheProxy {
       ? itemId
       : 'source-${sha256.convert(utf8.encode(jsonEncode([itemId, source])))}';
 
+  String _transferKey(String itemId, String? mediaSourceId) =>
+      '$itemId\u0000${mediaSourceId ?? ''}';
+
+  String _diagnosticItem(String itemId, String? mediaSourceId) => sha256
+      .convert(utf8.encode(jsonEncode([itemId, mediaSourceId])))
+      .toString()
+      .substring(0, 12);
+
+  void _logTransfer(
+    String event,
+    String itemId,
+    String? mediaSourceId,
+    Map<String, Object?> fields,
+  ) {
+    if (!_transferDiagnosticsEnabled) return;
+    final record = {'item': _diagnosticItem(itemId, mediaSourceId), ...fields};
+    ReliabilityDiagnostics.instance.record('media-cache', event, record);
+    debugPrint('[media-cache] ${jsonEncode({'event': event, ...record})}');
+  }
+
   void abortItem(String itemId) {
     _itemGenerations[itemId] = (_itemGenerations[itemId] ?? 0) + 1;
-    for (final client in _clients.keys.toList()) {
-      if (_clients[client] == itemId) client.close(force: true);
-    }
+    _activeRequests.removeWhere((request, value) {
+      if (value != itemId) return false;
+      request.abort(StateError('Cache transfer cancelled'));
+      return true;
+    });
+    _signedUrls.removeWhere((key, _) {
+      if (!key.startsWith('$itemId\u0000')) return false;
+      return true;
+    });
+    _signedUrlFlights.removeWhere((key, _) => key.startsWith('$itemId\u0000'));
   }
 
   void stopTransfers() {
     _generation++;
-    for (final client in _clients.keys.toList()) {
-      client.close(force: true);
-    }
-    _clients.clear();
+    _upstreamClient?.close(force: true);
+    _upstreamClient = null;
+    _activeRequests.clear();
+    _signedUrls.clear();
+    _signedUrlFlights.clear();
   }
 
   Future<void> changeOrigin(String origin) async {
@@ -105,6 +146,12 @@ class MediaCacheProxy {
 
   /// Amortizes URL minting and connection setup without parallel fetches.
   static const downloadChunkSize = 8 * 1024 * 1024;
+  static const _maxSignedUrls = 64;
+  static const _maxRetryAfter = Duration(seconds: 5);
+
+  static const _transferDiagnosticsEnabled = bool.fromEnvironment(
+    'WATCHPARTY_CACHE_DIAGNOSTICS',
+  );
 
   /// Titles with a read-ahead pass currently running — guards against
   /// stacking up unbounded background fetches for the same title (one
@@ -479,16 +526,61 @@ class MediaCacheProxy {
         throw StateError('Cache transfer cancelled');
       }
       final chunkEnd = (pos + chunkSize) > end ? end : pos + chunkSize;
-      await _validatedWrite(
-        itemId,
-        entry,
-        pos,
-        chunkEnd,
-        mediaSourceId: mediaSourceId,
-      );
+      var attempts = 0;
+      while (true) {
+        try {
+          await _validatedWrite(
+            itemId,
+            entry,
+            pos,
+            chunkEnd,
+            mediaSourceId: mediaSourceId,
+          );
+          break;
+        } catch (error) {
+          attempts++;
+          if (attempts > 1 || !_isRetryableTransferError(error)) rethrow;
+          _logTransfer('retry', itemId, mediaSourceId, {
+            'start': pos,
+            'end': chunkEnd,
+            'error': error.runtimeType.toString(),
+          });
+          final delay = error is _RetryableHttpException
+              ? error.retryAfter
+              : const Duration(milliseconds: 250);
+          await _waitForRetry(delay, itemId, generation, itemGeneration);
+        }
+      }
       pos = chunkEnd;
     }
     await entry.flushMetadata();
+  }
+
+  bool _isRetryableTransferError(Object error) =>
+      error is TimeoutException ||
+      error is SocketException ||
+      error is _RetryableHttpException ||
+      (error is HttpException && error is! _IntegrityException);
+
+  Future<void> _waitForRetry(
+    Duration delay,
+    String itemId,
+    int generation,
+    int itemGeneration,
+  ) async {
+    final elapsed = Stopwatch()..start();
+    while (elapsed.elapsed < delay) {
+      if (generation != _generation ||
+          itemGeneration != (_itemGenerations[itemId] ?? 0)) {
+        throw StateError('Cache transfer cancelled');
+      }
+      final remaining = delay - elapsed.elapsed;
+      await Future<void>.delayed(
+        remaining > const Duration(milliseconds: 100)
+            ? const Duration(milliseconds: 100)
+            : remaining,
+      );
+    }
   }
 
   // ── Remote fetch (mint + re-mint on expiry) ───────────────────────────
@@ -533,12 +625,23 @@ class MediaCacheProxy {
       end,
       mediaSourceId: mediaSourceId,
     );
+    final elapsed = Stopwatch()..start();
     try {
       final res = upstream.response;
       final range = RegExp(
         r'^bytes (\d+)-(\d+)/(\d+)$',
       ).firstMatch(res.headers.value(HttpHeaders.contentRangeHeader) ?? '');
       final total = range == null ? null : int.tryParse(range.group(3)!);
+      if (res.statusCode == HttpStatus.tooManyRequests ||
+          res.statusCode == HttpStatus.internalServerError ||
+          res.statusCode == HttpStatus.badGateway ||
+          res.statusCode == HttpStatus.serviceUnavailable ||
+          res.statusCode == HttpStatus.gatewayTimeout) {
+        throw _RetryableHttpException(
+          res.statusCode,
+          _retryAfter(res.headers.value(HttpHeaders.retryAfterHeader)),
+        );
+      }
       if (res.statusCode != HttpStatus.partialContent ||
           range == null ||
           int.tryParse(range.group(1)!) != start ||
@@ -548,31 +651,129 @@ class MediaCacheProxy {
           (entry.totalLength != null && entry.totalLength != total) ||
           (res.contentLength >= 0 && res.contentLength != end - start) ||
           res.headers.value(HttpHeaders.contentEncodingHeader) != null) {
-        throw HttpException('Invalid upstream range response');
+        throw _IntegrityException('Invalid upstream range response');
       }
       final bytes = BytesBuilder(copy: false);
-      await (() async {
-        await for (final chunk in res) {
-          check();
-          if (bytes.length + chunk.length > end - start) {
-            throw HttpException('Upstream range body is too long');
-          }
-          bytes.add(chunk);
+      await for (final chunk in res.timeout(requestTimeout)) {
+        check();
+        if (bytes.length + chunk.length > end - start) {
+          throw _IntegrityException('Upstream range body is too long');
         }
-      })().timeout(requestTimeout);
+        bytes.add(chunk);
+      }
       check();
       if (bytes.length != end - start) {
-        throw HttpException('Upstream range body is too short');
+        throw _IntegrityException('Upstream range body is too short');
       }
       if (entry.totalLength != null && entry.totalLength != total) {
-        throw HttpException('Media length changed during range request');
+        throw _IntegrityException('Media length changed during range request');
       }
       entry.setTotalLength(total);
       await entry.write(start, bytes.takeBytes());
+      final elapsedMs = elapsed.elapsedMilliseconds;
+      _logTransfer('stored', itemId, mediaSourceId, {
+        'start': start,
+        'end': end,
+        'bytes': end - start,
+        'elapsedMs': elapsedMs,
+        'mbps': elapsedMs <= 0 ? null : ((end - start) * 8 / elapsedMs / 1000),
+      });
+    } catch (error) {
+      _logTransfer('store_error', itemId, mediaSourceId, {
+        'start': start,
+        'end': end,
+        'error': error.runtimeType.toString(),
+      });
+      try {
+        await upstream.response.drain<void>().timeout(requestTimeout);
+      } catch (_) {
+        upstream.request.abort(error);
+      }
+      rethrow;
     } finally {
-      _clients.remove(upstream.client);
-      upstream.close();
+      _activeRequests.remove(upstream.request);
     }
+  }
+
+  Future<StreamUrl> _signedUrl(
+    String itemId,
+    String? mediaSourceId, {
+    bool forceRefresh = false,
+    String? staleUrl,
+  }) async {
+    final key = _transferKey(itemId, mediaSourceId);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _pruneSignedUrls(now);
+    if (forceRefresh) {
+      final cached = _signedUrls[key];
+      if (cached != null && cached.url != staleUrl) return cached;
+      _signedUrls.remove(key);
+      final inFlight = _signedUrlFlights[key];
+      if (inFlight != null) return inFlight;
+    } else {
+      final cached = _signedUrls[key];
+      if (cached != null && cached.expiresAt > now + 15000) {
+        _signedUrls.remove(key);
+        _signedUrls[key] = cached;
+        return cached;
+      }
+      final inFlight = _signedUrlFlights[key];
+      if (inFlight != null) return inFlight;
+    }
+
+    final generation = _generation;
+    final itemGeneration = _itemGenerations[itemId] ?? 0;
+    late final Future<StreamUrl> flight;
+    flight = (() async {
+      final signed = await _apiClient
+          .nativeStreamUrl(
+            itemId,
+            purpose: 'stream',
+            mediaSourceId: mediaSourceId,
+          )
+          .timeout(requestTimeout);
+      if (generation != _generation ||
+          itemGeneration != (_itemGenerations[itemId] ?? 0) ||
+          _origin != _apiClient.baseUrl) {
+        throw StateError('Cache transfer cancelled');
+      }
+      _signedUrls.remove(key);
+      _signedUrls[key] = signed;
+      while (_signedUrls.length > _maxSignedUrls) {
+        _signedUrls.remove(_signedUrls.keys.first);
+      }
+      return signed;
+    })();
+    _signedUrlFlights[key] = flight;
+    try {
+      return await flight;
+    } finally {
+      if (identical(_signedUrlFlights[key], flight)) {
+        _signedUrlFlights.remove(key);
+      }
+    }
+  }
+
+  void _pruneSignedUrls(int now) {
+    _signedUrls.removeWhere((_, signed) => signed.expiresAt <= now + 15000);
+  }
+
+  Duration _retryAfter(String? value) {
+    if (value == null) return Duration.zero;
+    final seconds = int.tryParse(value);
+    Duration delay;
+    if (seconds != null) {
+      delay = Duration(seconds: seconds < 0 ? 0 : seconds);
+    } else {
+      try {
+        final target = HttpDate.parse(value);
+        final difference = target.difference(DateTime.now().toUtc());
+        delay = difference.isNegative ? Duration.zero : difference;
+      } on FormatException {
+        return Duration.zero;
+      }
+    }
+    return delay > _maxRetryAfter ? _maxRetryAfter : delay;
   }
 
   /// Fetches `[start, end)` from the remote signed URL, re-minting once if
@@ -587,45 +788,69 @@ class MediaCacheProxy {
   }) async {
     final generation = _generation;
     final itemGeneration = _itemGenerations[itemId] ?? 0;
+    HttpClient clientForOrigin() {
+      final existing = _upstreamClient;
+      if (existing != null) return existing;
+      final client = HttpClient()
+        ..autoUncompress = false
+        ..connectionTimeout = requestTimeout
+        ..idleTimeout = const Duration(seconds: 45);
+      _upstreamClient = client;
+      return client;
+    }
+
     Future<_Upstream> attempt(String url) async {
       if (generation != _generation ||
           itemGeneration != (_itemGenerations[itemId] ?? 0)) {
         throw StateError('Cache transfer cancelled');
       }
-      final client = HttpClient()..autoUncompress = false;
-      _clients[client] = itemId;
+      final client = clientForOrigin();
+      final elapsed = Stopwatch()..start();
+      HttpClientRequest? req;
       try {
-        final req = await client.getUrl(Uri.parse(url)).timeout(requestTimeout);
+        req = await client.getUrl(Uri.parse(url)).timeout(requestTimeout);
+        _activeRequests[req] = itemId;
         req.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
         req.headers.set(HttpHeaders.rangeHeader, 'bytes=$start-${end - 1}');
         final res = await req.close().timeout(requestTimeout);
-        return _Upstream(res, client);
-      } catch (_) {
-        _clients.remove(client);
-        client.close(force: true);
+        _logTransfer('response', itemId, mediaSourceId, {
+          'start': start,
+          'end': end,
+          'status': res.statusCode,
+          'ttfbMs': elapsed.elapsedMilliseconds,
+          'length': res.contentLength,
+        });
+        return _Upstream(res, req);
+      } catch (error) {
+        _logTransfer('request_error', itemId, mediaSourceId, {
+          'start': start,
+          'end': end,
+          'error': error.runtimeType.toString(),
+        });
+        if (req != null) _activeRequests.remove(req);
+        req?.abort(error);
         rethrow;
       }
     }
 
-    var signed = await _apiClient
-        .nativeStreamUrl(
-          itemId,
-          purpose: 'stream',
-          mediaSourceId: mediaSourceId,
-        )
-        .timeout(requestTimeout);
+    var signed = await _signedUrl(itemId, mediaSourceId);
     var upstream = await attempt(signed.url);
     if (upstream.response.statusCode == HttpStatus.unauthorized ||
         upstream.response.statusCode == HttpStatus.forbidden) {
-      _clients.remove(upstream.client);
-      upstream.close();
-      signed = await _apiClient
-          .nativeStreamUrl(
-            itemId,
-            purpose: 'stream',
-            mediaSourceId: mediaSourceId,
-          )
-          .timeout(requestTimeout);
+      try {
+        await upstream.response.drain<void>().timeout(requestTimeout);
+      } catch (error) {
+        upstream.request.abort(error);
+        rethrow;
+      } finally {
+        _activeRequests.remove(upstream.request);
+      }
+      signed = await _signedUrl(
+        itemId,
+        mediaSourceId,
+        forceRefresh: true,
+        staleUrl: signed.url,
+      );
       upstream = await attempt(signed.url);
     }
     return upstream;

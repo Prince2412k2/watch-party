@@ -192,6 +192,32 @@ void main() {
     expect(container.read(nowPlayingIntroProvider), 'film-2');
   });
 
+  test('party track changes update selection without reopening media', () {
+    final (:container, :engine) = _boot(me: 'guest', hostId: 'host');
+    addTearDown(container.dispose);
+
+    _watch(container, 'film-1');
+    final before = container.read(nowPlayingProvider);
+    expect(before.revision, 1);
+    expect(engine.attachCount, 1);
+
+    _watch(
+      container,
+      'film-1',
+      playback: const PlaybackInfo(
+        selectedAudioIndex: 2,
+        selectedSubtitleIndex: 7,
+      ),
+    );
+
+    final after = container.read(nowPlayingProvider);
+    expect(after.itemId, 'film-1');
+    expect(after.audioStreamIndex, 2);
+    expect(after.subtitleStreamIndex, 7);
+    expect(after.revision, before.revision);
+    expect(engine.attachCount, 1);
+  });
+
   test('the host taking the film away closes it for a guest', () {
     final (:container, :engine) = _boot(me: 'guest', hostId: 'host');
     addTearDown(container.dispose);
@@ -322,7 +348,11 @@ void main() {
     final now = container.read(nowPlayingProvider);
     expect(now.audioStreamIndex, 5);
     expect(now.subtitleStreamIndex, -1);
-    expect(now.revision, greaterThan(revision));
+    expect(
+      now.revision,
+      revision,
+      reason: 'track-only changes must not trigger a native reopen',
+    );
     expect(now.isFloating, isTrue);
     expect(container.read(nowPlayingIntroProvider), isNull);
     expect(engine.attachCount, 1);

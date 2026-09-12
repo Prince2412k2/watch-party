@@ -8,7 +8,7 @@
 // after each correction settles, else 1.
 
 import { HeadlessClient } from './client.js'
-import { TICKS } from '../client/src/sync/syncCore.js'
+import { TICKS } from '../client/src/sync/syncCore.ts'
 
 const SERVER = process.env.WP_SERVER || 'http://localhost:3999'
 const CONVERGE_SEC = 0.5          // pass threshold for |drift| after settling

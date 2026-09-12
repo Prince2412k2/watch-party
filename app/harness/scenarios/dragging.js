@@ -1,7 +1,6 @@
-// Dragging mode + stalls: a stall from one/several guests freezes the group
-// (phase 'stalled'); clearing stalls resumes; STALL_MAX_MS force-resumes a
-// dead client. STALL_MAX_MS in the server is 30s — too long for CI, so the
-// force-resume check is a lighter structural assertion (documented in notes).
+// Follow/Dragging mode + stalls: a stall from one/several guests freezes the
+// group (phase 'stalled'); clearing all stalls resumes. A dead client remains
+// stalled until recovery, host action, or disconnect removes it from membership.
 
 import { spawnHost, spawnGuest, startSampler, sleep, check, positionSpread, worstDrift, makeFetchSchedule, makeFetchView } from './_helpers.js'
 
@@ -103,6 +102,30 @@ export const deadClientDisconnect = {
     return { checks: [
       check('froze on dead-client stall', froze, `phase=${s.rows.find(r=>r.phase==='stalled')?'stalled':'never'}`),
       check('resumes after dead client leaves', resumed, `finalPhase=${rows[rows.length-1].phase}`),
+    ] }
+  },
+}
+
+// Removing a stalled guest is an explicit host escape hatch from Follow mode.
+export const stalledGuestKick = {
+  name: 'follow-stalled-guest-kick',
+  async run({ SERVER }) {
+    const { host, partyId, guests, fetchSchedule } = await setupDragging(SERVER)
+    const s = startSampler(fetchSchedule, partyId, guests)
+    host.play(0)
+    await sleep(2000)
+    guests[2].reportStall(true)
+    await sleep(2000)
+    const froze = s.rows[s.rows.length - 1].phase === 'stalled'
+    const kicked = await host.kick(guests[2].userId)
+    await sleep(3000)
+    const rows = s.stop()
+    const resumed = rows[rows.length - 1].phase === 'playing'
+    host.disconnect(); guests.forEach(g => g.disconnect())
+    return { checks: [
+      check('froze on stalled guest', froze, `phase=${s.rows.find(r=>r.phase==='stalled')?'stalled':'never'}`),
+      check('host kick acknowledged', kicked?.ok === true, JSON.stringify(kicked)),
+      check('resumes after stalled guest is kicked', resumed, `finalPhase=${rows[rows.length-1].phase}`),
     ] }
   },
 }
