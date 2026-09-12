@@ -68,6 +68,7 @@ class SyncEngineImpl implements SyncEngine {
   bool _loggedRecoverySuppression = false;
 
   Timer? _controlLoop;
+  Timer? _openingStallTimer;
   final List<void Function()> _unsubs = [];
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _bufferingSub;
@@ -93,7 +94,18 @@ class SyncEngineImpl implements SyncEngine {
 
   void endOpen() {
     if (_opening > 0) _opening--;
-    if (_opening == 0 && _player != null && !_disposeRequested) _markApplying();
+    if (_opening == 0 && _player != null && !_disposeRequested) {
+      _markApplying();
+      _openingStallTimer?.cancel();
+      if (_stalled) {
+        _openingStallTimer = Timer(const Duration(seconds: 1), () {
+          if (_opening == 0 && _stalled && !_disposeRequested) {
+            _reportStall();
+            _emitCatchUp(CatchUp(waiting: true, drift: _currentDrift()));
+          }
+        });
+      }
+    }
   }
 
   Duration get scheduledPosition =>
@@ -231,6 +243,8 @@ class SyncEngineImpl implements SyncEngine {
     _operationEpoch++;
     _controlLoop?.cancel();
     _controlLoop = null;
+    _openingStallTimer?.cancel();
+    _openingStallTimer = null;
     for (final u in _unsubs) {
       u();
     }
@@ -370,6 +384,15 @@ class SyncEngineImpl implements SyncEngine {
 
   void _onBufferingChanged(bool stalled) {
     _stalled = stalled;
+    if (_opening > 0) {
+      if (stalled) {
+        unawaited(_player?.setRate(1).catchError((Object _) {}));
+        _emitCatchUp(CatchUp(waiting: true, drift: _currentDrift()));
+      }
+      return;
+    }
+    _openingStallTimer?.cancel();
+    _openingStallTimer = null;
     _reportStall();
     if (stalled) {
       _bufferRecoveryUntilMs = 0;

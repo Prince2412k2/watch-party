@@ -984,6 +984,48 @@ void main() {
     },
   );
 
+  testWidgets(
+    'preferred embedded subtitle is applied from canonical party state',
+    (tester) async {
+      final c = _SpyController();
+      final api = MockApiClient(
+        playback: const PlaybackInfo(
+          subtitleStreams: [PlaybackTrack(index: 12, title: 'English SDH')],
+          selectedSubtitleIndex: -1,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.dark,
+          home: Scaffold(
+            body: PlayerChrome(
+              controller: c,
+              itemId: 'movie',
+              apiClient: api,
+              preferredSubtitleStreamIndex: 12,
+              onSubtitleStreamSelected: (_) async {},
+            ),
+          ),
+        ),
+      );
+      c.emitTracks(
+        const PlayerTracks(
+          subtitle: [
+            PlayerTrack(
+              id: 's1',
+              type: 'subtitle',
+              title: 'English SDH',
+              jellyfinIndex: 12,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(c.subtitles, contains('s1'));
+    },
+  );
+
   testWidgets('guest can select local audio and subtitle tracks', (
     tester,
   ) async {

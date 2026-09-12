@@ -865,8 +865,11 @@ class _PlayerChromeState extends State<PlayerChrome>
       playerTracks: _tracks.audio,
       playback: playback,
     );
+    final canonicalSubtitleIndex = widget.onSubtitleStreamSelected == null
+        ? playback.selectedSubtitleIndex
+        : widget.preferredSubtitleStreamIndex ?? playback.selectedSubtitleIndex;
     final subtitleId = playerTrackIdForJellyfinIndex(
-      jellyfinIndex: playback.selectedSubtitleIndex,
+      jellyfinIndex: canonicalSubtitleIndex,
       type: 'subtitle',
       playerTracks: _visibleSubtitleTracks,
       playback: playback,
@@ -875,7 +878,7 @@ class _PlayerChromeState extends State<PlayerChrome>
       await _setAudio(audioId);
       if (!isCurrent()) return;
     }
-    if (playback.selectedSubtitleIndex != null) {
+    if (canonicalSubtitleIndex != null) {
       await _setSubtitle(subtitleId);
     }
   }

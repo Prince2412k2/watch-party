@@ -673,6 +673,56 @@ void main() {
     });
   });
 
+  test('buffering during native open does not immediately report a stall', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000.0);
+      final player = FakePlayer();
+      final socket = MockSocketClient();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(gen: 4));
+
+      engine.beginOpen();
+      fa.flushMicrotasks();
+      player.setBuffering(true);
+      fa.flushMicrotasks();
+      expect(
+        socket.emitted.where(
+          (event) =>
+              event.$1 == ClientEvent.syncStall &&
+              (event.$2 as Map)['stalled'] == true,
+        ),
+        isEmpty,
+      );
+
+      engine.endOpen();
+      fa.elapse(const Duration(milliseconds: 999));
+      expect(
+        socket.emitted.where(
+          (event) =>
+              event.$1 == ClientEvent.syncStall &&
+              (event.$2 as Map)['stalled'] == true,
+        ),
+        isEmpty,
+      );
+      fa.elapse(const Duration(milliseconds: 1));
+      expect(
+        socket.emitted.where(
+          (event) =>
+              event.$1 == ClientEvent.syncStall &&
+              (event.$2 as Map)['stalled'] == true,
+        ),
+        isNotEmpty,
+      );
+      engine.detach();
+    });
+  });
+
   test(
     'buffering waits for a generation, then samples and resends on change',
     () {
