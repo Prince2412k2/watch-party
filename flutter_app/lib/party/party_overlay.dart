@@ -390,6 +390,7 @@ class _ChatSlideOverState extends State<ChatSlideOver>
   @override
   void initState() {
     super.initState();
+    _composer.addListener(_keepComposerFocused);
     // The composer is where the caret belongs for as long as the drawer is up:
     // a drawer you have to click into before typing costs two actions instead
     // of one. Re-asserted when the open animation settles, because focus can be
@@ -428,8 +429,14 @@ class _ChatSlideOverState extends State<ChatSlideOver>
     });
   }
 
+  void _keepComposerFocused() {
+    if (!widget.open || _composer.hasFocus) return;
+    _grabFocus();
+  }
+
   @override
   void dispose() {
+    _composer.removeListener(_keepComposerFocused);
     _c.dispose();
     _composer.dispose();
     super.dispose();

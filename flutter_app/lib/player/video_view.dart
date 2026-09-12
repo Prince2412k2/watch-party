@@ -66,7 +66,7 @@ class VideoView extends StatelessWidget {
   const VideoView({
     super.key,
     required this.controller,
-    this.fit = BoxFit.contain,
+    this.fit = BoxFit.cover,
     this.fill = Colors.black,
   });
 

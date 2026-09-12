@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { useParty } from '../context/PartyContext.tsx'
 import { glass } from '../glass.tsx'
@@ -21,10 +21,13 @@ const ALERT = {
 export default function Chat({ top = 76, mobileSheet = false }: { top?: number; mobileSheet?: boolean } = {}) {
   const { messages, sendMessage, chatOpen, closeChat, alertMode, setAlertMode, chatFocusToken } = useParty()
   const [text, setText] = useState('')
-  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const messagesRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, chatOpen])
+  useLayoutEffect(() => {
+    const list = messagesRef.current
+    if (chatOpen && list) list.scrollTop = list.scrollHeight
+  }, [messages, chatOpen])
   // Pull focus into the input whenever asked (hotkey / auto-open on message)
   useEffect(() => { if (chatOpen) inputRef.current?.focus() }, [chatFocusToken, chatOpen])
 
@@ -42,6 +45,7 @@ export default function Chat({ top = 76, mobileSheet = false }: { top?: number; 
     if (!text.trim()) return
     sendMessage(text.trim())
     setText('')
+    inputRef.current?.focus()
   }
 
   const a = ALERT[alertMode] || ALERT.focus
@@ -74,7 +78,7 @@ export default function Chat({ top = 76, mobileSheet = false }: { top?: number; 
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div ref={messagesRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {messages.length === 0 && (
           <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>No messages yet</div>
         )}
@@ -92,15 +96,17 @@ export default function Chat({ top = 76, mobileSheet = false }: { top?: number; 
             </div>
           )
         })}
-        <div ref={bottomRef} />
       </div>
 
       {/* Input */}
       <form onSubmit={handleSend} style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'center', borderTop: '1px solid var(--stroke)' }}>
-        <input ref={inputRef} value={text} onChange={e => setText(e.target.value)} placeholder="Message…" maxLength={500}
+        <input ref={inputRef} autoFocus value={text} onChange={e => setText(e.target.value)} placeholder="Message…" maxLength={500}
           style={{ flex: 1, padding: '11px 14px', borderRadius: 999, border: '1px solid var(--stroke2)', background: 'var(--glass2)', color: 'var(--text)', fontSize: 14, outline: 'none', transition: 'border-color .15s' }}
           onFocus={e => { e.currentTarget.style.borderColor = 'var(--text3)' }}
-          onBlur={e => { e.currentTarget.style.borderColor = 'var(--stroke2)' }} />
+          onBlur={e => {
+            e.currentTarget.style.borderColor = 'var(--stroke2)'
+            requestAnimationFrame(() => inputRef.current?.focus())
+          }} />
         <button type="submit" disabled={!text.trim()} style={{
           width: 40, height: 40, flexShrink: 0, borderRadius: '50%', border: 'none',
           background: text.trim() ? 'var(--accent)' : 'var(--glass2)', color: text.trim() ? 'var(--on-accent)' : 'var(--text3)',

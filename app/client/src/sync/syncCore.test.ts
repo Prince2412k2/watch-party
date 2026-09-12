@@ -58,3 +58,21 @@ test('hard-seek cooldown keeps a playing guest on bounded rate correction', () =
   // the viewer, so it no longer has to stay under the threshold of notice.
   assert.equal(intent.rate, 1.1)
 })
+
+test('drift at HARD_SEEK_SEC stays on bounded rate correction', () => {
+  const intent = decideSyncAction({
+    schedule: playing,
+    serverNowMs: () => 2_000,
+    clockReady: () => true,
+    currentTime: 6,
+    paused: false,
+    isHost: false,
+    mode: 'hopping',
+    userSeeking: false,
+  })
+
+  assert.ok(intent)
+  assert.equal(intent.hardSeek, undefined)
+  assert.equal(intent.seekTo, undefined)
+  assert.equal(intent.rate, 1.1)
+})

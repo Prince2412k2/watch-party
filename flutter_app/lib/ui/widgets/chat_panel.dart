@@ -28,6 +28,12 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   bool _sending = false;
 
   @override
+  void initState() {
+    super.initState();
+    _scrollToEnd();
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
@@ -37,6 +43,7 @@ class _ChatPanelState extends ConsumerState<ChatPanel> {
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
+    widget.composerFocus?.requestFocus();
 
     setState(() {
       _sending = true;
@@ -232,6 +239,7 @@ class _ChatInput extends StatelessWidget {
                   key: const Key('chatInput'),
                   controller: controller,
                   focusNode: focusNode,
+                  autofocus: true,
                   readOnly: busy,
                   onSubmitted: (_) => onSend(),
                   style: const TextStyle(color: AppColors.text, fontSize: 13.5),

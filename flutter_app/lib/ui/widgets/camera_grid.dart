@@ -225,7 +225,7 @@ class CameraVideoView extends StatelessWidget {
           lk.VideoTrackRenderer(
             videoTrack,
             key: ValueKey(videoTrack.sid),
-            fit: lk.VideoViewFit.contain,
+            fit: lk.VideoViewFit.cover,
           ),
           if (track.videoMuted) _CamOffPlaceholder(track: track),
         ],

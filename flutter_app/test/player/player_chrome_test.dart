@@ -264,8 +264,8 @@ void main() {
     });
   }
 
-  test('movies preserve their full frame by default', () {
-    expect(VideoView(controller: _SpyController()).fit, BoxFit.contain);
+  test('movies fill the player surface by default', () {
+    expect(VideoView(controller: _SpyController()).fit, BoxFit.cover);
   });
 
   for (final release in ['focus', 'lifecycle', 'dispose', 'key up']) {

@@ -48,8 +48,8 @@ export interface AnalogTimelineProps {
   /** Offline/on-disk spans, drawn distinctly from network buffer. */
   cached?: readonly TimeSpan[]
   canControl?: boolean
-  /** Called continuously through a drag, with the target time in seconds. */
-  onScrub?: (seconds: number) => void
+  /** Called once when a drag completes, with the final target in seconds. */
+  onScrubCommit?: (seconds: number) => void
   onScrubStart?: () => void
   onScrubEnd?: () => void
   /**
@@ -73,7 +73,7 @@ export default function AnalogTimeline({
   buffered,
   cached,
   canControl = false,
-  onScrub,
+  onScrubCommit,
   onScrubStart,
   onScrubEnd,
   renderPreview,
@@ -89,6 +89,7 @@ export default function AnalogTimeline({
   const [pointerTime, setPointerTime] = useState<{ time: number; x: number } | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
   const dragCleanupRef = useRef<(() => void) | null>(null)
+  const dragTargetRef = useRef<number | null>(null)
 
   useEffect(() => () => dragCleanupRef.current?.(), [])
 
@@ -99,7 +100,7 @@ export default function AnalogTimeline({
   const showHandle = canControl && isHandleVisible(activity)
   const { playedPct, buffered: bufferedSpans, cached: cachedSpans } = timelineLayers({
     durationSec,
-    positionSec,
+    positionSec: dragging && pointerTime ? pointerTime.time : positionSec,
     buffered,
     cached,
   })
@@ -139,28 +140,47 @@ export default function AnalogTimeline({
     event.stopPropagation()
     setDragging(true)
     onScrubStart?.()
-    const seek = (clientX: number) => {
+    let active = true
+    dragTargetRef.current = null
+    const listeners = new AbortController()
+    const preview = (clientX: number) => {
       const element = trackRef.current
       if (!element) return
       updatePointer(clientX)
-      onScrub?.(seekTimeFromRatio(ratioFromPointer(clientX, element.getBoundingClientRect()), durationSec))
+      dragTargetRef.current = seekTimeFromRatio(
+        ratioFromPointer(clientX, element.getBoundingClientRect()),
+        durationSec,
+      )
     }
-    seek(event.clientX)
-    const move = (moveEvent: PointerEvent) => seek(moveEvent.clientX)
-    const up = () => {
+    preview(event.clientX)
+    const move = (moveEvent: PointerEvent) => preview(moveEvent.clientX)
+    const cleanup = () => {
+      if (!active) return
+      active = false
+      listeners.abort()
+      dragCleanupRef.current = null
+    }
+    const finish = () => {
       setDragging(false)
       setPointerTime(null)
       onScrubEnd?.()
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
-      dragCleanupRef.current = null
+    }
+    const up = (upEvent: PointerEvent) => {
+      preview(upEvent.clientX)
+      const target = dragTargetRef.current
+      cleanup()
+      finish()
+      if (target != null) onScrubCommit?.(target)
+    }
+    const cancel = () => {
+      cleanup()
+      finish()
     }
     dragCleanupRef.current?.()
-    dragCleanupRef.current = up
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up, { once: true })
-    window.addEventListener('pointercancel', up, { once: true })
+    dragCleanupRef.current = cleanup
+    window.addEventListener('pointermove', move, { signal: listeners.signal })
+    window.addEventListener('pointerup', up, { signal: listeners.signal })
+    window.addEventListener('pointercancel', cancel, { signal: listeners.signal })
   }
 
   // "Hover, focus, and drag retain the time label and trickplay preview." A
@@ -176,6 +196,7 @@ export default function AnalogTimeline({
   const track = (
     <div
       ref={trackRef}
+      data-final-seek-timeline
       role="slider"
       aria-label={ariaLabel}
       aria-valuemin={0}

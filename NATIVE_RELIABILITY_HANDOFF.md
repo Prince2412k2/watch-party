@@ -50,7 +50,7 @@ Treat two-person P2P A/V as a separate transport project after playback stabiliz
 - `flutter_app/lib/sync/sync_engine_impl.dart:413-468`: tick checks opening/busy/
   host-gone, but not local buffering before deciding/applying seek/rate/play.
 - `flutter_app/lib/sync/sync_core.dart:144-179`: the decision input has no
-  buffering/readiness state. Both guest modes hard-seek above 2.5s drift.
+  buffering/readiness state. Both guest modes hard-seek above 5s drift.
 - Awaiting `PlayerController.seek` serializes command completion; it does not
   prove decoded frames or sufficient buffered runway are available.
 - `app/server/index.js:1101-1149`: dragging/follow freezes the timeline for

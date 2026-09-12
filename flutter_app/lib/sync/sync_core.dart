@@ -23,9 +23,9 @@ const int controlMs = 200;
 /// slow segment — was answered with a snap: the picture jumps, the audio clips,
 /// and you lose the second you were watching. Speeding up loses nothing; it
 /// borrows the time back. At the [maxRateAdj] cap, closing D seconds takes
-/// ~10*D seconds, so this is ~25s of catching up at worst — which is why the
+/// ~10*D seconds, so this is ~50s of catching up at worst — which is why the
 /// player says so while it happens.
-const double hardSeekSec = 2.5;
+const double hardSeekSec = 5.0;
 
 /// A dragging host only corrects gross drift, not routine jitter.
 const double hostDragSeekSec = 2.0;

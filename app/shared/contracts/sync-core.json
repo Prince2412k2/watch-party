@@ -4,7 +4,7 @@
   "constants": {
     "TICKS": 10000000,
     "CONTROL_MS": 200,
-    "HARD_SEEK_SEC": 2.5,
+    "HARD_SEEK_SEC": 5.0,
     "HOST_DRAG_SEEK_SEC": 2.0,
     "SOFT_SEC": 0.08,
     "SOFT_EXIT_SEC": 0.04,
@@ -243,28 +243,28 @@
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,
       "clockReady": true,
-      "currentTime": 49,
+      "currentTime": 46,
       "paused": false,
       "isHost": false,
       "mode": "hopping",
       "userSeeking": false,
       "suppressHardSeek": false,
       "correctionState": null,
-      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 3 }
+      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 6 }
     },
     {
       "name": "the hard-seek cooldown downgrades a gross correction to a clamped nudge",
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,
       "clockReady": true,
-      "currentTime": 49,
+      "currentTime": 46,
       "paused": false,
       "isHost": false,
       "mode": "hopping",
       "userSeeking": false,
       "suppressHardSeek": true,
       "correctionState": null,
-      "expect": { "seekTo": null, "rate": 1.1, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 3 }
+      "expect": { "seekTo": null, "rate": 1.1, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 6 }
     },
     {
       "name": "drift inside the soft band is closed with a bounded rate nudge",
@@ -386,28 +386,28 @@
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,
       "clockReady": true,
-      "currentTime": 49.6,
+      "currentTime": 47.1,
       "paused": false,
       "isHost": false,
       "mode": "hopping",
       "userSeeking": false,
       "suppressHardSeek": false,
       "correctionState": null,
-      "expect": { "seekTo": null, "rate": 1.1, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 2.4 }
+      "expect": { "seekTo": null, "rate": 1.1, "play": false, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 4.9 }
     },
     {
       "name": "a hard seek disarms the hysteresis latch",
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,
       "clockReady": true,
-      "currentTime": 49,
+      "currentTime": 46,
       "paused": false,
       "isHost": false,
       "mode": "hopping",
       "userSeeking": false,
       "suppressHardSeek": false,
       "correctionState": { "correcting": true },
-      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 3 },
+      "expect": { "seekTo": 52, "rate": 1, "play": false, "pause": false, "hardSeek": true, "pausedSeek": false, "drift": 6 },
       "expectCorrectionState": { "correcting": false }
     }
   ]

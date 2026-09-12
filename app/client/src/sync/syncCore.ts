@@ -72,12 +72,12 @@ export const CONTROL_MS = 200
 // audio clips, and you lose the second you were watching. Speeding up loses
 // nothing; it just borrows time back.
 //
-// At the 0.10 cap, closing D seconds of drift takes ~10*D seconds, so 2.5 is
-// about 25 seconds of catching up in the worst case. That is a long time to be
-// off-speed silently, and exactly why it is surfaced. Past 2.5s the wait stops
+// At the 0.10 cap, closing D seconds of drift takes ~10*D seconds, so 5 is
+// about 50 seconds of catching up in the worst case. That is a long time to be
+// off-speed silently, and exactly why it is surfaced. Past 5s the wait stops
 // being worth it and a snap is the kinder answer -- and drift that large
 // usually means something actually broke rather than merely lagged.
-export const HARD_SEEK_SEC = 2.5
+export const HARD_SEEK_SEC = 5
 export const HOST_DRAG_SEEK_SEC = 2.0    // dragging host only corrects gross drift
 export const SOFT_SEC = 0.08             // drift beyond this → speed nudge begins (enter threshold)
 // Exit threshold for the soft-correction nudge, deliberately lower than SOFT_SEC.

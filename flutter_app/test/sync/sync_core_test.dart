@@ -237,6 +237,22 @@ void main() {
     expect(intent.seekToSec, 11);
   });
 
+  test('drift at HARD_SEEK_SEC stays on bounded rate correction', () {
+    final intent = decideSyncAction(
+      schedule: playing,
+      serverNowMs: () => at(2000),
+      clockReady: () => true,
+      currentTime: 6, // expected 11, err exactly 5s
+      paused: false,
+      isHost: false,
+      mode: 'hopping',
+      userSeeking: false,
+    )!;
+    expect(intent.hardSeek, isFalse);
+    expect(intent.seekToSec, isNull);
+    expect(intent.rate, 1.1);
+  });
+
   test('dragging host corrects only gross drift, never nudges', () {
     final small = decideSyncAction(
       schedule: playing,

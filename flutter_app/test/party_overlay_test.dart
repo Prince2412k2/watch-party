@@ -239,6 +239,14 @@ void main() {
     );
 
     expect(editable().focusNode.hasFocus, isTrue);
+    editable().focusNode.unfocus();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      editable().focusNode.hasFocus,
+      isTrue,
+      reason: 'an open chat drawer must reclaim composer focus',
+    );
     await tester.enterText(input, 'Still typing');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();

@@ -230,7 +230,7 @@ export default function Player({
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </VideoSkin>
 
         {canControl && hostMuted && (
@@ -866,7 +866,8 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   useEffect(() => {
     if (!canControl) return
     const onPointerDown = (e: PointerEvent) => {
-      if (e.target instanceof Element && e.target.closest('.watch-skin')) transportIntent.current.arm('*')
+      if (!(e.target instanceof Element) || e.target.closest('[data-final-seek-timeline]')) return
+      if (e.target.closest('.watch-skin')) transportIntent.current.arm('*')
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
@@ -1475,11 +1476,9 @@ const fmtClock = formatClock
 // one had no hover state and no thumb at all).
 //
 // What lives here rather than in the kit is everything that needs a media
-// element or the network: the trickplay manifest, and the seek itself. Dragging
-// still mutates media.currentTime directly, exactly as before — the surrounding
-// row carries the `.watch-skin` class so SyncBridge's capture-phase
-// pointerdown-arm fires before the mutation, and the existing seeking/seeked →
-// requestSeek pipeline authors the room unchanged.
+// element or the network: the trickplay manifest and the final seek. Dragging
+// changes only AnalogTimeline's preview; pointer-up emits one deliberate local
+// transport command, which authors exactly one shared seek.
 //
 // `cached` is left unset: there is no on-disk cache in this client to read time
 // spans from, so the layer renders empty rather than being faked out of the
@@ -1559,7 +1558,11 @@ function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, labels, traili
       durationSec={dur}
       buffered={ranges}
       canControl={canControl}
-      onScrub={(seconds) => { if (media) media.currentTime = seconds }}
+      onScrubCommit={(seconds) => {
+        window.dispatchEvent(new CustomEvent('watch:transport', {
+          detail: { kind: 'seek', time: seconds },
+        }))
+      }}
       onScrubStart={() => onHoldChrome?.(CHROME_HOLD.scrubbing)}
       onScrubEnd={() => onReleaseChrome?.(CHROME_HOLD.scrubbing)}
       renderPreview={renderPreview}
