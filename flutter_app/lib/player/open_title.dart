@@ -11,6 +11,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
+import '../state/offline_provider.dart';
 import '../state/state.dart';
 import '../sync/sync_engine_impl.dart';
 import 'offline_playback.dart';
@@ -50,7 +51,10 @@ Future<OpenTitleResult> openTitleIntoPlayer(
 }) async {
   final engine = ref.read(syncEngineProvider);
   final nativeSync = engine is SyncEngineImpl ? engine : null;
-  final opening = nativeSync?.beginOpen();
+  final localPlayback = ref
+      .read(offlineProvider)
+      .any((record) => record.itemId == itemId);
+  final opening = nativeSync?.beginOpen(localPlayback: localPlayback);
   try {
     await opening;
     if (isStale()) return const OpenTitleResult.ready(usesCacheProxy: false);

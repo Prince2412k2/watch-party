@@ -84,11 +84,17 @@ class SyncEngineImpl implements SyncEngine {
   int _opening = 0;
   int _busy = 0;
   bool _hostGone = false;
+  bool _suppressLocalStartupStall = false;
 
   /// Suspend authoring and correction before touching the native open pipeline.
-  Future<void> beginOpen() {
+  Future<void> beginOpen({bool localPlayback = false}) {
     _opening++;
     _operationEpoch++;
+    _suppressLocalStartupStall = localPlayback;
+    if (localPlayback && _stalled) {
+      _stalled = false;
+      if (_reportedStalled == true) _reportStall();
+    }
     return Future.wait<void>([_lifecycle, _operations]).then((_) {});
   }
 
@@ -212,7 +218,7 @@ class SyncEngineImpl implements SyncEngine {
       // Author play/pause from the player's own transitions (the Dart analog of
       // the web media element's 'play'/'pause' events wired to request*).
       _playingSub = player.playing.listen(_onPlayingChanged);
-      _stalled = player.isBufferingNow;
+      _stalled = player.isBufferingNow && !_suppressLocalStartupStall;
       if (_stalled) {
         _logSync('attach_buffering', {
           'mediaGeneration': _schedule?.mediaGeneration,
@@ -264,6 +270,7 @@ class SyncEngineImpl implements SyncEngine {
     _loggedRecoverySuppression = false;
     _reportedStalled = null;
     _reportedStallGeneration = null;
+    if (_opening == 0) _suppressLocalStartupStall = false;
     _userSeekTimer?.cancel();
     _userSeekTimer = null;
     for (final t in _applyingTimers) {
@@ -370,6 +377,7 @@ class SyncEngineImpl implements SyncEngine {
 
   // ── Host authoring from the player's own play/pause transitions ──────────
   void _onPlayingChanged(bool playing) {
+    if (playing) _suppressLocalStartupStall = false;
     if (!_canControl) return;
     if (_opening > 0 || _busy > 0 || _hostGone) return;
     if (_applying > 0) return; // our own applied change — don't echo it back
@@ -383,6 +391,15 @@ class SyncEngineImpl implements SyncEngine {
   }
 
   void _onBufferingChanged(bool stalled) {
+    // media_kit on Windows can hold a local source in `buffering=true` until
+    // its first play. Reporting that startup state freezes Follow mode before
+    // the player gets the play it needs to clear it. Real stalls after playback
+    // begins still pass through normally.
+    if (stalled && _suppressLocalStartupStall) {
+      _stalled = false;
+      if (_reportedStalled == true) _reportStall();
+      return;
+    }
     _stalled = stalled;
     if (_opening > 0) {
       if (stalled) {
@@ -480,6 +497,10 @@ class SyncEngineImpl implements SyncEngine {
     final p = _player;
     final s = _schedule;
     if (p == null || s == null) return;
+    // Stream delivery can be coalesced while mpv rebuilds tracks. Never let a
+    // missed buffering=false event freeze Follow mode after the player itself
+    // already reports that it recovered.
+    if (_stalled && !p.isBufferingNow) _onBufferingChanged(false);
     _reportPlayback(p, _currentDrift().inMilliseconds / 1000);
     if (_stalled) {
       if (s.phase != 'playing' && p.isPlayingNow && _busy == 0) {

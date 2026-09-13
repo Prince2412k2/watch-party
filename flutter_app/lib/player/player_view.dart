@@ -50,6 +50,7 @@ class PlayerView extends StatelessWidget {
     this.onPushToTalkStop,
     this.chatOpen = false,
     this.chatToasts = const [],
+    this.keyboardEnabled = true,
   });
 
   /// Ready-made controller supplied by the app-wide player host.
@@ -111,6 +112,7 @@ class PlayerView extends StatelessWidget {
   /// to [PlayerChrome]. Empty in solo playback.
   final bool chatOpen;
   final List<ToastMessage> chatToasts;
+  final bool keyboardEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -151,6 +153,7 @@ class PlayerView extends StatelessWidget {
             onPushToTalkStop: onPushToTalkStop,
             chatOpen: chatOpen,
             chatToasts: chatToasts,
+            keyboardEnabled: keyboardEnabled,
           ),
           if (catchUp != null)
             Positioned(

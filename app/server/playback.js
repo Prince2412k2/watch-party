@@ -37,6 +37,7 @@ export async function refreshPlayback(session, {
   const subtitleStreams = (source?.MediaStreams ?? []).filter(stream => stream?.Type === 'Subtitle')
   const playback = normalizePlaybackInfo(response, {
     itemId,
+    mediaSourceId: source?.Id ?? mediaSourceId,
     selectedAudioIndex: Number.isInteger(audioStreamIndex)
       ? audioStreamIndex
       : defaultIndex(audioStreams),

@@ -418,6 +418,44 @@ void main() {
     });
   });
 
+  test('a missed buffering recovery event self-heals from player state', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000);
+      final player = FakePlayer()
+        ..playingNow = true
+        ..pos = const Duration(seconds: 11);
+      final socket = MockSocketClient();
+      final seen = <CatchUp>[];
+      engine.catchUp.listen(seen.add);
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, playingSchedule());
+      player.setBuffering(true);
+      fa.flushMicrotasks();
+      expect(seen.last.waiting, isTrue);
+
+      // Simulate mpv updating its synchronous state while the matching stream
+      // event is coalesced during a track rebuild.
+      player.bufferingNow = false;
+      fa.elapse(const Duration(milliseconds: 250));
+      fa.flushMicrotasks();
+
+      final stalls = socket.emitted
+          .where((event) => event.$1 == ClientEvent.syncStall)
+          .map((event) => event.$2 as Map)
+          .toList();
+      expect(stalls.last, {'stalled': false, 'mediaGeneration': 0});
+      expect(seen.last.waiting, isFalse);
+      engine.dispose();
+      fa.flushMicrotasks();
+    });
+  });
+
   test('authoritative pause applies while buffering without a seek', () {
     fakeAsync((fa) {
       final engine = engineWith(() => 2000);
@@ -719,6 +757,45 @@ void main() {
         ),
         isNotEmpty,
       );
+      engine.detach();
+    });
+  });
+
+  test('local playback startup cannot deadlock Follow mode', () {
+    fakeAsync((fa) {
+      final engine = engineWith(() => 2000.0);
+      final player = FakePlayer()..bufferingNow = true;
+      final socket = MockSocketClient();
+      engine.attach(
+        player: player,
+        socket: socket,
+        partyId: 'p',
+        canControl: false,
+      );
+      // Party attachment and title opening race in the real guest lifecycle.
+      // The attach cleanup must not erase the local-startup suppression.
+      engine.beginOpen(localPlayback: true);
+      fa.flushMicrotasks();
+      socket.inject(ServerEvent.syncSchedule, pausedSchedule(gen: 4));
+
+      player.setBuffering(true);
+      engine.endOpen();
+      fa.elapse(const Duration(seconds: 2));
+
+      var stalls = socket.emitted
+          .where((event) => event.$1 == ClientEvent.syncStall)
+          .map((event) => event.$2 as Map)
+          .toList();
+      expect(stalls.where((payload) => payload['stalled'] == true), isEmpty);
+
+      player.userSetPlaying(true);
+      player.setBuffering(true);
+      fa.flushMicrotasks();
+      stalls = socket.emitted
+          .where((event) => event.$1 == ClientEvent.syncStall)
+          .map((event) => event.$2 as Map)
+          .toList();
+      expect(stalls.last, {'stalled': true, 'mediaGeneration': 4});
       engine.detach();
     });
   });

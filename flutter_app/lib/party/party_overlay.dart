@@ -363,6 +363,7 @@ class ChatSlideOver extends StatefulWidget {
 class _ChatSlideOverState extends State<ChatSlideOver>
     with SingleTickerProviderStateMixin {
   final FocusNode _composer = FocusNode(debugLabel: 'chatComposer');
+  FocusNode? _returnFocus;
 
   static const double _collapsedWidth = 34;
 
@@ -391,6 +392,7 @@ class _ChatSlideOverState extends State<ChatSlideOver>
   void initState() {
     super.initState();
     _composer.addListener(_keepComposerFocused);
+    if (widget.open) _captureReturnFocus();
     // The composer is where the caret belongs for as long as the drawer is up:
     // a drawer you have to click into before typing costs two actions instead
     // of one. Re-asserted when the open animation settles, because focus can be
@@ -410,6 +412,7 @@ class _ChatSlideOverState extends State<ChatSlideOver>
     super.didUpdateWidget(old);
     if (widget.open == old.open) return;
     if (widget.open) {
+      _captureReturnFocus();
       _c.forward();
       _grabFocus();
     } else {
@@ -417,6 +420,12 @@ class _ChatSlideOverState extends State<ChatSlideOver>
       // Give focus back to whatever the player put it on. unfocus() alone
       // would leave the tree with no primary focus and swallow the next key.
       _composer.unfocus();
+      final target = _returnFocus;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && target?.context != null && target!.canRequestFocus) {
+          target.requestFocus();
+        }
+      });
     }
   }
 
@@ -427,6 +436,13 @@ class _ChatSlideOverState extends State<ChatSlideOver>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && widget.open) _composer.requestFocus();
     });
+  }
+
+  void _captureReturnFocus() {
+    final focused = FocusManager.instance.primaryFocus;
+    if (focused?.context != null && focused != _composer) {
+      _returnFocus = focused;
+    }
   }
 
   void _keepComposerFocused() {

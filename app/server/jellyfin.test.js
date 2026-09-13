@@ -72,6 +72,18 @@ test('normalizePlaybackInfo preserves Jellyfin stream indices instead of array p
   assert.equal(playback.selectedSubtitleIndex, 19)
 })
 
+test('normalizePlaybackInfo preserves an explicitly selected media source', () => {
+  const playback = normalizePlaybackInfo({
+    MediaSources: [
+      { Id: 'source-a', MediaStreams: [{ Type: 'Subtitle', Index: 1 }] },
+      { Id: 'source-b', MediaStreams: [{ Type: 'Subtitle', Index: 9 }] },
+    ],
+  }, { mediaSourceId: 'source-b', selectedSubtitleIndex: 9 })
+
+  assert.equal(playback.mediaSourceId, 'source-b')
+  assert.deepEqual(playback.subtitleStreams.map(stream => stream.index), [9])
+})
+
 const trickplayItem = {
   MediaSources: [{ Id: 'source-a' }, { Id: 'source-b' }],
   Trickplay: {

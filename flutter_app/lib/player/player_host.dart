@@ -55,6 +55,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   static const String _kFloatingHold = 'floating';
   bool _pttHolding = false;
   bool _disposed = false;
+  FocusNode? _returnFocus;
 
   /// OS-level window fullscreen for the film. Carried over from the deleted
   /// party route, which owned it — dropping it here is why the fullscreen
@@ -78,6 +79,16 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
     await _exitFullscreen();
     if (!mounted || _disposed) return;
     ref.read(nowPlayingProvider.notifier).minimise();
+    _restoreReturnFocus();
+  }
+
+  void _restoreReturnFocus() {
+    final target = _returnFocus;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && target?.context != null && target!.canRequestFocus) {
+        target.requestFocus();
+      }
+    });
   }
 
   void _holdChrome(String reason) {
@@ -357,7 +368,14 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
         _error == null && now.itemId != null && (intro == now.itemId || !_ready)
         ? (intro ?? now.itemId)
         : null;
-    ref.listen<NowPlaying>(nowPlayingProvider, (_, next) {
+    ref.listen<NowPlaying>(nowPlayingProvider, (previous, next) {
+      if (!(previous?.isOpen ?? false) && next.isOpen) {
+        final focused = FocusManager.instance.primaryFocus;
+        if (focused?.context != null) _returnFocus = focused;
+      }
+      if ((previous?.isOpen ?? false) && !next.isOpen) {
+        _restoreReturnFocus();
+      }
       _syncOpen(next);
       _syncChromeHold(next);
     });
@@ -500,6 +518,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                                       ),
                                   ]
                                 : const [],
+                            keyboardEnabled: now.isExpanded,
                             onToggleChat: party != null
                                 ? () =>
                                       ref

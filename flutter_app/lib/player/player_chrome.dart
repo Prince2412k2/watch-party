@@ -80,6 +80,7 @@ class PlayerChrome extends StatefulWidget {
     this.onPushToTalkStop,
     this.chatOpen = false,
     this.chatToasts = const [],
+    this.keyboardEnabled = true,
   });
 
   final PlayerController controller;
@@ -115,6 +116,10 @@ class PlayerChrome extends StatefulWidget {
   /// timestamp cannot expire a message the instant it arrives). Empty in solo
   /// playback — there is no chat to notify about.
   final List<ToastMessage> chatToasts;
+
+  /// The app-wide player stays mounted while floating, but its keymap must not
+  /// keep ownership after the library underneath becomes interactive again.
+  final bool keyboardEnabled;
 
   /// Cached ("downloaded") byte-range spans for [itemId], as 0..1 fractions
   /// of total length, painted behind the scrubber's play-progress as a
@@ -175,6 +180,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   final Map<String, PlaybackTrack> _externalSubtitleById = {};
   final Map<String, Future<String>> _externalSubtitleContent = {};
   final Map<String, String> _loadedExternalSubtitleTrackIds = {};
+  final Map<String, int> _appliedExternalSubtitleGeneration = {};
   int _subtitleSelectionVersion = 0;
   int _subtitleRequestGeneration = 0;
   int _canonicalTrackApplication = 0;
@@ -239,6 +245,9 @@ class _PlayerChromeState extends State<PlayerChrome>
     _loadExternalSubtitles();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _applyCanonicalTracks();
+      if (mounted && widget.keyboardEnabled && !widget.chatOpen) {
+        _focusNode.requestFocus();
+      }
     });
   }
 
@@ -361,6 +370,16 @@ class _PlayerChromeState extends State<PlayerChrome>
       // close; the drawer shows the messages in full.
       _toasts = setChatOpen(_toasts, widget.chatOpen);
       _armToastTimers();
+    }
+    if (oldWidget.keyboardEnabled != widget.keyboardEnabled) {
+      if (widget.keyboardEnabled) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !widget.chatOpen) _focusNode.requestFocus();
+        });
+      } else {
+        _stopPushToTalk();
+        if (_focusNode.hasFocus) _focusNode.unfocus();
+      }
     }
     if (!identical(oldWidget.chatToasts, widget.chatToasts)) _syncToasts();
   }
@@ -574,6 +593,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     _externalSubtitleById.clear();
     _externalSubtitleContent.clear();
     _loadedExternalSubtitleTrackIds.clear();
+    _appliedExternalSubtitleGeneration.clear();
     _playbackInfo = null;
     if (mounted) {
       setState(() {
@@ -676,7 +696,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     _stopPushToTalk();
     final pf = FocusManager.instance.primaryFocus;
     final stranded = pf == null || pf.context == null || pf is FocusScopeNode;
-    if (stranded) _reclaimKeyboard();
+    if (widget.keyboardEnabled && stranded) _reclaimKeyboard();
   }
 
   void _onAutoHide() {
@@ -942,15 +962,27 @@ class _PlayerChromeState extends State<PlayerChrome>
   }
 
   Future<void> _setSubtitle(String? id) async {
+    final external = id == null ? null : _externalSubtitleById[id];
+    final externalGeneration = _subtitleRequestGeneration;
+    if (external != null &&
+        _appliedExternalSubtitleGeneration[id] == externalGeneration) {
+      if (mounted && _selectedSubtitle != id) {
+        setState(() => _selectedSubtitle = id);
+      }
+      return;
+    }
     final previous = _selectedSubtitle;
     final version = ++_subtitleSelectionVersion;
-    final external = id == null ? null : _externalSubtitleById[id];
     final c = widget.controller;
     if (external != null) {
       final itemId = widget.itemId;
       final mediaSourceId = widget.mediaSourceId;
       final api = widget.apiClient;
       if (itemId == null || api == null) return;
+      if (previous != null && previous != id) {
+        _appliedExternalSubtitleGeneration.remove(previous);
+      }
+      _appliedExternalSubtitleGeneration[id!] = externalGeneration;
       if (mounted) setState(() => _selectedSubtitle = id);
       try {
         final content = await _contentForExternal(external);
@@ -985,7 +1017,7 @@ class _PlayerChromeState extends State<PlayerChrome>
               );
               final nativeId = c.currentSubtitleTrackId;
               if (nativeId != null) {
-                _loadedExternalSubtitleTrackIds[id!] = nativeId;
+                _loadedExternalSubtitleTrackIds[id] = nativeId;
               }
             }
             nativeRendered = true;
@@ -1005,6 +1037,9 @@ class _PlayerChromeState extends State<PlayerChrome>
           setState(() => _subtitleCues = cues);
         }
       } catch (e) {
+        if (_appliedExternalSubtitleGeneration[id] == externalGeneration) {
+          _appliedExternalSubtitleGeneration.remove(id);
+        }
         if (mounted && version == _subtitleSelectionVersion) {
           setState(() {
             _selectedSubtitle = previous;
@@ -1015,6 +1050,9 @@ class _PlayerChromeState extends State<PlayerChrome>
         return;
       }
     } else {
+      if (previous != null) {
+        _appliedExternalSubtitleGeneration.remove(previous);
+      }
       if (mounted) setState(() => _subtitleCues = const []);
       await widget.controller.setSubtitle(id);
     }
@@ -1079,7 +1117,10 @@ class _PlayerChromeState extends State<PlayerChrome>
   /// Take keyboard focus back unless the user is typing (party chat lives
   /// outside this subtree and must keep its keystrokes).
   void _reclaimKeyboard() {
-    if (!mounted || !_focusNode.canRequestFocus || _focusNode.hasPrimaryFocus) {
+    if (!mounted ||
+        !widget.keyboardEnabled ||
+        !_focusNode.canRequestFocus ||
+        _focusNode.hasPrimaryFocus) {
       return;
     }
     final focused = FocusManager.instance.primaryFocus?.context;
@@ -1104,6 +1145,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (!widget.keyboardEnabled) return KeyEventResult.ignored;
     // Push-to-talk releases on key up — independent of playback-control rights.
     if (event is KeyUpEvent) {
       if (event.logicalKey == LogicalKeyboardKey.keyT &&
@@ -1113,7 +1155,8 @@ class _PlayerChromeState extends State<PlayerChrome>
       }
       return KeyEventResult.ignored;
     }
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final repeat = event is KeyRepeatEvent;
+    if (event is! KeyDownEvent && !repeat) return KeyEventResult.ignored;
     if (_editableFocus.$1 && event.logicalKey == LogicalKeyboardKey.keyT) {
       return KeyEventResult.ignored;
     }
@@ -1140,6 +1183,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         ),
       );
       if (accelerator || (!ctrlOrMeta && !editable)) {
+        if (repeat) return KeyEventResult.handled;
         _wake(PlayerInputKind.key);
         widget.onToggleChat!();
         return KeyEventResult.handled;
@@ -1150,7 +1194,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     }
 
     if (ctrlOrMeta && event.logicalKey == LogicalKeyboardKey.keyF) {
-      widget.onToggleFullscreen?.call();
+      if (!repeat) widget.onToggleFullscreen?.call();
       return KeyEventResult.handled;
     }
 
@@ -1182,18 +1226,28 @@ class _PlayerChromeState extends State<PlayerChrome>
         _setVolume(math.max(0, _volume - kAnalogVolumeKeyStep));
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyF:
-        widget.onToggleFullscreen?.call();
+        if (!repeat) widget.onToggleFullscreen?.call();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyM:
-        _toggleMute();
+        if (!repeat) _toggleMute();
         return KeyEventResult.handled;
     }
 
-    if (!widget.canControl) return KeyEventResult.ignored;
+    if (!widget.canControl) {
+      return switch (event.logicalKey) {
+        LogicalKeyboardKey.space ||
+        LogicalKeyboardKey.keyK ||
+        LogicalKeyboardKey.arrowRight ||
+        LogicalKeyboardKey.arrowLeft ||
+        LogicalKeyboardKey.keyL ||
+        LogicalKeyboardKey.keyJ => KeyEventResult.handled,
+        _ => KeyEventResult.ignored,
+      };
+    }
     switch (event.logicalKey) {
       case LogicalKeyboardKey.space:
       case LogicalKeyboardKey.keyK:
-        _togglePlay();
+        if (!repeat) _togglePlay();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowRight:
         _seekBy(const Duration(seconds: 5));
@@ -1345,7 +1399,8 @@ class _PlayerChromeState extends State<PlayerChrome>
     final visible = widget.visible ?? _autoHide.visible;
     return Focus(
       focusNode: _focusNode,
-      autofocus: true,
+      autofocus: widget.keyboardEnabled,
+      canRequestFocus: widget.keyboardEnabled,
       onKeyEvent: _onKey,
       child: MouseRegion(
         cursor: visible ? MouseCursor.defer : SystemMouseCursors.none,

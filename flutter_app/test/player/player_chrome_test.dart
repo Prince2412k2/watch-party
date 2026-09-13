@@ -105,6 +105,7 @@ class _NativeSubtitleController extends _SpyController
   String? selectedNativeTrack;
   List<PlayerTrack> nativeTracks = const [];
   bool ignoreNativeSelection = false;
+  bool emitNativeTracksOnLoad = false;
 
   @override
   Future<void> addExternalSubtitle(
@@ -116,6 +117,9 @@ class _NativeSubtitleController extends _SpyController
     await loadGate?.future;
     if (failSubtitle) throw StateError('Native subtitle load failed');
     selectedNativeTrack = nativeTrackId;
+    if (emitNativeTracksOnLoad) {
+      emitTracks(PlayerTracks(subtitle: nativeTracks));
+    }
   }
 
   @override
@@ -268,6 +272,23 @@ void main() {
     expect(VideoView(controller: _SpyController()).fit, BoxFit.cover);
   });
 
+  testWidgets('directional key repeats remain handled by the player', (
+    tester,
+  ) async {
+    final c = _SpyController()..positionNow = const Duration(seconds: 30);
+    await tester.pumpWidget(MaterialApp(home: PlayerChrome(controller: c)));
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+
+    expect(c.seeks, [const Duration(seconds: 35), const Duration(seconds: 35)]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await c.dispose();
+  });
+
   for (final release in ['focus', 'lifecycle', 'dispose', 'key up']) {
     testWidgets('PTT releases once on $release', (tester) async {
       final c = _SpyController();
@@ -416,6 +437,35 @@ void main() {
       },
     );
   }
+
+  testWidgets('native track events do not side-load a party subtitle twice', (
+    tester,
+  ) async {
+    final c = _NativeSubtitleController()
+      ..positionNow = const Duration(seconds: 2)
+      ..nativeTracks = const [
+        PlayerTrack(id: '7', type: 'subtitle', title: 'Uploaded'),
+      ]
+      ..emitNativeTracksOnLoad = true;
+    final api = _MutableSubtitleApi();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: api,
+          preferredSubtitleStreamIndex: 4,
+          onSubtitleStreamSelected: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(c.loads, 1);
+    expect(c.selectedNativeTrack, c.nativeTrackId);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await c.dispose();
+  });
 
   for (final scenario in [
     'data ID',

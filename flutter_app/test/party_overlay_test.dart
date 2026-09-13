@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
@@ -70,7 +71,10 @@ void main() {
     }
   }
 
-  Future<void> pumpOverlay(WidgetTester tester) async {
+  Future<void> pumpOverlay(
+    WidgetTester tester, {
+    Widget underlay = const Center(child: Text('library')),
+  }) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -81,12 +85,12 @@ void main() {
           // Mirrors app.dart: the overlay renders under a transparent
           // Material, which is what supplies the ink/text plumbing its chat
           // composer needs without painting a background.
-          home: const Material(
+          home: Material(
             type: MaterialType.transparency,
             child: Stack(
               children: [
-                Positioned.fill(child: Center(child: Text('library'))),
-                Positioned.fill(child: PartyOverlay()),
+                Positioned.fill(child: underlay),
+                const Positioned.fill(child: PartyOverlay()),
               ],
             ),
           ),
@@ -253,6 +257,34 @@ void main() {
     await tester.pump();
 
     expect(editable().focusNode.hasFocus, isTrue);
+  });
+
+  testWidgets('closing chat restores the keyboard owner that opened it', (
+    tester,
+  ) async {
+    final appFocus = FocusNode(debugLabel: 'testAppFocus');
+    addTearDown(appFocus.dispose);
+    await pumpOverlay(
+      tester,
+      underlay: Focus(
+        focusNode: appFocus,
+        autofocus: true,
+        child: const Center(child: Text('library')),
+      ),
+    );
+    joinRoom();
+    await tester.pump();
+    expect(appFocus.hasFocus, isTrue);
+
+    container.read(chatDrawerOpenProvider.notifier).state = true;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(appFocus.hasFocus, isFalse);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+
+    expect(appFocus.hasFocus, isTrue);
   });
 
   testWidgets('join requests reach the host wherever they are standing', (

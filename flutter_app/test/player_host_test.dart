@@ -65,7 +65,10 @@ void main() {
     container.dispose();
   });
 
-  Future<void> pumpHost(WidgetTester tester) async {
+  Future<void> pumpHost(
+    WidgetTester tester, {
+    Widget underlay = const Center(child: Text('library')),
+  }) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -73,12 +76,12 @@ void main() {
         container: container,
         child: MaterialApp(
           theme: AppTheme.dark,
-          home: const Material(
+          home: Material(
             type: MaterialType.transparency,
             child: Stack(
               children: [
-                Positioned.fill(child: Center(child: Text('library'))),
-                Positioned.fill(child: PlayerHost()),
+                Positioned.fill(child: underlay),
+                const Positioned.fill(child: PlayerHost()),
               ],
             ),
           ),
@@ -205,6 +208,49 @@ void main() {
     await tester.pump();
 
     expect(container.read(nowPlayingProvider).isFloating, isTrue);
+  });
+
+  testWidgets('minimising returns keyboard navigation to the app', (
+    tester,
+  ) async {
+    final appFocus = FocusNode(debugLabel: 'testAppFocus');
+    addTearDown(appFocus.dispose);
+    var arrows = 0;
+    await pumpHost(
+      tester,
+      underlay: Focus(
+        focusNode: appFocus,
+        autofocus: true,
+        onKeyEvent: (_, event) {
+          if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+              event.logicalKey == LogicalKeyboardKey.arrowRight) {
+            arrows++;
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: const Center(child: Text('library')),
+      ),
+    );
+    expect(appFocus.hasFocus, isTrue);
+
+    container.read(nowPlayingProvider.notifier).open(itemId: 'movie-1');
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    expect(container.read(nowPlayingProvider).isFloating, isTrue);
+    expect(appFocus.hasFocus, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    expect(arrows, 1);
+
+    final notifier = container.read(nowPlayingProvider.notifier);
+    notifier.expand();
+    await tester.pumpAndSettle();
+    expect(appFocus.hasFocus, isFalse);
+    await notifier.close();
+    await tester.pumpAndSettle();
+    expect(appFocus.hasFocus, isTrue);
   });
 
   for (final path in ['back', 'escape', 'platform']) {

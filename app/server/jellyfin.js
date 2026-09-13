@@ -298,10 +298,14 @@ export function getPlaybackInfo(token, userId, itemId, {
 
 export function normalizePlaybackInfo(response, {
   itemId = null,
+  mediaSourceId = null,
   selectedAudioIndex = null,
   selectedSubtitleIndex = null,
 } = {}) {
-  const source = response?.MediaSources?.[0] ?? null
+  const sources = Array.isArray(response?.MediaSources) ? response.MediaSources : []
+  const source = mediaSourceId
+    ? sources.find(candidate => candidate?.Id === mediaSourceId) ?? sources[0] ?? null
+    : sources[0] ?? null
   const mediaStreams = Array.isArray(source?.MediaStreams) ? source.MediaStreams : []
   const audioStreams = mediaStreams
     .filter(stream => stream?.Type === 'Audio')
