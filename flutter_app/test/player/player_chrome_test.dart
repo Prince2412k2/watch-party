@@ -467,6 +467,41 @@ void main() {
     await c.dispose();
   });
 
+  testWidgets('party subtitles wait for native open and reload after retry', (
+    tester,
+  ) async {
+    final c = _NativeSubtitleController();
+    final api = _MutableSubtitleApi();
+    Future<void> pump({required bool ready, int attempt = 0}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlayerChrome(
+            controller: c,
+            itemId: 'movie',
+            apiClient: api,
+            mediaReady: ready,
+            playbackAttempt: attempt,
+            preferredSubtitleStreamIndex: 4,
+            onSubtitleStreamSelected: (_) async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pump(ready: false);
+    expect(c.loads, 0);
+    await pump(ready: true);
+    expect(c.loads, 1);
+    await pump(ready: false, attempt: 1);
+    c.selectedNativeTrack = null; // Native open discards the side-loaded track.
+    await pump(ready: true, attempt: 1);
+    expect(c.loads, 2);
+    expect(c.selectedNativeTrack, c.nativeTrackId);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await c.dispose();
+  });
+
   for (final scenario in [
     'data ID',
     'native ID',

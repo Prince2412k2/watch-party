@@ -51,6 +51,7 @@ class PlayerView extends StatelessWidget {
     this.chatOpen = false,
     this.chatToasts = const [],
     this.keyboardEnabled = true,
+    this.mediaReady = true,
   });
 
   /// Ready-made controller supplied by the app-wide player host.
@@ -113,6 +114,7 @@ class PlayerView extends StatelessWidget {
   final bool chatOpen;
   final List<ToastMessage> chatToasts;
   final bool keyboardEnabled;
+  final bool mediaReady;
 
   @override
   Widget build(BuildContext context) {
@@ -154,6 +156,7 @@ class PlayerView extends StatelessWidget {
             chatOpen: chatOpen,
             chatToasts: chatToasts,
             keyboardEnabled: keyboardEnabled,
+            mediaReady: mediaReady,
           ),
           if (catchUp != null)
             Positioned(

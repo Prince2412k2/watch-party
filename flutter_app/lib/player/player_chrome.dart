@@ -81,6 +81,7 @@ class PlayerChrome extends StatefulWidget {
     this.chatOpen = false,
     this.chatToasts = const [],
     this.keyboardEnabled = true,
+    this.mediaReady = true,
   });
 
   final PlayerController controller;
@@ -120,6 +121,9 @@ class PlayerChrome extends StatefulWidget {
   /// The app-wide player stays mounted while floating, but its keymap must not
   /// keep ownership after the library underneath becomes interactive again.
   final bool keyboardEnabled;
+
+  /// Native open resets side-loaded tracks. Apply selections only afterwards.
+  final bool mediaReady;
 
   /// Cached ("downloaded") byte-range spans for [itemId], as 0..1 fractions
   /// of total length, painted behind the scrubber's play-progress as a
@@ -344,6 +348,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         // These native track ids were injected into the OLD player; the new one
         // has no such tracks, so keeping them would hide real subtitle entries.
         _loadedExternalSubtitleTrackIds.clear();
+        _appliedExternalSubtitleGeneration.clear();
         _bindController(widget.controller);
       });
       _autoHide.setPlaying(widget.controller.isPlayingNow);
@@ -361,9 +366,16 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (oldWidget.itemId != widget.itemId ||
         oldWidget.mediaSourceId != widget.mediaSourceId ||
         oldWidget.apiClient != widget.apiClient ||
-        oldWidget.subtitleRevision != widget.subtitleRevision) {
+        oldWidget.subtitleRevision != widget.subtitleRevision ||
+        oldWidget.controller != widget.controller ||
+        oldWidget.playbackAttempt != widget.playbackAttempt ||
+        oldWidget.mediaReady != widget.mediaReady) {
       _loadExternalSubtitles();
       _runtimeRetryUsed = false;
+    }
+    if (oldWidget.preferredSubtitleStreamIndex !=
+        widget.preferredSubtitleStreamIndex) {
+      unawaited(_applyCanonicalTracks());
     }
     if (oldWidget.chatOpen != widget.chatOpen) {
       // Opening chat dismisses what is on screen and does not resurrect it on
@@ -604,7 +616,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         }
       });
     }
-    if (itemId == null || api == null) {
+    if (itemId == null || api == null || !widget.mediaReady) {
       return;
     }
     try {
@@ -874,6 +886,7 @@ class _PlayerChromeState extends State<PlayerChrome>
     final application = ++_canonicalTrackApplication;
     bool isCurrent() =>
         mounted &&
+        widget.mediaReady &&
         generation == _subtitleRequestGeneration &&
         application == _canonicalTrackApplication;
     if (!isCurrent()) return;
@@ -962,6 +975,7 @@ class _PlayerChromeState extends State<PlayerChrome>
   }
 
   Future<void> _setSubtitle(String? id) async {
+    if (!widget.mediaReady) return;
     final external = id == null ? null : _externalSubtitleById[id];
     final externalGeneration = _subtitleRequestGeneration;
     if (external != null &&

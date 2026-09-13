@@ -449,6 +449,7 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                           loading: !_ready && _error == null,
                           onRetry: () => _retry(),
                           child: PlayerView(
+                            mediaReady: _ready,
                             controller: ref.watch(playerControllerProvider),
                             itemId: now.itemId,
                             mediaSourceId: now.mediaSourceId,
