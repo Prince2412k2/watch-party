@@ -29,15 +29,17 @@ void main() {
       apiClient: MockApiClient(),
       store: RangeCacheStore(overrideDir: cacheDir),
     );
-    container = ProviderContainer(overrides: [
-      mediaCacheProxyProvider.overrideWithValue(proxy),
-      offlineProvider.overrideWith(
-        (ref) => OfflineNotifier(
-          ref.watch(mediaCacheProxyProvider),
-          manifestStore: OfflineManifestStore(overrideDir: manifestDir),
+    container = ProviderContainer(
+      overrides: [
+        mediaCacheProxyProvider.overrideWithValue(proxy),
+        offlineProvider.overrideWith(
+          (ref) => OfflineNotifier(
+            ref.watch(mediaCacheProxyProvider),
+            manifestStore: OfflineManifestStore(overrideDir: manifestDir),
+          ),
         ),
-      ),
-    ]);
+      ],
+    );
     addTearDown(container.dispose);
   });
 
@@ -53,21 +55,48 @@ void main() {
     } catch (_) {}
   });
 
-  test('a fully-cached title surfaces in offlineProvider on rehydrate', () async {
-    const itemId = 'title-42';
+  test(
+    'a fully-cached title surfaces in offlineProvider on rehydrate',
+    () async {
+      const itemId = 'title-42';
+      final entry = await proxy.openEntry(itemId);
+      entry.setTotalLength(1024);
+      await entry.write(0, List<int>.filled(1024, 1));
+      await entry.flushMetadata();
+      await proxy.touch(
+        itemId,
+      ); // OfflineNotifier itself never opens the entry.
+
+      final state = await _waitFor(
+        () => container.read(offlineProvider),
+        (records) => records.any((r) => r.itemId == itemId),
+      );
+
+      final record = state.firstWhere((r) => r.itemId == itemId);
+      expect(record.itemId, itemId);
+    },
+  );
+
+  test('party URL uses downloaded bytes before library rehydration', () async {
+    const itemId = 'party-download';
     final entry = await proxy.openEntry(itemId);
-    entry.setTotalLength(1024);
-    await entry.write(0, List<int>.filled(1024, 1));
+    entry.setTotalLength(10);
+    await entry.write(0, List<int>.filled(10, 7));
     await entry.flushMetadata();
-    await proxy.touch(itemId); // OfflineNotifier itself never opens the entry.
-
-    final state = await _waitFor(
-      () => container.read(offlineProvider),
-      (records) => records.any((r) => r.itemId == itemId),
+    await proxy.start();
+    addTearDown(proxy.dispose);
+    // Reading the notifier starts its disk scan but returns an empty list.
+    expect(container.read(offlineProvider), isEmpty);
+    final client = HttpClient();
+    addTearDown(() => client.close(force: true));
+    final response = await (await client.getUrl(
+      Uri.parse(proxy.urlFor(itemId, mediaSourceId: 'party-source')),
+    )).close();
+    expect(response.statusCode, 200);
+    expect(
+      await response.expand((chunk) => chunk).toList(),
+      List<int>.filled(10, 7),
     );
-
-    final record = state.firstWhere((r) => r.itemId == itemId);
-    expect(record.itemId, itemId);
   });
 
   test('markComplete flips offlineProvider live, with the metadata the guest '
@@ -84,7 +113,9 @@ void main() {
     // attaches the guest-detail metadata regardless.
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    await container.read(offlineProvider.notifier).markComplete(
+    await container
+        .read(offlineProvider.notifier)
+        .markComplete(
           itemId: itemId,
           title: 'Klute',
           posterTag: 'poster-99',
@@ -98,8 +129,7 @@ void main() {
     expect(record.runTimeTicks, 90 * 60 * 10000000);
   });
 
-  test(
-      'resolveOfflinePlayback resolves the cache-proxy URL once offline, '
+  test('resolveOfflinePlayback resolves the cache-proxy URL once offline, '
       'falls back to the network URL otherwise', () async {
     const itemId = 'title-7';
     final entry = await proxy.openEntry(itemId);
@@ -121,37 +151,43 @@ void main() {
     expect(resolved.offline, isTrue);
     expect(resolved.url, proxy.urlFor(itemId));
 
-    final untouched = resolveOfflinePlayback(ref, 'never-downloaded', streamUrl);
+    final untouched = resolveOfflinePlayback(
+      ref,
+      'never-downloaded',
+      streamUrl,
+    );
     expect(untouched.offline, isFalse);
     expect(untouched.url, streamUrl);
   });
 
-  test('completed media is served by the proxy without an upstream request',
-      () async {
-    const itemId = 'complete-title';
-    final bytes = List<int>.generate(
-      MediaCacheProxy.fetchChunkSize * 2 + 17,
-      (i) => i % 251,
-    );
-    final entry = await proxy.openEntry(itemId);
-    entry.setTotalLength(bytes.length);
-    await entry.write(0, bytes);
-    await entry.flushMetadata();
-    await proxy.start();
-    addTearDown(proxy.dispose);
+  test(
+    'completed media is served by the proxy without an upstream request',
+    () async {
+      const itemId = 'complete-title';
+      final bytes = List<int>.generate(
+        MediaCacheProxy.fetchChunkSize * 2 + 17,
+        (i) => i % 251,
+      );
+      final entry = await proxy.openEntry(itemId);
+      entry.setTotalLength(bytes.length);
+      await entry.write(0, bytes);
+      await entry.flushMetadata();
+      await proxy.start();
+      addTearDown(proxy.dispose);
 
-    final client = HttpClient();
-    addTearDown(() => client.close(force: true));
-    final request = await client.getUrl(Uri.parse(proxy.urlFor(itemId)));
-    final response = await request.close();
-    final received = await response.fold<List<int>>(
-      <int>[],
-      (all, chunk) => all..addAll(chunk),
-    );
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+      final request = await client.getUrl(Uri.parse(proxy.urlFor(itemId)));
+      final response = await request.close();
+      final received = await response.fold<List<int>>(
+        <int>[],
+        (all, chunk) => all..addAll(chunk),
+      );
 
-    expect(response.statusCode, HttpStatus.ok);
-    expect(received, bytes);
-  });
+      expect(response.statusCode, HttpStatus.ok);
+      expect(received, bytes);
+    },
+  );
 
   test('remove() deletes the cache entry and drops the record', () async {
     const itemId = 'title-remove';
@@ -166,7 +202,10 @@ void main() {
 
     await container.read(offlineProvider.notifier).remove(itemId);
 
-    expect(container.read(offlineProvider).any((r) => r.itemId == itemId), isFalse);
+    expect(
+      container.read(offlineProvider).any((r) => r.itemId == itemId),
+      isFalse,
+    );
     expect(await proxy.isComplete(itemId), isFalse);
   });
 }

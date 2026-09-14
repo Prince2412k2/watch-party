@@ -95,7 +95,12 @@ test('media selection commits only the latest still-authorized request', { timeo
       PlaySessionId: `play-${itemId}`,
       MediaSources: [{
         Id: `source-${itemId}`,
-        MediaStreams: [],
+        MediaStreams: [
+          { Type: 'Audio', Index: 2 },
+          { Type: 'Audio', Index: 5, IsDefault: true },
+          { Type: 'Subtitle', Index: 8 },
+          { Type: 'Subtitle', Index: 11, IsDefault: true, IsExternal: true },
+        ],
         DirectStreamUrl: `/Videos/${itemId}/stream`,
       }],
     }))
@@ -157,6 +162,8 @@ test('media selection commits only the latest still-authorized request', { timeo
     let session = (await emitAck(host, 'party:resume')).session
     assert.equal(session.mediaItemId, 'latest')
     assert.equal(session.playback.playSessionId, 'play-latest')
+    assert.equal(session.playback.selectedAudioIndex, 5)
+    assert.equal(session.playback.selectedSubtitleIndex, 11)
 
     assert.deepEqual(await emitAck(host, 'party:backToLobby'), { ok: true })
     const lobbyGate = holdPlayback('after-lobby')

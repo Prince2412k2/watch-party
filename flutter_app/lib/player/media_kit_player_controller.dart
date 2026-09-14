@@ -268,6 +268,19 @@ class MediaKitPlayerController implements PlayerController {
   }
 
   void _wire() {
+    final platform = _player.platform;
+    if (platform is mk.NativePlayer) {
+      _bufferingReady = platform.observeProperty('paused-for-cache', (
+        value,
+      ) async {
+        if (_disposed) return;
+        final buffering = value == 'yes' || value == 'true';
+        if (_cacheBuffering != buffering) {
+          _cacheBuffering = buffering;
+          _bufferingCtrl.add(buffering);
+        }
+      });
+    }
     _subs.add(_player.stream.tracks.listen(_onTracks));
     _subs.add(
       _player.stream.error.listen((e) {
@@ -276,6 +289,12 @@ class MediaKitPlayerController implements PlayerController {
       }),
     );
   }
+
+  // media_kit's generic buffering flag also includes core-idle (pause/seek).
+  // Only mpv's cache-pause signal should freeze the party's shared timeline.
+  final _bufferingCtrl = StreamController<bool>.broadcast();
+  bool _cacheBuffering = false;
+  Future<void> _bufferingReady = Future.value();
 
   void _onTracks(mk.Tracks t) {
     _audioById.clear();
@@ -334,6 +353,7 @@ class MediaKitPlayerController implements PlayerController {
   }) async {
     if (_disposed) return;
     _lastError = null;
+    await _bufferingReady;
     // Open paused so a non-zero startAt lands before the first frame is shown;
     // libmpv queues the seek against the freshly-loaded file.
     await _player.open(mk.Media(url), play: false);
@@ -390,6 +410,8 @@ class MediaKitPlayerController implements PlayerController {
       await s.cancel();
     }
     _subs.clear();
+    await _bufferingReady;
+    await _bufferingCtrl.close();
     await _tracksCtrl.close();
     await _errorCtrl.close();
     await _player.dispose();
@@ -401,7 +423,7 @@ class MediaKitPlayerController implements PlayerController {
   @override
   Stream<Duration> get duration => _player.stream.duration;
   @override
-  Stream<bool> get buffering => _player.stream.buffering;
+  Stream<bool> get buffering => _bufferingCtrl.stream;
   @override
   Stream<bool> get playing => _player.stream.playing;
   @override
@@ -417,5 +439,5 @@ class MediaKitPlayerController implements PlayerController {
   @override
   bool get isPlayingNow => _player.state.playing;
   @override
-  bool get isBufferingNow => _player.state.buffering;
+  bool get isBufferingNow => _cacheBuffering;
 }

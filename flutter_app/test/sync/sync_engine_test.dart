@@ -761,7 +761,7 @@ void main() {
     });
   });
 
-  test('local playback startup cannot deadlock Follow mode', () {
+  test('cache recovery while paused releases Follow mode', () {
     fakeAsync((fa) {
       final engine = engineWith(() => 2000.0);
       final player = FakePlayer()..bufferingNow = true;
@@ -772,21 +772,18 @@ void main() {
         partyId: 'p',
         canControl: false,
       );
-      // Party attachment and title opening race in the real guest lifecycle.
-      // The attach cleanup must not erase the local-startup suppression.
-      engine.beginOpen(localPlayback: true);
       fa.flushMicrotasks();
       socket.inject(ServerEvent.syncSchedule, pausedSchedule(gen: 4));
 
-      player.setBuffering(true);
-      engine.endOpen();
+      player.setBuffering(false);
       fa.elapse(const Duration(seconds: 2));
 
       var stalls = socket.emitted
           .where((event) => event.$1 == ClientEvent.syncStall)
           .map((event) => event.$2 as Map)
           .toList();
-      expect(stalls.where((payload) => payload['stalled'] == true), isEmpty);
+      expect(player.playingNow, isFalse);
+      expect(stalls.last, {'stalled': false, 'mediaGeneration': 4});
 
       player.userSetPlaying(true);
       player.setBuffering(true);

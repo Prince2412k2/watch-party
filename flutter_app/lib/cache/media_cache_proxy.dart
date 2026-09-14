@@ -291,6 +291,13 @@ class MediaCacheProxy {
     String? mediaSourceId,
   }) async {
     final generation = _generation;
+    // Party auto-open can beat the async offline-library scan and arrive with
+    // a source-qualified URL. Honor the same completed-download preference as
+    // openPreferringOffline using disk state, not the UI's rehydration timing.
+    if (mediaSourceId != null && await isComplete(itemId)) {
+      mediaSourceId = null;
+    }
+    if (generation != _generation) throw StateError('Cache session changed');
     final entry = await openEntry(itemId, mediaSourceId: mediaSourceId);
     await entry.touch();
     if (generation != _generation) throw StateError('Cache session changed');

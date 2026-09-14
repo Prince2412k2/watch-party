@@ -13,7 +13,7 @@ function pickSource(response, mediaSourceId) {
 }
 
 function defaultIndex(streams) {
-  return streams.find(stream => stream?.isDefault)?.index ?? streams[0]?.index ?? null
+  return streams.find(stream => stream?.IsDefault)?.Index ?? streams[0]?.Index ?? null
 }
 
 export async function refreshPlayback(session, {
