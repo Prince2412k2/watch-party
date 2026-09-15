@@ -5,6 +5,7 @@ import '../analog/player_core.dart' show ToastMessage;
 import '../analog/player/analog_timeline.dart' show TimelinePeerPosition;
 import '../cache/range_cache_store.dart' show CachedSpan;
 import '../data/api_client.dart';
+import '../models/playback_info.dart';
 import '../ui/tokens.dart';
 import '../sync/sync_engine.dart';
 import 'player_chrome.dart';
@@ -21,12 +22,12 @@ class PlayerView extends StatelessWidget {
     super.key,
     required this.controller,
     this.canControl = true,
-    this.canManageTracks = true,
+    this.canManageAudio = true,
     this.onSeek,
     this.onSeekAuthored,
     this.onTogglePlay,
     this.onAudioStreamSelected,
-    this.onSubtitleStreamSelected,
+    this.onLocalSubtitleStreamSelected,
     this.onRetryPlayback,
     this.playbackAttempt = 0,
     this.title,
@@ -36,6 +37,8 @@ class PlayerView extends StatelessWidget {
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
+    this.initialPlaybackInfo,
+    this.preferredAudioStreamIndex,
     this.preferredSubtitleStreamIndex,
     this.subtitleRevision = 0,
     this.cachedSpans,
@@ -57,13 +60,14 @@ class PlayerView extends StatelessWidget {
   /// Ready-made controller supplied by the app-wide player host.
   final PlayerController controller;
 
+  final int? preferredAudioStreamIndex;
   final int? preferredSubtitleStreamIndex;
   final int subtitleRevision;
 
   /// Read-only transport bar when false — E5 passes this for a guest without
   /// playback-control rights (PLAN §4 E5.2 `canControl` gating).
   final bool canControl;
-  final bool canManageTracks;
+  final bool canManageAudio;
 
   /// Owns seeking and publication for party playback; null uses the controller.
   final Future<void> Function(Duration)? onSeek;
@@ -72,7 +76,7 @@ class PlayerView extends StatelessWidget {
   final ValueChanged<Duration>? onSeekAuthored;
   final Future<void> Function()? onTogglePlay;
   final Future<void> Function(int? index)? onAudioStreamSelected;
-  final Future<void> Function(int? index)? onSubtitleStreamSelected;
+  final ValueChanged<int?>? onLocalSubtitleStreamSelected;
   final VoidCallback? onRetryPlayback;
   final int playbackAttempt;
 
@@ -90,6 +94,7 @@ class PlayerView extends StatelessWidget {
   final String? itemId;
   final String? mediaSourceId;
   final ApiClient? apiClient;
+  final PlaybackInfo? initialPlaybackInfo;
 
   /// Cached ("downloaded") byte-range spans for [itemId], forwarded straight
   /// to [PlayerChrome]'s seek-bar overlay. Null for the offline-local-file
@@ -127,12 +132,12 @@ class PlayerView extends StatelessWidget {
           PlayerChrome(
             controller: controller,
             canControl: canControl,
-            canManageTracks: canManageTracks,
+            canManageAudio: canManageAudio,
             onSeek: onSeek,
             onSeekAuthored: onSeekAuthored,
             onTogglePlay: onTogglePlay,
             onAudioStreamSelected: onAudioStreamSelected,
-            onSubtitleStreamSelected: onSubtitleStreamSelected,
+            onLocalSubtitleStreamSelected: onLocalSubtitleStreamSelected,
             onRetryPlayback: onRetryPlayback,
             playbackAttempt: playbackAttempt,
             title: title,
@@ -142,6 +147,8 @@ class PlayerView extends StatelessWidget {
             itemId: itemId,
             mediaSourceId: mediaSourceId,
             apiClient: apiClient,
+            initialPlaybackInfo: initialPlaybackInfo,
+            preferredAudioStreamIndex: preferredAudioStreamIndex,
             preferredSubtitleStreamIndex: preferredSubtitleStreamIndex,
             subtitleRevision: subtitleRevision,
             cachedSpans: cachedSpans,

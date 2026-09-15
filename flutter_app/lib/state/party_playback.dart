@@ -114,7 +114,7 @@ class PartyPlayback {
   /// them in a party watching nothing with no way back to it. Minimising is
   /// unrestricted — see the note at the top of the file.
   bool get canClose => canDrive;
-  bool get canManageTracks =>
+  bool get canManageAudio =>
       _party == null || _ref.read(partyProvider.notifier).isHost;
   Stream<CatchUp> get catchUp => _engine.catchUp;
 
@@ -205,13 +205,8 @@ class PartyPlayback {
   }
 
   Future<void> selectAudioStream(int? index) async {
-    if (_party == null || !canManageTracks) return;
+    if (_party == null || !canManageAudio) return;
     await _ref.read(partyProvider.notifier).setAudioStream(index);
-  }
-
-  Future<void> selectSubtitleStream(int? index) async {
-    if (_party == null || !canManageTracks) return;
-    await _ref.read(partyProvider.notifier).setSubtitleStream(index);
   }
 
   Future<int?> _resumePositionTicks(String itemId) async {
@@ -255,9 +250,7 @@ class PartyPlayback {
     final unchanged =
         !mediaChanged &&
         nowPlaying.mediaSourceId == party?.mediaSourceId &&
-        nowPlaying.audioStreamIndex == party?.playback?.selectedAudioIndex &&
-        nowPlaying.subtitleStreamIndex ==
-            party?.playback?.selectedSubtitleIndex;
+        nowPlaying.audioStreamIndex == party?.playback?.selectedAudioIndex;
     if (unchanged) return;
 
     // Left the room, or the driver put the film away: whoever is left holding
@@ -287,7 +280,11 @@ class PartyPlayback {
           itemId: wanted,
           mediaSourceId: party?.mediaSourceId,
           audioStreamIndex: party?.playback?.selectedAudioIndex,
-          subtitleStreamIndex: party?.playback?.selectedSubtitleIndex,
+          // Subtitles are a per-viewer preference. Adopt the room's initial
+          // choice when opening a title, then preserve this viewer's selection.
+          subtitleStreamIndex: mediaChanged
+              ? party?.playback?.selectedSubtitleIndex
+              : nowPlaying.subtitleStreamIndex,
           presentation: presentation,
         );
   }

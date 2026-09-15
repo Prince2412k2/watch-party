@@ -455,17 +455,21 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             mediaSourceId: now.mediaSourceId,
                             title: now.title,
                             apiClient: ref.watch(apiClientProvider),
+                            initialPlaybackInfo: party?.playback,
+                            preferredAudioStreamIndex: now.audioStreamIndex,
                             preferredSubtitleStreamIndex:
                                 now.subtitleStreamIndex,
-                            subtitleRevision:
-                                party?.playbackRevision ?? now.revision,
-                            canManageTracks: playback.canManageTracks,
+                            subtitleRevision: party == null
+                                ? now.revision
+                                : Object.hashAll(
+                                    party.playback?.subtitleStreams ?? const [],
+                                  ),
+                            canManageAudio: playback.canManageAudio,
                             onAudioStreamSelected: party == null
                                 ? null
                                 : playback.selectAudioStream,
-                            onSubtitleStreamSelected: party == null
-                                ? null
-                                : playback.selectSubtitleStream,
+                            onLocalSubtitleStreamSelected:
+                                notifier.setSubtitleStreamIndex,
                             cachedSpans: _usesCacheProxy && now.itemId != null
                                 ? ref
                                       .watch(mediaCacheProxyProvider)

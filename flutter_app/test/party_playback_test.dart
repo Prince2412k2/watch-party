@@ -192,11 +192,12 @@ void main() {
     expect(container.read(nowPlayingIntroProvider), 'film-2');
   });
 
-  test('party track changes update selection without reopening media', () {
+  test('party audio changes preserve local subtitles without reopening', () {
     final (:container, :engine) = _boot(me: 'guest', hostId: 'host');
     addTearDown(container.dispose);
 
     _watch(container, 'film-1');
+    container.read(nowPlayingProvider.notifier).setSubtitleStreamIndex(9);
     final before = container.read(nowPlayingProvider);
     expect(before.revision, 1);
     expect(engine.attachCount, 1);
@@ -213,7 +214,7 @@ void main() {
     final after = container.read(nowPlayingProvider);
     expect(after.itemId, 'film-1');
     expect(after.audioStreamIndex, 2);
-    expect(after.subtitleStreamIndex, 7);
+    expect(after.subtitleStreamIndex, 9);
     expect(after.revision, before.revision);
     expect(engine.attachCount, 1);
   });
@@ -321,7 +322,7 @@ void main() {
     expect(engine.attachCount, 1);
   });
 
-  test('same-title canonical track changes update the active player', () {
+  test('same-title party updates keep the viewer subtitle selection', () {
     final (:container, :engine) = _boot(me: 'guest', hostId: 'host');
     addTearDown(container.dispose);
     _watch(
@@ -333,6 +334,7 @@ void main() {
       ),
     );
     container.read(nowPlayingProvider.notifier).minimise();
+    container.read(nowPlayingProvider.notifier).setSubtitleStreamIndex(9);
     container.read(nowPlayingIntroProvider.notifier).state = null;
     final revision = container.read(nowPlayingProvider).revision;
 
@@ -347,7 +349,7 @@ void main() {
 
     final now = container.read(nowPlayingProvider);
     expect(now.audioStreamIndex, 5);
-    expect(now.subtitleStreamIndex, -1);
+    expect(now.subtitleStreamIndex, 9);
     expect(
       now.revision,
       revision,
@@ -358,7 +360,7 @@ void main() {
     expect(engine.attachCount, 1);
   });
 
-  test('only the host can author canonical playback tracks', () async {
+  test('only the host can author canonical audio tracks', () async {
     final host = _boot(me: 'host', hostId: 'host', watching: 'film-1');
     final guest = _boot(
       me: 'guest',
@@ -369,14 +371,9 @@ void main() {
     addTearDown(host.container.dispose);
     addTearDown(guest.container.dispose);
 
-    expect(host.container.read(partyPlaybackProvider).canManageTracks, isTrue);
-    expect(
-      guest.container.read(partyPlaybackProvider).canManageTracks,
-      isFalse,
-    );
+    expect(host.container.read(partyPlaybackProvider).canManageAudio, isTrue);
+    expect(guest.container.read(partyPlaybackProvider).canManageAudio, isFalse);
     await host.container.read(partyPlaybackProvider).selectAudioStream(8);
-    await host.container.read(partyPlaybackProvider).selectSubtitleStream(-1);
-    await guest.container.read(partyPlaybackProvider).selectSubtitleStream(4);
 
     final hostSocket =
         host.container.read(socketClientProvider) as MockSocketClient;
@@ -392,7 +389,6 @@ void main() {
         .toList();
     expect(trackPayloads, [
       {'audioStreamIndex': 8},
-      {'subtitleStreamIndex': -1},
     ]);
     expect(
       guestSocket.emitted.map((event) => event.$1),

@@ -52,7 +52,7 @@ class PlayerChrome extends StatefulWidget {
     super.key,
     required this.controller,
     this.canControl = true,
-    this.canManageTracks = true,
+    this.canManageAudio = true,
     this.title,
     this.onBack,
     this.onToggleFullscreen,
@@ -61,12 +61,14 @@ class PlayerChrome extends StatefulWidget {
     this.onSeekAuthored,
     this.onTogglePlay,
     this.onAudioStreamSelected,
-    this.onSubtitleStreamSelected,
+    this.onLocalSubtitleStreamSelected,
     this.onRetryPlayback,
     this.playbackAttempt = 0,
     this.itemId,
     this.mediaSourceId,
     this.apiClient,
+    this.initialPlaybackInfo,
+    this.preferredAudioStreamIndex,
     this.preferredSubtitleStreamIndex,
     this.subtitleRevision = 0,
     this.cachedSpans,
@@ -86,7 +88,7 @@ class PlayerChrome extends StatefulWidget {
 
   final PlayerController controller;
   final bool canControl;
-  final bool canManageTracks;
+  final bool canManageAudio;
   final String? title;
   final VoidCallback? onBack;
 
@@ -136,6 +138,8 @@ class PlayerChrome extends StatefulWidget {
   final String? itemId;
   final String? mediaSourceId;
   final ApiClient? apiClient;
+  final PlaybackInfo? initialPlaybackInfo;
+  final int? preferredAudioStreamIndex;
   final int? preferredSubtitleStreamIndex;
   final int subtitleRevision;
 
@@ -150,7 +154,7 @@ class PlayerChrome extends StatefulWidget {
   final ValueChanged<Duration>? onSeekAuthored;
   final Future<void> Function()? onTogglePlay;
   final Future<void> Function(int? index)? onAudioStreamSelected;
-  final Future<void> Function(int? index)? onSubtitleStreamSelected;
+  final ValueChanged<int?>? onLocalSubtitleStreamSelected;
   final VoidCallback? onRetryPlayback;
   final int playbackAttempt;
 
@@ -234,6 +238,8 @@ class _PlayerChromeState extends State<PlayerChrome>
   String? _error;
   bool _runtimeRetryUsed = false;
   int _runtimeRetryGeneration = 0;
+  int _subtitleOperations = 0;
+  bool _hasLocalSubtitleSelection = false;
 
   @override
   void initState() {
@@ -342,6 +348,7 @@ class _PlayerChromeState extends State<PlayerChrome>
       // Anything still resolving against the previous player (an external
       // subtitle fetch) must not land on the new one.
       _subtitleSelectionVersion++;
+      _hasLocalSubtitleSelection = false;
       setState(() {
         _subtitleCues = const [];
         _selectedSubtitle = null;
@@ -361,20 +368,31 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (oldWidget.itemId != widget.itemId ||
         oldWidget.mediaSourceId != widget.mediaSourceId ||
         oldWidget.apiClient != widget.apiClient) {
+      _hasLocalSubtitleSelection = false;
       _loadTrickplay();
     }
-    if (oldWidget.itemId != widget.itemId ||
+    final subtitleContextChanged =
+        oldWidget.itemId != widget.itemId ||
         oldWidget.mediaSourceId != widget.mediaSourceId ||
         oldWidget.apiClient != widget.apiClient ||
-        oldWidget.subtitleRevision != widget.subtitleRevision ||
         oldWidget.controller != widget.controller ||
         oldWidget.playbackAttempt != widget.playbackAttempt ||
-        oldWidget.mediaReady != widget.mediaReady) {
+        oldWidget.mediaReady != widget.mediaReady;
+    if (subtitleContextChanged) {
+      _hasLocalSubtitleSelection = false;
       _loadExternalSubtitles();
       _runtimeRetryUsed = false;
+    } else if (oldWidget.subtitleRevision != widget.subtitleRevision ||
+        (oldWidget.initialPlaybackInfo == null &&
+            widget.initialPlaybackInfo != null)) {
+      _loadExternalSubtitles(preserveSelection: true);
     }
     if (oldWidget.preferredSubtitleStreamIndex !=
         widget.preferredSubtitleStreamIndex) {
+      unawaited(_applyCanonicalTracks());
+    }
+    if (oldWidget.preferredAudioStreamIndex !=
+        widget.preferredAudioStreamIndex) {
       unawaited(_applyCanonicalTracks());
     }
     if (oldWidget.chatOpen != widget.chatOpen) {
@@ -397,6 +415,12 @@ class _PlayerChromeState extends State<PlayerChrome>
   }
 
   void _onPlaybackError(String error) {
+    // libmpv reports a failed side-loaded subtitle through the same stream as
+    // fatal video errors. The subtitle path handles that failure with its text
+    // overlay fallback; treating it as a movie failure would reopen the title.
+    if (_subtitleOperations > 0 || error.toLowerCase().contains('subtitle')) {
+      return;
+    }
     final failure = classifyPlaybackFailure(error);
     if (mounted) setState(() => _error = failure.message);
     if (!failure.retryable ||
@@ -417,6 +441,20 @@ class _PlayerChromeState extends State<PlayerChrome>
       setState(() => _error = null);
       widget.onRetryPlayback!();
     });
+  }
+
+  Future<T> _runNativeSubtitleOperation<T>(
+    Future<T> Function() operation,
+  ) async {
+    _subtitleOperations++;
+    try {
+      return await operation();
+    } finally {
+      // Let an asynchronously forwarded libmpv error retain the operation
+      // context without hiding unrelated failures after the selection ends.
+      await Future<void>.microtask(() {});
+      _subtitleOperations--;
+    }
   }
 
   void _retryPlayback() {
@@ -595,12 +633,13 @@ class _PlayerChromeState extends State<PlayerChrome>
     });
   }
 
-  Future<void> _loadExternalSubtitles() async {
+  Future<void> _loadExternalSubtitles({bool preserveSelection = false}) async {
     final requestGeneration = ++_subtitleRequestGeneration;
     final itemId = widget.itemId;
     final mediaSourceId = widget.mediaSourceId;
     final api = widget.apiClient;
     final revision = widget.subtitleRevision;
+    final preservedSelection = preserveSelection ? _selectedSubtitle : null;
     _subtitleSelectionVersion++;
     _externalSubtitleById.clear();
     _externalSubtitleContent.clear();
@@ -610,9 +649,11 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (mounted) {
       setState(() {
         _externalSubtitles = const [];
-        _subtitleCues = const [];
-        if (_selectedSubtitle?.startsWith('jellyfin-external:') ?? false) {
-          _selectedSubtitle = null;
+        if (!preserveSelection) {
+          _subtitleCues = const [];
+          if (_selectedSubtitle?.startsWith('jellyfin-external:') ?? false) {
+            _selectedSubtitle = null;
+          }
         }
       });
     }
@@ -620,7 +661,9 @@ class _PlayerChromeState extends State<PlayerChrome>
       return;
     }
     try {
-      final info = await api.playbackInfo(itemId, mediaSourceId: mediaSourceId);
+      final info =
+          widget.initialPlaybackInfo ??
+          await api.playbackInfo(itemId, mediaSourceId: mediaSourceId);
       if (!mounted ||
           widget.itemId != itemId ||
           widget.mediaSourceId != mediaSourceId ||
@@ -650,7 +693,20 @@ class _PlayerChromeState extends State<PlayerChrome>
             ),
         ];
       });
-      if (_selectedSubtitle == null) {
+      if (preservedSelection?.startsWith('jellyfin-external:') ?? false) {
+        if (_externalSubtitleById.containsKey(preservedSelection)) {
+          await _setSubtitle(preservedSelection);
+        } else {
+          await _setSubtitle(null);
+          if (mounted &&
+              requestGeneration == _subtitleRequestGeneration &&
+              widget.itemId == itemId &&
+              widget.subtitleRevision == revision &&
+              _selectedSubtitle == null) {
+            widget.onLocalSubtitleStreamSelected?.call(-1);
+          }
+        }
+      } else if (!preserveSelection && _selectedSubtitle == null) {
         final preferred = widget.preferredSubtitleStreamIndex;
         PlaybackTrack? requested;
         if (preferred != null) {
@@ -668,14 +724,7 @@ class _PlayerChromeState extends State<PlayerChrome>
         }
       }
       await _applyCanonicalTracks(requestGeneration);
-    } catch (e) {
-      if (mounted &&
-          widget.itemId == itemId &&
-          widget.subtitleRevision == revision &&
-          requestGeneration == _subtitleRequestGeneration) {
-        setState(() => _error = '$e');
-      }
-    }
+    } catch (_) {}
   }
 
   @override
@@ -892,26 +941,30 @@ class _PlayerChromeState extends State<PlayerChrome>
     if (!isCurrent()) return;
     final playback = _playbackInfo;
     if (playback == null) return;
+    final partyAudio = widget.onAudioStreamSelected != null;
+    final canonicalAudioIndex = partyAudio
+        ? widget.preferredAudioStreamIndex
+        : playback.selectedAudioIndex;
     final audioId = playerTrackIdForJellyfinIndex(
-      jellyfinIndex: playback.selectedAudioIndex,
+      jellyfinIndex: canonicalAudioIndex,
       type: 'audio',
       playerTracks: _tracks.audio,
       playback: playback,
     );
-    final canonicalSubtitleIndex = widget.onSubtitleStreamSelected == null
-        ? playback.selectedSubtitleIndex
-        : widget.preferredSubtitleStreamIndex ?? playback.selectedSubtitleIndex;
+    final canonicalSubtitleIndex =
+        widget.preferredSubtitleStreamIndex ?? playback.selectedSubtitleIndex;
     final subtitleId = playerTrackIdForJellyfinIndex(
       jellyfinIndex: canonicalSubtitleIndex,
       type: 'subtitle',
       playerTracks: _visibleSubtitleTracks,
       playback: playback,
     );
-    if (playback.selectedAudioIndex != null && audioId != null) {
+    if ((partyAudio || (canonicalAudioIndex != null && audioId != null)) &&
+        _selectedAudio != audioId) {
       await _setAudio(audioId);
       if (!isCurrent()) return;
     }
-    if (canonicalSubtitleIndex != null) {
+    if (!_hasLocalSubtitleSelection && canonicalSubtitleIndex != null) {
       await _setSubtitle(subtitleId);
     }
   }
@@ -1021,13 +1074,17 @@ class _PlayerChromeState extends State<PlayerChrome>
                   (track) => track.id == loadedTrackId,
                 );
             if (canSelect) {
-              await c.setSubtitle(loadedTrackId);
+              await _runNativeSubtitleOperation(
+                () => c.setSubtitle(loadedTrackId),
+              );
             }
             if (!canSelect || c.currentSubtitleTrackId != loadedTrackId) {
-              await c.addExternalSubtitle(
-                content,
-                title: external.displayTitle ?? external.title,
-                language: external.language,
+              await _runNativeSubtitleOperation(
+                () => c.addExternalSubtitle(
+                  content,
+                  title: external.displayTitle ?? external.title,
+                  language: external.language,
+                ),
               );
               final nativeId = c.currentSubtitleTrackId;
               if (nativeId != null) {
@@ -1046,7 +1103,7 @@ class _PlayerChromeState extends State<PlayerChrome>
             throw const FormatException('No valid subtitle cues');
           }
           // Disable any previous or partially selected native track first.
-          await c.setSubtitle(null);
+          await _runNativeSubtitleOperation(() => c.setSubtitle(null));
           if (!mounted || version != _subtitleSelectionVersion) return;
           setState(() => _subtitleCues = cues);
         }
@@ -1058,7 +1115,6 @@ class _PlayerChromeState extends State<PlayerChrome>
           setState(() {
             _selectedSubtitle = previous;
             _subtitleCues = const [];
-            _error = '$e';
           });
         }
         return;
@@ -1068,7 +1124,13 @@ class _PlayerChromeState extends State<PlayerChrome>
         _appliedExternalSubtitleGeneration.remove(previous);
       }
       if (mounted) setState(() => _subtitleCues = const []);
-      await widget.controller.setSubtitle(id);
+      try {
+        await _runNativeSubtitleOperation(
+          () => widget.controller.setSubtitle(id),
+        );
+      } catch (_) {
+        return;
+      }
     }
     if (mounted && version == _subtitleSelectionVersion) {
       setState(() => _selectedSubtitle = id);
@@ -1077,22 +1139,20 @@ class _PlayerChromeState extends State<PlayerChrome>
   }
 
   Future<void> _selectSubtitle(String? id) async {
-    final callback = widget.onSubtitleStreamSelected;
-    if (callback == null) {
-      await _setSubtitle(id);
-      return;
-    }
+    _hasLocalSubtitleSelection = true;
+    await _setSubtitle(id);
+    if (_selectedSubtitle != id) return;
     final playback = _playbackInfo;
-    if (playback == null) return;
-    await callback(
-      jellyfinIndexForPlayerTrack(
-        playerTrackId: id,
-        type: 'subtitle',
-        playerTracks: _visibleSubtitleTracks,
-        playback: playback,
-      ),
-    );
-    _wake();
+    if (playback != null) {
+      widget.onLocalSubtitleStreamSelected?.call(
+        jellyfinIndexForPlayerTrack(
+          playerTrackId: id,
+          type: 'subtitle',
+          playerTracks: _visibleSubtitleTracks,
+          playback: playback,
+        ),
+      );
+    }
   }
 
   /// Pick a local subtitle file and side-load it into the player. The video is
@@ -1111,18 +1171,20 @@ class _PlayerChromeState extends State<PlayerChrome>
       );
       final file = picked?.files.single;
       if (file == null) return;
+      _hasLocalSubtitleSelection = true;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
       if (!mounted || widget.controller != c) return;
       final version = ++_subtitleSelectionVersion;
-      await c.addExternalSubtitle(_subtitleToUtf8(bytes), title: file.name);
+      await _runNativeSubtitleOperation(
+        () => c.addExternalSubtitle(_subtitleToUtf8(bytes), title: file.name),
+      );
       if (mounted && version == _subtitleSelectionVersion) {
         setState(() {
           _subtitleCues = const [];
           _selectedSubtitle = c.currentSubtitleTrackId;
         });
       }
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Failed to load subtitle: $e');
+    } catch (_) {
       return;
     }
     _wake();
@@ -1371,7 +1433,7 @@ class _PlayerChromeState extends State<PlayerChrome>
           label: 'Audio track',
           detail: _audioTrackDetail,
           // A guest may read which track the party is on but not change it.
-          enabled: widget.canManageTracks,
+          enabled: widget.canManageAudio,
           onTap: _openAudioPicker,
         ),
       AnalogSettingsEntry(
@@ -1461,7 +1523,6 @@ class _PlayerChromeState extends State<PlayerChrome>
                 alignment: Alignment.bottomCenter,
                 child: _TransportBar(
                   canControl: widget.canControl,
-                  canManageTracks: widget.canManageTracks,
                   playing: _playing,
                   position: _dragPosition ?? _position,
                   duration: _duration,
@@ -1695,7 +1756,6 @@ class _TopBar extends StatelessWidget {
 class _TransportBar extends StatelessWidget {
   const _TransportBar({
     required this.canControl,
-    required this.canManageTracks,
     required this.playing,
     required this.position,
     required this.duration,
@@ -1726,7 +1786,6 @@ class _TransportBar extends StatelessWidget {
   });
 
   final bool canControl;
-  final bool canManageTracks;
   final bool playing;
   final Duration position;
   final Duration duration;
@@ -1873,7 +1932,7 @@ class _TransportBar extends StatelessWidget {
                   liftAbove: timelineAnchor,
                   tracks: subtitleTracks,
                   selected: selectedSubtitle,
-                  enabled: canManageTracks,
+                  enabled: true,
                   onChanged: onSubtitle,
                   onAddFile: onAddSubtitle,
                   onMenuChanged: onSubtitleMenuChanged,

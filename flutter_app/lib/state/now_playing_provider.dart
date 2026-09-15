@@ -107,8 +107,7 @@ class NowPlayingNotifier extends StateNotifier<NowPlaying> {
     PlayerPresentation presentation = PlayerPresentation.expanded,
   }) {
     final sameMedia =
-        state.itemId == itemId &&
-        state.mediaSourceId == mediaSourceId;
+        state.itemId == itemId && state.mediaSourceId == mediaSourceId;
     if (sameMedia) {
       state = NowPlaying(
         itemId: itemId,
@@ -143,6 +142,20 @@ class NowPlayingNotifier extends StateNotifier<NowPlaying> {
   void expand() {
     if (!state.isOpen) return;
     state = state.copyWith(presentation: PlayerPresentation.expanded);
+  }
+
+  /// Persist a viewer-local subtitle choice without reopening native media.
+  void setSubtitleStreamIndex(int? index) {
+    if (!state.isOpen) return;
+    state = NowPlaying(
+      itemId: state.itemId,
+      mediaSourceId: state.mediaSourceId,
+      title: state.title,
+      audioStreamIndex: state.audioStreamIndex,
+      subtitleStreamIndex: index,
+      presentation: state.presentation,
+      revision: state.revision,
+    );
   }
 
   /// Stop. The ONLY path in the app that pauses and rewinds.

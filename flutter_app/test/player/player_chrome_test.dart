@@ -99,6 +99,7 @@ class _SpyController implements PlayerController {
 class _NativeSubtitleController extends _SpyController
     implements MediaKitPlayerController {
   bool failSubtitle = false;
+  bool emitSubtitleError = false;
   int loads = 0;
   Completer<void>? loadGate;
   String nativeTrackId = 'subtitle data, not a native track ID';
@@ -106,6 +107,7 @@ class _NativeSubtitleController extends _SpyController
   List<PlayerTrack> nativeTracks = const [];
   bool ignoreNativeSelection = false;
   bool emitNativeTracksOnLoad = false;
+  final _errors = StreamController<String>.broadcast();
 
   @override
   Future<void> addExternalSubtitle(
@@ -115,6 +117,12 @@ class _NativeSubtitleController extends _SpyController
   }) async {
     loads++;
     await loadGate?.future;
+    if (emitSubtitleError) {
+      Timer(
+        const Duration(milliseconds: 100),
+        () => _errors.add('network subtitle load failed'),
+      );
+    }
     if (failSubtitle) throw StateError('Native subtitle load failed');
     selectedNativeTrack = nativeTrackId;
     if (emitNativeTracksOnLoad) {
@@ -158,7 +166,13 @@ class _NativeSubtitleController extends _SpyController
   @override
   int get subtitleBackgroundOpacity => 65;
   @override
-  Stream<String> get errors => const Stream.empty();
+  Stream<String> get errors => _errors.stream;
+  @override
+  Future<void> dispose() async {
+    await _errors.close();
+    await super.dispose();
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -212,6 +226,16 @@ class _GatedSubtitleApi extends MockApiClient {
     int streamIndex, {
     String? mediaSourceId,
   }) async => '00:00:01.000 --> 00:00:03.000\nNewest';
+}
+
+class _FailingPlaybackApi extends MockApiClient {
+  @override
+  Future<PlaybackInfo> playbackInfo(
+    String itemId, {
+    String? mediaSourceId,
+    int? audioStreamIndex,
+    int? subtitleStreamIndex,
+  }) => Future.error(StateError('playback metadata unavailable'));
 }
 
 void main() {
@@ -438,7 +462,62 @@ void main() {
     );
   }
 
-  testWidgets('native track events do not side-load a party subtitle twice', (
+  testWidgets('subtitle load errors do not retry or reopen the movie', (
+    tester,
+  ) async {
+    final c = _NativeSubtitleController()
+      ..failSubtitle = true
+      ..emitSubtitleError = true
+      ..positionNow = const Duration(seconds: 2);
+    var retries = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: _MutableSubtitleApi(),
+          preferredSubtitleStreamIndex: 4,
+          onRetryPlayback: () => retries++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(c.loads, 1);
+    expect(retries, 0);
+    expect(find.text('The network connection was interrupted.'), findsNothing);
+    expect(find.byKey(const Key('externalSubtitleOverlay')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await c.dispose();
+  });
+
+  testWidgets('terminal subtitle failures do not become movie failures', (
+    tester,
+  ) async {
+    final c = _NativeSubtitleController()..failSubtitle = true;
+    final api = _MutableSubtitleApi()..content = 'not a subtitle';
+    var retries = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: api,
+          preferredSubtitleStreamIndex: 4,
+          onRetryPlayback: () => retries++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(retries, 0);
+    expect(find.text('The video stream could not be played.'), findsNothing);
+    expect(find.text('Retry'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await c.dispose();
+  });
+
+  testWidgets('native track events do not side-load a subtitle twice', (
     tester,
   ) async {
     final c = _NativeSubtitleController()
@@ -455,7 +534,6 @@ void main() {
           itemId: 'movie',
           apiClient: api,
           preferredSubtitleStreamIndex: 4,
-          onSubtitleStreamSelected: (_) async {},
         ),
       ),
     );
@@ -467,7 +545,7 @@ void main() {
     await c.dispose();
   });
 
-  testWidgets('party subtitles wait for native open and reload after retry', (
+  testWidgets('subtitles wait for native open and reload after retry', (
     tester,
   ) async {
     final c = _NativeSubtitleController();
@@ -482,7 +560,6 @@ void main() {
             mediaReady: ready,
             playbackAttempt: attempt,
             preferredSubtitleStreamIndex: 4,
-            onSubtitleStreamSelected: (_) async {},
           ),
         ),
       );
@@ -1004,12 +1081,71 @@ void main() {
     expect(c.audioTracks, ['a1']);
   });
 
+  testWidgets('a party audio update switches the native track in place', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    const playback = PlaybackInfo(
+      audioStreams: [
+        PlaybackTrack(index: 8, title: 'English'),
+        PlaybackTrack(index: 9, title: 'Commentary'),
+      ],
+      selectedAudioIndex: 8,
+    );
+    final api = _FailingPlaybackApi();
+    Future<void> pump(int? preferred) => tester.pumpWidget(
+      MaterialApp(
+        home: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: api,
+          initialPlaybackInfo: playback,
+          preferredAudioStreamIndex: preferred,
+          onAudioStreamSelected: (_) async {},
+        ),
+      ),
+    );
+
+    await pump(8);
+    await tester.pumpAndSettle();
+    c.emitTracks(
+      const PlayerTracks(
+        audio: [
+          PlayerTrack(
+            id: 'a1',
+            type: 'audio',
+            title: 'English',
+            jellyfinIndex: 8,
+          ),
+          PlayerTrack(
+            id: 'a2',
+            type: 'audio',
+            title: 'Commentary',
+            jellyfinIndex: 9,
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    c.audioTracks.clear();
+
+    await pump(9);
+    await tester.pumpAndSettle();
+    expect(c.audioTracks, ['a2']);
+    c.audioTracks.clear();
+
+    await pump(null);
+    await tester.pumpAndSettle();
+
+    expect(c.audioTracks, [null]);
+  });
+
   testWidgets(
-    'party track callbacks receive Jellyfin indices without local writes',
+    'party audio callback stays shared while subtitles write locally',
     (tester) async {
       final c = _SpyController();
       final audio = <int?>[];
-      final subtitles = <int?>[];
+      final localSubtitles = <int?>[];
       final api = MockApiClient(
         playback: const PlaybackInfo(
           audioStreams: [PlaybackTrack(index: 8, title: 'Commentary')],
@@ -1025,7 +1161,7 @@ void main() {
               itemId: 'movie',
               apiClient: api,
               onAudioStreamSelected: (index) async => audio.add(index),
-              onSubtitleStreamSelected: (index) async => subtitles.add(index),
+              onLocalSubtitleStreamSelected: localSubtitles.add,
             ),
           ),
         ),
@@ -1061,40 +1197,16 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Off'));
       await tester.pumpAndSettle();
-
-      expect(audio, [8]);
-      expect(subtitles, [-1]);
-      expect(c.audioTracks, isEmpty);
-      expect(c.subtitles, isEmpty);
-    },
-  );
-
-  testWidgets(
-    'preferred embedded subtitle is applied from canonical party state',
-    (tester) async {
-      final c = _SpyController();
-      final api = MockApiClient(
-        playback: const PlaybackInfo(
-          subtitleStreams: [PlaybackTrack(index: 12, title: 'English SDH')],
-          selectedSubtitleIndex: -1,
-        ),
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark,
-          home: Scaffold(
-            body: PlayerChrome(
-              controller: c,
-              itemId: 'movie',
-              apiClient: api,
-              preferredSubtitleStreamIndex: 12,
-              onSubtitleStreamSelected: (_) async {},
-            ),
-          ),
-        ),
-      );
       c.emitTracks(
         const PlayerTracks(
+          audio: [
+            PlayerTrack(
+              id: 'a1',
+              type: 'audio',
+              title: 'Commentary',
+              jellyfinIndex: 8,
+            ),
+          ],
           subtitle: [
             PlayerTrack(
               id: 's1',
@@ -1105,35 +1217,86 @@ void main() {
           ],
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump();
 
-      expect(c.subtitles, contains('s1'));
+      expect(audio, [8]);
+      expect(localSubtitles, [-1]);
+      expect(c.audioTracks, isEmpty);
+      expect(
+        c.subtitles,
+        [null],
+        reason: 'native track refreshes must not restore the room subtitle',
+      );
     },
   );
 
-  testWidgets('guest can select local audio and subtitle tracks', (
+  testWidgets('preferred embedded subtitle is applied when media opens', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final api = MockApiClient(
+      playback: const PlaybackInfo(
+        subtitleStreams: [PlaybackTrack(index: 12, title: 'English SDH')],
+        selectedSubtitleIndex: -1,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: PlayerChrome(
+            controller: c,
+            itemId: 'movie',
+            apiClient: api,
+            preferredSubtitleStreamIndex: 12,
+          ),
+        ),
+      ),
+    );
+    c.emitTracks(
+      const PlayerTracks(
+        subtitle: [
+          PlayerTrack(
+            id: 's1',
+            type: 'subtitle',
+            title: 'English SDH',
+            jellyfinIndex: 12,
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(c.subtitles, contains('s1'));
+  });
+
+  testWidgets('guest can select subtitles when shared audio is read-only', (
     tester,
   ) async {
     final c = _SpyController();
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.dark,
-        home: Scaffold(body: PlayerChrome(controller: c, canControl: false)),
+        home: Scaffold(
+          body: PlayerChrome(
+            controller: c,
+            canControl: false,
+            canManageAudio: false,
+          ),
+        ),
       ),
     );
     c.emitTracks(tracks);
     await tester.pump();
     await tester.pump();
 
-    await openAudioPicker(tester);
-    await tester.tap(find.text('Commentary'));
-    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.subtitles));
     await tester.pumpAndSettle();
     await tester.tap(find.text('English SDH'));
     await tester.pumpAndSettle();
 
-    expect(c.audioTracks, ['a1']);
+    expect(c.audioTracks, isEmpty);
     expect(c.subtitles, ['s0']);
     expect(c.seeks, isEmpty);
   });
