@@ -133,11 +133,18 @@ media-converter resolve 42 archive-target
 docker exec -it media-converter media-converter tui
 ```
 
-The active panel shows operation type, progress, FFmpeg speed, ETA, and source/output sizes. The queue includes all pending, completed, failed, skipped, and `requires_transcode` jobs.
+The active panel shows progress, FFmpeg speed, ETA, and source/output sizes. Library browsing is hierarchical: `Movies → movie → files` and `TV Shows → show → season → episodes`. Seasons and episodes use natural numeric ordering, so Season 2 appears before Season 10. Queue and History are separate views instead of one flat file list.
 
 | Key | Action |
 |---|---|
 | `q` | Quit |
+| `Enter` / right / `l` | Open the selected library level or job |
+| left / `Esc` / `h` | Return to the previous level |
+| `Tab` / `Shift+Tab` | Cycle Library, Queue, and History |
+| `1`, `2`, `3` | Jump directly to Library, Queue, or History |
+| arrows / `j`, `k` | Move the selection |
+| `PgUp`, `PgDn` / `Ctrl+U`, `Ctrl+D` | Scroll by a page |
+| `g`, `G` | Jump to the first or last item |
 | `s` | Scan both libraries |
 | `a` | Queue a file or directory path |
 | `p` | Pause/resume new job claims |
@@ -145,7 +152,9 @@ The active panel shows operation type, progress, FFmpeg speed, ETA, and source/o
 | `c` | Cancel selected job |
 | `r` | Retry selected terminal job |
 | `d` | Toggle dry-run for TUI-queued scans |
-| arrows / `j`, `k` | Select a job |
+| `?` | Toggle the full key guide |
+
+The layout automatically switches to a two-line list optimized for narrow phone terminals. Mouse-wheel events are also supported when the SSH client forwards terminal mouse input.
 
 ## Sonarr, Radarr, And Jellyfin
 
