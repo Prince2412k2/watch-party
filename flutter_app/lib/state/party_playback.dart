@@ -164,6 +164,9 @@ class PartyPlayback {
     return followed != null && _ref.read(nowPlayingProvider).itemId == followed;
   }
 
+  String? _pendingSubtitleItemId;
+  int? _pendingSubtitleStreamIndex;
+
   // ── Asking to play something ──────────────────────────────────────────────
 
   Future<OpenOutcome> requestOpen({
@@ -186,6 +189,8 @@ class PartyPlayback {
       case PartyRole.passenger:
         return OpenOutcome.refusedPassenger;
       case PartyRole.driver:
+        _pendingSubtitleItemId = itemId;
+        _pendingSubtitleStreamIndex = subtitleStreamIndex;
         final resumePositionTicks = await _resumePositionTicks(itemId);
         if (generation != _openGeneration ||
             _party?.id != partyId ||
@@ -197,7 +202,6 @@ class PartyPlayback {
             .selectMedia(
               mediaItemId: itemId,
               audioStreamIndex: audioStreamIndex,
-              subtitleStreamIndex: subtitleStreamIndex,
               resumePositionTicks: resumePositionTicks,
             );
         return OpenOutcome.sentToRoom;
@@ -247,8 +251,10 @@ class PartyPlayback {
     final wanted = party?.mediaItemId;
     final nowPlaying = _ref.read(nowPlayingProvider);
     final mediaChanged = wanted != _followed;
+    final hasPendingSubtitle = wanted != null && _pendingSubtitleItemId == wanted;
     final unchanged =
         !mediaChanged &&
+        !hasPendingSubtitle &&
         nowPlaying.mediaSourceId == party?.mediaSourceId &&
         nowPlaying.audioStreamIndex == party?.playback?.selectedAudioIndex;
     if (unchanged) return;
@@ -274,17 +280,24 @@ class PartyPlayback {
         : PlayerPresentation.expanded;
 
     if (mediaChanged) _showIntro(wanted);
+    final pendingSubtitle = hasPendingSubtitle
+        ? _pendingSubtitleStreamIndex
+        : null;
+    if (hasPendingSubtitle) {
+      _pendingSubtitleItemId = null;
+      _pendingSubtitleStreamIndex = null;
+    }
     _ref
         .read(nowPlayingProvider.notifier)
         .open(
           itemId: wanted,
           mediaSourceId: party?.mediaSourceId,
           audioStreamIndex: party?.playback?.selectedAudioIndex,
-          // Subtitles are a per-viewer preference. Adopt the room's initial
-          // choice when opening a title, then preserve this viewer's selection.
-          subtitleStreamIndex: mediaChanged
-              ? party?.playback?.selectedSubtitleIndex
-              : nowPlaying.subtitleStreamIndex,
+          // A driver's pre-play choice is handed directly to this client. It
+          // never enters party state; everyone else starts independently.
+          subtitleStreamIndex: hasPendingSubtitle
+              ? pendingSubtitle
+              : (mediaChanged ? null : nowPlaying.subtitleStreamIndex),
           presentation: presentation,
         );
   }

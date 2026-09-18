@@ -185,6 +185,7 @@ class _MutableSubtitleApi extends MockApiClient {
   );
   String content = '00:00:01.000 --> 00:00:03.000\nFirst';
   int contentCalls = 0;
+  int playbackCalls = 0;
 
   @override
   Future<PlaybackInfo> playbackInfo(
@@ -192,7 +193,10 @@ class _MutableSubtitleApi extends MockApiClient {
     String? mediaSourceId,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
-  }) async => info;
+  }) async {
+    playbackCalls++;
+    return info;
+  }
 
   @override
   Future<String> subtitleContent(
@@ -887,6 +891,49 @@ void main() {
 
     expect(find.text('Second'), findsOneWidget);
     expect(api.contentCalls, 2);
+  });
+
+  testWidgets('subtitle revision bypasses stale initial party inventory', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final api = _MutableSubtitleApi();
+    const stale = PlaybackInfo(
+      subtitleStreams: [
+        PlaybackTrack(index: 3, title: 'Stale', isExternal: true),
+      ],
+    );
+    api.info = const PlaybackInfo(
+      subtitleStreams: [
+        PlaybackTrack(index: 4, title: 'Fresh', isExternal: true),
+      ],
+    );
+
+    Widget chrome(int revision) => MaterialApp(
+      theme: AppTheme.dark,
+      home: Scaffold(
+        body: PlayerChrome(
+          controller: c,
+          itemId: 'movie',
+          apiClient: api,
+          initialPlaybackInfo: stale,
+          subtitleRevision: revision,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(chrome(1));
+    await tester.pumpAndSettle();
+    expect(api.playbackCalls, 0);
+
+    await tester.pumpWidget(chrome(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.subtitles));
+    await tester.pumpAndSettle();
+
+    expect(api.playbackCalls, 1);
+    expect(find.text('Fresh'), findsOneWidget);
+    expect(find.text('Stale'), findsNothing);
   });
 
   testWidgets('an older subtitle request cannot overwrite a newer revision', (

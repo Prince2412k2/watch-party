@@ -1285,9 +1285,8 @@ class _SeasonStrip extends StatelessWidget {
           ),
       ],
       selected: active?.season.id,
-      onSelected: (id) => state._selectSeason(
-        rows.firstWhere((row) => row.season.id == id),
-      ),
+      onSelected: (id) =>
+          state._selectSeason(rows.firstWhere((row) => row.season.id == id)),
     );
   }
 }
@@ -1624,28 +1623,17 @@ class _TrackButtonState extends ConsumerState<_TrackButton> {
       if (file == null) return;
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
       final api = ref.read(apiClientProvider);
-      final previous =
-          widget.playback?.subtitleStreams
-              .map((track) => track.index)
-              .toSet() ??
-          const <int>{};
-      await api.uploadSubtitle(widget.itemId, _toUtf8(bytes), file.name);
-
-      PlaybackTrack? uploaded;
-      for (var attempt = 0; attempt < 6 && uploaded == null; attempt++) {
-        if (attempt > 0) {
-          await Future<void>.delayed(Duration(milliseconds: 180 * attempt));
-        }
-        final refreshed = await api.playbackInfo(widget.itemId);
-        for (final track in refreshed.subtitleStreams) {
-          if (!previous.contains(track.index)) {
-            uploaded = track;
-            break;
-          }
-        }
-      }
+      final uploadedIndex = await api.uploadSubtitle(
+        widget.itemId,
+        _toUtf8(bytes),
+        file.name,
+        mediaSourceId: widget.playback?.mediaSourceId,
+      );
       ref.invalidate(detailPlaybackProvider(widget.itemId));
-      if (uploaded != null) widget.onSelectSubtitle(uploaded.index);
+      ref
+          .read(subtitleInventoryRevisionProvider(widget.itemId).notifier)
+          .state++;
+      widget.onSelectSubtitle(uploadedIndex);
     } catch (e) {
       if (mounted) setState(() => _error = 'Subtitle upload failed: $e');
     } finally {
@@ -1661,9 +1649,16 @@ class _TrackButtonState extends ConsumerState<_TrackButton> {
     try {
       await ref
           .read(apiClientProvider)
-          .deleteSubtitle(widget.itemId, track.index);
+          .deleteSubtitle(
+            widget.itemId,
+            track.index,
+            mediaSourceId: widget.playback?.mediaSourceId,
+          );
       if (widget.selectedSubtitle == track.index) widget.onSelectSubtitle(null);
       ref.invalidate(detailPlaybackProvider(widget.itemId));
+      ref
+          .read(subtitleInventoryRevisionProvider(widget.itemId).notifier)
+          .state++;
     } catch (e) {
       if (mounted) setState(() => _error = 'Subtitle delete failed');
     } finally {

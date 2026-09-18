@@ -1,4 +1,4 @@
-import type { AuthUser, ChatMessage, PartySession, PartyUser, SubtitlePreferences, UserProfile } from './types.ts'
+import type { AuthUser, ChatMessage, PartySession, PartyUser, UserProfile } from './types.ts'
 import type { AvatarConfig } from './lib/avatar.ts'
 
 export function isObject(value: unknown): value is Record<string, unknown> {
@@ -52,21 +52,11 @@ function isPlayback(value: unknown): boolean {
     (value.mediaSourceId === undefined || value.mediaSourceId === null || typeof value.mediaSourceId === 'string')
 }
 
-function isSubtitlePreferences(value: unknown): value is SubtitlePreferences {
-  return isObject(value) && Number.isInteger(value.delayMs) && Number.isInteger(value.fontScalePercent) &&
-    Number.isInteger(value.verticalOffsetPercent) &&
-    (value.verticalOffsetPercent as number) >= 0 && (value.verticalOffsetPercent as number) <= 100 &&
-    ['sans', 'serif', 'mono'].includes(String(value.fontFamily)) &&
-    typeof value.textColor === 'string' && Number.isInteger(value.backgroundOpacityPercent)
-}
-
-
 export function isPartySession(value: unknown): value is PartySession {
   if (!isObject(value) || typeof value.id !== 'string' || typeof value.hostId !== 'string') return false
   return (value.guests === undefined || (Array.isArray(value.guests) && value.guests.every(isPartyUser))) &&
     (value.waiting === undefined || (Array.isArray(value.waiting) && value.waiting.every(isPartyUser))) &&
     (value.playback === undefined || value.playback === null || isPlayback(value.playback)) &&
-    (value.subtitlePreferences === undefined || isSubtitlePreferences(value.subtitlePreferences)) &&
     (value.hostName === undefined || typeof value.hostName === 'string') &&
     isOptionalAvatar(value.hostAvatar) &&
     (value.stage === undefined || typeof value.stage === 'string') &&
@@ -82,4 +72,3 @@ export function isChatMessage(value: unknown): value is ChatMessage {
     (value.ts === undefined || typeof value.ts === 'number') &&
     (value.timestamp === undefined || typeof value.timestamp === 'number')
 }
-

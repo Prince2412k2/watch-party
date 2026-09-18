@@ -81,6 +81,13 @@ final detailPlaybackProvider =
   return ref.read(apiClientProvider).playbackInfo(id);
 });
 
+/// Changes when Jellyfin's subtitle inventory for a title is mutated. The
+/// app-wide player watches this separately from the media revision so a track
+/// refresh never reopens or seeks the video.
+final subtitleInventoryRevisionProvider = StateProvider.family<int, String>(
+  (ref, itemId) => 0,
+);
+
 /// One actively-downloading torrent, as surfaced on the home "Downloading now"
 /// rail. A trimmed projection of the enriched torrent payload — just what the
 /// rail card renders.

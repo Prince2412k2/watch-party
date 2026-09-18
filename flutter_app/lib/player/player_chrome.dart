@@ -385,7 +385,10 @@ class _PlayerChromeState extends State<PlayerChrome>
     } else if (oldWidget.subtitleRevision != widget.subtitleRevision ||
         (oldWidget.initialPlaybackInfo == null &&
             widget.initialPlaybackInfo != null)) {
-      _loadExternalSubtitles(preserveSelection: true);
+      _loadExternalSubtitles(
+        preserveSelection: true,
+        useInitialPlaybackInfo: false,
+      );
     }
     if (oldWidget.preferredSubtitleStreamIndex !=
         widget.preferredSubtitleStreamIndex) {
@@ -633,7 +636,10 @@ class _PlayerChromeState extends State<PlayerChrome>
     });
   }
 
-  Future<void> _loadExternalSubtitles({bool preserveSelection = false}) async {
+  Future<void> _loadExternalSubtitles({
+    bool preserveSelection = false,
+    bool useInitialPlaybackInfo = true,
+  }) async {
     final requestGeneration = ++_subtitleRequestGeneration;
     final itemId = widget.itemId;
     final mediaSourceId = widget.mediaSourceId;
@@ -661,9 +667,9 @@ class _PlayerChromeState extends State<PlayerChrome>
       return;
     }
     try {
-      final info =
-          widget.initialPlaybackInfo ??
-          await api.playbackInfo(itemId, mediaSourceId: mediaSourceId);
+      final info = useInitialPlaybackInfo && widget.initialPlaybackInfo != null
+          ? widget.initialPlaybackInfo!
+          : await api.playbackInfo(itemId, mediaSourceId: mediaSourceId);
       if (!mounted ||
           widget.itemId != itemId ||
           widget.mediaSourceId != mediaSourceId ||

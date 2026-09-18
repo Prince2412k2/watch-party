@@ -53,7 +53,7 @@ import {
   addToWaiting, approveGuest, admitGuest, rejectGuest, removeGuest,
   transferHost, reclaimOriginalHost, randomConnectedGuest, persistSession, pushMessage, isHost, isMember, publicSession, allSessions,
   validateSyncCommand, authorizeSyncCommand, beginMediaGeneration, applyStallReport,
-  validateSubtitlePreferences, effectiveName, publicMember, staleRoomIds,
+  effectiveName, publicMember, staleRoomIds,
 } from './session.js'
 import {
   authorizeLiveKitUpgrade, createLiveKitTokenVerifier, isLiveKitUpgradePath,
@@ -474,7 +474,7 @@ io.on('connection', (socket) => {
   })
 
   // party:create ────────────────────────────────────────────────────────────
-  socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, subtitleStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
+  socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     let sess = null
     try {
       if (findSessionByUser(userId)) return ack?.({ error: 'already in a party' })
@@ -495,7 +495,6 @@ io.on('connection', (socket) => {
         await refreshPlayback(sess, {
           token, userId, itemId: mediaItemId, mediaSourceId,
           audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
-          subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
         })
         const initialPosition = Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0
           ? resumePositionTicks
@@ -727,7 +726,7 @@ io.on('connection', (socket) => {
   const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl
 
   // party:selectMedia — a title was chosen in the lobby → enter watching stage
-  socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, subtitleStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
+  socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
     const hostId = sess.hostId
@@ -755,7 +754,6 @@ io.on('connection', (socket) => {
           await refreshPlayback(draft, {
             token, userId, itemId: mediaItemId, mediaSourceId: src,
             audioStreamIndex: maySetTracks && Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
-            subtitleStreamIndex: maySetTracks && Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
           })
           const refreshedError = selectionError()
           if (refreshedError) return ack?.({ error: refreshedError })
@@ -804,6 +802,7 @@ io.on('connection', (socket) => {
     }
     const sess = findSessionForMember(userId)
     if (!sess || sess.hostId !== userId || !sess.mediaItemId) return ack?.({ error: 'not allowed' })
+    if (!Object.hasOwn(payload, 'audioStreamIndex')) return ack?.({ ok: true })
     const mediaItemId = sess.mediaItemId
     enqueuePlaybackMutation(sess, async () => {
       if (getSession(sess.id) !== sess || sess.mediaItemId !== mediaItemId || sess.hostId !== userId) {
@@ -813,9 +812,6 @@ io.on('connection', (socket) => {
         const audioStreamIndex = Object.hasOwn(payload, 'audioStreamIndex')
           ? payload.audioStreamIndex
           : sess.playback?.selectedAudioIndex
-        const subtitleStreamIndex = Object.hasOwn(payload, 'subtitleStreamIndex')
-          ? payload.subtitleStreamIndex
-          : sess.playback?.selectedSubtitleIndex
         const draft = {
           mediaSourceId: sess.mediaSourceId,
           playback: sess.playback,
@@ -827,7 +823,6 @@ io.on('connection', (socket) => {
           itemId: mediaItemId,
           mediaSourceId: sess.mediaSourceId,
           audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : null,
-          subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : null,
         })
         if (getSession(sess.id) !== sess || sess.mediaItemId !== mediaItemId || sess.hostId !== userId) {
           return ack?.({ error: 'media changed' })
@@ -845,18 +840,9 @@ io.on('connection', (socket) => {
     })
   })
 
-  // Canonical subtitle presentation is part of party state, not a per-device
-  // preference. Only the host can replace the complete validated object.
-  socket.on('party:setSubtitlePreferences', ({ preferences } = {}, ack) => {
-    const sess = findSessionForMember(userId)
-    if (!sess || sess.hostId !== userId) return ack?.({ error: 'not allowed' })
-    const result = validateSubtitlePreferences(preferences)
-    if (result.error) return ack?.({ error: result.error })
-    sess.subtitlePreferences = result.value
-    persistSession(sess)
-    io.to(sess.id).emit('party:state', publicSession(sess))
-    ack?.({ ok: true, subtitlePreferences: sess.subtitlePreferences })
-  })
+  // Kept as a no-op for older clients. Subtitle presentation belongs to each
+  // viewer and must never mutate or broadcast party state.
+  socket.on('party:setSubtitlePreferences', (_payload, ack) => ack?.({ ok: true }))
 
   // sync:hello — client asks for the current timeline once it's listening
   // (avoids the race where a pushed schedule arrives before the guest mounts)

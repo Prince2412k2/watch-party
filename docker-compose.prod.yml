@@ -61,17 +61,13 @@ services:
       - "0.0.0.0:8096:8096"
     volumes:
       - ./jellyfin/config:/config
-      # Media is mounted READ-ONLY. Jellyfin writes metadata, artwork and
-      # user data under /config, so it does not need write access to the media
-      # trees, and read-only removes the possibility of the media server
-      # mutating or deleting source files.
+      # Jellyfin needs write access here for its native subtitle API, which
+      # stores uploaded subtitle sidecars beside the selected video file.
       #
-      # Reverse this ONLY if you deliberately enable a Jellyfin library option
-      # that saves into media folders ("Save artwork into media folders" or NFO
-      # metadata saving). If you do, document why here — otherwise a future
-      # reader cannot tell an intentional exception from a regression.
-      - ./media:/media:ro
-      - ${MEDIA_ROOT:-./media-data}/media:/servarr-media:ro
+      # Keep artwork/NFO-in-media options disabled so this access remains
+      # limited to explicit subtitle upload/delete operations.
+      - ./media:/media:rw
+      - ${MEDIA_ROOT:-./media-data}/media:/servarr-media:rw
     environment:
       - JELLYFIN_PublishedServerUrl=https://watch.example.com/jellyfin
     healthcheck:

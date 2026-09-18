@@ -56,23 +56,51 @@ void main() {
     expect(content, contains('Hello'));
   });
 
-  test('DioApiClient uploads subtitle bytes with filename metadata', () async {
+  test('DioApiClient uploads subtitle bytes for the selected source', () async {
     final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
           expect(options.path, '/api/library/items/movie/subtitles');
+          expect(options.queryParameters, {'mediaSourceId': 'source-4k'});
           expect(options.headers[Headers.contentLengthHeader], 3);
           expect(options.headers['Content-Type'], 'application/octet-stream');
           expect(options.headers['X-Subtitle-Filename'], 'English%20SDH.srt');
-          handler.resolve(Response(requestOptions: options, statusCode: 201));
+          handler.resolve(
+            Response(
+              requestOptions: options,
+              statusCode: 201,
+              data: {'subtitleStreamIndex': 7},
+            ),
+          );
+        },
+      ),
+    );
+
+    final index = await DioApiClient(dio: dio).uploadSubtitle(
+      'movie',
+      [1, 2, 3],
+      'English SDH.srt',
+      mediaSourceId: 'source-4k',
+    );
+    expect(index, 7);
+  });
+
+  test('DioApiClient deletes a subtitle from the selected source', () async {
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          expect(options.path, '/api/library/items/movie/subtitles/7');
+          expect(options.queryParameters, {'mediaSourceId': 'source-4k'});
+          handler.resolve(Response(requestOptions: options, statusCode: 200));
         },
       ),
     );
 
     await DioApiClient(
       dio: dio,
-    ).uploadSubtitle('movie', [1, 2, 3], 'English SDH.srt');
+    ).deleteSubtitle('movie', 7, mediaSourceId: 'source-4k');
   });
 
   test('PlaybackInfo preserves external subtitle metadata', () {

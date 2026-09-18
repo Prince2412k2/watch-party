@@ -342,6 +342,9 @@ export function publicMember({ userId, name }) {
 // field is safe-by-default instead of a future leak.
 export function publicSession(session) {
   const host = publicMember({ userId: session.hostId, name: session.hostName })
+  const playback = session.playback
+    ? Object.fromEntries(Object.entries(session.playback).filter(([key]) => key !== 'selectedSubtitleIndex'))
+    : session.playback
   return {
     id: session.id,
     hostId: session.hostId,
@@ -350,9 +353,8 @@ export function publicSession(session) {
     stage: session.stage,
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
-    playback: session.playback,
+    playback,
     playbackRevision: session.playbackRevision,
-    subtitlePreferences: session.subtitlePreferences,
     guests: session.guests.map(publicMember),
     waiting: session.waiting.map(publicMember),
     collaborativeControl: session.collaborativeControl,

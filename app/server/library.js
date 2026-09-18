@@ -235,6 +235,7 @@ export function registerLibraryRoutes(app) {
       })
       res.json(normalizePlaybackInfo(response, {
         itemId: id,
+        mediaSourceId,
         selectedAudioIndex: Number.isInteger(req.body?.audioStreamIndex) ? req.body.audioStreamIndex : null,
         selectedSubtitleIndex: Number.isInteger(req.body?.subtitleStreamIndex) ? req.body.subtitleStreamIndex : null,
       }))

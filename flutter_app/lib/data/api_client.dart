@@ -183,10 +183,19 @@ abstract class ApiClient {
 
   /// Upload an external subtitle file for [itemId]. [filename] is used only
   /// to infer the subtitle format (its extension) and label.
-  Future<void> uploadSubtitle(String itemId, List<int> bytes, String filename);
+  Future<int> uploadSubtitle(
+    String itemId,
+    List<int> bytes,
+    String filename, {
+    String? mediaSourceId,
+  });
 
   /// Delete the external subtitle track at [streamIndex] on [itemId].
-  Future<void> deleteSubtitle(String itemId, int streamIndex);
+  Future<void> deleteSubtitle(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  });
 
   // ── Profile ───────────────────────────────────────────────────────────
   /// The signed-in user's own profile. Nobody else's is readable.
@@ -570,13 +579,17 @@ class DioApiClient implements ApiClient {
   }
 
   @override
-  Future<void> uploadSubtitle(
+  Future<int> uploadSubtitle(
     String itemId,
     List<int> bytes,
-    String filename,
-  ) async {
+    String filename, {
+    String? mediaSourceId,
+  }) async {
     final res = await _dio.post(
       '/api/library/items/$itemId/subtitles',
+      queryParameters: mediaSourceId == null
+          ? null
+          : {'mediaSourceId': mediaSourceId},
       data: Stream.fromIterable([bytes]),
       options: Options(
         headers: {
@@ -587,12 +600,27 @@ class DioApiClient implements ApiClient {
       ),
     );
     if (res.statusCode != 201) _fail(res, 'uploadSubtitle');
+    final data = res.data;
+    final index = data is Map ? data['subtitleStreamIndex'] : null;
+    if (index is! int) {
+      throw const FormatException(
+        'Subtitle upload response did not include a stream index',
+      );
+    }
+    return index;
   }
 
   @override
-  Future<void> deleteSubtitle(String itemId, int streamIndex) async {
+  Future<void> deleteSubtitle(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  }) async {
     final res = await _dio.delete(
       '/api/library/items/$itemId/subtitles/$streamIndex',
+      queryParameters: mediaSourceId == null
+          ? null
+          : {'mediaSourceId': mediaSourceId},
     );
     if (res.statusCode != 200) _fail(res, 'deleteSubtitle');
   }

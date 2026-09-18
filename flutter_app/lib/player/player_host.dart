@@ -354,6 +354,9 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
   Widget build(BuildContext context) {
     final now = ref.watch(nowPlayingProvider);
     final notifier = ref.read(nowPlayingProvider.notifier);
+    final localSubtitleRevision = now.itemId == null
+        ? 0
+        : ref.watch(subtitleInventoryRevisionProvider(now.itemId!));
     // Party context, when there is one. The player is the same player either
     // way — a room only changes who may drive it and where seeks are authored.
     final party = ref.watch(partyProvider);
@@ -460,9 +463,17 @@ class _PlayerHostState extends ConsumerState<PlayerHost>
                             preferredSubtitleStreamIndex:
                                 now.subtitleStreamIndex,
                             subtitleRevision: party == null
-                                ? now.revision
-                                : Object.hashAll(
-                                    party.playback?.subtitleStreams ?? const [],
+                                ? Object.hash(
+                                    now.revision,
+                                    localSubtitleRevision,
+                                  )
+                                : Object.hash(
+                                    localSubtitleRevision,
+                                    party.mediaSourceId,
+                                    Object.hashAll(
+                                      party.playback?.subtitleStreams ??
+                                          const [],
+                                    ),
                                   ),
                             canManageAudio: playback.canManageAudio,
                             onAudioStreamSelected: party == null

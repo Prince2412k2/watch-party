@@ -68,6 +68,7 @@ Future<OpenTitleResult> openTitleIntoPlayer(
             .read(apiClientProvider)
             .playbackInfo(
               itemId,
+              mediaSourceId: mediaSourceId,
               audioStreamIndex: audioStreamIndex,
               subtitleStreamIndex: subtitleStreamIndex,
             );

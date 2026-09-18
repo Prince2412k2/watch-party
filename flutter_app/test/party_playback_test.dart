@@ -304,7 +304,7 @@ void main() {
     expect(engine.attachCount, 0);
   });
 
-  test('party playback forwards canonical track selections', () {
+  test('party playback follows shared audio but starts subtitles locally off', () {
     final (:container, :engine) = _boot(me: 'guest', hostId: 'host');
     addTearDown(container.dispose);
     _watch(
@@ -318,7 +318,49 @@ void main() {
 
     final now = container.read(nowPlayingProvider);
     expect(now.audioStreamIndex, 2);
-    expect(now.subtitleStreamIndex, 4);
+    expect(now.subtitleStreamIndex, isNull);
+    expect(engine.attachCount, 1);
+  });
+
+  test('a driver keeps their pre-play subtitle choice locally', () async {
+    final (:container, :engine) = _boot(me: 'host', hostId: 'host');
+    addTearDown(container.dispose);
+
+    expect(
+      await container
+          .read(partyPlaybackProvider)
+          .requestOpen(itemId: 'film-1', subtitleStreamIndex: 9),
+      OpenOutcome.sentToRoom,
+    );
+    _watch(
+      container,
+      'film-1',
+      playback: const PlaybackInfo(selectedAudioIndex: 2),
+    );
+
+    expect(container.read(nowPlayingProvider).subtitleStreamIndex, 9);
+    expect(engine.attachCount, 1);
+  });
+
+  test('a driver can reselect the current title with a new local subtitle', () async {
+    final (:container, :engine) = _boot(
+      me: 'host',
+      hostId: 'host',
+      watching: 'film-1',
+    );
+    addTearDown(container.dispose);
+    container.read(nowPlayingProvider.notifier).setSubtitleStreamIndex(4);
+
+    await container
+        .read(partyPlaybackProvider)
+        .requestOpen(itemId: 'film-1', subtitleStreamIndex: 9);
+    _watch(
+      container,
+      'film-1',
+      playback: const PlaybackInfo(selectedAudioIndex: 2),
+    );
+
+    expect(container.read(nowPlayingProvider).subtitleStreamIndex, 9);
     expect(engine.attachCount, 1);
   });
 

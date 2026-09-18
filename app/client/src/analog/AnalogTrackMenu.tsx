@@ -59,7 +59,8 @@ export function AnalogTrackMenu({
     setBusy(true)
     setError('')
     try {
-      const response = await fetch(`/api/library/items/${itemId}/subtitles`, {
+      const params = tracks?.mediaSourceId ? `?mediaSourceId=${encodeURIComponent(tracks.mediaSourceId)}` : ''
+      const response = await fetch(`/api/library/items/${encodeURIComponent(itemId)}/subtitles${params}`, {
         method: 'POST',
         credentials: 'include',
         body: file,
@@ -89,7 +90,8 @@ export function AnalogTrackMenu({
     setBusy(true)
     setError('')
     try {
-      const response = await fetch(`/api/library/items/${itemId}/subtitles/${track.index}`, {
+      const params = tracks?.mediaSourceId ? `?mediaSourceId=${encodeURIComponent(tracks.mediaSourceId)}` : ''
+      const response = await fetch(`/api/library/items/${encodeURIComponent(itemId)}/subtitles/${track.index}${params}`, {
         method: 'DELETE',
         credentials: 'include',
       })

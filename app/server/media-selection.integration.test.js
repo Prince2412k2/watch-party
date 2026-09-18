@@ -163,7 +163,7 @@ test('media selection commits only the latest still-authorized request', { timeo
     assert.equal(session.mediaItemId, 'latest')
     assert.equal(session.playback.playSessionId, 'play-latest')
     assert.equal(session.playback.selectedAudioIndex, 5)
-    assert.equal(session.playback.selectedSubtitleIndex, 11)
+    assert.equal(session.playback.selectedSubtitleIndex, undefined)
 
     assert.deepEqual(await emitAck(host, 'party:backToLobby'), { ok: true })
     const lobbyGate = holdPlayback('after-lobby')

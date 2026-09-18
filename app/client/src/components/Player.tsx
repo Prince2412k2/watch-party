@@ -28,6 +28,7 @@ import {
   type TimelinePreview,
 } from '../analog/player/index.ts'
 import { analogTokens } from '../design/analogTokens.ts'
+import { DEFAULT_SUBTITLE_PREFERENCES } from '../types.ts'
 import type { PeerPlayback, SubtitlePreferences } from '../types.ts'
 
 type LocalPhase = 'ready' | 'catchingUp' | 'buffering'
@@ -84,15 +85,6 @@ export interface PlayerProps {
 const VPlayer = createPlayer({ features: videoFeatures })
 
 const MONO_F = "'JetBrains Mono', ui-monospace, monospace"
-const DEFAULT_SUBTITLE_PREFERENCES: SubtitlePreferences = {
-  delayMs: 0,
-  fontScalePercent: 100,
-  verticalOffsetPercent: 0,
-  fontFamily: 'sans',
-  textColor: '#FFFFFF',
-  backgroundOpacityPercent: 65,
-}
-
 const originalCueState = new WeakMap<TextTrackCue, { startTime: number; endTime: number }>()
 
 function applyCuePreferences(track: TextTrack, preferences: SubtitlePreferences) {
@@ -2046,14 +2038,13 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
   function chooseAudio(index: number) {
     if (!canManageMedia) return
     onChooseAudio?.(index)
-    onSetPlaybackTracks?.({ audioStreamIndex: index, subtitleStreamIndex: selectedSubtitleIndex })
+    onSetPlaybackTracks?.({ audioStreamIndex: index })
     setView('main')
   }
 
   function chooseSub(index: number | null) {
-    if (!canManageMedia) return
     onChooseSubtitle?.(index)
-    onSetPlaybackTracks?.({ audioStreamIndex: selectedAudioIndex, subtitleStreamIndex: index })
+    onSetPlaybackTracks?.({ subtitleStreamIndex: index })
     setView('main')
   }
 
@@ -2074,7 +2065,7 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
       if (!res.ok) throw new Error(message)
       if (typeof data === 'object' && data !== null && 'subtitleStreamIndex' in data && typeof data.subtitleStreamIndex === 'number') {
         onChooseSubtitle?.(data.subtitleStreamIndex)
-        onSetPlaybackTracks?.({ audioStreamIndex: selectedAudioIndex, subtitleStreamIndex: data.subtitleStreamIndex })
+        onSetPlaybackTracks?.({ subtitleStreamIndex: data.subtitleStreamIndex })
         setView('main')
       }
     } catch (err) {
@@ -2196,9 +2187,9 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
             </div>
             {subtitleStreams.length > 8 && searchBox}
             <div style={{ overflowY: 'auto', padding: S.listPad }}>
-              {optRow('Off', selectedSubtitleIndex == null || selectedSubtitleIndex < 0, () => chooseSub(null), 'off', !canManageMedia)}
+              {optRow('Off', selectedSubtitleIndex == null || selectedSubtitleIndex < 0, () => chooseSub(null), 'off')}
               {subtitleStreams.length === 0 && <div style={{ padding: S.emptyPad, fontSize: S.emptyFont, color: 'rgba(244,244,245,.36)' }}>None available in this stream</div>}
-              {filtered(subtitleStreams).map((t, i) => optRow(trackName(t, i), selectedSubtitleIndex === t.index, () => chooseSub(t.index), t.index, !canManageMedia))}
+              {filtered(subtitleStreams).map((t, i) => optRow(trackName(t, i), selectedSubtitleIndex === t.index, () => chooseSub(t.index), t.index))}
               <div style={{ borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 6, padding: S.optPad }}>
                 <input ref={uploadInputRef} type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" hidden
                   onChange={(e) => uploadSubtitle(e.target.files?.[0])} />
@@ -2219,25 +2210,25 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
             {subHeader('Subtitle settings')}
             <div style={{ overflowY: 'auto' }}>
               {settingRow('Timing offset', `${subtitlePreferences.delayMs > 0 ? '+' : ''}${subtitlePreferences.delayMs} ms`,
-                <input disabled={!canManageMedia} aria-label="Subtitle timing offset" type="range" min={-10000} max={10000} step={250} value={subtitlePreferences.delayMs} onChange={e => onUpdateSubtitlePreferences?.({ delayMs: Number(e.target.value) })} style={rangeStyle} />)}
+                <input aria-label="Subtitle timing offset" type="range" min={-10000} max={10000} step={250} value={subtitlePreferences.delayMs} onChange={e => onUpdateSubtitlePreferences?.({ delayMs: Number(e.target.value) })} style={rangeStyle} />)}
               {settingRow('Font size', `${subtitlePreferences.fontScalePercent}%`,
-                <input disabled={!canManageMedia} aria-label="Subtitle font size" type="range" min={60} max={200} step={10} value={subtitlePreferences.fontScalePercent} onChange={e => onUpdateSubtitlePreferences?.({ fontScalePercent: Number(e.target.value) })} style={rangeStyle} />)}
+                <input aria-label="Subtitle font size" type="range" min={60} max={200} step={10} value={subtitlePreferences.fontScalePercent} onChange={e => onUpdateSubtitlePreferences?.({ fontScalePercent: Number(e.target.value) })} style={rangeStyle} />)}
               {settingRow('Background', `${subtitlePreferences.backgroundOpacityPercent}%`,
-                <input disabled={!canManageMedia} aria-label="Subtitle background opacity" type="range" min={0} max={100} step={5} value={subtitlePreferences.backgroundOpacityPercent} onChange={e => onUpdateSubtitlePreferences?.({ backgroundOpacityPercent: Number(e.target.value) })} style={rangeStyle} />)}
+                <input aria-label="Subtitle background opacity" type="range" min={0} max={100} step={5} value={subtitlePreferences.backgroundOpacityPercent} onChange={e => onUpdateSubtitlePreferences?.({ backgroundOpacityPercent: Number(e.target.value) })} style={rangeStyle} />)}
               {settingRow('Font', '',
-                <select disabled={!canManageMedia} aria-label="Subtitle font" value={subtitlePreferences.fontFamily} onChange={e => onUpdateSubtitlePreferences?.({ fontFamily: e.target.value as SubtitlePreferences['fontFamily'] })} style={selectStyle}>
+                <select aria-label="Subtitle font" value={subtitlePreferences.fontFamily} onChange={e => onUpdateSubtitlePreferences?.({ fontFamily: e.target.value as SubtitlePreferences['fontFamily'] })} style={selectStyle}>
                   <option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option>
                 </select>)}
               {settingRow('Text color', '',
-                <select disabled={!canManageMedia} aria-label="Subtitle text color" value={subtitlePreferences.textColor.toLowerCase()} onChange={e => onUpdateSubtitlePreferences?.({ textColor: e.target.value.toUpperCase() })} style={selectStyle}>
+                <select aria-label="Subtitle text color" value={subtitlePreferences.textColor.toLowerCase()} onChange={e => onUpdateSubtitlePreferences?.({ textColor: e.target.value.toUpperCase() })} style={selectStyle}>
                   <option value="#ffffff">White</option><option value="#ffe66d">Yellow</option><option value="#7fdbff">Cyan</option><option value="#a8ffb0">Green</option>
                 </select>)}
               {settingRow('Height', subtitlePreferences.verticalOffsetPercent === 0 ? 'Bottom' : `${subtitlePreferences.verticalOffsetPercent}%`,
-                <input type="range" disabled={!canManageMedia} aria-label="Subtitle height above the bottom" min={0} max={100} step={5}
+                <input type="range" aria-label="Subtitle height above the bottom" min={0} max={100} step={5}
                   value={subtitlePreferences.verticalOffsetPercent}
                   onChange={e => onUpdateSubtitlePreferences?.({ verticalOffsetPercent: Number(e.target.value) })} style={{ width: '100%' }} />)}
               <div style={{ padding: S.footPad }}>
-                <button disabled={!canManageMedia} onClick={onResetSubtitlePreferences} style={{ width: '100%', padding: S.btnPad, borderRadius: S.btnRadius, border: '1px solid rgba(255,255,255,.1)', background: 'transparent', color: 'rgba(244,244,245,.62)', cursor: 'pointer', fontSize: S.btnFont }}>Reset subtitle settings</button>
+                <button onClick={onResetSubtitlePreferences} style={{ width: '100%', padding: S.btnPad, borderRadius: S.btnRadius, border: '1px solid rgba(255,255,255,.1)', background: 'transparent', color: 'rgba(244,244,245,.62)', cursor: 'pointer', fontSize: S.btnFont }}>Reset subtitle settings</button>
               </div>
             </div>
           </>

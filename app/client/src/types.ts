@@ -66,6 +66,15 @@ export interface SubtitlePreferences {
   backgroundOpacityPercent: number
 }
 
+export const DEFAULT_SUBTITLE_PREFERENCES: SubtitlePreferences = Object.freeze({
+  delayMs: 0,
+  fontScalePercent: 100,
+  verticalOffsetPercent: 0,
+  fontFamily: 'sans',
+  textColor: '#FFFFFF',
+  backgroundOpacityPercent: 65,
+})
+
 export interface PartySession {
   id: string
   hostId: string
@@ -80,7 +89,6 @@ export interface PartySession {
   playback?: PartyPlayback | null
   mediaItemId?: string | null
   mediaSourceId?: string | null
-  subtitlePreferences?: SubtitlePreferences
   schedule?: { positionTicks: number; t0: number; phase: string; version?: number }
 }
 
@@ -113,6 +121,8 @@ export interface PartyContextValue {
   toasts: ToastRecord[]
   peerPlayback: Record<string, PeerPlayback>
   showPeerPointers: boolean
+  localSubtitleSelection: { itemId: string; index: number | null } | null
+  subtitlePreferences: SubtitlePreferences
   createParty: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => Promise<string>
   createRoom: () => Promise<string>
   joinParty: (partyId: string) => Promise<string>

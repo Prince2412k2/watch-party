@@ -164,14 +164,19 @@ class MockApiClient implements ApiClient {
   }) async => subtitleContents[streamIndex] ?? '';
 
   @override
-  Future<void> uploadSubtitle(
+  Future<int> uploadSubtitle(
     String itemId,
     List<int> bytes,
-    String filename,
-  ) async {}
+    String filename, {
+    String? mediaSourceId,
+  }) async => 1;
 
   @override
-  Future<void> deleteSubtitle(String itemId, int streamIndex) async {}
+  Future<void> deleteSubtitle(
+    String itemId,
+    int streamIndex, {
+    String? mediaSourceId,
+  }) async {}
 
   @override
   Future<LiveKitToken> livekitToken(String partyId) async =>

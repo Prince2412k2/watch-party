@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
 import type { ReactNode } from 'react'
+import { DEFAULT_SUBTITLE_PREFERENCES } from '../types.ts'
 import { useSocket } from '../hooks/useSocket.ts'
 import { navigate } from '../router.ts'
 import type { PartyContextValue, PartySession, PartyUser, PeerPlayback, SubtitlePreferences, ToastRecord } from '../types.ts'
@@ -21,6 +22,8 @@ interface PartyState {
   toasts: ToastRecord[]
   peerPlayback: Record<string, PeerPlayback>
   showPeerPointers: boolean
+  localSubtitleSelection: { itemId: string; index: number | null } | null
+  subtitlePreferences: SubtitlePreferences
 }
 
 type PartyAction =
@@ -39,6 +42,8 @@ type PartyAction =
   | { type: 'REMOVE_TOAST'; id: number }
   | { type: 'PEER_PLAYBACK'; report: PeerPlayback }
   | { type: 'TOGGLE_PEER_POINTERS' }
+  | { type: 'SET_LOCAL_SUBTITLE'; itemId: string; index: number | null }
+  | { type: 'SET_SUBTITLE_PREFERENCES'; preferences: SubtitlePreferences }
   | { type: 'USER_JOINED'; user: PartyUser }
   | { type: 'USER_LEFT'; userId: string }
   | { type: 'HOST_CHANGED'; hostId: string }
@@ -57,6 +62,8 @@ const initialState: PartyState = {
   toasts: [],
   peerPlayback: {},
   showPeerPointers: false,
+  localSubtitleSelection: null,
+  subtitlePreferences: DEFAULT_SUBTITLE_PREFERENCES,
 }
 
 function reducer(state: PartyState, action: PartyAction): PartyState {
@@ -69,6 +76,9 @@ function reducer(state: PartyState, action: PartyAction): PartyState {
         peerPlayback: state.session?.id === action.session.id && state.session.mediaItemId === action.session.mediaItemId
           ? state.peerPlayback
           : {},
+        localSubtitleSelection: state.localSubtitleSelection?.itemId === action.session.mediaItemId
+          ? state.localSubtitleSelection
+          : null,
       }
     case 'SET_ROLE':
       return { ...state, role: action.role }
@@ -98,6 +108,10 @@ function reducer(state: PartyState, action: PartyAction): PartyState {
       return { ...state, peerPlayback: { ...state.peerPlayback, [action.report.userId]: action.report } }
     case 'TOGGLE_PEER_POINTERS':
       return { ...state, showPeerPointers: !state.showPeerPointers }
+    case 'SET_LOCAL_SUBTITLE':
+      return { ...state, localSubtitleSelection: { itemId: action.itemId, index: action.index } }
+    case 'SET_SUBTITLE_PREFERENCES':
+      return { ...state, subtitlePreferences: action.preferences }
     case 'USER_JOINED': {
       if (state.session?.guests?.some(guest => guest.userId === action.user.userId)) return state
       const guests = state.session
@@ -314,8 +328,15 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
 
   // Actions
   function createParty(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}): Promise<string> {
+    if (Object.prototype.hasOwnProperty.call(tracks, 'subtitleStreamIndex')) {
+      dispatch({ type: 'SET_LOCAL_SUBTITLE', itemId: mediaItemId, index: tracks.subtitleStreamIndex ?? null })
+    }
     return new Promise<string>((resolve, reject) => {
-      socket.emit('party:create', { mediaItemId, ...tracks }, (value: unknown) => {
+      socket.emit('party:create', {
+        mediaItemId,
+        audioStreamIndex: tracks.audioStreamIndex,
+        resumePositionTicks: tracks.resumePositionTicks,
+      }, (value: unknown) => {
         if (!isObject(value)) return reject(new Error('Party creation failed'))
         if (typeof value.error === 'string') return reject(new Error(value.error))
         if (!isPartySession(value.session) || typeof value.partyId !== 'string') return reject(new Error('Party creation failed'))
@@ -340,7 +361,14 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
 
   // Pick a title from the lobby → everyone transitions into the player.
   function selectMedia(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}) {
-    socket.emit('party:selectMedia', { mediaItemId, ...tracks })
+    if (Object.prototype.hasOwnProperty.call(tracks, 'subtitleStreamIndex')) {
+      dispatch({ type: 'SET_LOCAL_SUBTITLE', itemId: mediaItemId, index: tracks.subtitleStreamIndex ?? null })
+    }
+    socket.emit('party:selectMedia', {
+      mediaItemId,
+      audioStreamIndex: tracks.audioStreamIndex,
+      resumePositionTicks: tracks.resumePositionTicks,
+    })
   }
 
   // Stop the movie, return the room to shared browsing.
@@ -415,12 +443,18 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     socket.emit('party:setSyncMode', { mode })
   }
 
-  function setPlaybackTracks({ audioStreamIndex = null, subtitleStreamIndex = null }: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } = {}) {
-    socket.emit('party:setPlaybackTracks', { audioStreamIndex, subtitleStreamIndex })
+  function setPlaybackTracks(tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null } = {}) {
+    const itemId = stateRef.current.session?.mediaItemId
+    if (itemId && Object.prototype.hasOwnProperty.call(tracks, 'subtitleStreamIndex')) {
+      dispatch({ type: 'SET_LOCAL_SUBTITLE', itemId, index: tracks.subtitleStreamIndex ?? null })
+    }
+    if (Object.prototype.hasOwnProperty.call(tracks, 'audioStreamIndex')) {
+      socket.emit('party:setPlaybackTracks', { audioStreamIndex: tracks.audioStreamIndex ?? null })
+    }
   }
 
   function setSubtitlePreferences(preferences: SubtitlePreferences) {
-    socket.emit('party:setSubtitlePreferences', { preferences })
+    dispatch({ type: 'SET_SUBTITLE_PREFERENCES', preferences })
   }
 
   function sendMessage(text: string) {

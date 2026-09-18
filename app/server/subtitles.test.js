@@ -81,6 +81,78 @@ test('subtitleMutationError maps Jellyfin client and server failures safely', ()
   assert.equal(subtitleMutationError(undefined).status, 502)
 })
 
+test('library subtitle mutations target and validate the requested media source', async () => {
+  const routes = new Map()
+  const app = {
+    get() {},
+    post(path, ...handlers) { routes.set(`POST ${path}`, handlers.at(-1)) },
+    delete(path, ...handlers) { routes.set(`DELETE ${path}`, handlers.at(-1)) },
+  }
+  registerSubtitleRoutes(app, null, { enqueuePlaybackMutation: async (_session, operation) => operation() })
+
+  const originalFetch = globalThis.fetch
+  const mutations = []
+  let uploaded = false
+  globalThis.fetch = async (input, init = {}) => {
+    const path = new URL(input).pathname
+    if (path.endsWith('/PlaybackInfo')) {
+      return Response.json({
+        MediaSources: [
+          { Id: 'source-a', MediaStreams: [] },
+          {
+            Id: 'source-b',
+            MediaStreams: uploaded
+              ? [{ Type: 'Subtitle', Index: 12, IsExternal: true }]
+              : [],
+          },
+        ],
+      })
+    }
+    mutations.push({ method: init.method, path })
+    if (init.method === 'POST') uploaded = true
+    return new Response(null, { status: 204 })
+  }
+
+  const response = () => ({
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this },
+    json(body) { this.body = body; return this },
+  })
+  const baseRequest = {
+    session: { jellyfin: { userId: 'user', accessToken: 'token', deviceId: 'device' } },
+    query: { mediaSourceId: 'source-b' },
+    get: name => ({
+      'content-type': 'text/vtt',
+      'x-subtitle-filename': 'English.vtt',
+      'x-subtitle-language': 'eng',
+    })[name.toLowerCase()] ?? '',
+  }
+
+  try {
+    const uploadResponse = response()
+    await routes.get('POST /api/library/items/:itemId/subtitles')({
+      ...baseRequest,
+      params: { itemId: 'movie' },
+      body: Buffer.from('WEBVTT\n\n00:00.000 --> 00:01.000\nHello'),
+    }, uploadResponse)
+    assert.equal(uploadResponse.statusCode, 201)
+    assert.equal(uploadResponse.body.subtitleStreamIndex, 12)
+
+    const deleteResponse = response()
+    await routes.get('DELETE /api/library/items/:itemId/subtitles/:index')({
+      ...baseRequest,
+      params: { itemId: 'movie', index: '12' },
+    }, deleteResponse)
+    assert.equal(deleteResponse.statusCode, 200)
+    assert.deepEqual(mutations, [
+      { method: 'POST', path: '/Videos/source-b/Subtitles' },
+      { method: 'DELETE', path: '/Videos/source-b/Subtitles/12' },
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('party subtitle uploads serialize their Jellyfin snapshot and mutation', async () => {
   const routes = new Map()
   const app = {
@@ -112,9 +184,11 @@ test('party subtitle uploads serialize their Jellyfin snapshot and mutation', as
   const subtitles = []
   let playbackReads = 0
   let mutations = 0
+  const mutationPaths = []
   globalThis.fetch = async (input, init = {}) => {
     const path = new URL(input).pathname
     if (path.endsWith('/Subtitles')) {
+      mutationPaths.push(path)
       mutations++
       if (mutations === 1) {
         mutationStarted.resolve()
@@ -169,6 +243,7 @@ test('party subtitle uploads serialize their Jellyfin snapshot and mutation', as
     assert.equal(secondResponse.statusCode, 201)
     assert.equal(firstResponse.body.subtitleStreamIndex, 10)
     assert.equal(secondResponse.body.subtitleStreamIndex, 11)
+    assert.deepEqual(mutationPaths, ['/Videos/source/Subtitles', '/Videos/source/Subtitles'])
   } finally {
     globalThis.fetch = originalFetch
     deleteSession(session.id)

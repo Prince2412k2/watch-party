@@ -54,6 +54,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   const {
     session, role, messages, layoutMode, chatOpen, chatRipple, alertMode,
     setLayout, toggleChat, openChat, closeChat, selectMedia, setPlaybackTracks, setSubtitlePreferences,
+    localSubtitleSelection, subtitlePreferences,
     peerPlayback, showPeerPointers,
   } = party
 
@@ -210,6 +211,8 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
       layoutMode={layoutMode} setLayout={setLayout} openChat={openChat} closeChat={closeChat} toggleChat={toggleChat}
       setPlaybackTracks={setPlaybackTracks}
       setSubtitlePreferences={setSubtitlePreferences}
+      localSubtitleSelection={localSubtitleSelection}
+      subtitlePreferences={subtitlePreferences}
       hideSelf={hideSelf} onToggleHideSelf={toggleHideSelf}
     />
   )
@@ -258,6 +261,7 @@ function WatchView({
   messages = NO_MESSAGES, selfUserId,
   peerPlayback = {}, showPeerPointers = false,
   setLayout = () => {}, openChat = () => {}, closeChat = () => {}, toggleChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
+  localSubtitleSelection = null, subtitlePreferences,
 }: {
   session: PartySession
   isHost?: boolean
@@ -277,6 +281,8 @@ function WatchView({
   toggleChat?: () => void
   setPlaybackTracks?: (tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }) => void
   setSubtitlePreferences?: (preferences: SubtitlePreferences) => void
+  localSubtitleSelection?: { itemId: string; index: number | null } | null
+  subtitlePreferences?: SubtitlePreferences
   hideSelf?: boolean
   onToggleHideSelf?: () => void
 }) {
@@ -527,6 +533,8 @@ function WatchView({
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
           onSetPlaybackTracks={setPlaybackTracks}
           onSetSubtitlePreferences={setSubtitlePreferences}
+          localSubtitleStreamIndex={localSubtitleSelection && localSubtitleSelection.itemId === session.mediaItemId ? localSubtitleSelection.index : null}
+          subtitlePreferences={subtitlePreferences}
           peerPlayback={peerPlayback}
           showPeerPointers={showPeerPointers}
           micOn={lk.micOn} camOn={lk.camOn}
@@ -913,13 +921,16 @@ function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }: 
 
 type HlsPlayerProps = Omit<PlayerProps, 'hlsUrl' | 'mediaItemId' | 'playback' | 'syncMode'> & {
   session: PartySession
+  localSubtitleStreamIndex?: number | null
 }
 
-function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, ...rest }: HlsPlayerProps) {
+function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, localSubtitleStreamIndex = null, ...rest }: HlsPlayerProps) {
   const [hlsUrl, setHlsUrl] = useState<{ itemId: string; url: string } | null>(null)
   const audioStreamIndex = session?.playback?.selectedAudioIndex
-  const subtitleStreamIndex = session?.playback?.selectedSubtitleIndex
   const mediaSourceId = session?.playback?.mediaSourceId ?? session?.mediaSourceId ?? session?.mediaItemId
+  const playback = session.playback
+    ? { ...session.playback, selectedSubtitleIndex: localSubtitleStreamIndex }
+    : undefined
 
   // Phase 1.2: fetch the ADAPTIVE (ABR) master playlist ONCE per media item.
   // The URL carries no bitrate pin, so hls.js loads a multi-variant ladder and
@@ -937,7 +948,6 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
     const qs = new URLSearchParams({ itemId, abr: '1' })
     if (mediaSourceId) qs.set('mediaSourceId', mediaSourceId)
     if (Number.isInteger(audioStreamIndex)) qs.set('audioStreamIndex', String(audioStreamIndex))
-    if (Number.isInteger(subtitleStreamIndex)) qs.set('subtitleStreamIndex', String(subtitleStreamIndex))
     fetch(`/api/library/hls-url?${qs}`, { credentials: 'include' })
       .then(r => r.ok ? apiJson(r) : null)
       .then(d => {
@@ -969,8 +979,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
       key={hlsUrl.itemId}
       hlsUrl={hlsUrl.url}
       mediaItemId={session.mediaItemId}
-      playback={session.playback ?? undefined}
-      subtitlePreferences={session.subtitlePreferences}
+      playback={playback}
       isHost={isHost}
       collaborativeControl={collaborativeControl}
       syncMode={session.syncMode}

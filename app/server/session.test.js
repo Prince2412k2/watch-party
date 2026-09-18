@@ -229,6 +229,19 @@ test('publicSession strips every member token — host, approved guest, and wait
   } finally { deleteSession(sess.id) }
 })
 
+test('publicSession keeps subtitle choices and presentation client-local', () => {
+  const sess = fresh()
+  try {
+    sess.playback = { selectedAudioIndex: 2, selectedSubtitleIndex: 7, subtitleStreams: [{ index: 7 }] }
+    sess.subtitlePreferences = { ...DEFAULT_SUBTITLE_PREFERENCES, delayMs: 500 }
+    const pub = publicSession(sess)
+    assert.equal(pub.playback.selectedAudioIndex, 2)
+    assert.equal(pub.playback.selectedSubtitleIndex, undefined)
+    assert.equal(pub.subtitlePreferences, undefined)
+    assert.deepEqual(pub.playback.subtitleStreams, [{ index: 7 }])
+  } finally { deleteSession(sess.id) }
+})
+
 test('publicSession strips tokens after a host transfer demotes the old host into guests', () => {
   const sess = createSession({
     hostId: 'owner', hostName: 'Owner', hostToken: 'owner-secret-token',
