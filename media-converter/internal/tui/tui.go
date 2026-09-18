@@ -73,6 +73,7 @@ type Model struct {
 	group, season                    string
 	detailID                         int64
 	stack                            []navState
+	selected                         map[int64]bool
 	cursor, offset, width, height    int
 	paused, dry, inputMode, showHelp bool
 	input                            textinput.Model
@@ -99,7 +100,7 @@ func New(s *storage.Store, c config.Config) Model {
 	in.Prompt = "> "
 	in.PromptStyle = lipgloss.NewStyle().Foreground(accent)
 	in.TextStyle = lipgloss.NewStyle().Foreground(ink)
-	return Model{store: s, cfg: c, scanner: scanner.Scanner{Store: s, Priority: c.Priority, Excludes: c.ExcludePatterns, IncludeSamples: c.IncludeSamples}, input: in}
+	return Model{store: s, cfg: c, scanner: scanner.Scanner{Store: s, Priority: c.Priority, Excludes: c.ExcludePatterns, IncludeSamples: c.IncludeSamples}, selected: map[int64]bool{}, input: in}
 }
 
 func Run(s *storage.Store, c config.Config) error {
@@ -136,6 +137,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.items = x.jobs
 		m.records = buildRecords(x.jobs, m.cfg.MoviesDir, m.cfg.TVDir)
 		m.paused = x.paused
+		m.pruneSelection()
 		if x.err != nil {
 			m.message = x.err.Error()
 		}
@@ -206,14 +208,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p":
 			m.paused = !m.paused
 			return m, m.settingCmd(m.paused)
+		case " ":
+			m.toggleSelection()
 		case "c":
 			return m, m.jobsCmd("cancel", m.selectedJobs())
 		case "r":
 			return m, m.jobsCmd("retry", m.selectedJobs())
-		case "+", "=":
-			return m, m.jobsCmd("priority-up", m.selectedJobs())
-		case "-":
-			return m, m.jobsCmd("priority-down", m.selectedJobs())
+		case "+", "=", "shift+up":
+			return m, m.reorderCmd(-1)
+		case "-", "shift+down":
+			return m, m.reorderCmd(1)
 		case "?":
 			m.showHelp = !m.showHelp
 		}
@@ -270,18 +274,6 @@ func (m Model) jobsCmd(action string, selected []jobs.Job) tea.Cmd {
 				} else {
 					continue
 				}
-			case "priority-up":
-				if job.Status == jobs.Queued {
-					err = m.store.Priority(context.Background(), job.ID, max(0, job.Priority-10))
-				} else {
-					continue
-				}
-			case "priority-down":
-				if job.Status == jobs.Queued {
-					err = m.store.Priority(context.Background(), job.ID, job.Priority+10)
-				} else {
-					continue
-				}
 			}
 			if err != nil {
 				return actionResult{"", err}
@@ -293,6 +285,71 @@ func (m Model) jobsCmd(action string, selected []jobs.Job) tea.Cmd {
 		}
 		return actionResult{fmt.Sprintf("Updated %d job%s", changed, plural(changed)), nil}
 	}
+}
+
+func (m Model) reorderCmd(direction int) tea.Cmd {
+	ids := m.reorderIDs()
+	label := "up"
+	if direction > 0 {
+		label = "down"
+	}
+	return func() tea.Msg {
+		if len(ids) == 0 {
+			return actionResult{"Select a queued item first", nil}
+		}
+		err := m.store.Reorder(context.Background(), ids, direction)
+		return actionResult{fmt.Sprintf("Moved %d job%s %s", len(ids), plural(len(ids)), label), err}
+	}
+}
+func (m *Model) toggleSelection() {
+	if m.tab != tabQueue || m.level == levelDetail {
+		return
+	}
+	rows := m.rows()
+	if m.cursor < 0 || m.cursor >= len(rows) || rows[m.cursor].status != jobs.Queued {
+		return
+	}
+	if m.selected == nil {
+		m.selected = map[int64]bool{}
+	}
+	id := rows[m.cursor].jobID
+	if m.selected[id] {
+		delete(m.selected, id)
+	} else {
+		m.selected[id] = true
+	}
+}
+func (m *Model) pruneSelection() {
+	queued := map[int64]bool{}
+	for _, job := range m.items {
+		if job.Status == jobs.Queued {
+			queued[job.ID] = true
+		}
+	}
+	for id := range m.selected {
+		if !queued[id] {
+			delete(m.selected, id)
+		}
+	}
+}
+func (m Model) reorderIDs() []int64 {
+	if m.tab != tabQueue {
+		return nil
+	}
+	if len(m.selected) > 0 {
+		ids := make([]int64, 0, len(m.selected))
+		for _, job := range m.items {
+			if job.Status == jobs.Queued && m.selected[job.ID] {
+				ids = append(ids, job.ID)
+			}
+		}
+		return ids
+	}
+	rows := m.rows()
+	if m.cursor >= 0 && m.cursor < len(rows) && rows[m.cursor].status == jobs.Queued {
+		return []int64{rows[m.cursor].jobID}
+	}
+	return nil
 }
 
 func (m *Model) setTab(tab viewTab) {
@@ -344,7 +401,7 @@ func (m Model) visibleRows() int {
 		reserved += 3
 	}
 	if m.showHelp {
-		reserved += 4
+		reserved += 5
 	}
 	if m.message != "" {
 		reserved++
@@ -516,6 +573,15 @@ func (m Model) selectedJobs() []jobs.Job {
 		}
 		return nil
 	}
+	if m.tab == tabQueue && len(m.selected) > 0 {
+		out := make([]jobs.Job, 0, len(m.selected))
+		for _, job := range m.items {
+			if m.selected[job.ID] {
+				out = append(out, job)
+			}
+		}
+		return out
+	}
 	rows := m.rows()
 	if m.cursor < 0 || m.cursor >= len(rows) {
 		return nil
@@ -552,6 +618,19 @@ func (m Model) activeJob() *jobs.Job {
 		}
 	}
 	return nil
+}
+func (m Model) queuePosition(id int64) int {
+	position := 0
+	for _, job := range m.items {
+		if job.Status != jobs.Queued {
+			continue
+		}
+		position++
+		if job.ID == id {
+			return position
+		}
+	}
+	return 0
 }
 
 func (m Model) View() string {
@@ -620,6 +699,9 @@ func (m Model) renderCrumb(w int) string {
 	crumb := "Library"
 	if m.tab == tabQueue {
 		crumb = "Queue"
+		if len(m.selected) > 0 {
+			crumb += fmt.Sprintf(" · %d selected", len(m.selected))
+		}
 	} else if m.tab == tabHistory {
 		crumb = "History"
 	} else {
@@ -680,9 +762,19 @@ func (m Model) renderRow(r row, selected bool, w int) string {
 		arrow = "› "
 	}
 	status := statusGlyph(r.status)
+	choice := ""
+	if m.tab == tabQueue {
+		choice = "    "
+		if r.status == jobs.Queued {
+			choice = "[ ] "
+			if m.selected[r.jobID] {
+				choice = "[✓] "
+			}
+		}
+	}
 	if m.mobile() {
-		titleW := max(8, w-6)
-		first := marker + status + truncateVisual(r.title, titleW)
+		titleW := max(8, w-6-lipgloss.Width(choice))
+		first := marker + choice + status + truncateVisual(r.title, titleW)
 		second := "    " + truncateVisual(r.meta, max(8, w-7)) + strings.Repeat(" ", max(1, w-6-lipgloss.Width(truncateVisual(r.meta, max(8, w-7))))-lipgloss.Width(arrow)) + arrow
 		if selected {
 			return lipgloss.NewStyle().Foreground(ink).Background(accentDark).Width(w).Render(first + "\n" + second)
@@ -690,8 +782,8 @@ func (m Model) renderRow(r row, selected bool, w int) string {
 		return first + "\n" + mutedStyle.Render(second)
 	}
 	metaW := min(42, max(18, w/3))
-	titleW := max(12, w-metaW-9)
-	text := marker + status + padRight(truncateVisual(r.title, titleW), titleW) + "  " + padRight(truncateVisual(r.meta, metaW), metaW) + arrow
+	titleW := max(12, w-metaW-9-lipgloss.Width(choice))
+	text := marker + choice + status + padRight(truncateVisual(r.title, titleW), titleW) + "  " + padRight(truncateVisual(r.meta, metaW), metaW) + arrow
 	if selected {
 		return lipgloss.NewStyle().Foreground(ink).Background(accentDark).Width(w).Render(text)
 	}
@@ -712,16 +804,20 @@ func (m Model) detailLines(w int) []string {
 		return []string{mutedStyle.Render("Job no longer exists")}
 	}
 	label := func(k, v string) string { return mutedStyle.Render(padRight(k, 12)) + truncateVisual(v, max(8, w-13)) }
-	lines := []string{lipgloss.NewStyle().Bold(true).Foreground(ink).Render(trimMediaExtension(filepath.Base(j.SourcePath))), "", label("Status", strings.ReplaceAll(j.Status, "_", " ")), label("Operation", empty(j.OperationType, "not planned")), label("Priority", strconv.Itoa(j.Priority)), label("Progress", fmt.Sprintf("%.1f%% · %s · ETA %s", j.Progress, empty(j.FFmpegSpeed, "--"), eta(*j))), label("Size", formatBytes(j.SourceSize)+" → "+formatBytes(j.TargetSize)), label("Video", empty(j.VideoCodec, "--")), label("Audio", empty(j.AudioCodecs, "--")), "", mutedStyle.Render(truncateVisual(j.SourcePath, w))}
+	lines := []string{lipgloss.NewStyle().Bold(true).Foreground(ink).Render(trimMediaExtension(filepath.Base(j.SourcePath))), "", label("Status", strings.ReplaceAll(j.Status, "_", " ")), label("Operation", empty(j.OperationType, "not planned"))}
+	if j.Status == jobs.Queued {
+		lines = append(lines, label("Queue order", fmt.Sprintf("#%d", m.queuePosition(j.ID))))
+	}
+	lines = append(lines, label("Progress", fmt.Sprintf("%.1f%% · %s · ETA %s", j.Progress, empty(j.FFmpegSpeed, "--"), eta(*j))), label("Size", formatBytes(j.SourceSize)+" → "+formatBytes(j.TargetSize)), label("Video", empty(j.VideoCodec, "--")), label("Audio", empty(j.AudioCodecs, "--")), "", mutedStyle.Render(truncateVisual(j.SourcePath, w)))
 	if j.ErrorMessage != "" {
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(danger).Render(truncateVisual(j.ErrorMessage, w)))
 	}
 	return lines
 }
 func (m Model) renderHelp(w int) string {
-	help := []string{"NAVIGATE   ↑/↓ or j/k · enter/right open · left/esc back · pgup/pgdn scroll", "VIEWS      tab cycle · 1 library · 2 queue · 3 history", "ACTIONS    s scan · a add path · p pause · c cancel · r retry · +/- priority", "OTHER      d dry-run · ? close help · q quit"}
+	help := []string{"NAVIGATE   ↑/↓ or j/k · enter/right open · left/esc back · pgup/pgdn scroll", "VIEWS      tab cycle · 1 library · 2 queue · 3 history", "QUEUE      space select · + move up · - move down", "ACTIONS    s scan · a add path · p pause · c cancel · r retry", "OTHER      d dry-run · ? close help · q quit"}
 	if m.mobile() {
-		help = []string{"↑↓ move   ↵ open   ← back", "tab views   pgup/pgdn scroll", "s scan   a add   p pause", "c cancel   r retry   +/- priority", "? close help   q quit"}
+		help = []string{"↑↓ move   ↵ open   ← back", "tab views   pgup/pgdn scroll", "space select   +/- reorder", "s scan   a add   p pause", "c cancel   r retry", "? close help   q quit"}
 	}
 	for i := range help {
 		help[i] = truncateVisual(help[i], w)
@@ -733,8 +829,14 @@ func (m Model) renderFooter(w int) string {
 		return truncateVisual("ADD PATH  "+m.input.View(), w) + "\n" + mutedStyle.Render("enter queue · esc cancel")
 	}
 	hint := "↑↓ move  ↵ open  ← back  tab views  ? help"
+	if m.tab == tabQueue {
+		hint = "↑↓ move  space select  + up  - down  ? help"
+	}
 	if !m.mobile() {
 		hint = "↑↓/jk move  enter open  esc back  tab views  s scan  a add  p pause  ? help  q quit"
+		if m.tab == tabQueue {
+			hint = "↑↓/jk move  space select  + up  - down  c cancel  enter details  ? help"
+		}
 	}
 	footer := mutedStyle.Render(truncateVisual(hint, w))
 	if m.message != "" {
@@ -760,7 +862,7 @@ func aggregateMeta(records []mediaRecord) string {
 	return strings.Join(parts, " · ")
 }
 func jobMeta(j jobs.Job) string {
-	parts := []string{shortStatus(j.Status), "P" + strconv.Itoa(j.Priority)}
+	parts := []string{shortStatus(j.Status)}
 	if j.OperationType != "" {
 		parts = append(parts, strings.ReplaceAll(j.OperationType, "_", " "))
 	}

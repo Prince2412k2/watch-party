@@ -31,7 +31,7 @@ func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS jobs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, source_path TEXT NOT NULL UNIQUE, target_path TEXT NOT NULL, temp_path TEXT NOT NULL,
- media_type TEXT NOT NULL DEFAULT 'unknown', status TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 50, operation_type TEXT NOT NULL DEFAULT '',
+ media_type TEXT NOT NULL DEFAULT 'unknown', status TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 50, queue_order INTEGER NOT NULL DEFAULT 0, operation_type TEXT NOT NULL DEFAULT '',
  video_codec TEXT NOT NULL DEFAULT '', audio_codecs TEXT NOT NULL DEFAULT '', subtitle_codecs TEXT NOT NULL DEFAULT '',
  source_size INTEGER NOT NULL DEFAULT 0, target_size INTEGER NOT NULL DEFAULT 0, duration REAL NOT NULL DEFAULT 0,
  progress REAL NOT NULL DEFAULT 0, ffmpeg_speed TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -41,6 +41,35 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, priority, created_at);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT OR IGNORE INTO settings(key,value) VALUES('paused','false');`)
+	if err != nil {
+		return err
+	}
+	hasQueueOrder := false
+	rows, err := s.db.Query(`PRAGMA table_info(jobs)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, kind string
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &kind, &notnull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "queue_order" {
+			hasQueueOrder = true
+		}
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	if !hasQueueOrder {
+		if _, err = s.db.Exec(`ALTER TABLE jobs ADD COLUMN queue_order INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.Exec(`UPDATE jobs SET queue_order=id WHERE queue_order=0; CREATE INDEX IF NOT EXISTS idx_jobs_queue_order ON jobs(status,priority,queue_order)`)
 	return err
 }
 
@@ -53,7 +82,7 @@ func (s *Store) Add(ctx context.Context, j jobs.Job) (bool, error) {
 	if mediaType == "" {
 		mediaType = "unknown"
 	}
-	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(source_path,target_path,temp_path,media_type,status,priority,source_size,dry_run,error_message,notes,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,CASE WHEN ? IN ('skipped','failed') THEN CURRENT_TIMESTAMP ELSE NULL END)`, j.SourcePath, j.TargetPath, j.TempPath, mediaType, status, j.Priority, j.SourceSize, j.DryRun, j.ErrorMessage, j.Notes, status)
+	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(source_path,target_path,temp_path,media_type,status,priority,queue_order,source_size,dry_run,error_message,notes,completed_at) VALUES(?,?,?,?,?,?,(SELECT COALESCE(MAX(queue_order),0)+1 FROM jobs),?,?,?,?,CASE WHEN ? IN ('skipped','failed') THEN CURRENT_TIMESTAMP ELSE NULL END)`, j.SourcePath, j.TargetPath, j.TempPath, mediaType, status, j.Priority, j.SourceSize, j.DryRun, j.ErrorMessage, j.Notes, status)
 	if err != nil {
 		return false, err
 	}
@@ -66,7 +95,7 @@ func (s *Store) Claim(ctx context.Context) (jobs.Job, error) {
 		return jobs.Job{}, err
 	}
 	defer tx.Rollback()
-	row := tx.QueryRowContext(ctx, `SELECT `+columns+` FROM jobs WHERE status=? ORDER BY priority ASC, created_at ASC, id ASC LIMIT 1`, jobs.Queued)
+	row := tx.QueryRowContext(ctx, `SELECT `+columns+` FROM jobs WHERE status=? ORDER BY priority ASC,queue_order ASC,id ASC LIMIT 1`, jobs.Queued)
 	j, err := scan(row)
 	if err != nil {
 		return jobs.Job{}, err
@@ -112,7 +141,7 @@ func (s *Store) List(ctx context.Context, limit int) ([]jobs.Job, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM jobs ORDER BY CASE WHEN status IN ('probing','remuxing','transcoding_audio','transcoding_video','validating') THEN 0 WHEN status='queued' THEN 1 ELSE 2 END,priority,COALESCE(completed_at,created_at) DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM jobs ORDER BY CASE WHEN status IN ('probing','remuxing','transcoding_audio','transcoding_video','validating') THEN 0 WHEN status='queued' THEN 1 ELSE 2 END,priority,CASE WHEN status='queued' THEN queue_order END ASC,COALESCE(completed_at,created_at) DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +184,62 @@ func (s *Store) Priority(ctx context.Context, id int64, p int) error {
 		}
 	}
 	return e
+}
+
+// Reorder moves queued jobs one position while preserving the relative order of
+// a multi-selection. A negative direction moves up; a positive direction moves
+// down. Running and terminal jobs are never included.
+func (s *Store) Reorder(ctx context.Context, ids []int64, direction int) error {
+	if len(ids) == 0 || direction == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id,priority FROM jobs WHERE status=? ORDER BY priority ASC,queue_order ASC,id ASC`, jobs.Queued)
+	if err != nil {
+		return err
+	}
+	var order []int64
+	var priorities []int
+	for rows.Next() {
+		var id int64
+		var priority int
+		if err = rows.Scan(&id, &priority); err != nil {
+			rows.Close()
+			return err
+		}
+		order = append(order, id)
+		priorities = append(priorities, priority)
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	selected := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		selected[id] = true
+	}
+	if direction < 0 {
+		for i := 1; i < len(order); i++ {
+			if selected[order[i]] && !selected[order[i-1]] {
+				order[i-1], order[i] = order[i], order[i-1]
+			}
+		}
+	} else {
+		for i := len(order) - 2; i >= 0; i-- {
+			if selected[order[i]] && !selected[order[i+1]] {
+				order[i], order[i+1] = order[i+1], order[i]
+			}
+		}
+	}
+	for i, id := range order {
+		if _, err = tx.ExecContext(ctx, `UPDATE jobs SET priority=?,queue_order=? WHERE id=? AND status=?`, priorities[i], i+1, id, jobs.Queued); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (s *Store) Cancel(ctx context.Context, id int64) error {
 	r, e := s.db.ExecContext(ctx, `UPDATE jobs SET cancel_requested=1,status=CASE WHEN status=? THEN ? ELSE status END,completed_at=CASE WHEN status=? THEN CURRENT_TIMESTAMP ELSE completed_at END WHERE id=? AND status IN (?,?,?,?,?,?)`, jobs.Queued, jobs.Cancelled, jobs.Queued, id, jobs.Queued, jobs.Probing, jobs.Remuxing, jobs.TranscodingAudio, jobs.TranscodingVideo, jobs.Validating)

@@ -91,6 +91,25 @@ func TestNarrowActiveJobAndDetailsStayScrollable(t *testing.T) {
 	}
 }
 
+func TestQueueSelectionAndFocusedReorderIDs(t *testing.T) {
+	items := []jobs.Job{{ID: 1, SourcePath: "/media/tv/Show/Season 1/E01.mkv", Status: jobs.Queued}, {ID: 2, SourcePath: "/media/tv/Show/Season 1/E02.mkv", Status: jobs.Queued}, {ID: 3, SourcePath: "/media/tv/Show/Season 1/E03.mkv", Status: jobs.Queued}}
+	m := Model{items: items, tab: tabQueue, selected: map[int64]bool{}, width: 40, height: 16}
+	if got := m.reorderIDs(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("focused reorder ids=%v", got)
+	}
+	m.toggleSelection()
+	m.move(1)
+	m.toggleSelection()
+	got := m.reorderIDs()
+	if len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("selected reorder ids=%v", got)
+	}
+	view := m.View()
+	if !strings.Contains(view, "[✓]") {
+		t.Fatalf("selected marker missing:\n%s", view)
+	}
+}
+
 func titles(rows []row) string {
 	out := make([]string, len(rows))
 	for i, row := range rows {

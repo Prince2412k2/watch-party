@@ -148,7 +148,8 @@ The active panel shows progress, FFmpeg speed, ETA, and source/output sizes. Lib
 | `s` | Scan both libraries |
 | `a` | Queue a file or directory path |
 | `p` | Pause/resume new job claims |
-| `+` / `-` | Raise/lower selected queued-job priority |
+| `Space` | Select or unselect a queued item for group reordering |
+| `+` / `-` | Move the focused item or selected group up/down in the queue |
 | `c` | Cancel selected job |
 | `r` | Retry selected terminal job |
 | `d` | Toggle dry-run for TUI-queued scans |
