@@ -45,6 +45,23 @@ chown -R 1000:1000 ./media-converter-data
 
 Do not recursively change a shared media library unless that ownership model is already correct for Sonarr, Radarr, and Jellyfin.
 
+### Watch-Party Production Deploy
+
+This repository's production Compose stack already includes `media-converter`. A push to `main` runs the existing GitHub Actions deploy, which invokes `deploy/up-prod.sh` and builds/recreates the converter alongside the rest of the stack. No additional GitHub secret, port, or media mount is required.
+
+It automatically uses the existing `${MEDIA_ROOT}/media` Servarr import tree, mapping its movie and TV roots to `/media/movies` and `/media/tv`. State is persisted at `./data/media-converter`. The existing `SONARR_API_KEY`, `RADARR_API_KEY`, and optional `JELLYFIN_API_KEY` values from `secrets/.env.local` are used for post-replacement refresh hooks when present.
+
+Optional production overrides go in `secrets/.env` or `secrets/.env.local`:
+
+```env
+MEDIA_CONVERTER_SCHEDULE=0 3 * * *
+MEDIA_CONVERTER_MAX_CONCURRENT_JOBS=1
+MEDIA_CONVERTER_DELETE_ORIGINAL=true
+MEDIA_CONVERTER_MIN_FREE_SPACE_GB=20
+```
+
+Omit these overrides to use the shown defaults. After deploy, inspect it with `docker logs -f watchparty-media-converter` or open the TUI with `docker exec -it watchparty-media-converter media-converter tui`.
+
 ## Configuration
 
 | Variable | Default | Purpose |

@@ -28,7 +28,7 @@ CRITICAL=(watchparty-app watchparty-jellyfin watchparty-livekit)
 
 # Reported but NOT deploy-blocking: these serve the library/download flow, not
 # playback. A failing Sonarr should not roll back a working watch party.
-ADVISORY=(watchparty-prowlarr watchparty-sonarr watchparty-radarr watchparty-bazarr)
+ADVISORY=(watchparty-prowlarr watchparty-sonarr watchparty-radarr watchparty-bazarr watchparty-media-converter)
 
 log() { printf '%s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; }

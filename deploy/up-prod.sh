@@ -125,7 +125,7 @@ fi
 echo "  coturn external-ip agrees"
 
 echo ""
-echo "== 5/5  Checking bind-mount ownership for the non-root app container =="
+echo "== 5/6  Checking bind-mount ownership for non-root containers =="
 # app/Dockerfile runs the server as uid 1000 (the image's `node` user). The
 # session store, subtitle cache and data dir are host bind mounts, so if the host
 # directories are owned by root the container cannot write them — and the visible
@@ -148,6 +148,12 @@ if [ "$OWNERSHIP_FAIL" = 1 ]; then
   exit 1
 fi
 echo "  data dirs owned by uid $APP_UID"
+# The converter's ./data/media-converter bind path is intentionally not made
+# here: this script may run as a different SSH user and ./data is correctly
+# owned by the runtime uid. Docker creates a missing bind directory as root;
+# the converter entrypoint then chowns only that state directory before it
+# drops privileges. That keeps the new service zero-config without weakening
+# the existing app ownership gate above.
 
 echo ""
 echo "== 6/6  Bringing the stack up =="

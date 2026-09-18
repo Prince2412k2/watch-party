@@ -210,6 +210,51 @@ services:
       qbittorrent:
         condition: service_started
 
+  # Filesystem-first remux worker. It shares the exact Servarr import tree, so
+  # replacements are visible to Radarr, Sonarr, and Jellyfin without a second
+  # host-media-path setting. The optional API hooks use the existing secrets
+  # already supplied to the stack through secrets/.env.local.
+  media-converter:
+    build: ./media-converter
+    container_name: watchparty-media-converter
+    restart: unless-stopped
+    networks: [watchparty-net]
+    environment:
+      - TZ=${TZ:-UTC}
+      - MOVIES_DIR=/media/movies
+      - TV_DIR=/media/tv
+      - DATA_DIR=/data
+      - SCHEDULE=${MEDIA_CONVERTER_SCHEDULE:-0 3 * * *}
+      - MAX_CONCURRENT_JOBS=${MEDIA_CONVERTER_MAX_CONCURRENT_JOBS:-1}
+      - DEFAULT_PRIORITY=${MEDIA_CONVERTER_DEFAULT_PRIORITY:-50}
+      - DELETE_ORIGINAL=${MEDIA_CONVERTER_DELETE_ORIGINAL:-true}
+      - MIN_FREE_SPACE_GB=${MEDIA_CONVERTER_MIN_FREE_SPACE_GB:-20}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - LOG_LEVEL=${MEDIA_CONVERTER_LOG_LEVEL:-info}
+      - SONARR_URL=http://sonarr:8989
+      - RADARR_URL=http://radarr:7878
+      - JELLYFIN_URL=http://jellyfin:8096
+    env_file:
+      - ./secrets/.env
+      - ./secrets/.env.local
+    volumes:
+      - ${MEDIA_ROOT:-./media-data}/media:/media
+      - ./data/media-converter:/data
+    healthcheck:
+      test: ["CMD", "media-converter", "status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
+      jellyfin:
+        condition: service_healthy
+
   prowlarr:
     # prowlarr 2.4.0.5397-ls152
     image: lscr.io/linuxserver/prowlarr@sha256:3e9bd62ca90c97c5df75b7012e10a29f6926e62807deeddc1dc89e6e2fd141e1
