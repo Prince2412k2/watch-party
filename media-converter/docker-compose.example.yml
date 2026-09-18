@@ -1,0 +1,22 @@
+services:
+  media-converter:
+    build: .
+    container_name: media-converter
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Kolkata
+      MOVIES_DIR: /media/movies
+      TV_DIR: /media/tv
+      DATA_DIR: /data
+      SCHEDULE: "0 3 * * *"
+      MAX_CONCURRENT_JOBS: 1
+      DEFAULT_PRIORITY: 50
+      DELETE_ORIGINAL: "true"
+      MIN_FREE_SPACE_GB: 20
+      PUID: 1000
+      PGID: 1000
+      LOG_LEVEL: info
+    volumes:
+      - /mnt/media/movies:/media/movies
+      - /mnt/media/tv:/media/tv
+      - ./media-converter-data:/data

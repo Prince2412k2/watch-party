@@ -1,0 +1,6 @@
+bin/
+data/
+media-converter-data/
+*.db
+*.db-shm
+*.db-wal
