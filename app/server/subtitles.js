@@ -49,8 +49,9 @@ export function findExternalSubtitleStream(playback, index, mediaSourceId = null
     const stream = source?.MediaStreams?.find(candidate =>
       candidate?.Type === 'Subtitle' &&
       candidate.Index === index &&
-      typeof candidate.DeliveryUrl === 'string' &&
-      candidate.DeliveryUrl.length > 0
+      (candidate.IsExternal === true || (
+        typeof candidate.DeliveryUrl === 'string' && candidate.DeliveryUrl.length > 0
+      ))
     )
     if (stream) return stream
   }
@@ -77,6 +78,12 @@ export function resolveJellyfinDeliveryUrl(deliveryUrl, token, base = BASE) {
   } catch {
     return null
   }
+}
+
+export function resolveSubtitleContentUrl(stream, itemId, mediaSourceId, token, base = BASE) {
+  const deliveryUrl = stream?.DeliveryUrl ||
+    `Videos/${encodeURIComponent(itemId)}/${encodeURIComponent(mediaSourceId)}/Subtitles/${encodeURIComponent(String(stream?.Index))}/Stream.vtt`
+  return resolveJellyfinDeliveryUrl(deliveryUrl, token, base)
 }
 
 export function subtitleMutationError(status) {
@@ -254,7 +261,10 @@ export function registerSubtitleRoutes(app, io, { enqueuePlaybackMutation }) {
       const playback = await getPlaybackInfo(token, userId, mediaItemId, { mediaSourceId })
       const stream = findExternalSubtitleStream(playback, index, mediaSourceId)
       if (!stream) return res.status(404).json({ error: 'External subtitle was not found' })
-      const target = resolveJellyfinDeliveryUrl(stream.DeliveryUrl, token)
+      const sourceId = mediaSourceId ?? playback.MediaSources?.find(source =>
+        source?.MediaStreams?.includes(stream)
+      )?.Id ?? mediaItemId
+      const target = resolveSubtitleContentUrl(stream, mediaItemId, sourceId, token)
       if (!target) {
         console.error('subtitle content rejected unsafe DeliveryUrl', { itemId: mediaItemId, index })
         return res.status(502).json({ error: 'Jellyfin returned an invalid subtitle URL' })

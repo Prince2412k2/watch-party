@@ -7,6 +7,7 @@ import {
   pollForNewExternalSubtitle,
   registerSubtitleRoutes,
   resolveJellyfinDeliveryUrl,
+  resolveSubtitleContentUrl,
   srtToVtt,
   subtitleTextToVtt,
   subtitleMutationError,
@@ -56,11 +57,13 @@ test('findExternalSubtitleStream accepts any exact subtitle Jellyfin can deliver
   const playback = { MediaSources: [{ MediaStreams: [
     { Type: 'Subtitle', Index: 4, IsExternal: false, DeliveryUrl: '/Videos/a/Subtitles/4/Stream.vtt' },
     { Type: 'Subtitle', Index: 7, IsExternal: true, DeliveryUrl: '/Videos/a/Subtitles/7/Stream.vtt' },
+    { Type: 'Subtitle', Index: 9, IsExternal: true, DeliveryUrl: null },
     { Type: 'Audio', Index: 7, IsExternal: true, DeliveryUrl: '/audio' },
   ] }] }
 
   assert.equal(findExternalSubtitleStream(playback, 7)?.Index, 7)
   assert.equal(findExternalSubtitleStream(playback, 4)?.Index, 4)
+  assert.equal(findExternalSubtitleStream(playback, 9)?.Index, 9)
   assert.equal(findExternalSubtitleStream(playback, 8), null)
 })
 
@@ -73,6 +76,20 @@ test('resolveJellyfinDeliveryUrl accepts only URLs under the configured Jellyfin
   assert.equal(resolveJellyfinDeliveryUrl('https://evil.test/subtitle.vtt', 'token', 'https://media.test/jellyfin'), null)
   assert.equal(resolveJellyfinDeliveryUrl('/outside/subtitle.vtt', 'token', 'https://media.test/jellyfin'), null)
   assert.equal(resolveJellyfinDeliveryUrl('/jellyfin/../outside/subtitle.vtt', 'token', 'https://media.test/jellyfin'), null)
+})
+
+test('builds Jellyfin canonical subtitle URL when an external stream has no DeliveryUrl', () => {
+  const target = resolveSubtitleContentUrl(
+    { Index: 0, IsExternal: true, DeliveryUrl: null },
+    'movie-id',
+    'source-id',
+    'server-token',
+    'https://media.test/jellyfin',
+  )
+  assert.equal(
+    target?.href,
+    'https://media.test/jellyfin/Videos/movie-id/source-id/Subtitles/0/Stream.vtt?api_key=server-token',
+  )
 })
 
 test('subtitleMutationError maps Jellyfin client and server failures safely', () => {
