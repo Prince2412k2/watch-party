@@ -818,8 +818,13 @@ void main() {
       ),
       subtitleContents: const {
         4:
-            '00:00:01.000 --> 00:00:03.000\nFirst\n\n'
-            '00:00:01.500 --> 00:00:02.500\nSecond',
+            'WEBVTT\n\n'
+            'Region: id:subtitle width:80% lines:3 '
+            'regionanchor:50%,100% viewportanchor:50%,90%\n\n'
+            '00:00:01.000 --> 00:00:03.000 region:subtitle line:90%\n'
+            'First\n\n'
+            '00:00:01.500 --> 00:00:02.500 region:subtitle line:90%\n'
+            'Second',
       },
     );
     await tester.pumpWidget(

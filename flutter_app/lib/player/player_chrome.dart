@@ -1071,7 +1071,8 @@ class _PlayerChromeState extends State<PlayerChrome>
         }
         setState(() => _subtitleCues = const []);
         var nativeRendered = false;
-        if (c is MediaKitPlayerController) {
+        final isWebVtt = content.trimLeft().startsWith('WEBVTT');
+        if (!isWebVtt && c is MediaKitPlayerController) {
           try {
             final loadedTrackId = _loadedExternalSubtitleTrackIds[id];
             // SubtitleTrack.data reports its content as the current ID, not
@@ -1110,7 +1111,9 @@ class _PlayerChromeState extends State<PlayerChrome>
           if (cues.isEmpty) {
             throw const FormatException('No valid subtitle cues');
           }
-          // Disable any previous or partially selected native track first.
+          // media_kit writes in-memory data to an extensionless temporary file.
+          // libmpv may accept WebVTT there but silently render no cues, so VTT
+          // from Jellyfin uses the deterministic Flutter overlay instead.
           await _runNativeSubtitleOperation(() => c.setSubtitle(null));
           if (!mounted || version != _subtitleSelectionVersion) return;
           setState(() => _subtitleCues = cues);
