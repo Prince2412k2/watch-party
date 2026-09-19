@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  buildHlsUrl, getTrickplayProfile, normalizePlaybackInfo,
+  buildHlsUrl, getPlaybackInfo, getTrickplayProfile, normalizePlaybackInfo,
   resolveMediaSourceId, selectTrickplayProfile,
   getCollections, getCollectionItems,
 } from './jellyfin.js'
@@ -34,6 +34,20 @@ test('HLS URLs ask Jellyfin to advertise subtitle renditions', () => {
 
     assert.equal(url.searchParams.get('EnableSubtitlesInManifest'), 'true')
   }
+})
+
+test('PlaybackInfo asks Jellyfin to include subtitle renditions in generated HLS URLs', async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  let requestBody
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(init.body)
+    return Response.json({ MediaSources: [] })
+  }
+
+  await getPlaybackInfo('token', 'user-id', 'item-id')
+
+  assert.equal(requestBody.DeviceProfile.TranscodingProfiles[0].EnableSubtitlesInManifest, true)
 })
 
 test('HLS URLs can carry Jellyfin stream indexes and media-source ids', () => {

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hlsIndexForJellyfin, jellyfinStreamIndex, subtitleContentUrl } from './subtitleTracks.ts'
+import { canSideLoadSubtitle, hlsIndexForJellyfin, jellyfinStreamIndex, subtitleContentUrl } from './subtitleTracks.ts'
 
 test('maps Jellyfin subtitle indices from rendition URLs or playback order', () => {
   const tracks = [{ url: '/sub.vtt?SubtitleStreamIndex=7' }, { url: '/other.vtt' }]
@@ -12,4 +12,10 @@ test('maps Jellyfin subtitle indices from rendition URLs or playback order', () 
 
 test('builds an authenticated app subtitle-content URL', () => {
   assert.equal(subtitleContentUrl('movie/id', 4, 'source id'), '/api/library/items/movie%2Fid/subtitles/4/content?mediaSourceId=source%20id')
+})
+
+test('side-loads Jellyfin-deliverable SRT even when it is embedded', () => {
+  assert.equal(canSideLoadSubtitle({ isExternal: false, deliveryUrl: '/Videos/movie/Subtitles/4/Stream.vtt' }), true)
+  assert.equal(canSideLoadSubtitle({ isExternal: true, deliveryUrl: null }), true)
+  assert.equal(canSideLoadSubtitle({ isExternal: false, deliveryUrl: null }), false)
 })

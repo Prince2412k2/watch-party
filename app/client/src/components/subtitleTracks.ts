@@ -1,5 +1,10 @@
 export interface SubtitleHlsTrack { url: string }
 export interface SubtitleStream { index: number }
+export interface DeliverableSubtitle { isExternal?: boolean; deliveryUrl?: string | null }
+
+export function canSideLoadSubtitle(stream: DeliverableSubtitle): boolean {
+  return stream.isExternal === true || Boolean(stream.deliveryUrl)
+}
 
 export function jellyfinStreamIndex(url: string, param: string, base = 'http://localhost'): number | null {
   try {

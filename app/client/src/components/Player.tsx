@@ -15,7 +15,7 @@ import { invoke } from '../native/ipc.ts'
 import { MpvBackend } from '../native/MpvBackend.ts'
 import { apiJson, stringField } from '../types/guards.ts'
 import { parseTrickplayManifest, trickplayFrame, trickplaySheetUrl, type TrickplayManifest } from './trickplay.ts'
-import { hlsIndexForJellyfin, subtitleContentUrl } from './subtitleTracks.ts'
+import { canSideLoadSubtitle, hlsIndexForJellyfin, subtitleContentUrl } from './subtitleTracks.ts'
 import {
   AnalogSettingsStack,
   AnalogTimeline,
@@ -1272,7 +1272,7 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
 
   const ensureExternalTrack = useCallback((stream: PlayerTrack) => {
     const video = videoRef?.current
-    if (!video || !mediaItemId || !stream.isExternal) return null
+    if (!video || !mediaItemId || !canSideLoadSubtitle(stream)) return null
     let trackElement = externalTracks.current.get(stream.index)
     const baseUrl = subtitleContentUrl(mediaItemId, stream.index, playback?.mediaSourceId)
     const version = encodeURIComponent(stream.deliveryUrl || String(playback?.subtitleStreams?.length ?? 0))
@@ -1296,7 +1296,7 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
 
   useEffect(() => {
     for (const stream of playback?.subtitleStreams ?? []) {
-      if (!stream.isExternal) continue
+      if (!canSideLoadSubtitle(stream)) continue
       const element = ensureExternalTrack(stream)
       if (element && stream.index !== selectedIndex.current) element.track.mode = 'hidden'
     }
@@ -1315,9 +1315,9 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
     const hlsIdx = resolveHlsIdx(hls, target)
     const hlsTrack = hlsIdx >= 0 ? hls.subtitleTracks[hlsIdx] : null
 
-    if (video && stream?.isExternal) {
-      // Uploaded external subtitles are fetched through the authenticated app
-      // endpoint, which always returns browser-ready WebVTT.
+    if (video && stream && canSideLoadSubtitle(stream)) {
+      // Jellyfin-deliverable subtitles are fetched through the authenticated
+      // app endpoint, which always returns browser-ready WebVTT.
       hls.subtitleTrack = -1
       const trackElement = ensureExternalTrack(stream)
       if (!trackElement) return
@@ -1366,7 +1366,7 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
       if (!engine) return
       const data = args[1] as { cues: unknown[] }
       const selectedStream = playback?.subtitleStreams?.find(stream => stream.index === selectedIndex.current)
-      if (selectedStream?.isExternal) return
+      if (selectedStream && canSideLoadSubtitle(selectedStream)) return
       const hlsIdx = resolveHlsIdx(engine, selectedIndex.current)
       if (hlsIdx < 0) return
       if (!engine.subtitleTracks[hlsIdx]) return

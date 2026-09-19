@@ -678,7 +678,9 @@ class _PlayerChromeState extends State<PlayerChrome>
           requestGeneration != _subtitleRequestGeneration) {
         return;
       }
-      final external = info.subtitleStreams.where((track) => track.isExternal);
+      final external = info.subtitleStreams.where(
+        (track) => track.isExternal || (track.deliveryUrl?.isNotEmpty ?? false),
+      );
       _playbackInfo = info;
       _externalSubtitleById.clear();
       for (final track in external) {

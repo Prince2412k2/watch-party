@@ -24,6 +24,7 @@ const BROWSER_PLAYBACK_PROFILE = {
       AudioCodec: 'aac,mp3,opus,flac,vorbis,ac3,eac3,mp2',
       VideoCodec: 'h264,hevc,av1,vp8,vp9',
       MaxAudioChannels: '2',
+      EnableSubtitlesInManifest: true,
     },
   ],
   SubtitleProfiles: [

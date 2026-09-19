@@ -52,7 +52,7 @@ test('pollForNewExternalSubtitle retries stale playback with a finite schedule',
   assert.deepEqual(waits, [10, 20])
 })
 
-test('findExternalSubtitleStream requires an exact external stream index with a delivery URL', () => {
+test('findExternalSubtitleStream accepts any exact subtitle Jellyfin can deliver externally', () => {
   const playback = { MediaSources: [{ MediaStreams: [
     { Type: 'Subtitle', Index: 4, IsExternal: false, DeliveryUrl: '/Videos/a/Subtitles/4/Stream.vtt' },
     { Type: 'Subtitle', Index: 7, IsExternal: true, DeliveryUrl: '/Videos/a/Subtitles/7/Stream.vtt' },
@@ -60,13 +60,15 @@ test('findExternalSubtitleStream requires an exact external stream index with a 
   ] }] }
 
   assert.equal(findExternalSubtitleStream(playback, 7)?.Index, 7)
-  assert.equal(findExternalSubtitleStream(playback, 4), null)
+  assert.equal(findExternalSubtitleStream(playback, 4)?.Index, 4)
   assert.equal(findExternalSubtitleStream(playback, 8), null)
 })
 
 test('resolveJellyfinDeliveryUrl accepts only URLs under the configured Jellyfin base', () => {
   const relative = resolveJellyfinDeliveryUrl('/jellyfin/Videos/a/Subtitles/7/Stream.vtt?api_key=client', 'server-token', 'https://media.test/jellyfin')
   assert.equal(relative?.href, 'https://media.test/jellyfin/Videos/a/Subtitles/7/Stream.vtt?api_key=server-token')
+  const mixedCase = resolveJellyfinDeliveryUrl('/jellyfin/Videos/a/Subtitles/7/Stream.vtt?ApiKey=client', 'server-token', 'https://media.test/jellyfin')
+  assert.equal(mixedCase?.href, 'https://media.test/jellyfin/Videos/a/Subtitles/7/Stream.vtt?api_key=server-token')
 
   assert.equal(resolveJellyfinDeliveryUrl('https://evil.test/subtitle.vtt', 'token', 'https://media.test/jellyfin'), null)
   assert.equal(resolveJellyfinDeliveryUrl('/outside/subtitle.vtt', 'token', 'https://media.test/jellyfin'), null)

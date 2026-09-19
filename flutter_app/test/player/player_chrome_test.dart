@@ -936,6 +936,41 @@ void main() {
     expect(find.text('Stale'), findsNothing);
   });
 
+  testWidgets('embedded SRT with a delivery URL uses the side-load path', (
+    tester,
+  ) async {
+    final c = _SpyController();
+    final api = _MutableSubtitleApi();
+    api.info = const PlaybackInfo(
+      subtitleStreams: [
+        PlaybackTrack(
+          index: 4,
+          title: 'Server SRT',
+          codec: 'subrip',
+          deliveryUrl: '/Videos/movie/Subtitles/4/Stream.vtt',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Scaffold(
+          body: PlayerChrome(
+            controller: c,
+            itemId: 'movie',
+            apiClient: api,
+            preferredSubtitleStreamIndex: 4,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(api.contentCalls, 1);
+    expect(c.subtitles, isNotEmpty);
+  });
+
   testWidgets('an older subtitle request cannot overwrite a newer revision', (
     tester,
   ) async {

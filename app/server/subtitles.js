@@ -49,7 +49,6 @@ export function findExternalSubtitleStream(playback, index, mediaSourceId = null
     const stream = source?.MediaStreams?.find(candidate =>
       candidate?.Type === 'Subtitle' &&
       candidate.Index === index &&
-      candidate.IsExternal === true &&
       typeof candidate.DeliveryUrl === 'string' &&
       candidate.DeliveryUrl.length > 0
     )
@@ -67,7 +66,11 @@ export function resolveJellyfinDeliveryUrl(deliveryUrl, token, base = BASE) {
     if (target.origin !== configuredBase.origin) return null
     if (basePath && target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) return null
     if (target.username || target.password) return null
-    target.searchParams.delete('api_key')
+    for (const key of [...target.searchParams.keys()]) {
+      if (key.toLowerCase() === 'api_key' || key.toLowerCase() === 'apikey') {
+        target.searchParams.delete(key)
+      }
+    }
     target.searchParams.set('api_key', token)
     target.hash = ''
     return target
