@@ -80,7 +80,7 @@ Future<void> main() async {
   // the moment any screen reads it — no screen awaits proxy startup itself.
   final mediaCacheProxy = MediaCacheProxy(apiClient: apiClient);
   await mediaCacheProxy.start();
-  // Bound the on-device cache (size cap + 30-day LRU, Phase 3a) once at
+  // Bound the on-device cache (size cap + seven-day LRU, Phase 3a) once at
   // boot. Nothing is open/playing yet at this point, so there's nothing to
   // protect; a small, one-shot scan-and-delete, not worth blocking on in the
   // background but also cheap enough not to bother deferring.

@@ -33,7 +33,42 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
     this._offlineNotifier, {
     Duration Function(int attempt)? backoff,
   }) : _backoff = backoff ?? retryDelay,
-       super(const []);
+       super(const []) {
+    _restoring = _restore();
+  }
+
+  late final Future<void> _restoring;
+  Future<void> _restore() async {
+    try {
+      for (final meta in await _fillController.pendingDownloads()) {
+        if (!mounted) return;
+        final id = meta['itemId'] as String;
+        if (_intents.containsKey(id)) continue;
+        _meta[id] = _Meta(
+          title: meta['title'] as String? ?? id,
+          posterTag: meta['posterTag'] as String?,
+          runTimeTicks: (meta['runTimeTicks'] as num?)?.toInt(),
+        );
+        final bytes = meta['cachedBytes'] as int;
+        final total = meta['totalBytes'] as int;
+        upsert(
+          DownloadRecord(
+            itemId: id,
+            title: _meta[id]!.title,
+            taskId: id,
+            status: DownloadStatus.paused,
+            bytesDownloaded: bytes,
+            totalBytes: total,
+            progress: total > 0 ? bytes / total : 0,
+            posterTag: _meta[id]!.posterTag,
+            updatedAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+      }
+    } catch (_) {
+      // Preserve files if a storage read fails; never infer cancellation.
+    }
+  }
 
   /// Injectable so a test can exercise the retry without spending the real
   /// first backoff. Waiting two wall-clock seconds made the test pass alone and
@@ -102,7 +137,21 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
     String? posterTag,
     int? runTimeTicks,
     String? container,
+    String? seriesName,
+    int? seasonNumber,
+    int? episodeNumber,
   }) async {
+    await _restoring;
+    await _fillController.markDownload(itemId, {
+      "title": title,
+      "posterTag": posterTag,
+      "runTimeTicks": runTimeTicks,
+      "container": container,
+      "seriesName": seriesName,
+      "seasonNumber": seasonNumber,
+      "episodeNumber": episodeNumber,
+    });
+    if (!mounted) throw StateError("Downloads disposed");
     _intents[itemId] = Object();
     _meta[itemId] = _Meta(
       title: title,
@@ -132,6 +181,7 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
 
   /// `api` is accepted for call-site compatibility; unused (see [start]).
   Future<void> resume(String itemId, {ApiClient? api}) async {
+    await _restoring;
     _intents.putIfAbsent(itemId, Object.new);
     _attachListener(itemId);
     await _runFill(() => _fillController.resume(itemId), itemId);
@@ -165,7 +215,11 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
   }
 
   Future<void> cancel(String itemId) async {
+    await _restoring;
     _fillController.cancel(itemId);
+    _intents.remove(itemId);
+    _retryTimers.remove(itemId)?.cancel();
+    await _fillController.releaseDownload(itemId);
     remove(itemId);
   }
 
@@ -214,6 +268,7 @@ class DownloadsNotifier extends StateNotifier<List<DownloadRecord>> {
 
   Future<void> _onComplete(String itemId) async {
     final intent = _intents[itemId];
+    if (intent == null) return;
     final meta = _meta[itemId];
     try {
       await _offlineNotifier.markComplete(

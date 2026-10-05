@@ -9,6 +9,7 @@ import '../../state/offline_provider.dart';
 import '../../state/providers.dart';
 import '../analog_tokens.dart';
 import 'chip.dart';
+import 'download_actions.dart';
 
 /// Download affordance for a title (PLAN §4 E8.2) — this is what E3's detail
 /// screen mounts next to Play. Driven entirely by [downloadsProvider] (the
@@ -32,6 +33,9 @@ class DownloadButton extends ConsumerWidget {
     this.posterTag,
     this.runTimeTicks,
     this.container,
+    this.seriesName,
+    this.seasonNumber,
+    this.episodeNumber,
   });
 
   final String itemId;
@@ -39,6 +43,9 @@ class DownloadButton extends ConsumerWidget {
   final String? posterTag;
   final int? runTimeTicks;
   final String? container;
+  final String? seriesName;
+  final int? seasonNumber;
+  final int? episodeNumber;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -56,7 +63,8 @@ class DownloadButton extends ConsumerWidget {
           AnalogIconButton(
             icon: Icons.delete_outline,
             tooltip: 'Remove download',
-            onPressed: () => ref.read(offlineProvider.notifier).remove(itemId),
+            onPressed: () =>
+                removeLocalDownload(context, ref, itemId: itemId, title: title),
           ),
         ],
       );
@@ -131,6 +139,9 @@ class DownloadButton extends ConsumerWidget {
         posterTag: posterTag,
         runTimeTicks: runTimeTicks,
         container: container,
+        seriesName: seriesName,
+        seasonNumber: seasonNumber,
+        episodeNumber: episodeNumber,
       );
 
   static OfflineRecord? _findOffline(
