@@ -73,7 +73,7 @@ export interface PlayerProps {
   // or a scrub in progress takes a named hold so the bar cannot fade out from
   // under the interaction that opened it.
   onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
-  /** Playback state for the auto-hide rule "never hide while paused". */
+  /** Playback state determines whether the idle timer can hide controls. */
   onPlayingChange?: (playing: boolean) => void
   peerPlayback?: Record<string, PeerPlayback>; showPeerPointers?: boolean
 }
@@ -216,17 +216,16 @@ export default function Player({
           camera tiles / chat that render as siblings of this player */}
       <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', isolation: 'isolate' }}>
         {/* The vidstack skin's own control bar is fully replaced by the flat,
-            native transport below — always hide it, on every platform. Skin is
-            interactive only for controllers; guests can't drive transport. */}
-        <VideoSkin className="watch-skin watch-skin--nobar" style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none', borderRadius: 0 }}>
+            native transport below — always hide it, on every platform. Surface taps belong to the page so they toggle chrome without changing playback. */}
+        <VideoSkin className="watch-skin watch-skin--nobar" style={{ width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 0 }}>
           {/* Everyone starts muted so synced play() autoplays without a gesture;
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline autoPlay={standalone} preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
         </VideoSkin>
 
-        {canControl && hostMuted && (
+        {canControl && hostMuted && visible && (
           <RestoreSoundPrompt onClick={() => setHostMuted(false)} />
         )}
 
@@ -240,18 +239,19 @@ export default function Player({
         <MediaErrorNotice />
         {!standalone && <PlaybackReporter mediaItemId={mediaItemId} playback={playback} />}
 
-        {userMuted && !hostMuted && (
-          <UnmuteButton onClick={toggleMuted} />
-        )}
-
         <div style={{ position: 'absolute', left: 'max(8px, env(safe-area-inset-left))', top: '50%', transform: 'translateY(-50%)', zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
           <PictureBrightness value={brightness} onChange={setBrightness} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
         </div>
-        <div style={{ position: 'absolute', right: 'max(8px, env(safe-area-inset-right))', top: '50%', transform: 'translateY(-50%)', paddingTop: 100, zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ position: 'absolute', right: 'max(8px, env(safe-area-inset-right))', top: '50%', transform: 'translateY(-50%)', paddingTop: 78, zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <PlayerVolume userMuted={userMuted} onToggleMuted={toggleMuted} size={44} reveal="always" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
-          {onToggleCam && <BarBtn onClick={onToggleCam} title={camOn ? 'Turn camera off' : 'Turn camera on'} active={camOn}>
+          <div style={{display:'flex',alignItems:'center'}}>
+          {onToggleMic && <BarBtn onClick={onToggleMic} title={micOn ? 'Mute microphone' : 'Share microphone'} active={micOn}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/>{!micOn && <path d="M3 3 21 21"/>}</svg>
+          </BarBtn>}
+          {onToggleCam && <BarBtn onClick={onToggleCam} title={camOn ? 'Turn camera off' : 'Share camera'} active={camOn}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-4v12l-6-4"/>{!camOn && <path d="M3 3 21 21"/>}</svg>
           </BarBtn>}
+          </div>
         </div>
         <>
 
@@ -554,7 +554,6 @@ interface SyncBridgeProps extends Pick<PlayerProps, 'isHost' | 'collaborativeCon
   srcUrl?: string; onAutoplayBlocked?: VoidCallback; userMuted?: boolean; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
 }
 function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, onToggleChat, onPlayingChange, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
-  const toggleFullscreen = () => (immersive ? exitImmersive?.() : enterImmersive?.())
   const media = VPlayer.useMedia() as unknown as MediaLike
   const mediaRef = useRef<MediaLike | null>(null)
   mediaRef.current = media
@@ -773,7 +772,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   // ── Keyboard controls ──────────────────────────────────────────────────
   // Transport keys author commands directly. Media events are observations;
   // browser stalls and pipeline reconfiguration must never become room intent.
-  // Volume / mute / fullscreen / chat are local and available to everyone.
+  // Volume / mute / chat are local and available to everyone.
   useEffect(() => {
     const play = (m: MediaLike) => transport.play(m)
     const pause = (m: MediaLike) => transport.pause(m)
@@ -783,8 +782,6 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const m = mediaRef.current
       const k = e.key.toLowerCase()
-      // Ctrl/Cmd+F → fullscreen (also plain 'f' below)
-      if (k === 'f' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); toggleFullscreen(); return }
       // Ctrl/Cmd+C → toggle chat, but only when it is not a copy. The blanket
       // modifier bail below is what has kept copy working, so the one binding
       // allowed past it goes through the shared guard: focus in an editable
@@ -821,7 +818,6 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
         case 'arrowup': if (m) { e.preventDefault(); m.volume = Math.min(1, (m.volume ?? 1) + 0.1); m.muted = false; if (userMuted) onToggleMuted?.() } break
         case 'arrowdown': if (m) { e.preventDefault(); m.volume = Math.max(0, (m.volume ?? 1) - 0.1) } break
         case 'm': onToggleMuted?.(); break
-        case 'f': toggleFullscreen(); break
         case 'c': e.preventDefault(); onOpenChat?.(); break
         default: return
       }
@@ -1036,32 +1032,9 @@ function RestoreSoundPrompt({ onClick }: { onClick?: VoidCallback } = {}) {
   )
 }
 
-// Guests (no playback control) get a dedicated unmute affordance, since they
-// have no other way to enable audio — audio is independent of control rights.
-function UnmuteButton({ onClick }: { onClick?: VoidCallback } = {}) {
-  return (
-    <button onClick={event => { event.stopPropagation(); onClick?.() }} style={{
-      position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-      zIndex: Z.controlBar, display: 'inline-flex', alignItems: 'center', gap: 8,
-      padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
-      color: '#f4f4f5', cursor: 'pointer', background: 'rgba(0,0,0,.5)',
-      border: '1px solid rgba(255,255,255,.14)',
-    }}>
-      Tap for sound
-    </button>
-  )
-}
-
 // Gear glyph — one copy, used by both bars' settings button.
 function GearGlyph({ size }: { size: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-}
-
-// Fullscreen enter/exit glyph — one copy, used by both bars.
-function FullscreenGlyph({ size, immersive }: { size: number; immersive?: boolean }) {
-  return immersive
-    ? <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M8 3v4a1 1 0 0 1-1 1H3M21 8h-4a1 1 0 0 1-1-1V3M16 21v-4a1 1 0 0 1 1-1h4M3 16h4a1 1 0 0 1 1 1v4"/></svg>
-    : <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M3 8V5a2 2 0 0 1 2-2h3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>
 }
 
 // ── ABR level control via hls.js (Phase 1.2) ────────────────────────────────
@@ -1709,13 +1682,6 @@ function NativeTransportBar({
               {settingsOpen && <SettingsMenu key={settingsView} open initialView={settingsView} userMuted={userMuted} onToggleMuted={onToggleMuted} playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} compact />}
             </div>
 
-            {/* Fullscreen: reads the single `immersive` state and calls the
-                enter/exit callbacks owned by WatchView. On iPhone this triggers
-                the CSS faux-fullscreen that KEEPS the whole party (chat,
-                cameras, room code) — it is NOT the native video player. */}
-            <BarBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen' : 'Full screen'}>
-              <FullscreenGlyph size={19} immersive={immersive} />
-            </BarBtn>
           </div>
         </div>
       </div>

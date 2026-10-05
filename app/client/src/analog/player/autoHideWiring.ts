@@ -7,7 +7,7 @@
 // That scheduling is arithmetic, so it lives here and is tested here.
 
 import { analogTokens } from '../../design/analogTokens.ts'
-import { tickAutoHide, type AutoHideState } from '../playerCore.ts'
+import { type AutoHideState } from '../playerCore.ts'
 
 /**
  * When the chrome is due to hide, or `null` when it is not due at all.
@@ -37,16 +37,12 @@ export function msUntilAutoHide(state: AutoHideState, nowMs: number): number | n
  * Hide right now — the phone's tap-to-toggle, which must be able to dismiss the
  * chrome without waiting out the timer.
  *
- * Expressed by ageing the last input past the timeout rather than by writing
- * `visible: false`, so it stays subject to the same rules as every other
- * transition: a taken hold or a paused movie still pins the chrome open, and a
- * later `noteInput` restarts the full three seconds.
+ * An explicit tap may dismiss a paused player's controls too. Open menus and
+ * active gestures still hold the chrome; a later input restores it normally.
  */
 export function hideNow(state: AutoHideState, nowMs: number): AutoHideState {
-  return tickAutoHide(
-    { ...state, lastInputAtMs: nowMs - analogTokens.timing.chromeAutoHideMs },
-    nowMs,
-  )
+  if (state.holds.length) return state
+  return { ...state, visible: false, lastInputAtMs: nowMs }
 }
 
 /** Reasons the chrome is pinned open. Strings, so two holds cannot collide. */

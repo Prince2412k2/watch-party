@@ -41,9 +41,17 @@ export function AuthProvider({ children }: { children?: ReactNode } = {}) {
 
   useEffect(() => {
     if (!user || !OFFLINE_SUPPORTED) return
-    void initializeOffline(user.userId).catch(() => {})
-    const timer = setInterval(() => { void initializeOffline(user.userId).catch(() => {}) }, 60 * 60 * 1000)
-    return () => clearInterval(timer)
+    const recover = () => { void initializeOffline(user.userId).catch(() => {}) }
+    const visible = () => { if (document.visibilityState === 'visible') recover() }
+    recover()
+    const timer = setInterval(recover, 60 * 60 * 1000)
+    window.addEventListener('online', recover)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('online', recover)
+      document.removeEventListener('visibilitychange', visible)
+    }
   }, [user?.userId])
 
   // The signed-in user's own profile follows their identity. Everyone else's

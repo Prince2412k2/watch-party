@@ -14,12 +14,53 @@ import {
   type SavedMedia
 } from './storage.ts'
 import { byteRange, validateChunk } from './ranges.ts'
+import { runChunkQueue } from './queue.ts'
+import {
+  abortBackground,
+  backgroundManager,
+  backgroundResponse,
+  finishBackground,
+  mediaRequest,
+  type BackgroundJob
+} from './background.ts'
 const sw = self as unknown as ServiceWorkerGlobalScope
 const inflight = new Map<string, Promise<Blob>>()
 const downloads = new Map<string, AbortController>()
 const running = new Map<string, Promise<void>>()
 const active = new Map<string, number>()
 const SHELL = 'watchparty-shell-v1'
+async function cachePoster(record: SavedMedia) {
+  if (record.artwork || record.posterAttempted) return
+  let claimed = false
+  await updateMedia(record.key, (current) => {
+    if (current?.generation !== record.generation || current.posterAttempted)
+      return current
+    claimed = true
+    return { ...current, posterAttempted: true }
+  })
+  if (!claimed || (await owner()) !== record.owner) return
+  try {
+    const response = await fetch(
+      `/api/library/image/${record.posterItemId || record.itemId}?maxWidth=240`,
+      { credentials: 'include' }
+    )
+    if (
+      !response.ok ||
+      !response.headers.get('content-type')?.startsWith('image/')
+    )
+      return
+    const artwork = await response.blob()
+    if (artwork.size > 2 * 1024 * 1024 || (await owner()) !== record.owner)
+      return
+    await updateMedia(record.key, (current) =>
+      current?.generation === record.generation
+        ? { ...current, artwork }
+        : current
+    )
+  } catch {
+    /* Artwork must never delay or fail a movie download. */
+  }
+}
 const retain = (key: string) => {
   active.set(key, (active.get(key) || 0) + 1)
   let ended = false
@@ -50,18 +91,10 @@ async function loadChunk(
       throw new Error('File removed')
     const start = index * CHUNK_SIZE,
       end = Math.min(record.size - 1, start + CHUNK_SIZE - 1)
-    const params = new URLSearchParams({
-      source: record.sourceId,
-      revision: record.revision
-    })
-    const response = await fetch(
-      `/api/offline/${record.itemId}/media?${params}`,
-      {
-        credentials: 'include',
-        headers: { Range: `bytes=${start}-${end}` },
-        signal
-      }
-    )
+    const request = mediaRequest(record, index, sw.location.origin)
+    const response =
+      (await backgroundResponse(sw.registration, current, request)) ||
+      (await fetch(request, { signal }))
     validateChunk(response, start, end, record.size)
     const data = await response.blob()
     if (data.size !== end - start + 1) throw new Error('Incomplete media chunk')
@@ -89,6 +122,37 @@ async function loadChunk(
   }
 }
 
+async function cacheCaptions(
+  record: SavedMedia,
+  controller = new AbortController()
+) {
+  const key = record.key
+  for (const subtitle of record.subtitles) {
+    if (controller.signal.aborted)
+      throw new DOMException('Paused', 'AbortError')
+    if (await read('subtitles', [key, subtitle.index])) continue
+    try {
+      const response = await fetch(
+        `/api/library/items/${record.itemId}/subtitles/${subtitle.index}/content?mediaSourceId=${record.sourceId}`,
+        { credentials: 'include', signal: controller.signal }
+      )
+      if (!response.ok) throw new Error('Subtitle unavailable')
+      await putSubtitle(record, subtitle.index, await response.blob())
+    } catch (error) {
+      if (controller.signal.aborted) throw error
+      await updateMedia(key, (current) =>
+        current?.generation === record.generation
+          ? {
+              ...current,
+              subtitleError:
+                'Some subtitles could not be saved. Retry to save them.'
+            }
+          : current
+      )
+    }
+  }
+}
+
 async function download(key: string, controller: AbortController) {
   const record = await getMedia(key)
   if (
@@ -102,51 +166,32 @@ async function download(key: string, controller: AbortController) {
       ? {
           ...current,
           state: 'downloading',
+          resumeOnOpen: true,
           error: undefined,
           subtitleError: undefined
         }
       : current
   )
   try {
-    // Download captions first so an interrupted media transfer can still use them.
-    for (const subtitle of record.subtitles) {
-      if (controller.signal.aborted)
-        throw new DOMException('Paused', 'AbortError')
-      if (await read('subtitles', [key, subtitle.index])) continue
-      try {
-        const response = await fetch(
-          `/api/library/items/${record.itemId}/subtitles/${subtitle.index}/content?mediaSourceId=${record.sourceId}`,
-          { credentials: 'include', signal: controller.signal }
+    await cacheCaptions(record, controller)
+    await runChunkQueue(
+      Math.ceil(record.size / CHUNK_SIZE),
+      async (index) => {
+        const current = await getMedia(key)
+        if (
+          current?.generation !== record.generation ||
+          current.retention !== 'download' ||
+          controller.signal.aborted
         )
-        if (!response.ok) throw new Error('Subtitle unavailable')
-        await putSubtitle(record, subtitle.index, await response.blob())
-      } catch (error) {
-        if (controller.signal.aborted) throw error
-        await updateMedia(key, (current) =>
-          current?.generation === record.generation
-            ? {
-                ...current,
-                subtitleError:
-                  'Some subtitles could not be saved. Retry to save them.'
-              }
-            : current
-        )
-      }
-    }
-    for (let index = 0; index < Math.ceil(record.size / CHUNK_SIZE); index++) {
-      const current = await getMedia(key)
-      if (
-        current?.generation !== record.generation ||
-        current.retention !== 'download' ||
-        controller.signal.aborted
-      )
-        throw new DOMException('Paused', 'AbortError')
-      await loadChunk(record, index, true)
-      if (!(await chunk(key, index)))
-        throw new Error(
-          'Could not save chunk. Check available storage and retry.'
-        )
-    }
+          throw new DOMException('Paused', 'AbortError')
+        await loadChunk(record, index, true)
+        if (!(await chunk(key, index)))
+          throw new Error(
+            'Could not save chunk. Check available storage and retry.'
+          )
+      },
+      controller.signal
+    )
     await updateMedia(key, (current) =>
       current?.generation === record.generation
         ? { ...current, state: 'complete', error: undefined }
@@ -267,15 +312,8 @@ sw.addEventListener('activate', (event) =>
       for (const cache of await caches.keys())
         if (cache.startsWith('watchparty-shell-') && cache !== SHELL)
           await caches.delete(cache)
-      // A terminated worker cannot resume automatically; keep the user's download intent.
       const account = await owner()
       if (account) {
-        for (const record of await listMedia(account))
-          if (record.state === 'downloading')
-            await updateMedia(
-              record.key,
-              (current) => current && { ...current, state: 'paused' }
-            )
         await clearCache(account, true)
       }
     })()
@@ -308,13 +346,50 @@ sw.addEventListener('message', (event) => {
     }
     if (!account) throw new Error('Sign in first')
     if (message.action === 'recover') {
-      for (const record of await listMedia(account))
-        if (record.state === 'downloading' && !running.has(record.key))
-          await updateMedia(
-            record.key,
-            (current) => current && { ...current, state: 'paused' }
+      const resume: string[] = []
+      for (const record of await listMedia(account)) {
+        if (record.retention !== 'download' || running.has(record.key)) continue
+        const recover = async () => {
+          if (running.has(record.key)) return
+          const latest = await getMedia(record.key)
+          if (!latest || latest.generation !== record.generation) return
+          const job = latest.backgroundId
+            ? await backgroundManager(sw.registration)?.get(latest.backgroundId)
+            : undefined
+          if (job && !job.result) return
+          if (job?.recordsAvailable) await finishBackground(job)
+          const current = await getMedia(record.key)
+          if (!current || current.state === 'complete') return
+          const interrupted = current.state === 'downloading'
+          await updateMedia(record.key, (value) =>
+            value?.generation === current.generation
+              ? {
+                  ...value,
+                  state: interrupted ? 'paused' : value.state,
+                  resumeOnOpen:
+                    interrupted && value.resumeOnOpen !== false
+                      ? true
+                      : value.resumeOnOpen,
+                  backgroundId: undefined,
+                  backgroundBase: undefined
+                }
+              : value
           )
-      return
+          if (
+            sw.navigator.onLine &&
+            (current.resumeOnOpen ||
+              (interrupted && current.resumeOnOpen !== false))
+          )
+            resume.push(record.key)
+        }
+        if (sw.navigator.locks)
+          await sw.navigator.locks.request(
+            `watchparty-download:${record.key}`,
+            recover
+          )
+        else await recover()
+      }
+      return { resume }
     }
     if (message.action === 'clear' || message.action === 'expire')
       return clearCache(
@@ -327,31 +402,75 @@ sw.addEventListener('message', (event) => {
     if (!record || record.owner !== account)
       throw new Error('Saved file not found')
     if (message.action === 'pin') {
-      await updateMedia(
-        key,
-        (current) => current && { ...current, retention: 'download' }
+      await updateMedia(key, (current) =>
+        current?.generation === record.generation
+          ? { ...current, retention: 'download' }
+          : current
       )
       event.waitUntil(startDownload(key))
+      event.waitUntil(cachePoster(record))
+      return
+    }
+    if (message.action === 'intent') {
+      await updateMedia(key, (current) =>
+        current?.generation === record.generation
+          ? {
+              ...current,
+              retention: 'download',
+              resumeOnOpen: true,
+              error: undefined
+            }
+          : current
+      )
+      return
+    }
+    if (message.action === 'background') {
+      event.waitUntil(cacheCaptions(record))
+      event.waitUntil(cachePoster(record))
       return
     }
     if (message.action === 'download') {
       event.waitUntil(startDownload(key))
+      event.waitUntil(cachePoster(record))
+      return
+    }
+    if (message.action === 'artwork') {
+      await cachePoster(record)
       return
     }
     if (message.action === 'pause') {
+      await updateMedia(key, (current) =>
+        current?.generation === record.generation
+          ? { ...current, resumeOnOpen: false }
+          : current
+      )
+      await abortBackground(sw.registration, record)
       downloads.get(key)?.abort()
       await running.get(key)
       await updateMedia(key, (current) =>
         current?.generation === record.generation
           ? {
               ...current,
-              state: current.received === current.size ? 'complete' : 'paused'
+              state: current.received === current.size ? 'complete' : 'paused',
+              resumeOnOpen: false
             }
           : current
       )
       return
     }
     if (message.action === 'cancel') {
+      await updateMedia(key, (current) =>
+        current?.generation === record.generation
+          ? {
+              ...current,
+              retention: 'cache',
+              resumeOnOpen: false,
+              backgroundId: undefined,
+              backgroundBase: undefined
+            }
+          : current
+      )
+      await abortBackground(sw.registration, record)
       downloads.get(key)?.abort()
       await running.get(key)
       await updateMedia(key, (current) =>
@@ -359,6 +478,7 @@ sw.addEventListener('message', (event) => {
           ? {
               ...current,
               retention: 'cache',
+              resumeOnOpen: false,
               state: current.received === current.size ? 'complete' : 'paused'
             }
           : current
@@ -368,6 +488,7 @@ sw.addEventListener('message', (event) => {
     if (message.action === 'remove') {
       downloads.get(key)?.abort()
       await removeMedia(key)
+      await abortBackground(sw.registration, record)
       return
     }
   }
@@ -382,9 +503,53 @@ sw.addEventListener('message', (event) => {
     )
   )
 })
+// The browser dispatches these even after every app window has been closed.
+for (const kind of [
+  'backgroundfetchsuccess',
+  'backgroundfetchfail',
+  'backgroundfetchabort'
+]) {
+  sw.addEventListener(kind, (event) => {
+    const backgroundEvent = event as ExtendableEvent & {
+      registration: BackgroundJob
+    }
+    backgroundEvent.waitUntil(finishBackground(backgroundEvent.registration))
+  })
+}
+sw.addEventListener('backgroundfetchclick', (event) => {
+  const backgroundEvent = event as ExtendableEvent
+  backgroundEvent.waitUntil(
+    (async () => {
+      const windows = await sw.clients.matchAll({ type: 'window' })
+      const window = windows.find(
+        (client) => new URL(client.url).pathname === '/saved'
+      )
+      if (window) await window.focus()
+      else await sw.clients.openWindow('/saved')
+    })()
+  )
+})
 sw.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
   if (url.origin !== sw.location.origin) return
+  if (url.pathname.startsWith('/__artwork/')) {
+    event.respondWith(
+      (async () => {
+        const record = await getMedia(
+          decodeURIComponent(url.pathname.slice('/__artwork/'.length))
+        )
+        if (!record?.artwork || record.owner !== (await owner()))
+          return new Response(null, { status: 404 })
+        return new Response(record.artwork, {
+          headers: {
+            'Content-Type': record.artwork.type,
+            'Cache-Control': 'no-store'
+          }
+        })
+      })()
+    )
+    return
+  }
   if (url.pathname.startsWith('/__media/')) {
     const key = decodeURIComponent(
       url.pathname.slice('/__media/'.length).replace(/\.mp4$/, '')
