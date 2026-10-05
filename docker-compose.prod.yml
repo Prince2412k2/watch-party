@@ -169,6 +169,7 @@ services:
       - PROWLARR_URL=http://prowlarr:9696
       - BAZARR_URL=http://bazarr:6767
       - QBITTORRENT_URL=http://qbittorrent:8080
+      - MEDIA_CONVERTER_URL=http://media-converter:8090
       # Share auth cookies across watch.example.com and jelly.example.com.
       - SESSION_COOKIE_DOMAIN=${SESSION_COOKIE_DOMAIN:-}
       # If the same app is served on both subdomains, allow both origins.
@@ -221,6 +222,9 @@ services:
       - TV_DIR=/media/tv
       - DATA_DIR=/data
       - SCHEDULE=${MEDIA_CONVERTER_SCHEDULE:-0 3 * * *}
+      - WATCH_INTERVAL_SECONDS=${MEDIA_CONVERTER_WATCH_INTERVAL_SECONDS:-15}
+      - FILE_SETTLE_SECONDS=${MEDIA_CONVERTER_FILE_SETTLE_SECONDS:-30}
+      - STRICT_MODE=${MEDIA_CONVERTER_STRICT_MODE:-true}
       - MAX_CONCURRENT_JOBS=${MEDIA_CONVERTER_MAX_CONCURRENT_JOBS:-1}
       - DEFAULT_PRIORITY=${MEDIA_CONVERTER_DEFAULT_PRIORITY:-50}
       - DELETE_ORIGINAL=${MEDIA_CONVERTER_DELETE_ORIGINAL:-true}

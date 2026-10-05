@@ -14,6 +14,7 @@ import Avatar from './Avatar.tsx'
 export default function RoomControls({
   stage, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false,
   layoutMode, onToggleLayout, hideSelf, onToggleHideSelf,
+  micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds, onHoldChrome, onReleaseChrome,
 }: {
   stage?: string
   top?: number
@@ -25,10 +26,19 @@ export default function RoomControls({
   onToggleLayout?: () => void
   hideSelf?: boolean
   onToggleHideSelf?: () => void
+  micOn?: boolean; camOn?: boolean; onToggleMic?: () => void; onToggleCam?: () => void
+  hideAllFeeds?: boolean; onToggleHideAllFeeds?: () => void
+  onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
 } = {}) {
   const { session, role, toasts, approveUser, rejectUser, endParty } = useParty()
 
   const [open, setOpen] = useState(false)
+  const [callOpen, setCallOpen] = useState(false)
+  useEffect(() => {
+    if (!callOpen) return
+    onHoldChrome?.('callMenu')
+    return () => onReleaseChrome?.('callMenu')
+  }, [callOpen, onHoldChrome, onReleaseChrome])
 
   useEffect(() => {
     if (phone || !session) return
@@ -91,21 +101,17 @@ export default function RoomControls({
           clear of the notch via safe-area). Pairs with the top-right cluster. */}
       {phone && watching && (
         <div style={{
-          position: 'absolute', top: 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 8px)', zIndex: 40,
-          display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px 7px 13px', borderRadius: 999,
-          ...flatPanel, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
+          position: 'absolute', top: 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 56px)', zIndex: 40,
+          display: 'flex', alignItems: 'center', height: 44, maxWidth: 'calc(100vw - var(--sa-l) - var(--sa-r) - 212px)',
+          opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
         }}>
-          <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>Code</span>
-          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, letterSpacing: '.1em', color: 'var(--text)' }}>{session.id}</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 999, background: 'var(--glass2)', fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--text)' }} />{participantCount}
-          </span>
+          <span title={`Room ${session.id} · ${participantCount} participants`} style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '.08em', color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.id}</span>
         </div>
       )}
 
       {/* Top-left room controls (fades with auto-hide) */}
-      <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 58px)' : top, left: phone ? 'calc(var(--sa-l) + 8px)' : 14, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 4, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
-        <button onClick={() => { void leaveRoom() }} title="Back" aria-label="Back" style={iconBtn(true)} onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)' }} onMouseLeave={e => { e.currentTarget.style.color = 'var(--red)' }}>
+      <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 8px)' : top, left: phone ? 'calc(var(--sa-l) + 8px)' : 14, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 4, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
+        <button onClick={event => { event.stopPropagation(); void leaveRoom() }} title="Back" aria-label="Back" style={iconBtn()}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /><path d="M9 12h12" /></svg>
         </button>
       </div>
@@ -122,16 +128,30 @@ export default function RoomControls({
         opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none',
         transform: visible ? 'translateY(0)' : 'translateY(-6px)', transition: 'opacity .25s, transform .25s',
       }}>
+        {watching && onToggleCam && <button onClick={event => { event.stopPropagation(); setCallOpen(value => !value) }} title="Camera and microphone" aria-label="Camera and microphone" aria-expanded={callOpen} style={iconBtn()}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/></svg>
+        </button>}
         {watching && onOpenChat ? (
           <button onClick={(event) => { event.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: phone ? 44 : 38, height: phone ? 44 : 38, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
             <svg width={phone ? 19 : 18} height={phone ? 19 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
           </button>
         ) : null}
-        <button onClick={(event) => { event.stopPropagation(); setOpen(value => !value) }} title="Watch party" aria-label="Watch party" aria-expanded={open} style={{ position: 'relative', minWidth: phone ? 52 : 38, height: phone ? 52 : 38, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, borderRadius: phone ? 18 : 10, border: phone ? '1px solid rgba(255,255,255,.14)' : 'none', color: phone ? '#f5f4f0' : 'var(--text2)', background: phone ? '#202126' : 'transparent', boxShadow: phone ? '0 15px 38px rgba(0,0,0,.38)' : 'none', cursor: 'pointer' }}>
+        <button onClick={(event) => { event.stopPropagation(); setCallOpen(false); setOpen(value => !value) }} title="Watch party" aria-label="Watch party" aria-expanded={open} style={{ position: 'relative', ...iconBtn(), width: phone ? 44 : 38, height: phone ? 44 : 38 }}>
           <svg width={phone ? 20 : 18} height={phone ? 20 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
           {waiting.length > 0 ? <span style={{ position: 'absolute', top: -5, right: -5, minWidth: phone ? 20 : 17, height: phone ? 20 : 17, padding: '0 5px', borderRadius: 10, display: 'grid', placeItems: 'center', color: '#fff', background: 'var(--red)', fontSize: 10, fontWeight: 800 }}>{waiting.length}</span> : null}
         </button>
       </div>
+
+      {callOpen && <>
+        <div onClick={event => { event.stopPropagation(); setCallOpen(false) }} style={{ position: 'absolute', inset: 0, zIndex: 40 }} />
+        <div role="group" aria-label="Camera and microphone controls" onClick={event => event.stopPropagation()} style={{ ...flatPanel, position: 'absolute', top: phone ? 'calc(var(--sa-t) + 60px)' : top + 48, right: phone ? 'calc(var(--sa-r) + 12px)' : 14, width: 'min(264px, calc(100vw - 24px))', borderRadius: 12, padding: 8, zIndex: 41 }}>
+          {[
+            { label: micOn ? 'Mute microphone' : 'Enable microphone', onClick: onToggleMic, active: micOn },
+            { label: camOn ? 'Turn camera off' : 'Turn camera on', onClick: onToggleCam, active: camOn },
+            { label: hideAllFeeds ? 'Show camera feeds' : 'Hide camera feeds', onClick: onToggleHideAllFeeds, active: !hideAllFeeds },
+          ].map(control => <button key={control.label} onClick={control.onClick} aria-pressed={control.active} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', minHeight: 48, padding: '8px 12px', width: '100%', border: 0, background: 'transparent', color: 'var(--text)', fontSize: 14, textAlign: 'left' }}>{control.label}<span style={{ color: 'var(--text3)' }}>{control.active ? 'On' : 'Off'}</span></button>)}
+        </div>
+      </>}
 
       {/* Join-request sidebar (host only) — stays visible; it's a notification */}
       {isHost && waiting.length > 0 && (

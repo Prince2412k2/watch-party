@@ -1,8 +1,10 @@
 # Media Converter
 
-A persistent, Dockerized MKV-to-MP4 remux worker for Sonarr/Radarr/Jellyfin libraries. It scans mounted filesystems, plans conversions from `ffprobe` metadata, prefers stream-copy remuxing, and only removes an MKV after the MP4 has passed validation and been atomically published.
+A persistent, Dockerized MP4 pre-conversion worker for Sonarr/Radarr/Jellyfin libraries. It watches mounted libraries for added/modified files, plans from `ffprobe` metadata, prefers lossless stream-copy, and validates output before publication or source removal.
 
-The service has no web UI or external database. One Go binary provides the daemon, CLI, cron scheduler, and Bubble Tea TUI; SQLite under `/data` is the control plane shared by `docker exec` commands.
+Manage it at **Watchparty → profile actions → Media converter**, or `/converter` (administrator accounts). The webpage shows running jobs, progress, speed, policy, a reorderable queue, and history/errors. **Move to next** promotes any waiting file ahead of the queue immediately; up/down adjust individual positions. Active work finishes without losing progress. Pause stops new jobs; cancel interrupts a selected job. One Go binary still supplies the worker, CLI and TUI, sharing persistent SQLite state under `/data`.
+
+The worker's HTTP API listens on internal port 8090. Watchparty authenticates administrators and proxies `/api/converter/*`; do not expose the worker directly. Both services use `MEDIA_CONVERTER_API_KEY`, falling back to their existing `SESSION_SECRET`. Production Compose already supplies the shared secrets and private network. For separate/local deployments, set `MEDIA_CONVERTER_URL` on Watchparty and matching service credentials.
 
 ## Safety Model
 
@@ -10,11 +12,13 @@ For `movie.mkv`, conversion writes `.movie.media-converter.tmp.mp4` in the same 
 
 1. Checks FFmpeg exited successfully.
 2. Probes the temporary MP4 and requires a video stream.
-3. Compares duration, resolution, and copied video codec with the MKV.
+3. Compares duration, resolution, and every planned audio/video/subtitle stream.
 4. Optionally decodes the whole output when `DEEP_VALIDATION=true`.
 5. Applies source mode, mtime, owner, and group where permissions allow.
 6. Publishes `movie.mp4` with an atomic no-overwrite hard-link operation.
-7. Deletes `movie.mkv` only when `DELETE_ORIGINAL=true` and every prior step succeeded.
+7. Deletes the original only when `DELETE_ORIGINAL=true`, no streams were omitted, and every prior step succeeded. Changed inputs or cancellation before publication discard temporary output.
+
+Existing MP4 files are also inspected. Compatible files are skipped; incompatible ones are normalized with a validated atomic replacement. With `DELETE_ORIGINAL=false` (or omitted streams in non-strict mode), a hidden `.media-converter.original-*.mp4` backup retains the original before replacement. Hidden temporary/backup files are excluded from watching.
 
 Failure and cancellation remove only the temporary output. The source is retained. If source cleanup itself fails, the valid MP4 remains and the job is marked failed for operator review.
 
@@ -76,7 +80,11 @@ Omit these overrides to use the shown defaults. After deploy, inspect it with `d
 | `DELETE_ORIGINAL` | `true` | Remove validated source MKV |
 | `DRY_RUN` | `false` | Probe/plan globally without FFmpeg |
 | `MIN_FREE_SPACE_GB` | `20` | Free space retained in addition to source size |
-| `STRICT_MODE` | `false` | Fail instead of omitting unsupported streams |
+| `STRICT_MODE` | `true` | Fail instead of omitting unsupported streams |
+| `WATCH_INTERVAL_SECONDS` | `15` | Automatic add/modify scan interval |
+| `FILE_SETTLE_SECONDS` | `30` | Wait for stable file size/mtime before automatic queueing |
+| `HTTP_ADDR` | `:8090` | Private HTTP control-plane listener |
+| `MEDIA_CONVERTER_API_KEY` | `SESSION_SECRET` | Shared internal API credential |
 | `DEEP_VALIDATION` | `false` | Decode full output after normal validation |
 | `INCLUDE_SAMPLES` | `false` | Include `*.sample.mkv` files |
 | `EXCLUDE_PATTERNS` | empty | Comma-separated filename/directory globs |
@@ -90,19 +98,18 @@ Built-in excluded directories are `@eaDir`, `.recycle`, `.Trash`, and `lost+foun
 
 The planner maps streams explicitly rather than using blind `-map 0`:
 
-- H.264, HEVC, AV1, and MPEG-4 video are copied.
-- Other video codecs are marked `requires_transcode`; video transcoding is intentionally disabled.
+- Compatible H.264 8-bit 4:2:0 and HEVC 4:2:0 8/10-bit video are copied bit-for-bit; HEVC is tagged `hvc1` for Apple playback.
+- Other SDR video is encoded as H.264 at original resolution, CRF 18, `veryfast`. This is high-quality **lossy** encoding, not lossless. Stream copying remains the fastest, lossless path. Unsupported HDR conversion is blocked pending an explicit tone-map policy rather than producing incorrect colors.
 - AAC, AC-3, E-AC-3, ALAC, and MP3 audio are copied.
-- Other audio is converted to AAC while compatible tracks remain untouched.
+- FLAC and integer PCM up to 24-bit become ALAC without audio quality loss. Higher-precision lossless audio is blocked rather than silently truncated. Other audio becomes AAC at 256 kbit/s stereo or 512 kbit/s multichannel, preserving channel count.
 - Existing `mov_text` subtitles are copied.
 - SRT, ASS/SSA, WebVTT, and text subtitles are converted to `mov_text`.
-- Bitmap/unsupported subtitles, attachments, fonts, and data streams are logged and omitted.
-- `STRICT_MODE=true` turns any omission into a failure.
+- Bitmap/unsupported subtitles, attachments, fonts, and data streams block conversion by default. `STRICT_MODE=false` allows omissions but preserves the original file. ASS → `mov_text` does not retain exact ASS styling; a future sidecar-export policy is needed for exact styled/bitmap subtitle preservation.
 - Stream language metadata and forced subtitle dispositions are retained where available.
 
 ## Scheduler And Recovery
 
-The daemon schedules scans internally in `TZ`; no host cron is needed. A scan does not add a duplicate row for a previously discovered source, and overlapping scheduled scans are skipped. Jobs run by priority and creation time.
+The daemon polls filesystem metadata every 15 seconds, including files imported by rename and Docker bind mounts. It waits for stable size/mtime and a 30-second settle period. Unchanged files are deduplicated; modifications requeue eligible terminal/waiting jobs. Existing conflicting targets are not overwritten. A nightly scheduled reconciliation remains enabled in `TZ`. Jobs run by persisted priority and queue order, editable from the webpage while workers are active.
 
 On startup, jobs interrupted in probing, conversion, or validation are returned to the queue and their known temporary files are removed. Docker `SIGTERM` stops new claims, sends FFmpeg `SIGTERM`, waits up to five seconds, and then forces termination if needed. The source is never touched during this path.
 

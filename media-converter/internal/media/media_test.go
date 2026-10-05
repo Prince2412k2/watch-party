@@ -15,8 +15,16 @@ func TestPaths(t *testing.T) {
 	}
 }
 
-func TestPathsRejectsNonMKV(t *testing.T) {
-	if _, _, err := Paths("movie.avi"); err == nil {
-		t.Fatal("expected error")
+func TestPathsNeverConvertsItsOwnOutputs(t *testing.T) {
+	for _, path := range []string{".movie.media-converter.tmp.mp4", "subtitle.srt", ".partial.mkv"} {
+		if _, _, err := Paths(path); err == nil {
+			t.Fatalf("accepted %s", path)
+		}
+	}
+	for _, path := range []string{"movie.avi", "movie.webm", "movie.MKV", "movie.mp4"} {
+		target, _, err := Paths(path)
+		if err != nil || target != "movie.mp4" {
+			t.Fatalf("path=%s target=%s err=%v", path, target, err)
+		}
 	}
 }

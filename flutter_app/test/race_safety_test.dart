@@ -180,6 +180,7 @@ void main() {
     // Makes itemId's cache entry fully present, so the rehydrate scan finds it
     // as an offline title.
     Future<void> completeEntry(String itemId) async {
+      await proxy.markDownload(itemId, {'title': itemId});
       final entry = await proxy.openEntry(itemId);
       entry.setTotalLength(8);
       await entry.write(0, List<int>.filled(8, 1));

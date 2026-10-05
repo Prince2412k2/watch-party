@@ -1485,3 +1485,25 @@
 .an-stage[data-size='phone'] .an-corner {
   max-width: calc(100vw - var(--an-space-lg-px) * 2);
 }
+
+/* Touch surfaces use a scrolling document, not the desktop's clipped bands. */
+.an-stage[data-size='phone'] .an-stage-content {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: calc(env(safe-area-inset-top) + 76px) max(20px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 140px) max(20px, env(safe-area-inset-left));
+}
+.an-stage[data-size='phone'] .an-stage-head { align-self: stretch; overflow: visible; flex: none; order: 1; }
+.an-stage[data-size='phone'] .an-stage-shelves { order: 2; flex: none; }
+.an-stage[data-size='phone'] .an-stage-side { order: 0; margin-bottom: 24px; }
+.an-stage[data-size='phone'] .an-modes { display: flex; justify-content: start; gap: 24px; overflow-x: auto; padding-bottom: 8px; }
+.an-stage[data-size='phone'] .an-modes button { flex: none; font-size: 14px; min-height: 44px; letter-spacing: 0; text-transform: none; }
+.an-stage[data-size='phone'] .an-stage-nav { position: fixed; inset: auto 0 0; padding: 4px 12px env(safe-area-inset-bottom); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); z-index: var(--an-z-toolbox); }
+.an-stage[data-size='phone'] .an-nav { padding: 0; }
+.an-stage[data-size='phone'] .an-nav button { min-height: 64px; font-size: 11px; letter-spacing: 0; gap: 6px; }
+.an-stage[data-size='phone'] .an-corner-trigger { min-width: 44px; min-height: 44px; }
+.an-touch-track { display: flex; gap: 14px; overflow-x: auto; overflow-y: hidden; padding: 12px 4px 20px; scroll-snap-type: x proximity; }
+.an-touch-slot { flex: 0 0 116px; min-width: 0; border: 0; padding: 0; color: inherit; background: transparent; font: inherit; text-align: left; scroll-snap-align: start; }
+.an-touch-slot .an-poster { width: 100%; }
+.an-touch-slot .an-poster[data-focused='true'] { transform: none; }

@@ -45,9 +45,10 @@ export interface AnalogProfileTrayProps {
   avatar?: AvatarConfig | null
   onSettings: () => void
   onSignOut: () => void
+  onConverter?: () => void
 }
 
-export function AnalogProfileTray({ userId, name, avatar, onSettings, onSignOut }: AnalogProfileTrayProps) {
+export function AnalogProfileTray({ userId, name, avatar, onSettings, onSignOut, onConverter }: AnalogProfileTrayProps) {
   const [tray, dispatch] = useReducer(widgetNext, closedWidget)
   const [status, setStatus] = useState<UpdateStatus>('idle')
   // The shelf's detent cue has no other switch in the client, and the reference
@@ -141,6 +142,7 @@ export function AnalogProfileTray({ userId, name, avatar, onSettings, onSignOut 
 
       {tray.open ? (
         <div className="an-tray" id={TRAY_ID} role="group" aria-label="Profile actions">
+          {onConverter && <button type="button" className="an-icon-button" aria-label="Media converter" title="Media converter" onClick={onConverter}><AnIcon name="film" size={18} /></button>}
           {profileTrayControls(status, sound).map((control) => (
             <AnIconButton key={control.id} control={control} onPress={() => run(control.id)} />
           ))}

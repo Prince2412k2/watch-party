@@ -20,6 +20,7 @@ import (
 	"github.com/snuffkin/media-converter/internal/scheduler"
 	"github.com/snuffkin/media-converter/internal/storage"
 	"github.com/snuffkin/media-converter/internal/tui"
+	"github.com/snuffkin/media-converter/internal/web"
 	"github.com/snuffkin/media-converter/internal/worker"
 )
 
@@ -57,6 +58,7 @@ func run() error {
 	scan := scanner.Scanner{Store: store, Priority: cfg.Priority, Excludes: cfg.ExcludePatterns, IncludeSamples: cfg.IncludeSamples}
 	switch cmd {
 	case "serve":
+		scan.SettleTime = cfg.SettleTime
 		log := logging.New(cfg.LogLevel, strings.EqualFold(os.Getenv("LOG_FORMAT"), "json"))
 		recovered, e := store.Recover(ctx)
 		if e != nil {
@@ -73,6 +75,20 @@ func run() error {
 			return fmt.Errorf("schedule: %w", e)
 		}
 		n := hooks.New(hooks.Config{SonarrURL: cfg.SonarrURL, SonarrKey: cfg.SonarrAPIKey, RadarrURL: cfg.RadarrURL, RadarrKey: cfg.RadarrAPIKey, JellyfinURL: cfg.JellyfinURL, JellyfinKey: cfg.JellyfinKey})
+		go scan.Watch(ctx, []string{cfg.MoviesDir, cfg.TVDir}, cfg.WatchInterval, func(r scanner.Result, err error) {
+			if err != nil && ctx.Err() == nil {
+				log.Error("watch scan", "error", err)
+			}
+			if r.Added > 0 {
+				log.Info("File changes queued", "jobs", r.Added)
+			}
+		})
+		go func() {
+			if err := web.Serve(ctx, cfg, web.Handler(cfg, store, scan)); err != nil {
+				log.Error("converter API", "error", err)
+				stop()
+			}
+		}()
 		log.Info("Worker started", logging.Event("START"), "schedule", cfg.Schedule, "workers", cfg.MaxConcurrent)
 		worker.New(cfg, store, log, n).Run(ctx)
 		return nil

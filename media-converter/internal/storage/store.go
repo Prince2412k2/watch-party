@@ -69,11 +69,27 @@ INSERT OR IGNORE INTO settings(key,value) VALUES('paused','false');`)
 			return err
 		}
 	}
+	var hasMtime int
+	if err = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name='source_mtime'`).Scan(&hasMtime); err != nil {
+		return err
+	}
+	if hasMtime == 0 {
+		if _, err = s.db.Exec(`ALTER TABLE jobs ADD COLUMN source_mtime INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
 	_, err = s.db.Exec(`UPDATE jobs SET queue_order=id WHERE queue_order=0; CREATE INDEX IF NOT EXISTS idx_jobs_queue_order ON jobs(status,priority,queue_order)`)
 	return err
 }
 
 func (s *Store) Add(ctx context.Context, j jobs.Job) (bool, error) {
+	// Bootstrap fingerprints for pre-watcher rows without demoting completed
+	// jobs or automatically retrying historical failures after migration.
+	if j.SourceMtime != 0 {
+		if _, err := s.db.ExecContext(ctx, `UPDATE jobs SET source_mtime=?,source_size=? WHERE source_path=? AND source_mtime=0`, j.SourceMtime, j.SourceSize, j.SourcePath); err != nil {
+			return false, err
+		}
+	}
 	status := j.Status
 	if status == "" {
 		status = jobs.Queued
@@ -82,7 +98,9 @@ func (s *Store) Add(ctx context.Context, j jobs.Job) (bool, error) {
 	if mediaType == "" {
 		mediaType = "unknown"
 	}
-	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(source_path,target_path,temp_path,media_type,status,priority,queue_order,source_size,dry_run,error_message,notes,completed_at) VALUES(?,?,?,?,?,?,(SELECT COALESCE(MAX(queue_order),0)+1 FROM jobs),?,?,?,?,CASE WHEN ? IN ('skipped','failed') THEN CURRENT_TIMESTAMP ELSE NULL END)`, j.SourcePath, j.TargetPath, j.TempPath, mediaType, status, j.Priority, j.SourceSize, j.DryRun, j.ErrorMessage, j.Notes, status)
+	r, err := s.db.ExecContext(ctx, `INSERT INTO jobs(source_path,target_path,temp_path,media_type,status,priority,queue_order,source_size,source_mtime,dry_run,error_message,notes,completed_at) VALUES(?,?,?,?,?,?,(SELECT COALESCE(MAX(queue_order),0)+1 FROM jobs),?,?,?,?,?,CASE WHEN ? IN ('skipped','failed') THEN CURRENT_TIMESTAMP ELSE NULL END)
+ON CONFLICT(source_path) DO UPDATE SET status=excluded.status,source_size=excluded.source_size,source_mtime=excluded.source_mtime,progress=0,ffmpeg_speed='',error_message=excluded.error_message,notes=excluded.notes,cancel_requested=0,started_at=NULL,completed_at=excluded.completed_at
+WHERE excluded.source_mtime<>0 AND (jobs.source_size<>excluded.source_size OR jobs.source_mtime<>excluded.source_mtime) AND jobs.status NOT IN ('probing','remuxing','transcoding_audio','transcoding_video','validating')`, j.SourcePath, j.TargetPath, j.TempPath, mediaType, status, j.Priority, j.SourceSize, j.SourceMtime, j.DryRun, j.ErrorMessage, j.Notes, status)
 	if err != nil {
 		return false, err
 	}
@@ -118,14 +136,14 @@ func (s *Store) Claim(ctx context.Context) (jobs.Job, error) {
 	return j, nil
 }
 
-const columns = `id,source_path,target_path,temp_path,media_type,status,priority,operation_type,video_codec,audio_codecs,subtitle_codecs,source_size,target_size,duration,progress,ffmpeg_speed,created_at,started_at,completed_at,attempt_count,error_message,notes,ffmpeg_stderr,cancel_requested,dry_run`
+const columns = `id,source_path,target_path,temp_path,media_type,status,priority,operation_type,video_codec,audio_codecs,subtitle_codecs,source_size,target_size,duration,progress,ffmpeg_speed,created_at,started_at,completed_at,attempt_count,error_message,notes,ffmpeg_stderr,cancel_requested,dry_run,source_mtime`
 
 type scanner interface{ Scan(...any) error }
 
 func scan(r scanner) (jobs.Job, error) {
 	var j jobs.Job
 	var started, completed sql.NullTime
-	err := r.Scan(&j.ID, &j.SourcePath, &j.TargetPath, &j.TempPath, &j.MediaType, &j.Status, &j.Priority, &j.OperationType, &j.VideoCodec, &j.AudioCodecs, &j.SubtitleCodecs, &j.SourceSize, &j.TargetSize, &j.Duration, &j.Progress, &j.FFmpegSpeed, &j.CreatedAt, &started, &completed, &j.AttemptCount, &j.ErrorMessage, &j.Notes, &j.FFmpegStderr, &j.CancelRequested, &j.DryRun)
+	err := r.Scan(&j.ID, &j.SourcePath, &j.TargetPath, &j.TempPath, &j.MediaType, &j.Status, &j.Priority, &j.OperationType, &j.VideoCodec, &j.AudioCodecs, &j.SubtitleCodecs, &j.SourceSize, &j.TargetSize, &j.Duration, &j.Progress, &j.FFmpegSpeed, &j.CreatedAt, &started, &completed, &j.AttemptCount, &j.ErrorMessage, &j.Notes, &j.FFmpegStderr, &j.CancelRequested, &j.DryRun, &j.SourceMtime)
 	if started.Valid {
 		j.StartedAt = &started.Time
 	}
@@ -173,7 +191,7 @@ func (s *Store) MarkConflict(ctx context.Context, source string) error {
 	return e
 }
 func (s *Store) Finish(ctx context.Context, id int64, size int64) error {
-	_, e := s.db.ExecContext(ctx, `UPDATE jobs SET status=?,progress=100,target_size=?,completed_at=CURRENT_TIMESTAMP,cancel_requested=0 WHERE id=?`, jobs.Completed, size, id)
+	_, e := s.db.ExecContext(ctx, `UPDATE jobs SET status=?,progress=100,target_size=?,source_size=CASE WHEN source_path=target_path THEN ? ELSE source_size END,completed_at=CURRENT_TIMESTAMP,cancel_requested=0 WHERE id=?`, jobs.Completed, size, size, id)
 	return e
 }
 func (s *Store) Priority(ctx context.Context, id int64, p int) error {
@@ -184,6 +202,19 @@ func (s *Store) Priority(ctx context.Context, id int64, p int) error {
 		}
 	}
 	return e
+}
+
+// One atomic update promotes a waiting job ahead of all other waiting jobs.
+// Running work is untouched, including when a worker claims concurrently.
+func (s *Store) MoveToFront(ctx context.Context, id int64) error {
+	r, err := s.db.ExecContext(ctx, `UPDATE jobs SET priority=(SELECT MIN(priority) FROM jobs WHERE status='queued'),queue_order=(SELECT MIN(queue_order)-1 FROM jobs WHERE status='queued') WHERE id=? AND status='queued'`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := r.RowsAffected(); n != 1 {
+		return fmt.Errorf("job %d is no longer queued", id)
+	}
+	return nil
 }
 
 // Reorder moves queued jobs one position while preserving the relative order of
@@ -220,6 +251,18 @@ func (s *Store) Reorder(ctx context.Context, ids []int64, direction int) error {
 	selected := make(map[int64]bool, len(ids))
 	for _, id := range ids {
 		selected[id] = true
+	}
+	for id := range selected {
+		found := false
+		for _, candidate := range order {
+			if candidate == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("job %d is no longer queued", id)
+		}
 	}
 	if direction < 0 {
 		for i := 1; i < len(order); i++ {

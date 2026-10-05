@@ -22,6 +22,10 @@ type Stream struct {
 	Width, Height        int
 	Channels             int
 	ChannelLayout        string `json:"channel_layout"`
+	PixFmt               string `json:"pix_fmt"`
+	ColorTransfer        string `json:"color_transfer"`
+	CodecTag             string `json:"codec_tag_string"`
+	BitsPerRawSample     string `json:"bits_per_raw_sample"`
 	Tags                 Tags
 	Disposition          Disposition
 }

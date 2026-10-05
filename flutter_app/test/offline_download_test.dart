@@ -59,6 +59,7 @@ void main() {
     'a fully-cached title surfaces in offlineProvider on rehydrate',
     () async {
       const itemId = 'title-42';
+      await proxy.markDownload(itemId, {'title': itemId});
       final entry = await proxy.openEntry(itemId);
       entry.setTotalLength(1024);
       await entry.write(0, List<int>.filled(1024, 1));
@@ -79,6 +80,7 @@ void main() {
 
   test('party URL uses downloaded bytes before library rehydration', () async {
     const itemId = 'party-download';
+    await proxy.markDownload(itemId, {'title': itemId});
     final entry = await proxy.openEntry(itemId);
     entry.setTotalLength(10);
     await entry.write(0, List<int>.filled(10, 7));
@@ -102,6 +104,7 @@ void main() {
   test('markComplete flips offlineProvider live, with the metadata the guest '
       'detail path reads', () async {
     const itemId = 'title-99';
+    await proxy.markDownload(itemId, {'title': itemId});
     final entry = await proxy.openEntry(itemId);
     entry.setTotalLength(10);
     await entry.write(0, List<int>.filled(10, 1));
@@ -132,6 +135,7 @@ void main() {
   test('resolveOfflinePlayback resolves the cache-proxy URL once offline, '
       'falls back to the network URL otherwise', () async {
     const itemId = 'title-7';
+    await proxy.markDownload(itemId, {'title': itemId});
     final entry = await proxy.openEntry(itemId);
     entry.setTotalLength(10);
     await entry.write(0, List<int>.filled(10, 1));
@@ -168,6 +172,7 @@ void main() {
         MediaCacheProxy.fetchChunkSize * 2 + 17,
         (i) => i % 251,
       );
+      await proxy.markDownload(itemId, {'title': itemId});
       final entry = await proxy.openEntry(itemId);
       entry.setTotalLength(bytes.length);
       await entry.write(0, bytes);
@@ -191,6 +196,7 @@ void main() {
 
   test('remove() deletes the cache entry and drops the record', () async {
     const itemId = 'title-remove';
+    await proxy.markDownload(itemId, {'title': itemId});
     final entry = await proxy.openEntry(itemId);
     entry.setTotalLength(10);
     await entry.write(0, List<int>.filled(10, 1));

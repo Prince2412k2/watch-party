@@ -14,6 +14,7 @@ import { playDetentCue } from './cue.ts'
 import { AnalogPoster } from './AnalogPoster.tsx'
 import type { ArtworkItem } from './artwork.ts'
 import type { MotionProfile } from './stageLayout.ts'
+import { usePhone } from '../hooks/useIsMobile.ts'
 
 /**
  * The bottom rail: small posters, a cursor that does not move, and a row that
@@ -93,6 +94,7 @@ export function AnalogRail({
   disabled = false,
   renderPoster,
 }: AnalogRailProps) {
+  const phone = usePhone()
   const viewportRef = useRef<HTMLDivElement>(null)
   const scrollState = useRef(newSteppedScrollState())
   const dragX = useRef<number | null>(null)
@@ -114,7 +116,7 @@ export function AnalogRail({
   // in the movie grid" true — inside the rail, the same gesture moves the rail.
   useEffect(() => {
     const viewport = viewportRef.current
-    if (!viewport || disabled) return
+    if (!viewport || disabled || phone) return
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
       event.stopPropagation()
@@ -126,7 +128,7 @@ export function AnalogRail({
     // `loading` and `count` matter: React reuses this node across the
     // loading/empty/loaded branches, so without them the listener ends up
     // attached to what was still a skeleton, or never attached at all.
-  }, [disabled, loading, count])
+  }, [disabled, loading, count, phone])
 
   // Roving tabindex: DOM focus follows the selection, but only while the user is
   // already inside the rail. Otherwise clicking the mode slider, or restoring a
@@ -173,6 +175,20 @@ export function AnalogRail({
     '--an-k-chrome-ms': `${motion.chromeFadeMs}ms`,
     '--an-k-track-ms': `${motion.focusStepMs}ms`,
   } as CSSProperties
+
+  if (phone) return (
+    <section className="an-rail an-touch-rail" style={vars} aria-busy={loading}>
+      <RailHead label={label} count={loading ? null : count} position={selection + 1} />
+      <div className="an-touch-track">
+        {loading ? Array.from({ length: 4 }, (_, index) => <span className="an-touch-slot" key={index}><AnalogPoster item={null} focused={false} motion={motion} /></span>) : items.map((item, index) => (
+          <button key={item.id} className="an-touch-slot" type="button" aria-label={item.label} aria-pressed={index === selection} disabled={disabled} onClick={() => onSelect(index)}>
+            {renderPoster ? renderPoster(item, index === selection) : <AnalogPoster item={item.art ?? null} src={item.artSrc} focused={index === selection} motion={motion} caption={item.label} badge={item.badge} progressPct={item.progressPct} />}
+          </button>
+        ))}
+      </div>
+      {!loading && !count && <div className="an-rail-empty"><strong>{emptyTitle}</strong>{emptyHint && <span>{emptyHint}</span>}</div>}
+    </section>
+  )
 
   if (loading) {
     return (

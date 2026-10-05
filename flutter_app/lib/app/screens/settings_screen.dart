@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../analog/chrome/analog_toast.dart';
 import '../../data/api_client.dart';
-import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../config.dart';
@@ -142,11 +141,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     // Downloads are the one thing this must not touch: they were asked for
     // explicitly, and on a connection worth downloading over, re-fetching one
     // is not a recoverable mistake.
-    final keep = {for (final r in ref.read(offlineProvider)) r.itemId};
     try {
-      final removed = await ref
-          .read(mediaCacheProxyProvider)
-          .clear(protected: keep);
+      final removed = await ref.read(mediaCacheProxyProvider).clear();
       if (!mounted) return;
       _say(
         removed == 0

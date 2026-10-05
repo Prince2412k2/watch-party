@@ -116,7 +116,7 @@ export function AnalogStage({
         {header ?? <div />}
         <div className="an-stage-shelves">{children}</div>
         {side ? <div className="an-stage-side">{side}</div> : null}
-        <div ref={navRef}>{nav}</div>
+        <div ref={navRef} className="an-stage-nav">{nav}</div>
       </div>
 
       {toolboxes}

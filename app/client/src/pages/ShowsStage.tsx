@@ -45,6 +45,7 @@ import {
   type ShowLevel,
 } from '../analog/showBrowse.ts'
 import { showActions, showContext, type ShowStageItem } from '../analog/showDetails.ts'
+import { PhoneCatalog } from '../mobile/PhoneCatalog.tsx'
 import {
   defaultSelection,
   parsePlaybackTracks,
@@ -157,7 +158,7 @@ export default function ShowsStage() {
     let cancelled = false
     getJson(`/api/library/items/${viewId}/children`)
       .then((value) => !cancelled && setSeriesList(showItems(value)))
-      .catch(() => !cancelled && setSeriesList([]))
+      .catch(() => { if (!cancelled) { setSeriesList([]); setError('Could not load shows. Check your connection and reload the library.') } })
     return () => {
       cancelled = true
     }
@@ -177,7 +178,7 @@ export default function ShowsStage() {
         if (!cancelled) setSeasonsBySeries((previous) => ({ ...previous, [id]: seasonItems(value) }))
       })
       .catch(() => {
-        if (!cancelled) setSeasonsBySeries((previous) => ({ ...previous, [id]: [] }))
+        if (!cancelled) { setSeasonsBySeries((previous) => ({ ...previous, [id]: [] })); setError('Could not load seasons. Check your connection and reload the library.') }
       })
     return () => {
       cancelled = true
@@ -200,7 +201,7 @@ export default function ShowsStage() {
         if (!cancelled) setEpisodesBySeason((previous) => ({ ...previous, [id]: showItems(value) }))
       })
       .catch(() => {
-        if (!cancelled) setEpisodesBySeason((previous) => ({ ...previous, [id]: [] }))
+        if (!cancelled) { setEpisodesBySeason((previous) => ({ ...previous, [id]: [] })); setError('Could not load episodes. Check your connection and reload the library.') }
       })
     return () => {
       cancelled = true
@@ -435,6 +436,7 @@ export default function ShowsStage() {
   const intentRef = useRef(onIntent)
   intentRef.current = onIntent
   useEffect(() => {
+    if (layout.size === 'phone') return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target as HTMLElement | null
@@ -449,7 +451,7 @@ export default function ShowsStage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [layout.size])
 
   // ── party ─────────────────────────────────────────────────────────────────
 
@@ -478,6 +480,20 @@ export default function ShowsStage() {
       ? seasonLabel(activeSeason, Math.max(0, seasonIndex(seasonList, activeSeasonId)))
       : (seriesLevel?.name || 'Episodes')
     : rootName
+
+  if (layout.size === 'phone') return (
+    <PhoneCatalog
+      title={seriesLevel?.name || 'Shows'} label={railLabel} items={railItems} selection={selection}
+      onSelect={setSelection} loading={loading} error={error} motion={motion}
+      back={seriesId ? goBack : undefined} backLabel="All shows"
+      filters={seriesId && seasonList.length > 0 ? <AnalogSeasonRail seasons={seasonList} selectedId={activeSeasonId} series={seriesItem} onSelect={setSeason} motion={motion} /> : undefined}
+      details={<AnalogDetails item={focused} context={showContext(focused, seriesItem?.Name ?? seriesLevel?.name)} fallbackTitle={railLabel} native={IS_NATIVE} actions={showActions(focused, IS_NATIVE)} onPlay={() => activate(selection)} onDownload={() => void download()} onTracks={toggleTracks} tracksOpen={tracksOpen} downloadState={downloadState}>
+        {tracksOpen && focused && <AnalogTrackMenu itemId={focused.Id} tracks={tracks} loading={tracksLoading} selectedAudio={selected.audioStreamIndex ?? null} selectedSubtitle={selected.subtitleStreamIndex ?? null} onSelectAudio={index => setSelected(current => ({ ...current, audioStreamIndex: index }))} onSelectSubtitle={index => setSelected(current => ({ ...current, subtitleStreamIndex: index }))} onRefresh={loadTracks} onClose={() => setTracksOpen(false)} />}
+      </AnalogDetails>}
+      nav={<AnalogNav active="shows" onNavigate={navigate} canAcquire={!!user?.isAdmin} downloadCount={hub.activeCount} failingCount={hub.failingCount} compact />}
+      toolboxes={<><AnalogProfileTray userId={user?.userId} name={profile?.displayName || user?.name} avatar={profile?.avatar} onSettings={() => navigate('/profile')} onSignOut={() => void logout()} onConverter={user?.isAdmin ? () => navigate('/converter') : undefined} /><AnalogPartyWidget /></>}
+    />
+  )
 
   return (
     <div className="an-shows" onWheel={onStageWheel}>
@@ -549,7 +565,7 @@ export default function ShowsStage() {
             canAcquire={!!user?.isAdmin}
             downloadCount={hub.activeCount}
             failingCount={hub.failingCount}
-            compact={layout.size === 'phone'}
+            compact={false}
           />
         }
         toolboxes={
@@ -559,6 +575,7 @@ export default function ShowsStage() {
               name={profile?.displayName || user?.name}
               avatar={profile?.avatar}
               onSettings={() => navigate('/profile')}
+              onConverter={user?.isAdmin ? () => navigate('/converter') : undefined}
               onSignOut={() => void logout()}
             />
             <AnalogPartyWidget />

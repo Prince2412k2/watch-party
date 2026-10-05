@@ -635,6 +635,11 @@ function WatchView({
 
       <RoomControls
         stage="watching" visible={visible} phone={phone}
+        micOn={lk.micOn} camOn={lk.camOn}
+        onToggleMic={() => { void guardedToggle(() => lk.enableMic(!lk.micOn)) }}
+        onToggleCam={() => { void guardedToggle(() => lk.enableCamera(!lk.camOn)) }}
+        hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={() => setHideAllFeeds(value => !value)}
+        onHoldChrome={chrome.hold} onReleaseChrome={chrome.release}
         onOpenChat={() => openChat(true)} chatOpen={chatOpen}
         layoutMode={layoutMode} onToggleLayout={() => setLayout(layoutMode === 'float' ? 'dock' : 'float')}
         hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
@@ -770,20 +775,24 @@ function MobileCameraStrip({
   useLayoutEffect(() => {
     const el = boundsRef.current
     if (!el) return
-    const rect = el.getBoundingClientRect()
-    const width = Math.min(CAM_POPUP_DEFAULT_W, Math.max(CAM_POPUP_MIN_W, rect.width - CAM_POPUP_MARGIN * 2))
-    const height = Math.min(CAM_POPUP_DEFAULT_H, Math.max(CAM_POPUP_MIN_H, rect.height - CAM_POPUP_MARGIN * 2))
-    setDefaultFrame({
-      width, height,
-      x: Math.max(0, rect.width - width - CAM_POPUP_MARGIN),
-      y: Math.max(0, rect.height - height - CAM_POPUP_MARGIN),
-    })
+    const clamp = () => {
+      const rect = el.getBoundingClientRect()
+      setDefaultFrame(previous => {
+        const width = Math.min(previous?.width ?? CAM_POPUP_DEFAULT_W, Math.max(1, rect.width - CAM_POPUP_MARGIN * 2))
+        const height = Math.min(previous?.height ?? CAM_POPUP_DEFAULT_H, Math.max(1, rect.height - CAM_POPUP_MARGIN * 2))
+        return { width, height, x: Math.max(0, Math.min(previous?.x ?? rect.width - width - CAM_POPUP_MARGIN, rect.width - width)), y: Math.max(0, Math.min(previous?.y ?? rect.height - height - CAM_POPUP_MARGIN, rect.height - height)) }
+      })
+    }
+    clamp()
+    const observer = new ResizeObserver(clamp)
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
 
   return (
     <div ref={boundsRef} style={{
       position: 'absolute', zIndex: Z.cameraStrip,
-      top: 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
+      top: visible ? 'calc(var(--sa-t) + 60px)' : 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
       // Same clearance the old strip used: sit above the bottom bar when chrome
       // is shown; drop to the safe-area edge when it hides. Clearance derives
       // from the bar's REAL measured height (published as --watch-bar-h by
@@ -797,7 +806,10 @@ function MobileCameraStrip({
     }}>
       {defaultFrame && (
         <Rnd
-          default={defaultFrame}
+          size={{ width: defaultFrame.width, height: defaultFrame.height }}
+          position={{ x: defaultFrame.x, y: defaultFrame.y }}
+          onDragStop={(_event, data) => setDefaultFrame(frame => frame ? { ...frame, x: data.x, y: data.y } : frame)}
+          onResizeStop={(_event, _direction, element, _delta, position) => setDefaultFrame({ width: element.offsetWidth, height: element.offsetHeight, ...position })}
           bounds="parent"
           minWidth={CAM_POPUP_MIN_W}
           minHeight={CAM_POPUP_MIN_H}

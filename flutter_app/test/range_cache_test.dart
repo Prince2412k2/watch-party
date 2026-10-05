@@ -560,7 +560,7 @@ void main() {
     );
 
     test(
-      'a currently-open entry is never evicted even if it is TTL-expired',
+      'an actively leased entry is not evicted even if TTL-expired',
       () async {
         final store = RangeCacheStore(overrideDir: tmpDir);
 
@@ -571,7 +571,7 @@ void main() {
         await entry.flushMetadata();
         // Deliberately left open (no close()) — still in store's `_open` map.
 
-        await store.evict();
+        await store.evict(protected: {'playing-item'});
 
         final cacheDir = Directory('${tmpDir.path}/media-cache');
         final names = cacheDir
@@ -583,30 +583,28 @@ void main() {
       },
     );
 
-    test(
-      'a corrupt sidecar is evicted rather than crashing the scan',
-      () async {
-        final store = RangeCacheStore(overrideDir: tmpDir);
-        final entry = await store.open('corrupt-item');
-        entry.setTotalLength(1000);
-        await entry.write(0, List.filled(50, 1));
-        await entry.flushMetadata();
-        await entry.close();
+    test('a corrupt sidecar preserves files with unknown ownership', () async {
+      final store = RangeCacheStore(overrideDir: tmpDir);
+      final entry = await store.open('corrupt-item');
+      entry.setTotalLength(1000);
+      await entry.write(0, List.filled(50, 1));
+      await entry.flushMetadata();
+      await entry.close();
 
-        final cacheDir = Directory('${tmpDir.path}/media-cache');
-        final metaFile = File('${cacheDir.path}/corrupt-item.meta.json');
-        await metaFile.writeAsString('{not valid json');
+      final cacheDir = Directory('${tmpDir.path}/media-cache');
+      final metaFile = File('${cacheDir.path}/corrupt-item.meta.json');
+      await metaFile.writeAsString('{not valid json');
 
-        final freshStore = RangeCacheStore(overrideDir: tmpDir);
-        await freshStore.evict(); // must not throw
+      final freshStore = RangeCacheStore(overrideDir: tmpDir);
+      await freshStore.evict(); // must not throw
 
-        final names = cacheDir
-            .listSync()
-            .map((f) => f.path.split('/').last)
-            .toSet();
-        expect(names.where((n) => n.startsWith('corrupt-item')), isEmpty);
-      },
-    );
+      final names = cacheDir
+          .listSync()
+          .map((f) => f.path.split('/').last)
+          .toSet();
+      expect(names, contains('corrupt-item.data'));
+      expect(names, contains('corrupt-item.meta.json'));
+    });
   });
 
   group('cachedSpansFromIntervals', () {
