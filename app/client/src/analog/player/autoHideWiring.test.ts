@@ -45,14 +45,14 @@ test('tap-to-hide dismisses immediately and the next input restores the full wai
   assert.equal(tickAutoHide(woken, 5_100 + TIMEOUT).visible, false)
 })
 
-test('tap-to-hide still refuses while a hold is taken or playback is paused', () => {
+test('tap-to-hide respects an open menu but can dismiss a paused frame', () => {
   // The old Party.tsx toggle wrote `visible = false` directly, so a tap could
   // pull the chrome out from under an open menu. Routing it through the shared
   // rules is what makes that impossible.
   const held = holdControls(newAutoHideState(0, true), CHROME_HOLD.scrubbing)
   assert.equal(hideNow(held, 9_000).visible, true)
   const paused = setPlaying(newAutoHideState(0, true), false, 0)
-  assert.equal(hideNow(paused, 9_000).visible, true)
+  assert.equal(hideNow(paused, 9_000).visible, false)
 })
 
 test('releasing a hold grants the full three seconds, not the remainder', () => {

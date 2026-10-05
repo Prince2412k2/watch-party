@@ -7,6 +7,7 @@ export interface MediaInfo {
   revision: string
   size: number
   title: string
+  posterItemId?: string
   series: string
   season?: number
   episode?: number
@@ -25,6 +26,12 @@ export interface SavedMedia extends MediaInfo {
   accessed: number
   error?: string
   subtitleError?: string
+  artwork?: Blob
+  posterAttempted?: boolean
+  resumeOnOpen?: boolean
+  backgroundId?: string
+  backgroundBase?: number
+  backgroundDownloaded?: number
 }
 let opened: Promise<IDBDatabase> | undefined
 export function database() {
@@ -117,10 +124,10 @@ export async function prepare(
 ) {
   return (await updateMedia(mediaKey(info), (current) =>
     current
-        ? {
-            ...current,
-            ...info,
-            accessed: Date.now(),
+      ? {
+          ...current,
+          ...info,
+          accessed: Date.now(),
           retention: retention === 'download' ? 'download' : current.retention
         }
       : {

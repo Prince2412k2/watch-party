@@ -37,7 +37,7 @@ export interface AutoHideControls {
   /** Pin the chrome open for as long as `reason` is held. */
   hold: (reason: string) => void
   release: (reason: string) => void
-  /** Phone tap-to-dismiss. Still refused while a hold is taken or paused. */
+  /** Explicit tap-to-dismiss, including paused frames. Refused during a hold. */
   hide: () => void
   /** Tap semantics: hide if up, reveal if down. */
   toggle: () => void

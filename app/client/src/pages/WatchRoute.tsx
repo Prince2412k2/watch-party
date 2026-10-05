@@ -24,7 +24,7 @@ export function WatchRoute({ path }: { path: string }) {
     const audioStreamIndex = audioParam == null ? NaN : Number(audioParam)
     const subtitleStreamIndex = subtitleParam == null ? NaN : Number(subtitleParam)
     const resumePositionTicks = Number(qs.get('resumePositionTicks'))
-    return <Party isNew itemId={qs.get('itemId') ?? undefined}
+    return <Party isNew itemId={qs.get('itemId') ?? undefined} initialShare={qs.get('share') === 'camera' ? 'camera' : qs.get('share') === 'microphone' ? 'microphone' : undefined}
       initialTracks={{
         mediaSourceId: qs.get('mediaSourceId') ?? undefined,
         audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,

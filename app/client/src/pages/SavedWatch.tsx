@@ -23,14 +23,23 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
     DEFAULT_SUBTITLE_PREFERENCES
   )
   const [playing, setPlaying] = useState(false)
-  const [immersive, setImmersive] = useState(false)
   const stage = useRef<HTMLDivElement>(null)
   const chrome = useAutoHideControls({ playing })
-  useEffect(() => {
-    const changed = () => setImmersive(Boolean(document.fullscreenElement))
-    document.addEventListener('fullscreenchange', changed)
-    return () => document.removeEventListener('fullscreenchange', changed)
-  }, [])
+  const startParty = (share?: 'camera' | 'microphone') => {
+    if (!record) return
+    const params = new URLSearchParams({
+      itemId: record.itemId,
+      mediaSourceId: record.sourceId,
+      audioStreamIndex: String(record.audioIndex ?? -1),
+      resumePositionTicks: String(
+        Math.round(
+          (stage.current?.querySelector('video')?.currentTime ?? 0) * 10_000_000
+        )
+      )
+    })
+    if (share) params.set('share', share)
+    navigate(`/party/new?${params}`)
+  }
   useEffect(() => {
     let active = true
     setRecord(null)
@@ -54,8 +63,10 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
     <div
       ref={stage}
       style={{ position: 'fixed', inset: 0, background: '#000' }}
-      onPointerMove={() => chrome.note()}
-      onClick={() => chrome.note()}
+      onPointerMove={(event) => {
+        if (event.pointerType === 'mouse') chrome.note()
+      }}
+      onClick={() => chrome.toggle()}
     >
       {record && (
         <Player
@@ -63,7 +74,16 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
           hlsUrl={localUrl(record)}
           mediaItemId={record.itemId}
           visible={chrome.visible}
-          immersive={immersive}
+          onToggleCam={
+            navigator.onLine && !user?.offline
+              ? () => startParty('camera')
+              : undefined
+          }
+          onToggleMic={
+            navigator.onLine && !user?.offline
+              ? () => startParty('microphone')
+              : undefined
+          }
           onPlayingChange={setPlaying}
           onHoldChrome={chrome.hold}
           onReleaseChrome={chrome.release}
@@ -80,16 +100,13 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
             if (tracks.subtitleStreamIndex != null)
               setSubtitle(tracks.subtitleStreamIndex)
           }}
-          enterImmersive={() => {
-            void stage.current?.requestFullscreen?.().catch(() => {})
-          }}
-          exitImmersive={() => {
-            void document.exitFullscreen?.().catch(() => {})
-          }}
         />
       )}
       <button
-        onClick={() => navigate('/saved')}
+        onClick={(event) => {
+          event.stopPropagation()
+          navigate('/saved')
+        }}
         style={{
           position: 'absolute',
           top: 'max(16px,env(safe-area-inset-top))',

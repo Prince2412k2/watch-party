@@ -39,7 +39,16 @@ export function registerOfflineRoutes(
   app,
   { detail = getItemDetail, upstreamFetch = fetch } = {}
 ) {
-  const inspect = async (req) => {
+  const snapshots = new Map()
+  const snapshotKey = (req) => {
+    const auth = getJellyfin(req)
+    return createHash('sha256')
+      .update(
+        `${auth.userId}:${auth.token}:${req.params.itemId}:${req.query.source || ''}`
+      )
+      .digest('hex')
+  }
+  const inspectFile = async (req) => {
     if (
       !isJellyfinId(req.params.itemId) ||
       (req.query.source && !isJellyfinId(req.query.source))
@@ -86,6 +95,7 @@ export function registerOfflineRoutes(
       etag,
       modified,
       title: item.Name,
+      posterItemId: item.SeriesId || req.params.itemId,
       series: item.SeriesName || '',
       season: item.ParentIndexNumber,
       episode: item.IndexNumber,
@@ -114,9 +124,25 @@ export function registerOfflineRoutes(
     }
     return { info, url, headers }
   }
+  const inspect = (req, refresh = false) => {
+    const key = snapshotKey(req),
+      now = Date.now(),
+      cached = snapshots.get(key)
+    if (!refresh && cached && cached.expires > now) return cached.value
+    // Share concurrent probes, and bound memory without retaining expired tokens.
+    for (const [id, entry] of snapshots)
+      if (entry.expires <= now) snapshots.delete(id)
+    if (snapshots.size >= 256) snapshots.delete(snapshots.keys().next().value)
+    const value = inspectFile(req).catch((error) => {
+      if (snapshots.get(key)?.value === value) snapshots.delete(key)
+      throw error
+    })
+    snapshots.set(key, { value, expires: now + 60_000 })
+    return value
+  }
   app.get('/api/offline/:itemId/info', requireAuth, async (req, res) => {
     try {
-      const { info } = await inspect(req)
+      const { info } = await inspect(req, true)
       res.set('Cache-Control', 'no-store').json(info)
     } catch (err) {
       res.status(err.status || 502).json({ error: err.message })
@@ -126,7 +152,10 @@ export function registerOfflineRoutes(
     const abort = new AbortController()
     res.on('close', () => abort.abort())
     try {
-      const { info, url, headers } = await inspect(req)
+      let snapshot = await inspect(req)
+      if (req.query.revision !== snapshot.info.revision)
+        snapshot = await inspect(req, true)
+      const { info, url, headers } = snapshot
       if (req.query.revision !== info.revision)
         return res
           .status(409)
@@ -152,6 +181,7 @@ export function registerOfflineRoutes(
         (strongEtag && upstream.headers.get('etag') !== info.etag) ||
         (!strongEtag && upstream.headers.get('last-modified') !== info.modified)
       ) {
+        snapshots.delete(snapshotKey(req))
         await upstream.body?.cancel()
         return res.status(409).json({
           error: 'Media changed or the server cannot serve byte ranges'

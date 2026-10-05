@@ -45,7 +45,12 @@ test('authenticated range proxy pins source version and rejects changes before m
   app.use((req, _res, next) => {
     req.session = req.get('x-test-anonymous')
       ? {}
-      : { jellyfin: { accessToken: 'server-token', userId: 'alice' } }
+      : {
+          jellyfin: {
+            accessToken: req.get('x-test-token') || 'server-token',
+            userId: req.get('x-test-account') || 'alice'
+          }
+        }
     next()
   })
   let etag = '"one"',
@@ -106,6 +111,36 @@ test('authenticated range proxy pins source version and rejects changes before m
   const upstream = seen.find((x) => x.options.headers.Range)
   assert.equal(upstream.options.headers['X-Emby-Token'], 'server-token')
   assert.equal(upstream.options.headers['If-Range'], '"one"')
+  const probesBefore = seen.filter((x) => x.options.method === 'HEAD').length
+  const concurrent = await Promise.all(
+    Array.from({ length: 6 }, () =>
+      fetch(`${base}/media?${query}`, { headers: { Range: 'bytes=0-3' } })
+    )
+  )
+  assert.ok(concurrent.every((response) => response.status === 206))
+  assert.equal(
+    seen.filter((x) => x.options.method === 'HEAD').length,
+    probesBefore,
+    'range requests reuse the authenticated source snapshot'
+  )
+  assert.equal(
+    (
+      await fetch(`${base}/media?${query}`, {
+        headers: {
+          Range: 'bytes=0-3',
+          'x-test-account': 'bob',
+          'x-test-token': 'other-token'
+        }
+      })
+    ).status,
+    206
+  )
+  assert.equal(
+    seen.filter((x) => x.options.method === 'HEAD').length,
+    probesBefore + 1,
+    'other credentials must inspect their own source'
+  )
+  assert.equal(seen.at(-1).options.headers['X-Emby-Token'], 'other-token')
   etag = '"replacement-same-size"'
   assert.equal(
     (await fetch(`${base}/media?${query}`, { headers: { Range: 'bytes=0-3' } }))

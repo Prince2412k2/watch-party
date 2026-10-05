@@ -49,7 +49,7 @@ type SeekBridge = {
   guardToggle: (action: () => unknown) => Promise<void>
 }
 
-export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } } = {}) {
+export default function Party({ partyId, isNew, itemId, initialTracks, initialShare }: { initialShare?: 'camera' | 'microphone'; partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } } = {}) {
   const { socket } = useSocket()
   const party = useParty()
   const { user } = useAuth()
@@ -207,6 +207,7 @@ export default function Party({ partyId, isNew, itemId, initialTracks }: { party
   return (
     <WatchView
       session={session} isHost={isHost} cameraProps={cameraProps} lk={lk}
+      initialShare={initialShare}
       chatOpen={chatOpen} chatRipple={chatRipple} alertMode={alertMode}
       messages={messages} selfUserId={user?.userId}
       peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
@@ -263,8 +264,9 @@ function WatchView({
   messages = NO_MESSAGES, selfUserId,
   peerPlayback = {}, showPeerPointers = false,
   setLayout = () => {}, openChat = () => {}, closeChat = () => {}, toggleChat = () => {}, setPlaybackTracks = () => {}, setSubtitlePreferences = () => {}, hideSelf, onToggleHideSelf = () => {},
-  localSubtitleSelection = null, subtitlePreferences,
+  localSubtitleSelection = null, subtitlePreferences, initialShare,
 }: {
+  initialShare?: 'camera' | 'microphone'
   session: PartySession
   isHost?: boolean
   cameraProps: CameraProps
@@ -337,9 +339,9 @@ function WatchView({
   const poke = () => chrome.note('pointer')
 
   // On phones a tap on the video TOGGLES the control layer (show → hide); when
-  // shown it re-arms the idle timer. On desktop a click only wakes the chrome.
+  // shown it re-arms the idle timer. A desktop click toggles the same layer.
   const toggleChrome = () => chrome.toggle()
-  const onSurfaceTap = () => chrome.note('tap')   // desktop click-to-wake
+  const onSurfaceTap = () => chrome.toggle()
 
   // ── Phone surface gestures (Phase F) ──────────────────────────────────────
   // Single tap = toggle chrome; double-tap on the LEFT third = seek −10s, RIGHT
@@ -374,6 +376,12 @@ function WatchView({
       lk.reportError(err instanceof Error ? err.message : 'Could not change your camera or microphone.')
     })
   }
+  const initialShareStarted = useRef(false)
+  useEffect(() => {
+    if (!initialShare || initialShareStarted.current || !lk.localParticipant) return
+    initialShareStarted.current = true
+    void guardedToggle(() => initialShare === 'camera' ? lk.enableCamera(true) : lk.enableMic(true))
+  }, [initialShare, lk.localParticipant])
   const DOUBLE_MS = 280                        // single/double discrimination window
   const MOVE_TOL = 12                          // px: past this a press is a drag/scroll, not a tap
   const tapRef = useRef<{ downX: number; downY: number; hasDown: boolean; lastT: number; timer: number | null }>({ downX: 0, downY: 0, hasDown: false, lastT: 0, timer: null })

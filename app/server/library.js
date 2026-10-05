@@ -316,8 +316,10 @@ export function registerLibraryRoutes(app) {
     if (!isJellyfinId(req.params.id)) return res.status(400).end()
     if (!IMAGE_TYPES.has(type)) return res.status(400).end()
     const url = `${BASE}/Items/${encodeURIComponent(req.params.id)}/Images/${encodeURIComponent(type)}?api_key=${encodeURIComponent(token)}`
+    const maxWidth = Number(req.query.maxWidth)
+    const imageUrl = Number.isInteger(maxWidth) && maxWidth > 0 && maxWidth <= 1920 ? `${url}&maxWidth=${maxWidth}` : url
     try {
-      const upstream = await fetch(url)
+      const upstream = await fetch(imageUrl)
       if (!upstream.ok) {
         // Negative-cache misses so a missing backdrop/logo isn't re-requested in a loop
         res.set('Cache-Control', 'public, max-age=3600')
