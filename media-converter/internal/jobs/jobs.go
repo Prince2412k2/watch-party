@@ -23,6 +23,7 @@ type Job struct {
 	Priority                                                           int
 	VideoCodec, AudioCodecs, SubtitleCodecs                            string
 	SourceSize, TargetSize                                             int64
+	SourceMtime                                                        int64
 	Duration, Progress                                                 float64
 	FFmpegSpeed                                                        string
 	CreatedAt                                                          time.Time

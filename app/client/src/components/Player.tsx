@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback, type ComponentType, type CSSProperties, type MouseEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties, type MouseEvent, type ReactNode, type RefObject, type MutableRefObject } from 'react'
 import { createPlayer } from '@videojs/react'
 import { VideoSkin, videoFeatures } from '@videojs/react/video'
 import { HlsVideo } from '@videojs/react/media/hls-video'
@@ -222,7 +222,7 @@ export default function Player({
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         </VideoSkin>
 
         {canControl && hostMuted && (
@@ -242,8 +242,7 @@ export default function Player({
         )}
 
         {phone ? (
-          /* Phones: a single consolidated bottom bar — transport + call + settings
-             + fullscreen — replacing the three floating desktop clusters. */
+          /* Native-style transport. Call controls live in the room header. */
             <MobileBottomBar
             mediaItemId={mediaItemId}
             mediaElementRef={videoRef}
@@ -263,14 +262,9 @@ export default function Player({
            />
         ) : (
           <>
-            {/* The primary transport on desktop: one big knob over the middle of
-                the frame. Controllers only — a guest gets no transport at all,
-                just the "Host controls playback" hint in the bar. Deliberately
-                NOT rendered on phones, where the surface owns single-tap
-                (chrome) and double-tap (±10s) gestures a center knob would
-                fight; phones keep play/pause in the bar instead. */}
-            {canControl && <CenterTransport visible={visible} localPhase={localPhase} />}
-
+            <div style={{ position: 'absolute', right: 18, top: 'calc(50% + 66px)', zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
+              <PlayerVolume userMuted={userMuted} onToggleMuted={toggleMuted} reveal="always" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
+            </div>
             {/* Timeline row + one control row, pinned bottom, over the single
                 allowed black-alpha scrim. Read-only for guests (no handle, no
                 pointer events on the timeline) — canControl gates
@@ -284,6 +278,7 @@ export default function Player({
               onSetSubtitlePreferences={onSetSubtitlePreferences}
               canManageMedia={Boolean(isHost)}
               visible={visible} canControl={canControl}
+              localPhase={localPhase}
               immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
               userMuted={userMuted} onToggleMuted={toggleMuted}
               micOn={micOn} camOn={camOn}
@@ -1029,8 +1024,8 @@ function RestoreSoundPrompt({ onClick }: { onClick?: VoidCallback } = {}) {
 // have no other way to enable audio — audio is independent of control rights.
 function UnmuteButton({ onClick }: { onClick?: VoidCallback } = {}) {
   return (
-    <button onClick={onClick} style={{
-      position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+    <button onClick={event => { event.stopPropagation(); onClick?.() }} style={{
+      position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
       zIndex: Z.controlBar, display: 'inline-flex', alignItems: 'center', gap: 8,
       padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600,
       color: '#f4f4f5', cursor: 'pointer', background: 'rgba(0,0,0,.5)',
@@ -1038,99 +1033,6 @@ function UnmuteButton({ onClick }: { onClick?: VoidCallback } = {}) {
     }}>
       Tap for sound
     </button>
-  )
-}
-
-// ── Desktop centre transport ─────────────────────────────────────────────────
-// The big play/pause knob over the middle of the frame — the primary transport
-// on the web desktop player (the bottom row carries no play button any more).
-// Rendered only for controllers, so a guest sees an unobstructed frame and gets
-// the "Host controls playback" hint in the bar instead.
-//
-// Authoring is unchanged from the button it replaces: dispatch `watch:transport`
-// and let SyncBridge's own handler do requestPlay/requestPause under
-// holdApplying. `localPhase` keeps the glyph honest — useSyncPlay pauses the
-// element itself while catching up/buffering, and without this guard the knob
-// would flip to "Play" even though shared intent is still "playing" (and a tap
-// would author a spurious play).
-function CenterTransport({ visible, localPhase = 'ready' }: { visible?: boolean; localPhase?: LocalPhase } = {}) {
-  const media = VPlayer.useMedia() as unknown as MediaLike
-  const [paused, setPaused] = useState(true)
-
-  useEffect(() => {
-    if (!media) return
-    const sync = () => setPaused(!!media.paused && localPhase === 'ready')
-    sync()
-    media.addEventListener('play', sync)
-    media.addEventListener('pause', sync)
-    return () => { media.removeEventListener('play', sync); media.removeEventListener('pause', sync) }
-  }, [media, localPhase])
-
-  const togglePlay = () => window.dispatchEvent(new CustomEvent('watch:transport', { detail: { kind: paused ? 'play' : 'pause' } }))
-
-  return (
-    // The wrapper spans the whole stage but is pointer-events:none, so only the
-    // knob is clickable and the video surface below keeps its own gestures.
-    <div style={{
-      position: 'absolute', inset: 0, zIndex: Z.controlBar, display: 'grid', placeItems: 'center',
-      opacity: visible ? 1 : 0, transition: 'opacity .25s', pointerEvents: 'none',
-    }}>
-      <button
-        onClick={(e) => { e.stopPropagation(); togglePlay() }}
-        title={paused ? 'Play (Space)' : 'Pause (Space)'} aria-label={paused ? 'Play' : 'Pause'}
-        style={{
-          width: 78, height: 78, borderRadius: '50%', border: 'none',
-          display: 'grid', placeItems: 'center', cursor: 'pointer',
-          background: 'rgba(0,0,0,.42)', color: '#f4f4f5',
-          pointerEvents: visible ? 'auto' : 'none',
-          transition: 'background-color .15s, transform .12s',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(0,0,0,.62)'; e.currentTarget.style.transform = 'scale(1.05)' }}
-        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(0,0,0,.42)'; e.currentTarget.style.transform = 'scale(1)' }}
-      >
-        {paused
-          ? <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 3 }}><path d="M8 5v14l11-7z"/></svg>
-          : <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
-      </button>
-    </div>
-  )
-}
-
-// ── The three feed controls shared by both web bars ──────────────────────────
-// hide-all-feeds, camera, mic — in that order, dead centre of the bottom row on
-// desktop and on phones. `Btn` is the host bar's own button shell (IconBtn on
-// desktop, the 44px-touch-target BarBtn on phones) so each bar keeps its own
-// hit-area rules while the glyph set and wiring stay in one place.
-//
-// None of the three is gated on canControl: they're room/display controls, not
-// playback, so a guest gets all of them. Hide-all-feeds in particular is purely
-// local — it hides every camera tile from THIS screen only.
-type FeedControlProps = Pick<PlayerProps, 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds'>
-function FeedControls({ Btn, glyph, micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds }: FeedControlProps & { Btn: ComponentType<ButtonProps>; glyph: number }) {
-  return (
-    <>
-      {onToggleHideAllFeeds && (
-        <Btn onClick={onToggleHideAllFeeds} active={hideAllFeeds} title={hideAllFeeds ? 'Show camera feeds' : 'Hide camera feeds'}>
-          {hideAllFeeds
-            ? <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M6.7 6.7C4.6 8 3 10 2 12c2 4 6 7 10 7 1.6 0 3.1-.4 4.5-1.1M9.9 4.2A10 10 0 0 1 12 4c4 0 8 3 10 8a16 16 0 0 1-2.3 3.4"/></svg>
-            : <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>}
-        </Btn>
-      )}
-      {onToggleCam && (
-        <Btn onClick={onToggleCam} title={camOn ? 'Camera off' : 'Camera on'} danger={!camOn}>
-          {camOn
-            ? <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/></svg>
-            : <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M16 16H4a2 2 0 0 1-2-2V8m4-2h8a2 2 0 0 1 2 2v3l4-2v8"/></svg>}
-        </Btn>
-      )}
-      {onToggleMic && (
-        <Btn onClick={onToggleMic} title={micOn ? 'Mute mic' : 'Unmute mic'} danger={!micOn}>
-          {micOn
-            ? <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/></svg>
-            : <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m2 2 20 20M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.7 3M12 19v3"/></svg>}
-        </Btn>
-      )}
-    </>
   )
 }
 
@@ -1623,18 +1525,8 @@ function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal,
 }
 
 // ── Desktop control chrome ───────────────────────────────────────────────────
-// Two stacked rows over the one allowed black-alpha scrim, no box or border
-// around either:
-//   1. a full-width timeline hairline, edge to edge of the bar
-//   2. one control row in three clusters — left: a compact mono
-//      `current / total`; centre: hide-feeds, camera, mic; right: mute + the
-//      vertical volume hairline, gear, fullscreen
-// Volume moved from the left cluster to the right in the analog redesign: the
-// reference puts it "near the right edge" as a compact vertical control rather
-// than a long horizontal slider in the transport.
-// Play/pause is NOT here: on desktop it's the big CenterTransport knob over the
-// middle of the frame. Guests get no transport at all, and the "Host controls
-// playback" hint sits in the left cluster instead.
+// Native reference: timeline above play/clock, with subtitle/settings/fullscreen
+// at the right. Room/call actions live in the room header.
 interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds' | 'onHoldChrome' | 'onReleaseChrome' | 'peerPlayback' | 'showPeerPointers'> {
   mediaElementRef?: RefObject<HTMLVideoElement | null>; canControl?: boolean; canManageMedia?: boolean; userMuted?: boolean; onToggleMuted?: VoidCallback; localPhase?: LocalPhase
 }
@@ -1645,6 +1537,7 @@ function DesktopControlBar({
   userMuted, onToggleMuted, micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds,
   onHoldChrome, onReleaseChrome,
   peerPlayback, showPeerPointers,
+  localPhase,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const quality = useQualityLevels(media)
@@ -1653,6 +1546,8 @@ function DesktopControlBar({
   const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences, mediaItemId)
   const { cur, dur } = useMediaClock(media)
   const [settingsOpen, setSettingsOpen] = useState(false)
+
+  const [settingsView, setSettingsView] = useState<'main' | 'subs'>('main')
 
   // Menus never auto-hide: force the row visible while settings is open, even
   // if the idle timer (owned by the party frame) has already faded `visible`.
@@ -1690,35 +1585,24 @@ function DesktopControlBar({
             grow (long durations, the guest hint). */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <TransportButton canControl={canControl} localPhase={localPhase} />
             <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', flexShrink: 0, whiteSpace: 'nowrap' }}>
               <span style={{ color: '#f4f4f5' }}>{fmtClock(cur)}</span> / {fmtClock(dur)}
             </span>
             {!canControl && <HostControlsHint />}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <FeedControls
-              Btn={IconBtn} glyph={18}
-              micOn={micOn} camOn={camOn} onToggleMic={onToggleMic} onToggleCam={onToggleCam}
-              hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
-            />
-          </div>
+          <div />
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-            {/* Volume moved here from the left cluster: "a compact vertical
-                control near the right edge rather than a long horizontal slider
-                in the bottom transport". */}
-            <PlayerVolume
-              userMuted={userMuted} onToggleMuted={onToggleMuted}
-              onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
-            />
+            <IconBtn onClick={() => { setSettingsView('subs'); setSettingsOpen(true) }} title="Subtitles" active={settingsOpen && settingsView === 'subs'}><SubtitleGlyph size={18} /></IconBtn>
             <div style={{ position: 'relative' }}>
-              <IconBtn onClick={() => setSettingsOpen(o => !o)} title="Settings" active={settingsOpen}>
+              <IconBtn onClick={() => { setSettingsView('main'); setSettingsOpen(value => !value || settingsView !== 'main') }} title="Settings" active={settingsOpen && settingsView === 'main'}>
                 <GearGlyph size={18} />
               </IconBtn>
               {/* Mounted only while open, as before: the menu's own view stack
                   and search box reset each time it is opened. */}
-              {settingsOpen && <SettingsMenu open playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />}
+              {settingsOpen && <SettingsMenu key={settingsView} initialView={settingsView} open playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />}
             </div>
 
             <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
@@ -1731,22 +1615,10 @@ function DesktopControlBar({
   )
 }
 
-// ── Mobile consolidated bottom bar ───────────────────────────────────────────
-// One flat bar pinned to the bottom (clear of the home-indicator via safe-area),
-// over the same black-alpha scrim as the desktop row, and the same philosophy as
-// the desktop chrome: a draggable timeline row on top, then ONE control row in
-// three clusters — left: play/pause (a lock glyph for guests); centre:
-// hide-feeds, camera, mic; right: gear, fullscreen.
-//
-// Six controls fit a narrow phone directly, so the old `useWideBar` split (a
-// primary cluster plus a "⋯" overflow popover below 820px) is gone along with
-// push-to-talk and the hide-self toggle it used to hold.
-//
-// Phones deliberately keep play/pause IN THE BAR rather than getting desktop's
-// big CenterTransport knob: the video surface already binds single-tap (toggle
-// chrome) and double-tap (±10s seek) in WatchView, and a centre button would
-// fight both. Fades with the auto-hide `visible` layer. Touch targets are 44px
-// with ≥8px gaps.
+// ── Phone transport ─────────────────────────────────────────────────────────
+// Full-width timeline, play/clock, then direct subtitles, settings and fullscreen.
+// The surface keeps tap-to-reveal and double-tap seek. Camera/mic controls are in
+// the room header; movie mute is in Settings (iOS owns hardware volume).
 function MobileBottomBar({
   mediaItemId,
   playback,
@@ -1766,6 +1638,8 @@ function MobileBottomBar({
   const subtitlePreferences = useSubtitlePreferences(mediaElementRef, canonicalSubtitlePreferences, onSetSubtitlePreferences)
   const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences, mediaItemId)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsView, setSettingsView] = useState<'main' | 'subs'>('main')
+  const { cur, dur } = useMediaClock(media)
   const [paused, setPaused] = useState(true)
   const barRef = useRef<HTMLDivElement | null>(null)
 
@@ -1826,49 +1700,32 @@ function MobileBottomBar({
         position: 'relative',
         display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 6px 2px',
       }}>
-        {/* Timeline row: everyone on a phone sees position / progress / duration
-            here. The skin's own scrubber is hidden on phones (watch-skin--nobar);
-            controllers can drag this one directly, or double-tap-seek.
-            The mute + vertical volume control rides at the right END OF THIS ROW
-            rather than in the control row below it: a seventh 44px button does
-            not fit a 360px-wide phone alongside the six that are already there,
-            and this row is a stretchy track that simply gives up the width. */}
-        <div style={{ padding: '2px 6px 0' }}>
+        {/* Native transport: full-width timeline, then play + clock on the left
+            and subtitle/settings/fullscreen on the right. Call controls belong
+            to the room header rather than competing with transport. */}
+        <div style={{ display: 'flex', alignItems: 'center', padding: '2px 6px 0' }}>
           <PlayerTimeline
             canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId}
-            labels
             onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
             peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
-            trailing={
-              <>
-                {!canControl && <span style={{ fontSize: 10.5, color: 'rgba(244,244,245,.36)', flexShrink: 0 }}>Host controls</span>}
-                <PlayerVolume
-                  userMuted={userMuted} onToggleMuted={onToggleMuted}
-                  // Touch has no hover: the track is permanently revealed on a
-                  // phone, otherwise there is no gesture that opens it.
-                  reveal="always" size={44} glyph={19}
-                  onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
-                />
-              </>
-            }
           />
         </div>
 
         {/* The one control row — three clusters, centre trio truly centred via
             a 1fr/auto/1fr grid so it doesn't drift with the side clusters. */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {/* Left — transport: play/pause for controllers, lock glyph for
               guests. Phones keep transport in the bar (see the component
               comment) rather than getting desktop's centre knob. */}
           <div style={{ display: 'flex', alignItems: 'center' }}>
             {canControl ? (
-              <BarBtn onClick={togglePlay} title={paused ? 'Play' : 'Pause'} primary>
+              <BarBtn onClick={togglePlay} title={paused ? 'Play' : 'Pause'}>
                 {paused
                   ? <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                   : <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>}
               </BarBtn>
             ) : (
-              <div title="Host controls playback" style={{
+              <div role="img" aria-label="Host controls playback" title="Host controls playback" style={{
                 width: 44, height: 44, borderRadius: 14, display: 'grid', placeItems: 'center',
                 color: 'rgba(244,244,245,.62)', flexShrink: 0,
               }}>
@@ -1877,22 +1734,20 @@ function MobileBottomBar({
             )}
           </div>
 
-          {/* Centre — the same three feed controls as the desktop bar. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <FeedControls
-              Btn={BarBtn} glyph={19}
-              micOn={micOn} camOn={camOn} onToggleMic={onToggleMic} onToggleCam={onToggleCam}
-              hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
-            />
-          </div>
+          <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', fontFamily: MONO_F, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', fontSize: 11 }}>
+            <span style={{ color: '#f4f4f5' }}>{fmtClock(cur)}</span> / {fmtClock(dur)}
+          </span>
 
           {/* Right — gear (the unchanged SettingsMenu) + fullscreen. */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0 }}>
+            <BarBtn onClick={() => { setSettingsView('subs'); setSettingsOpen(true) }} title="Subtitles" active={settingsOpen && settingsView === 'subs'}>
+              <SubtitleGlyph size={20} />
+            </BarBtn>
             <div style={{ position: 'relative' }}>
-              <BarBtn onClick={() => setSettingsOpen(o => !o)} active={settingsOpen} title="Settings">
+              <BarBtn onClick={() => { setSettingsView('main'); setSettingsOpen(value => !value || settingsView !== 'main') }} active={settingsOpen && settingsView === 'main'} title="Settings">
                 <GearGlyph size={19} />
               </BarBtn>
-              {settingsOpen && <SettingsMenu open playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} compact />}
+              {settingsOpen && <SettingsMenu key={settingsView} open initialView={settingsView} userMuted={userMuted} onToggleMuted={onToggleMuted} playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} compact />}
             </div>
 
             {/* Fullscreen: reads the single `immersive` state and calls the
@@ -1902,16 +1757,6 @@ function MobileBottomBar({
             <BarBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen' : 'Full screen'}>
               <FullscreenGlyph size={19} immersive={immersive} />
             </BarBtn>
-            {/* SEAM — secondary "expand video only" (chrome-free) native FS, DEMOTED.
-              iPhone Safari can play the bare <video> fullscreen via
-              video.webkitEnterFullscreen(), but that throws away every overlay
-              (the whole point of a watch PARTY), so it is intentionally NOT the
-              default FS button above. If we ever want a chrome-free movie, wire a
-              small secondary control here that reaches the underlying
-              HTMLVideoElement and, only when `video.webkitSupportsFullscreen`,
-              calls video.webkitEnterFullscreen(). Left as a commented seam for now
-              because reaching the element through the videojs skin cleanly is
-              disproportionate to the value — see PHONE-UX-PLAN §2.2/§4 Phase B. */}
           </div>
         </div>
       </div>
@@ -1920,6 +1765,25 @@ function MobileBottomBar({
 }
 
 // 44px touch-target button used across the mobile bar. Flat: no glass, active
+function TransportButton({ canControl, localPhase }: { canControl?: boolean; localPhase?: LocalPhase }) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
+  const [paused, setPaused] = useState(true)
+  useEffect(() => {
+    if (!media) return
+    const sync = () => setPaused(!!media.paused && (!localPhase || localPhase === 'ready'))
+    sync(); media.addEventListener('play', sync); media.addEventListener('pause', sync)
+    return () => { media.removeEventListener('play', sync); media.removeEventListener('pause', sync) }
+  }, [media, localPhase])
+  if (!canControl) return null
+  return <IconBtn title={paused ? 'Play' : 'Pause'} onClick={() => window.dispatchEvent(new CustomEvent('watch:transport', { detail: { kind: paused ? 'play' : 'pause' } }))}>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">{paused ? <path d="M8 5v14l11-7z"/> : <><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></>}</svg>
+  </IconBtn>
+}
+
+function SubtitleGlyph({ size }: { size: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M5 12h4m2 0h8M5 16h8m2 0h4"/></svg>
+}
+
 // state is brightness only (never a color fill) except the semantic `danger`
 // (muted mic/cam) and the near-white `primary` transport knob.
 function BarBtn({ onClick, title, active, danger, primary, children }: ButtonProps & { primary?: boolean } = {}) {
@@ -2017,11 +1881,13 @@ interface SettingsMenuProps {
   onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
   /** Phone density (MobileBottomBar). Omitted/false keeps the desktop scale. */
   compact?: boolean
+  initialView?: 'main' | 'subs'
+  userMuted?: boolean; onToggleMuted?: VoidCallback
 }
-function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageMedia, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, subtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES, onUpdateSubtitlePreferences, onResetSubtitlePreferences, onClose, onHoldChrome, onReleaseChrome, compact = false }: SettingsMenuProps) {
+function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageMedia, onSetPlaybackTracks, onChooseAudio, onChooseSubtitle, subtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES, onUpdateSubtitlePreferences, onResetSubtitlePreferences, onClose, onHoldChrome, onReleaseChrome, compact = false, initialView = 'main', userMuted, onToggleMuted }: SettingsMenuProps) {
   const S = compact ? MENU_COMPACT : MENU_REGULAR
   const displayPreferences = useDisplayPreferences()
-  const [view, setView] = useState<'main' | 'quality' | 'subs' | 'subtitleStyle' | 'audio'>('main')
+  const [view, setView] = useState<'main' | 'quality' | 'subs' | 'subtitleStyle' | 'audio'>(initialView)
   const [q, setQ] = useState('')
   const [uploadingSub, setUploadingSub] = useState(false)
   const [uploadError, setUploadError] = useState('')
@@ -2045,7 +1911,8 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
   function chooseSub(index: number | null) {
     onChooseSubtitle?.(index)
     onSetPlaybackTracks?.({ subtitleStreamIndex: index })
-    setView('main')
+    if (initialView === 'subs') onClose?.()
+    else setView('main')
   }
 
   async function uploadSubtitle(file?: File) {
@@ -2106,7 +1973,7 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
   )
   const subHeader = (title: string) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: S.headGap, padding: S.headPad, borderBottom: '1px solid rgba(255,255,255,.08)', flexShrink: 0 }}>
-      <button onClick={() => setView('main')} style={{ width: S.headBtn, height: S.headBtn, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.06)', color: '#f4f4f5', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
+      <button aria-label="Back to settings" onClick={() => setView('main')} style={{ width: S.headBtn, height: S.headBtn, borderRadius: 8, border: 'none', background: 'rgba(255,255,255,.06)', color: '#f4f4f5', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
         <svg width={S.headGlyph} height={S.headGlyph} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="m15 18-6-6 6-6" /></svg>
       </button>
       <span style={{ fontFamily: MONO_F, fontSize: S.headFont, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(244,244,245,.62)' }}>{title}</span>
@@ -2157,6 +2024,7 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
       <>
         {view === 'main' && (
           <div style={{ padding: S.mainPad }}>
+            {onToggleMuted && navRow('Movie sound', userMuted ? 'Muted' : 'On', onToggleMuted)}
             {navRow('Quality', curQuality, () => setView('quality'))}
             {navRow('Subtitles', curSub, () => setView('subs'))}
             {audioStreams.length > 1 && navRow('Audio', curAudio, () => setView('audio'))}

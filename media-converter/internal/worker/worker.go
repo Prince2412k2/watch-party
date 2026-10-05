@@ -78,9 +78,19 @@ func sleep(ctx context.Context, d time.Duration) {
 func (p *Pool) process(parent context.Context, j jobs.Job) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	initial, err := os.Stat(j.SourcePath)
+	if err != nil {
+		p.fail(ctx, j, err, "")
+		return
+	}
+	inPlace := j.SourcePath == j.TargetPath
+	if j.SourceMtime != 0 && (initial.Size() != j.SourceSize || initial.ModTime().UnixNano() != j.SourceMtime) {
+		p.fail(ctx, j, fmt.Errorf("source changed before conversion; waiting for rescan"), "")
+		return
+	}
 	title := strings.TrimSuffix(filepath.Base(j.SourcePath), filepath.Ext(j.SourcePath))
 	p.log.Info(title, logging.Event("PROBE"), "job", j.ID)
-	if _, e := os.Stat(j.TargetPath); e == nil {
+	if _, e := os.Stat(j.TargetPath); e == nil && !inPlace {
 		_ = p.store.UpdateState(ctx, j.ID, jobs.Skipped, "", "target MP4 already exists", "conflict", "")
 		return
 	}
@@ -105,6 +115,21 @@ func (p *Pool) process(parent context.Context, j jobs.Job) {
 	if len(plan.Omissions) > 0 {
 		p.log.Warn(title, logging.Event("STREAM"), "omitted", strings.Join(plan.Omissions, ", "))
 	}
+	copyOnly := len(plan.Omissions) == 0
+	for _, stream := range plan.Streams {
+		if stream.Mode != "copy" {
+			copyOnly = false
+		}
+	}
+	for _, stream := range src.Streams {
+		if stream.CodecName == "hevc" && stream.CodecTag != "" && stream.CodecTag != "hvc1" {
+			copyOnly = false
+		}
+	}
+	if inPlace && copyOnly {
+		_ = p.store.UpdateState(ctx, j.ID, jobs.Skipped, "remux", "", "already compatible MP4", "")
+		return
+	}
 	if j.DryRun || p.cfg.DryRun {
 		_ = p.store.UpdateState(ctx, j.ID, jobs.Skipped, plan.Operation, "", "dry run: would process; omitted: "+strings.Join(plan.Omissions, ", "), "")
 		return
@@ -117,6 +142,9 @@ func (p *Pool) process(parent context.Context, j jobs.Job) {
 	status := jobs.Remuxing
 	if plan.Operation == "audio_transcode" {
 		status = jobs.TranscodingAudio
+	}
+	if plan.Operation == "video_transcode" {
+		status = jobs.TranscodingVideo
 	}
 	_ = p.store.UpdateState(ctx, j.ID, status, plan.Operation, "", strings.Join(plan.Omissions, ", "), "")
 	p.log.Info(title, logging.Event(strings.ToUpper(plan.Operation)), "job", j.ID)
@@ -132,21 +160,51 @@ func (p *Pool) process(parent context.Context, j jobs.Job) {
 	}
 	_ = p.store.UpdateState(ctx, j.ID, jobs.Validating, plan.Operation, "", "", "")
 	p.log.Info(title, logging.Event("VALIDATE"), "job", j.ID)
-	if _, err = validator.Validate(ctx, p.prober, p.cfg.FFmpeg, j.TempPath, src, true, p.cfg.DeepValidation); err != nil {
+	out, err := validator.Validate(ctx, p.prober, p.cfg.FFmpeg, j.TempPath, src, plan.Operation != "video_transcode", p.cfg.DeepValidation)
+	if err == nil {
+		err = converter.ValidateStreams(plan, out)
+	}
+	if err != nil {
 		_ = os.Remove(j.TempPath)
 		p.fail(ctx, j, fmt.Errorf("validation: %w", err), stderr)
+		return
+	}
+	current, statErr := os.Stat(j.SourcePath)
+	if statErr != nil || !os.SameFile(initial, current) || initial.Size() != current.Size() || !initial.ModTime().Equal(current.ModTime()) {
+		_ = os.Remove(j.TempPath)
+		p.fail(ctx, j, fmt.Errorf("source changed during conversion; output discarded and source preserved"), "")
+		return
+	}
+	if p.store.CancelRequested(ctx, j.ID) || ctx.Err() != nil {
+		_ = os.Remove(j.TempPath)
+		_ = p.store.UpdateState(context.Background(), j.ID, jobs.Cancelled, plan.Operation, "cancelled before publication", "", "")
 		return
 	}
 	if err = inheritMetadata(j.SourcePath, j.TempPath); err != nil {
 		p.log.Warn(title, "metadata", err)
 	}
-	if _, err = os.Stat(j.TargetPath); err == nil {
+	if _, err = os.Stat(j.TargetPath); err == nil && !inPlace {
 		_ = os.Remove(j.TempPath)
 		_ = p.store.UpdateState(ctx, j.ID, jobs.Skipped, plan.Operation, "target appeared during conversion", "conflict", stderr)
 		return
 	}
-	// Link then unlink publishes atomically without overwriting a target created concurrently.
-	if err = os.Link(j.TempPath, j.TargetPath); err != nil {
+	// Normal conversions publish without overwriting. An incompatible MP4 is
+	// atomically replaced only after validating its complete normalized output.
+	if inPlace {
+		if !p.cfg.DeleteOriginal || len(plan.Omissions) > 0 {
+			backup := filepath.Join(filepath.Dir(j.SourcePath), "."+filepath.Base(j.SourcePath)+".media-converter.original-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".mp4")
+			if err = os.Link(j.SourcePath, backup); err != nil {
+				_ = os.Remove(j.TempPath)
+				p.fail(ctx, j, fmt.Errorf("preserve original MP4: %w", err), stderr)
+				return
+			}
+			_ = p.store.UpdateState(ctx, j.ID, jobs.Validating, plan.Operation, "", "original retained: "+backup, "")
+		}
+		err = os.Rename(j.TempPath, j.TargetPath)
+	} else {
+		err = os.Link(j.TempPath, j.TargetPath)
+	}
+	if err != nil {
 		_ = os.Remove(j.TempPath)
 		p.fail(ctx, j, fmt.Errorf("publish output: %w", err), stderr)
 		return
@@ -157,12 +215,17 @@ func (p *Pool) process(parent context.Context, j jobs.Job) {
 		p.fail(ctx, j, fmt.Errorf("stat published output: %w", err), stderr)
 		return
 	}
-	if p.cfg.DeleteOriginal {
+	if !inPlace && p.cfg.DeleteOriginal && len(plan.Omissions) == 0 {
+		latest, statErr := os.Stat(j.SourcePath)
+		if statErr != nil || !os.SameFile(initial, latest) || initial.Size() != latest.Size() || !initial.ModTime().Equal(latest.ModTime()) {
+			p.fail(ctx, j, fmt.Errorf("output valid but source changed before cleanup; source preserved"), stderr)
+			return
+		}
 		if err = os.Remove(j.SourcePath); err != nil {
 			p.fail(ctx, j, fmt.Errorf("output valid but source cleanup failed: %w", err), stderr)
 			return
 		}
-		p.log.Info("Removed source MKV", logging.Event("CLEANUP"), "job", j.ID)
+		p.log.Info("Removed validated source", logging.Event("CLEANUP"), "job", j.ID)
 	}
 	_ = p.store.Finish(ctx, j.ID, st.Size())
 	p.log.Info(title, logging.Event("DONE"), "source_bytes", j.SourceSize, "target_bytes", st.Size())

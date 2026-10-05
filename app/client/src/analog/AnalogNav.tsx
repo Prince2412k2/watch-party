@@ -52,7 +52,7 @@ export interface AnalogNavProps {
 export function AnalogNav({ active, onNavigate, downloadCount = 0, failingCount = 0, compact = false, canAcquire = false }: AnalogNavProps) {
   return (
     <nav className="an-nav" aria-label="Primary">
-      {visibleModes(canAcquire).map((mode) => {
+      {visibleModes(canAcquire).filter(mode => !compact || mode.id !== 'home').map((mode) => {
         const isActive = mode.id === active
         const badge = mode.id === 'downloads' ? failingCount || downloadCount : 0
         return (

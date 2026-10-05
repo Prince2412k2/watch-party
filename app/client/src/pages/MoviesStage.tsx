@@ -48,6 +48,7 @@ import {
   type TrackSelection,
 } from '../analog/playbackTracks.ts'
 import { resumeTicks } from '../analog/movieDetails.ts'
+import { PhoneCatalog } from '../mobile/PhoneCatalog.tsx'
 
 /**
  * Movies, rebuilt to the owner's revised model.
@@ -148,7 +149,7 @@ export default function MoviesStage() {
     let cancelled = false
     getJson(`/api/library/items/${viewId}/children`)
       .then((value) => !cancelled && setSingles(stageItems(value)))
-      .catch(() => !cancelled && setSingles([]))
+      .catch(() => { if (!cancelled) { setSingles([]); setError('Could not load movies. Check your connection and reload the library.') } })
     return () => {
       cancelled = true
     }
@@ -159,7 +160,7 @@ export default function MoviesStage() {
     let cancelled = false
     getJson(`/api/library/collections?parentId=${encodeURIComponent(viewId)}`)
       .then((value) => !cancelled && setCollections(stageItems(value)))
-      .catch(() => !cancelled && setCollections([]))
+      .catch(() => { if (!cancelled) { setCollections([]); setError('Could not load collections. Check your connection and reload the library.') } })
     return () => {
       cancelled = true
     }
@@ -176,7 +177,7 @@ export default function MoviesStage() {
     setParts(null)
     getJson(`/api/library/collections/${collectionId}/items`)
       .then((value) => !cancelled && setParts(stageItems(value)))
-      .catch(() => !cancelled && setParts([]))
+      .catch(() => { if (!cancelled) { setParts([]); setError('Could not load this collection. Check your connection and reload the library.') } })
     return () => {
       cancelled = true
     }
@@ -391,6 +392,7 @@ export default function MoviesStage() {
   const intentRef = useRef(onIntent)
   intentRef.current = onIntent
   useEffect(() => {
+    if (layout.size === 'phone') return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target as HTMLElement | null
@@ -405,7 +407,7 @@ export default function MoviesStage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [layout.size])
 
   // ── render ────────────────────────────────────────────────────────────────
 
@@ -429,6 +431,20 @@ export default function MoviesStage() {
     : mode === 'collections'
       ? 'Collection'
       : null
+
+  if (layout.size === 'phone') return (
+    <PhoneCatalog
+      title={collection?.name || 'Movies'} label={railLabel} items={railItems} selection={selection}
+      onSelect={setSelection} loading={loading} error={error} motion={motion}
+      back={collection ? goBack : undefined} backLabel="All collections"
+      filters={!collection ? <AnalogModeSlider mode={mode} onChange={setMode} /> : undefined}
+      details={<AnalogDetails item={focused} context={context} fallbackTitle={railLabel} native={IS_NATIVE} onPlay={() => activate(selection)} onDownload={() => void download()} onTracks={toggleTracks} tracksOpen={tracksOpen} downloadState={downloadState}>
+        {tracksOpen && focused && <AnalogTrackMenu itemId={focused.Id} tracks={tracks} loading={tracksLoading} selectedAudio={selected.audioStreamIndex ?? null} selectedSubtitle={selected.subtitleStreamIndex ?? null} onSelectAudio={index => setSelected(current => ({ ...current, audioStreamIndex: index }))} onSelectSubtitle={index => setSelected(current => ({ ...current, subtitleStreamIndex: index }))} onRefresh={loadTracks} onClose={() => setTracksOpen(false)} />}
+      </AnalogDetails>}
+      nav={<AnalogNav active="movies" onNavigate={navigate} canAcquire={!!user?.isAdmin} downloadCount={hub.activeCount} failingCount={hub.failingCount} compact />}
+      toolboxes={<><AnalogProfileTray userId={user?.userId} name={profile?.displayName || user?.name} avatar={profile?.avatar} onSettings={() => navigate('/profile')} onSignOut={() => void logout()} onConverter={user?.isAdmin ? () => navigate('/converter') : undefined} /><AnalogPartyWidget /></>}
+    />
+  )
 
   return (
     <div className="an-movies" onWheel={onStageWheel}>
@@ -484,7 +500,7 @@ export default function MoviesStage() {
             canAcquire={!!user?.isAdmin}
             downloadCount={hub.activeCount}
             failingCount={hub.failingCount}
-            compact={layout.size === 'phone'}
+            compact={false}
           />
         }
         toolboxes={
@@ -494,6 +510,7 @@ export default function MoviesStage() {
               name={profile?.displayName || user?.name}
               avatar={profile?.avatar}
               onSettings={() => navigate('/profile')}
+              onConverter={user?.isAdmin ? () => navigate('/converter') : undefined}
               onSignOut={() => void logout()}
             />
             <AnalogPartyWidget />

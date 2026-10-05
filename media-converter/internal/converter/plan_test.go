@@ -30,10 +30,40 @@ func TestPlanCopiesCompatibleAndTranscodesOnlyDTS(t *testing.T) {
 	}
 }
 
-func TestPlanUnsupportedVideoRequiresTranscode(t *testing.T) {
-	_, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "vp9"}}}, false)
-	if err == nil || !strings.Contains(err.Error(), "requires transcoding") {
-		t.Fatalf("error=%v", err)
+func TestPlanUnsupportedSDRVideoEncodesCompatibleMP4(t *testing.T) {
+	p, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "vp9"}}}, false)
+	if err != nil || p.Operation != "video_transcode" {
+		t.Fatalf("plan=%+v error=%v", p, err)
+	}
+	args := strings.Join(Args("in.webm", "out.mp4", p), " ")
+	for _, want := range []string{"-c:v:0 libx264", "-crf:v:0 18", "-preset:v:0 veryfast", "-pix_fmt:v:0 yuv420p"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("missing %q: %s", want, args)
+		}
+	}
+}
+
+func TestPlanPreservesHEVCHDRAndLosslessAudio(t *testing.T) {
+	p, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "hevc", ColorTransfer: "smpte2084"}, {CodecType: "audio", CodecName: "flac"}}}, true)
+	if err != nil || p.Streams[0].Mode != "copy" || p.Streams[1].Mode != "alac" {
+		t.Fatalf("plan=%+v err=%v", p, err)
+	}
+	if !strings.Contains(strings.Join(Args("in.mkv", "out.mp4", p), " "), "-tag:v:0 hvc1") {
+		t.Fatal("HEVC must be tagged for Apple playback")
+	}
+}
+
+func TestPlanDoesNotSilentlyReencodeUnsupportedHDR(t *testing.T) {
+	_, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "av1", ColorTransfer: "smpte2084"}}}, true)
+	if err == nil {
+		t.Fatal("HDR conversion needs an explicit tone-map policy")
+	}
+}
+
+func TestPlanDoesNotTruncate32BitLosslessAudio(t *testing.T) {
+	_, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "h264"}, {CodecType: "audio", CodecName: "pcm_s32le"}}}, true)
+	if err == nil {
+		t.Fatal("32-bit source must not silently become 24-bit ALAC")
 	}
 }
 

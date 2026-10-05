@@ -25,6 +25,7 @@ const DownloadsStage = lazy(() => import('./pages/DownloadsStage'))
 const DesktopApp = lazy(() => import('./pages/DesktopApp'))
 const Profile = lazy(() => import('./pages/Profile'))
 const WatchRoute = lazy(() => import('./pages/WatchRoute'))
+const Converter = lazy(() => import('./pages/Converter'))
 
 /* Splitting routes into chunks introduces one failure mode a single bundle did
  * not have: after a redeploy, an open tab still holds the previous index.html and
@@ -147,6 +148,7 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
 
   // Installer downloads must remain reachable from any device size.
   if (path === '/desktop-app') return <Suspense fallback={null}><DesktopApp /></Suspense>
+  if (path === '/converter' && user.isAdmin) return <Suspense fallback={null}><Converter /></Suspense>
 
   // One profile editor for both device sizes — it is a full-screen page on each,
   // and rendering it above the phone branch keeps a rotation from remounting it
