@@ -20,6 +20,7 @@ type Stream struct {
 	Index                int `json:"index"`
 	CodecType, CodecName string
 	Width, Height        int
+	Profile              string `json:"profile"`
 	Channels             int
 	ChannelLayout        string `json:"channel_layout"`
 	PixFmt               string `json:"pix_fmt"`

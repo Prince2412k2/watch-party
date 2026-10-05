@@ -78,6 +78,15 @@ INSERT OR IGNORE INTO settings(key,value) VALUES('paused','false');`)
 			return err
 		}
 	}
+	var hasPolicy int
+	if err = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name='policy_version'`).Scan(&hasPolicy); err != nil {
+		return err
+	}
+	if hasPolicy == 0 {
+		if _, err = s.db.Exec(`ALTER TABLE jobs ADD COLUMN policy_version TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	_, err = s.db.Exec(`UPDATE jobs SET queue_order=id WHERE queue_order=0; CREATE INDEX IF NOT EXISTS idx_jobs_queue_order ON jobs(status,priority,queue_order)`)
 	return err
 }
@@ -98,9 +107,9 @@ func (s *Store) Add(ctx context.Context, j jobs.Job) (bool, error) {
 	if mediaType == "" {
 		mediaType = "unknown"
 	}
-	r, err := s.db.ExecContext(ctx, `INSERT INTO jobs(source_path,target_path,temp_path,media_type,status,priority,queue_order,source_size,source_mtime,dry_run,error_message,notes,completed_at) VALUES(?,?,?,?,?,?,(SELECT COALESCE(MAX(queue_order),0)+1 FROM jobs),?,?,?,?,?,CASE WHEN ? IN ('skipped','failed') THEN CURRENT_TIMESTAMP ELSE NULL END)
-ON CONFLICT(source_path) DO UPDATE SET status=excluded.status,source_size=excluded.source_size,source_mtime=excluded.source_mtime,progress=0,ffmpeg_speed='',error_message=excluded.error_message,notes=excluded.notes,cancel_requested=0,started_at=NULL,completed_at=excluded.completed_at
-WHERE excluded.source_mtime<>0 AND (jobs.source_size<>excluded.source_size OR jobs.source_mtime<>excluded.source_mtime) AND jobs.status NOT IN ('probing','remuxing','transcoding_audio','transcoding_video','validating')`, j.SourcePath, j.TargetPath, j.TempPath, mediaType, status, j.Priority, j.SourceSize, j.SourceMtime, j.DryRun, j.ErrorMessage, j.Notes, status)
+	r, err := s.db.ExecContext(ctx, `INSERT INTO jobs(source_path,target_path,temp_path,media_type,status,priority,queue_order,source_size,source_mtime,dry_run,error_message,notes,completed_at,policy_version) VALUES(?,?,?,?,?,?,(SELECT COALESCE(MAX(queue_order),0)+1 FROM jobs),?,?,?,?,?,CASE WHEN ? IN ('skipped','failed') THEN CURRENT_TIMESTAMP ELSE NULL END,'browser-v2')
+ON CONFLICT(source_path) DO UPDATE SET status=excluded.status,source_size=excluded.source_size,source_mtime=excluded.source_mtime,progress=0,ffmpeg_speed='',error_message=excluded.error_message,notes=excluded.notes,cancel_requested=0,started_at=NULL,completed_at=excluded.completed_at,policy_version=excluded.policy_version
+WHERE excluded.source_mtime<>0 AND (jobs.source_size<>excluded.source_size OR jobs.source_mtime<>excluded.source_mtime OR (jobs.policy_version<>excluded.policy_version AND jobs.source_path=jobs.target_path AND jobs.status IN ('completed','skipped') AND excluded.status='queued')) AND jobs.status NOT IN ('probing','remuxing','transcoding_audio','transcoding_video','validating')`, j.SourcePath, j.TargetPath, j.TempPath, mediaType, status, j.Priority, j.SourceSize, j.SourceMtime, j.DryRun, j.ErrorMessage, j.Notes, status)
 	if err != nil {
 		return false, err
 	}

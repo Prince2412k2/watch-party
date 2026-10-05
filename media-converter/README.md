@@ -2,7 +2,7 @@
 
 A persistent, Dockerized MP4 pre-conversion worker for Sonarr/Radarr/Jellyfin libraries. It watches mounted libraries for added/modified files, plans from `ffprobe` metadata, prefers lossless stream-copy, and validates output before publication or source removal.
 
-Manage it at **Watchparty → profile actions → Media converter**, or `/converter` (administrator accounts). The webpage shows running jobs, progress, speed, policy, a reorderable queue, and history/errors. **Move to next** promotes any waiting file ahead of the queue immediately; up/down adjust individual positions. Active work finishes without losing progress. Pause stops new jobs; cancel interrupts a selected job. One Go binary still supplies the worker, CLI and TUI, sharing persistent SQLite state under `/data`.
+Manage it at **Watchparty → profile actions → Media converter**, or `/converter` (administrator accounts). The webpage shows running jobs, progress, speed, a reorderable queue, and history with expandable error details. **Next** promotes any waiting file ahead of the queue immediately; up/down adjust individual positions. Active work finishes without losing progress. Pause stops new jobs; cancel interrupts a selected job. One Go binary still supplies the worker, CLI and TUI, sharing persistent SQLite state under `/data`.
 
 The worker's HTTP API listens on internal port 8090. Watchparty authenticates administrators and proxies `/api/converter/*`; do not expose the worker directly. Both services use `MEDIA_CONVERTER_API_KEY`, falling back to their existing `SESSION_SECRET`. Production Compose already supplies the shared secrets and private network. For separate/local deployments, set `MEDIA_CONVERTER_URL` on Watchparty and matching service credentials.
 
@@ -98,10 +98,10 @@ Built-in excluded directories are `@eaDir`, `.recycle`, `.Trash`, and `lost+foun
 
 The planner maps streams explicitly rather than using blind `-map 0`:
 
-- Compatible H.264 8-bit 4:2:0 and HEVC 4:2:0 8/10-bit video are copied bit-for-bit; HEVC is tagged `hvc1` for Apple playback.
-- Other SDR video is encoded as H.264 at original resolution, CRF 18, `veryfast`. This is high-quality **lossy** encoding, not lossless. Stream copying remains the fastest, lossless path. Unsupported HDR conversion is blocked pending an explicit tone-map policy rather than producing incorrect colors.
-- AAC, AC-3, E-AC-3, ALAC, and MP3 audio are copied.
-- FLAC and integer PCM up to 24-bit become ALAC without audio quality loss. Higher-precision lossless audio is blocked rather than silently truncated. Other audio becomes AAC at 256 kbit/s stereo or 512 kbit/s multichannel, preserving channel count.
+- Output is fast-start MP4 with H.264 8-bit 4:2:0 video and AAC audio for broad browser playback. MKV is an input format, never an output format. With the default `DELETE_ORIGINAL=true`, source MKVs are removed only after successful validation; failed, conflicting, or incomplete conversions preserve their sources.
+- Compatible SDR H.264 streams and AAC-LC audio are copied bit-for-bit, avoiding generation loss. Other SDR video (including HEVC) is encoded at original resolution and frame rate with x264 CRF 14 and the `slow` preset. This favors visual quality over speed and file size, but re-encoding is not mathematically lossless.
+- PQ and HLG HDR are converted to BT.709 SDR using linear-light Mobius tone-mapping, BT.2020-to-BT.709 gamut conversion, and dithering to 8-bit. This deliberately changes dynamic range for browser compatibility. FFmpeg must include `zscale` and `tonemap`; missing filters fail conversion and preserve the source.
+- Non-AAC-LC audio (including AC-3, E-AC-3, DTS, ALAC, FLAC, and PCM) becomes AAC at 320 kbit/s mono/stereo or 640 kbit/s multichannel, preserving channel count. This is lossy even for a lossless source; ALAC is not used because browser support is limited.
 - Existing `mov_text` subtitles are copied.
 - SRT, ASS/SSA, WebVTT, and text subtitles are converted to `mov_text`.
 - Bitmap/unsupported subtitles, attachments, fonts, and data streams block conversion by default. `STRICT_MODE=false` allows omissions but preserves the original file. ASS → `mov_text` does not retain exact ASS styling; a future sidecar-export policy is needed for exact styled/bitmap subtitle preservation.
@@ -109,7 +109,7 @@ The planner maps streams explicitly rather than using blind `-map 0`:
 
 ## Scheduler And Recovery
 
-The daemon polls filesystem metadata every 15 seconds, including files imported by rename and Docker bind mounts. It waits for stable size/mtime and a 30-second settle period. Unchanged files are deduplicated; modifications requeue eligible terminal/waiting jobs. Existing conflicting targets are not overwritten. A nightly scheduled reconciliation remains enabled in `TZ`. Jobs run by persisted priority and queue order, editable from the webpage while workers are active.
+The daemon polls filesystem metadata every 15 seconds, including files imported by rename and Docker bind mounts. It waits for stable size/mtime and a 30-second settle period. Unchanged files are deduplicated; modifications requeue eligible terminal/waiting jobs. Previously completed or skipped MP4 jobs are inspected once under the new browser codec policy; historical failed/cancelled jobs still require an explicit retry. Existing conflicting targets are not overwritten. A nightly scheduled reconciliation remains enabled in `TZ`. Jobs run by persisted priority and queue order, editable from the webpage while workers are active.
 
 On startup, jobs interrupted in probing, conversion, or validation are returned to the queue and their known temporary files are removed. Docker `SIGTERM` stops new claims, sends FFmpeg `SIGTERM`, waits up to five seconds, and then forces termination if needed. The source is never touched during this path.
 
@@ -187,4 +187,4 @@ make build
 make docker-build
 ```
 
-Tests cover stream policy, FFmpeg argument generation, priority ordering and updates, path generation, duplicate insertion, duration tolerance, restart recovery, sample exclusion, and target conflict detection. FFmpeg integration requires real fixture media and is intentionally not part of the default unit suite.
+Tests cover stream policy, FFmpeg argument generation, priority ordering and updates, path generation, duplicate insertion, duration tolerance, restart recovery, sample exclusion, and target conflict detection. Real FFmpeg integration tests generate short MKV, AVI, and MP4 fixtures, verify copied video hashes, SDR encoding, PQ/HLG tone-mapping, decodable browser codecs, and validated source cleanup. They run when FFmpeg/ffprobe are installed and otherwise skip.

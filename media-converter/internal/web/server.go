@@ -48,7 +48,7 @@ func Handler(cfg config.Config, store *storage.Store, scan scanner.Scanner) http
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"jobs": list, "counts": counts, "paused": store.Paused(ctx), "policy": map[string]any{
-				"output": "MP4", "video": "Copy H.264 / HEVC; other SDR video → H.264 CRF 18", "audio": "Copy compatible tracks; lossless → ALAC; other audio → AAC",
+				"output": "MP4", "video": "Copy compatible H.264; encode H.264 CRF 14; HDR → SDR", "audio": "Copy AAC-LC; other audio → AAC 320k / 640k",
 				"workers": cfg.MaxConcurrent, "watchSeconds": cfg.WatchInterval.Seconds(), "settleSeconds": cfg.SettleTime.Seconds(), "strict": cfg.Strict, "deleteOriginal": cfg.DeleteOriginal,
 			}})
 			return

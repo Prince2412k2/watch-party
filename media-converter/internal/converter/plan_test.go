@@ -8,7 +8,7 @@ import (
 )
 
 func TestPlanCopiesCompatibleAndTranscodesOnlyDTS(t *testing.T) {
-	m := probe.Media{Streams: []probe.Stream{{Index: 0, CodecType: "video", CodecName: "h264"}, {Index: 1, CodecType: "audio", CodecName: "aac"}, {Index: 2, CodecType: "audio", CodecName: "dts"}, {Index: 3, CodecType: "subtitle", CodecName: "subrip"}, {Index: 4, CodecType: "attachment", CodecName: "ttf"}}}
+	m := probe.Media{Streams: []probe.Stream{{Index: 0, CodecType: "video", CodecName: "h264", PixFmt: "yuv420p"}, {Index: 1, CodecType: "audio", CodecName: "aac"}, {Index: 2, CodecType: "audio", CodecName: "dts"}, {Index: 3, CodecType: "subtitle", CodecName: "subrip"}, {Index: 4, CodecType: "attachment", CodecName: "ttf"}}}
 	p, err := Plan(m, false)
 	if err != nil {
 		t.Fatal(err)
@@ -36,34 +36,48 @@ func TestPlanUnsupportedSDRVideoEncodesCompatibleMP4(t *testing.T) {
 		t.Fatalf("plan=%+v error=%v", p, err)
 	}
 	args := strings.Join(Args("in.webm", "out.mp4", p), " ")
-	for _, want := range []string{"-c:v:0 libx264", "-crf:v:0 18", "-preset:v:0 veryfast", "-pix_fmt:v:0 yuv420p"} {
+	for _, want := range []string{"-c:v:0 libx264", "-crf:v:0 14", "-preset:v:0 slow", "-pix_fmt:v:0 yuv420p"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("missing %q: %s", want, args)
 		}
 	}
 }
 
-func TestPlanPreservesHEVCHDRAndLosslessAudio(t *testing.T) {
-	p, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "hevc", ColorTransfer: "smpte2084"}, {CodecType: "audio", CodecName: "flac"}}}, true)
-	if err != nil || p.Streams[0].Mode != "copy" || p.Streams[1].Mode != "alac" {
-		t.Fatalf("plan=%+v err=%v", p, err)
+func TestPlanBrowserCodecs(t *testing.T) {
+	for _, codec := range []string{"hevc", "av1", "vp9", "mpeg4"} {
+		p, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: codec, PixFmt: "yuv420p"}}}, true)
+		if err != nil || p.Streams[0].Mode != "libx264" {
+			t.Fatalf("%s: %+v %v", codec, p, err)
+		}
 	}
-	if !strings.Contains(strings.Join(Args("in.mkv", "out.mp4", p), " "), "-tag:v:0 hvc1") {
-		t.Fatal("HEVC must be tagged for Apple playback")
+	for _, codec := range []string{"ac3", "eac3", "alac", "flac", "pcm_s32le", "mp3", "dts"} {
+		p, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "h264", PixFmt: "yuv420p"}, {CodecType: "audio", CodecName: codec, Channels: 6}}}, true)
+		if err != nil || p.Streams[1].Mode != "aac" {
+			t.Fatalf("%s: %+v %v", codec, p, err)
+		}
+		if !strings.Contains(strings.Join(Args("in.mkv", "out.mp4", p), " "), "-b:a:0 640k") {
+			t.Fatal("multichannel bitrate missing")
+		}
 	}
 }
-
-func TestPlanDoesNotSilentlyReencodeUnsupportedHDR(t *testing.T) {
-	_, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "av1", ColorTransfer: "smpte2084"}}}, true)
-	if err == nil {
-		t.Fatal("HDR conversion needs an explicit tone-map policy")
+func TestPlanToneMapsHDR(t *testing.T) {
+	for _, transfer := range []string{"smpte2084", "arib-std-b67"} {
+		p, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "hevc", PixFmt: "yuv420p10le", ColorTransfer: transfer}}}, true)
+		if err != nil || !p.Streams[0].ToneMap || p.Streams[0].Mode != "libx264" {
+			t.Fatalf("%+v %v", p, err)
+		}
+		args := strings.Join(Args("in.mkv", "out.mp4", p), " ")
+		for _, want := range []string{"tonemap=tonemap=mobius", "-color_trc:v:0 bt709", "-color_primaries:v:0 bt709", "-pix_fmt:v:0 yuv420p"} {
+			if !strings.Contains(args, want) {
+				t.Errorf("missing %s", want)
+			}
+		}
 	}
 }
-
-func TestPlanDoesNotTruncate32BitLosslessAudio(t *testing.T) {
-	_, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "h264"}, {CodecType: "audio", CodecName: "pcm_s32le"}}}, true)
-	if err == nil {
-		t.Fatal("32-bit source must not silently become 24-bit ALAC")
+func TestPlanHighBitDepthAndHEAACAreNotCopied(t *testing.T) {
+	p, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "h264", PixFmt: "yuv420p10le"}, {CodecType: "audio", CodecName: "aac", Profile: "HE-AAC"}}}, true)
+	if err != nil || p.Streams[0].Mode != "libx264" || p.Streams[1].Mode != "aac" {
+		t.Fatalf("%+v %v", p, err)
 	}
 }
 
@@ -71,5 +85,26 @@ func TestPlanStrictRejectsOmission(t *testing.T) {
 	_, err := Plan(probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "hevc"}, {CodecType: "subtitle", CodecName: "hdmv_pgs_subtitle"}}}, true)
 	if err == nil {
 		t.Fatal("expected strict-mode error")
+	}
+}
+
+func TestValidationRejectsNonBrowserOrIncompleteOutput(t *testing.T) {
+	plan := ConversionPlan{Streams: []StreamAction{{Type: "video", Mode: "libx264"}, {Type: "audio", Mode: "aac", Channels: 6}}}
+	good := probe.Media{Streams: []probe.Stream{{CodecType: "video", CodecName: "h264", PixFmt: "yuv420p"}, {CodecType: "audio", CodecName: "aac", Profile: "LC", Channels: 6}}}
+	if err := ValidateStreams(plan, good); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutation := range []func(*probe.Media){
+		func(m *probe.Media) { m.Streams[0].PixFmt = "yuv420p10le" },
+		func(m *probe.Media) { m.Streams[0].PixFmt = "" },
+		func(m *probe.Media) { m.Streams[0].ColorTransfer = "smpte2084" },
+		func(m *probe.Media) { m.Streams[1].Channels = 2 },
+		func(m *probe.Media) { m.Streams[1].Profile = "HE-AAC" },
+	} {
+		bad := probe.Media{Streams: append([]probe.Stream(nil), good.Streams...)}
+		mutation(&bad)
+		if err := ValidateStreams(plan, bad); err == nil {
+			t.Fatalf("accepted incompatible output: %+v", bad)
+		}
 	}
 }

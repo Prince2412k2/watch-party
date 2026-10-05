@@ -74,10 +74,10 @@ case "$last" in
 	if invalidOutput {
 		probeScript += `streams='[]'`
 	} else {
-		probeScript += `streams='[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,"height":1080}]'`
+		probeScript += `streams='[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1920,"height":1080}]'`
 	}
 	probeScript += ` ;;
-  *) streams='[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,"height":1080}]' ;;
+  *) streams='[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1920,"height":1080}]' ;;
 esac
 printf '{"streams":%s,"format":{"duration":"10.0","size":"8192"}}\n' "$streams"
 `
