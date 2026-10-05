@@ -10,6 +10,7 @@ export interface AuthUser {
   /** Jellyfin administrator. Decides who may acquire (and delete) titles on the
       server; `/api/auth/me` carries it. Absent is the same as false. */
   isAdmin?: boolean
+  offline?: boolean
 }
 
 /** The signed-in user's own profile. Both fields are null for anyone who has
@@ -123,7 +124,7 @@ export interface PartyContextValue {
   showPeerPointers: boolean
   localSubtitleSelection: { itemId: string; index: number | null } | null
   subtitlePreferences: SubtitlePreferences
-  createParty: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => Promise<string>
+  createParty: (mediaItemId: string, tracks?: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => Promise<string>
   createRoom: () => Promise<string>
   joinParty: (partyId: string) => Promise<string>
   /**
@@ -132,7 +133,7 @@ export interface PartyContextValue {
    * previous room's session/role/messages can't bleed into the new one.
    */
   leaveParty: () => void
-  selectMedia: (mediaItemId: string, tracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => void
+  selectMedia: (mediaItemId: string, tracks?: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => void
   backToLobby: () => void
   approveUser: (userId: string) => void
   rejectUser: (userId: string) => void

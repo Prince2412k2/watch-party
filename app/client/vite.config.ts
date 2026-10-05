@@ -14,6 +14,7 @@ export default defineConfig({
     ],
   },
   server: {
+    headers: { "Service-Worker-Allowed": "/" },
     host: true,
     allowedHosts: ['dsk-4161', 'dsk-4161.tail0a3558.ts.net'],
     // Behind Tailscale Serve, the browser reaches us over HTTPS on 443;

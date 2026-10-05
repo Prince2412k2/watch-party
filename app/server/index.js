@@ -40,7 +40,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { createProxyMiddleware } from './proxy.js'
 import { login, me, logout, password, testLogin, requireAuth } from './auth.js'
-import { registerLibraryRoutes } from './library.js'
+import { registerLibraryRoutes, isJellyfinId } from './library.js'
 import { registerNativeRoutes } from './native.js'
 import { registerSubtitleRoutes } from './subtitles.js'
 import { registerLiveKitRoutes } from './livekit.js'
@@ -62,7 +62,8 @@ import {
 import { registerProfileRoutes } from './profile.js'
 import { registerAvatarRoutes } from './avatar.js'
 import { registerConverterRoutes } from './converter.js'
-import { resolveMediaSourceId } from './jellyfin.js'
+import { registerOfflineRoutes } from './offline.js'
+import { resolveMediaSourceId, getItemDetail } from './jellyfin.js'
 
 // Fail fast: never run in production with a missing or default session secret.
 if (process.env.NODE_ENV === 'production' &&
@@ -362,6 +363,7 @@ registerDesktopBuildRoutes(app)
 registerProfileRoutes(app, io)
 registerAvatarRoutes(app)
 registerConverterRoutes(app)
+registerOfflineRoutes(app)
 
 // ── Dev-only observability (gated: 404 unless WP_TEST_MODE=1) ───────────────
 // Exposes session internals for the sync test harness. MUST stay off in prod.
@@ -391,7 +393,7 @@ if (TEST_ENDPOINTS_ENABLED) {
 if (process.env.SERVE_CLIENT === '1') {
   const clientDist = join(__dirname, '../client/dist')
   if (existsSync(clientDist)) {
-    app.use(express.static(clientDist))
+    app.use(express.static(clientDist, { setHeaders: (res, path) => { if (path.includes('service-worker')) { res.setHeader('Service-Worker-Allowed', '/'); res.setHeader('Cache-Control', 'no-cache') } } }))
     // SPA fallback — hand any non-API, non-socket, non-proxy path to index.html
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') ||
@@ -455,14 +457,14 @@ io.on('connection', (socket) => {
   })
 
   // party:create ────────────────────────────────────────────────────────────
-  socket.on('party:create', async ({ mediaItemId = null, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
+  socket.on('party:create', async ({ mediaItemId = null, mediaSourceId: requestedSourceId = null, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     let sess = null
     try {
       if (findSessionByUser(userId)) return ack?.({ error: 'already in a party' })
       // Room can start empty (lobby) — media is optional at creation.
       let mediaSourceId = null
       if (mediaItemId) {
-        const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
+        const src = await resolveMediaSourceSafe(token, userId, mediaItemId, requestedSourceId)
         if (!src) return ack?.({ error: 'item not found' })
         mediaSourceId = src
       }
@@ -707,7 +709,7 @@ io.on('connection', (socket) => {
   const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl
 
   // party:selectMedia — a title was chosen in the lobby → enter watching stage
-  socket.on('party:selectMedia', async ({ mediaItemId, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
+  socket.on('party:selectMedia', async ({ mediaItemId, mediaSourceId: requestedSourceId = null, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
     const hostId = sess.hostId
@@ -718,7 +720,7 @@ io.on('connection', (socket) => {
       return null
     }
     try {
-      const src = await resolveMediaSourceSafe(token, userId, mediaItemId)
+      const src = await resolveMediaSourceSafe(token, userId, mediaItemId, requestedSourceId)
       if (!src) return ack?.({ error: 'item not found' })
       const error = selectionError()
       if (error) return ack?.({ error })
@@ -1028,7 +1030,12 @@ function setSchedule(sess, next) {
 // Same, but under WP_TEST_MODE a fake Jellyfin token can't reach the real API,
 // so fall back to the given id (or a dummy) — the timeline engine only needs an
 // id to run; the harness never fetches real video. Only reachable in test mode.
-async function resolveMediaSourceSafe(token, userId, mediaItemId) {
+async function resolveMediaSourceSafe(token, userId, mediaItemId, requestedSourceId = null) {
+  if (requestedSourceId) {
+    if (!isJellyfinId(mediaItemId) || !isJellyfinId(requestedSourceId)) throw new Error('invalid media source')
+    const item = await getItemDetail(token, userId, mediaItemId)
+    return item?.MediaSources?.find(source => source.Id === requestedSourceId)?.Id ?? null
+  }
   try {
     const src = await resolveMediaSourceId(token, userId, mediaItemId)
     if (src) return src

@@ -25,6 +25,8 @@ const DownloadsStage = lazy(() => import('./pages/DownloadsStage'))
 const DesktopApp = lazy(() => import('./pages/DesktopApp'))
 const Profile = lazy(() => import('./pages/Profile'))
 const WatchRoute = lazy(() => import('./pages/WatchRoute'))
+const SavedMovies = lazy(() => import('./pages/SavedMovies'))
+const SavedWatch = lazy(() => import('./pages/SavedWatch'))
 const Converter = lazy(() => import('./pages/Converter'))
 
 /* Splitting routes into chunks introduces one failure mode a single bundle did
@@ -133,7 +135,8 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // curated surface (Continue Watching, active parties, Next Up, Recently
   // Added); until that exists, Home and Movies are the same place.
   useEffect(() => {
-    if (path === '/' || path === '/library') navigate('/movies')
+    if (user.offline && !path.startsWith('/saved')) navigate('/saved')
+    else if (path === '/' || path === '/library') navigate('/movies')
   }, [path])
 
   if (path === '/' || path === '/library' || path === '/login') return null
@@ -148,6 +151,8 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
 
   // Installer downloads must remain reachable from any device size.
   if (path === '/desktop-app') return <Suspense fallback={null}><DesktopApp /></Suspense>
+  if (path === '/saved') return <Suspense fallback={null}><SavedMovies /></Suspense>
+  if (path.startsWith('/saved/watch/')) return <Suspense fallback={null}><SavedWatch mediaKey={decodeURIComponent(path.slice('/saved/watch/'.length))} /></Suspense>
   if (path === '/converter' && user.isAdmin) return <Suspense fallback={null}><Converter /></Suspense>
 
   // One profile editor for both device sizes — it is a full-screen page on each,

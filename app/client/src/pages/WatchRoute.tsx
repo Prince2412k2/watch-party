@@ -26,6 +26,7 @@ export function WatchRoute({ path }: { path: string }) {
     const resumePositionTicks = Number(qs.get('resumePositionTicks'))
     return <Party isNew itemId={qs.get('itemId') ?? undefined}
       initialTracks={{
+        mediaSourceId: qs.get('mediaSourceId') ?? undefined,
         audioStreamIndex: Number.isInteger(audioStreamIndex) ? audioStreamIndex : undefined,
         subtitleStreamIndex: Number.isInteger(subtitleStreamIndex) ? subtitleStreamIndex : undefined,
         resumePositionTicks: Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0 ? resumePositionTicks : undefined,

@@ -5,6 +5,7 @@ import { useParty } from '../context/PartyContext.tsx'
 import { useDownloadsHub } from '../context/DownloadsContext.tsx'
 import { navigate } from '../router.ts'
 import { apiJson, arrayOf, isLibraryItemJson, isRecord } from '../types/guards.ts'
+import { OFFLINE_SUPPORTED, saveMovie } from '../offline/client.ts'
 import { IS_NATIVE } from '../native/env.ts'
 import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc.ts'
@@ -314,19 +315,24 @@ export default function MoviesStage() {
     navigate(`/party/new?${query}`)
   }
 
-  // Offline download, desktop shell only — a browser tab has nowhere to put the
-  // file, which is why every native-only path in this client is gated on
-  // IS_NATIVE rather than rendered dead everywhere else.
+  // Use native storage in the shell and persistent browser chunks in the PWA.
   const download = async () => {
-    if (!focused || !IS_NATIVE) return
+    if (!focused || (!IS_NATIVE && (!OFFLINE_SUPPORTED || !user))) return
     setDownloadState('busy')
     try {
+      if (!IS_NATIVE) {
+        await saveMovie(focused.Id, user!.userId)
+        setDownloadState('queued')
+        navigate('/saved')
+        return
+      }
       const value = await getJson(`/api/library/hls-url?itemId=${encodeURIComponent(focused.Id)}&abr=1`)
       const url = isRecord(value) && typeof value.url === 'string' ? value.url : null
       if (!url) throw new Error('no stream url')
       await invoke(IPC.DL_START, { itemId: focused.Id, url, title: focused.Name })
       setDownloadState('queued')
-    } catch {
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not start download')
       setDownloadState('failed')
     }
   }
@@ -438,7 +444,7 @@ export default function MoviesStage() {
       onSelect={setSelection} loading={loading} error={error} motion={motion}
       back={collection ? goBack : undefined} backLabel="All collections"
       filters={!collection ? <AnalogModeSlider mode={mode} onChange={setMode} /> : undefined}
-      details={<AnalogDetails item={focused} context={context} fallbackTitle={railLabel} native={IS_NATIVE} onPlay={() => activate(selection)} onDownload={() => void download()} onTracks={toggleTracks} tracksOpen={tracksOpen} downloadState={downloadState}>
+      details={<AnalogDetails item={focused} context={context} fallbackTitle={railLabel} native={IS_NATIVE || OFFLINE_SUPPORTED} onPlay={() => activate(selection)} onDownload={() => void download()} onTracks={toggleTracks} tracksOpen={tracksOpen} downloadState={downloadState}>
         {tracksOpen && focused && <AnalogTrackMenu itemId={focused.Id} tracks={tracks} loading={tracksLoading} selectedAudio={selected.audioStreamIndex ?? null} selectedSubtitle={selected.subtitleStreamIndex ?? null} onSelectAudio={index => setSelected(current => ({ ...current, audioStreamIndex: index }))} onSelectSubtitle={index => setSelected(current => ({ ...current, subtitleStreamIndex: index }))} onRefresh={loadTracks} onClose={() => setTracksOpen(false)} />}
       </AnalogDetails>}
       nav={<AnalogNav active="movies" onNavigate={navigate} canAcquire={!!user?.isAdmin} downloadCount={hub.activeCount} failingCount={hub.failingCount} compact />}
@@ -470,7 +476,7 @@ export default function MoviesStage() {
               context={context}
               fallbackTitle={error ? 'Movies' : loading ? 'Loading' : railLabel}
               error={error || null}
-              native={IS_NATIVE}
+              native={IS_NATIVE || OFFLINE_SUPPORTED}
               onPlay={() => activate(selection)}
               onDownload={() => void download()}
               onTracks={toggleTracks}

@@ -8,7 +8,9 @@ import { useLiveKit } from '../hooks/useLiveKit.ts'
 import type { LiveKitParticipantView } from '../hooks/useLiveKit.ts'
 import { useHideSelf } from '../hooks/useHideSelf.ts'
 import { navigate } from '../router.ts'
+import { IS_NATIVE } from '../native/env.ts'
 import Player from '../components/Player.tsx'
+import { cachePlayback, infoFor, localSubtitles, localUrl, OFFLINE_SUPPORTED, type SavedMedia } from '../offline/client.ts'
 import type { PlayerProps } from '../components/Player.tsx'
 import CameraGrid from '../components/CameraGrid.tsx'
 import Dock from '../components/Dock.tsx'
@@ -47,7 +49,7 @@ type SeekBridge = {
   guardToggle: (action: () => unknown) => Promise<void>
 }
 
-export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } } = {}) {
+export default function Party({ partyId, isNew, itemId, initialTracks }: { partyId?: string; isNew?: boolean; itemId?: string; initialTracks?: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } } = {}) {
   const { socket } = useSocket()
   const party = useParty()
   const { user } = useAuth()
@@ -937,52 +939,60 @@ type HlsPlayerProps = Omit<PlayerProps, 'hlsUrl' | 'mediaItemId' | 'playback' | 
 }
 
 function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, localSubtitleStreamIndex = null, ...rest }: HlsPlayerProps) {
-  const [hlsUrl, setHlsUrl] = useState<{ itemId: string; url: string } | null>(null)
+  const { user } = useAuth()
+  const [hlsUrl, setHlsUrl] = useState<{ itemId: string; url: string; saved?: SavedMedia } | null>(null)
+  const [streamError, setStreamError] = useState('')
   const audioStreamIndex = session?.playback?.selectedAudioIndex
   const mediaSourceId = session?.playback?.mediaSourceId ?? session?.mediaSourceId ?? session?.mediaItemId
   const playback = session.playback
     ? { ...session.playback, selectedSubtitleIndex: localSubtitleStreamIndex }
     : undefined
 
-  // Phase 1.2: fetch the ADAPTIVE (ABR) master playlist ONCE per media item.
-  // The URL carries no bitrate pin, so hls.js loads a multi-variant ladder and
-  // adapts by bandwidth. Quality changes are now level switches inside hls.js
-  // (see Player → useQualityLevels) — they never re-fetch or swap <HlsVideo src>,
-  // so this effect intentionally does NOT depend on the selected quality.
   useEffect(() => {
     const itemId = session?.mediaItemId
-    // Never render the prior title while the new playlist is resolving. Apart
-    // from showing the wrong movie briefly, that kept the old HLS track list
-    // alive while the settings menu was already using the new session metadata.
-    setHlsUrl(null)
+    setHlsUrl(current => current?.itemId === itemId ? current : null)
+    setStreamError('')
     if (!itemId) return
     let cancelled = false
-    const qs = new URLSearchParams({ itemId, abr: '1' })
-    if (mediaSourceId) qs.set('mediaSourceId', mediaSourceId)
-    if (Number.isInteger(audioStreamIndex)) qs.set('audioStreamIndex', String(audioStreamIndex))
-    fetch(`/api/library/hls-url?${qs}`, { credentials: 'include' })
-      .then(r => r.ok ? apiJson(r) : null)
-      .then(d => {
-        const url = stringField(d, 'url')
-        if (url && !cancelled) setHlsUrl({ itemId, url })
-      })
-      .catch(() => {})
-    return () => { cancelled = true }
-  // Track indices are intentionally excluded from deps: audio/subtitle switching
-  // is handled client-side via hls.audioTrack / hls.subtitleTrack (no src reload).
-  // The initial URL still carries the session's starting indices for the first load.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.mediaItemId, mediaSourceId])
+    const resolve = async () => {
+      if (!IS_NATIVE && OFFLINE_SUPPORTED) {
+        try {
+          const info = await infoFor(itemId, mediaSourceId)
+          // Chromium cannot select arbitrary audio tracks in a static MP4.
+          // Preserve shared track choice by falling back to HLS when needed.
+          if (info.owner === user?.userId && (audioStreamIndex == null || audioStreamIndex === info.audioIndex)) {
+            const saved = await cachePlayback(info)
+            if (!cancelled) setHlsUrl({itemId,url:localUrl(saved),saved})
+            return
+          }
+        } catch { /* Unconverted titles / unsupported browsers retain HLS playback. */ }
+      }
+      const qs = new URLSearchParams({itemId,abr:'1'})
+      if (mediaSourceId) qs.set('mediaSourceId',mediaSourceId)
+      if (Number.isInteger(audioStreamIndex)) qs.set('audioStreamIndex',String(audioStreamIndex))
+      const response = await fetch(`/api/library/hls-url?${qs}`,{credentials:'include'})
+      const url = stringField(await apiJson(response),'url')
+      if (!response.ok || !url) throw new Error('Could not load video. Reconnect and try again.')
+      if (!cancelled) setHlsUrl({itemId,url})
+    }
+    void resolve().catch(error=>{if(!cancelled)setStreamError(error.message)})
+    return () => {cancelled=true}
+  },[session?.mediaItemId,mediaSourceId,audioStreamIndex,user?.userId])
 
   if (!hlsUrl || hlsUrl.itemId !== session.mediaItemId) return (
     <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: '#000' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
         <div style={{ width: 36, height: 36, borderRadius: '50%', border: '3px solid var(--stroke2)', borderTopColor: 'var(--accent)', animation: 'spin .9s linear infinite' }} />
-        <span style={{ color: 'var(--text3)', fontSize: 13 }}>Loading video…</span>
+        <span style={{ color: 'var(--text3)', fontSize: 13 }}>{streamError || 'Loading video…'}</span>
       </div>
     </div>
   )
 
+  const savedSubtitles = hlsUrl.saved ? localSubtitles(hlsUrl.saved) : []
+  const subtitleStreams = (playback?.subtitleStreams ?? savedSubtitles).map(stream => ({
+    ...stream,
+    ...(savedSubtitles.find(saved => saved.index === stream.index) ?? {})
+  }))
   return (
     <Player
       // A media item has its own HLS engine and text-track collection. Keying
@@ -991,7 +1001,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
       key={hlsUrl.itemId}
       hlsUrl={hlsUrl.url}
       mediaItemId={session.mediaItemId}
-      playback={playback}
+      playback={hlsUrl.saved ? { ...playback, offlineKey: hlsUrl.saved.key, mediaSourceId: hlsUrl.saved.sourceId, subtitleStreams } : playback}
       isHost={isHost}
       collaborativeControl={collaborativeControl}
       syncMode={session.syncMode}

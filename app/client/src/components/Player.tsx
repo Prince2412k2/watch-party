@@ -9,6 +9,7 @@ import { createTransportIntent } from '../sync/transportIntent.ts'
 import { createLocalTransport } from '../sync/transportCommand.ts'
 import { isBuffered } from '../sync/bufferSeek.ts'
 import { BUFFER_AHEAD_SEC } from '../sync/syncCore.ts'
+import { getMedia } from '../offline/storage.ts'
 import { IS_NATIVE } from '../native/env.ts'
 import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc.ts'
@@ -49,9 +50,9 @@ interface HlsLike { levels?: HlsLevel[]; currentLevel: number; nextLevel: number
 interface QualityState { levels: HlsLevel[]; current: number; selected: number; choose: (index: number) => void }
 type TrackSelection = { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null }
 export interface PlayerTrack { index: number; displayTitle?: string; title?: string; language?: string; codec?: string; isDefault?: boolean; isExternal?: boolean; deliveryUrl?: string | null }
-export interface PlayerPlayback { mediaSourceId?: string | null; playSessionId?: string | null; audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
+export interface PlayerPlayback { offlineKey?: string; mediaSourceId?: string | null; playSessionId?: string | null; audioStreams?: PlayerTrack[]; subtitleStreams?: PlayerTrack[]; selectedAudioIndex?: number | null; selectedSubtitleIndex?: number | null }
 export interface PlayerProps {
-  hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
+  standalone?: boolean; hlsUrl?: string; playback?: PlayerPlayback; mediaItemId?: string; isHost?: boolean; collaborativeControl?: boolean; syncMode?: 'hopping' | 'dragging'; onStruggle?: VoidCallback
   onToggleMic?: VoidCallback; onToggleCam?: VoidCallback; micOn?: boolean; camOn?: boolean
   // Purely-local display toggle: "hide every camera tile from MY screen". Owned
   // by WatchView (Party.tsx); it is never published to the room, so the eye
@@ -152,7 +153,7 @@ function useSubtitlePreferences(videoRef?: RefObject<HTMLVideoElement | null>, c
 }
 
 export default function Player({
-  hlsUrl, playback, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
+  standalone = false, hlsUrl, playback, mediaItemId, isHost, collaborativeControl, syncMode, onStruggle,
   onToggleMic, onToggleCam, micOn, camOn,
   hideAllFeeds, onToggleHideAllFeeds,
   onToggleLayout, onOpenChat, onToggleChat, layoutMode,
@@ -162,7 +163,7 @@ export default function Player({
   onHoldChrome, onReleaseChrome, onPlayingChange,
   peerPlayback, showPeerPointers,
 }: PlayerProps = {}) {
-  const canControl = Boolean(isHost || collaborativeControl)
+  const canControl = Boolean(standalone || isHost || collaborativeControl)
   const videoRef = useRef<HTMLVideoElement | null>(null)
 
   // A freshly-opened movie is authored as "playing" immediately (so muted
@@ -178,13 +179,14 @@ export default function Player({
   // unmuted. Everyone starts muted so autoplay (synced play()) isn't blocked
   // by the browser; the 'm' key / mute button flips this, not canControl.
   const [userMuted, setUserMuted] = useState(true)
+  const [brightness, setBrightness] = useState(1)
   const toggleMuted = () => setUserMuted(m => !m)
 
   // Local (non-shared) playback phase from useSyncPlay, surfaced here so the
   // mobile transport button (owned by Player, not the hook) can tell a real
   // user pause apart from useSyncPlay's own catch-up/buffering pauses instead
   // of reading raw media.paused. Lifted out of SyncBridge because it's a
-  // sibling of MobileBottomBar, not an ancestor.
+  // sibling of NativeTransportBar, not an ancestor.
   const [localPhase, setLocalPhase] = useState<'ready' | 'catchingUp' | 'buffering'>('ready')
 
   // Native (Tauri) desktop shell: the video surface + its transport are
@@ -214,15 +216,14 @@ export default function Player({
           camera tiles / chat that render as siblings of this player */}
       <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', isolation: 'isolate' }}>
         {/* The vidstack skin's own control bar is fully replaced by the flat,
-            single-row control bar below (desktop: DesktopControlBar; phone:
-            MobileBottomBar) — always hide it, on every platform. Skin is
+            native transport below — always hide it, on every platform. Skin is
             interactive only for controllers; guests can't drive transport. */}
-        <VideoSkin className="watch-skin watch-skin--nobar" style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none' }}>
+        <VideoSkin className="watch-skin watch-skin--nobar" style={{ width: '100%', height: '100%', pointerEvents: canControl ? 'auto' : 'none', borderRadius: 0 }}>
           {/* Everyone starts muted so synced play() autoplays without a gesture;
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
         </VideoSkin>
 
         {canControl && hostMuted && (
@@ -230,20 +231,31 @@ export default function Player({
         )}
 
         {/* Route all playback through SyncPlay + keyboard control */}
+        {standalone ? <StandaloneBridge onPlayingChange={onPlayingChange} /> : (
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
           onOpenChat={onOpenChat} onToggleChat={onToggleChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
           seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
           userMuted={userMuted} onToggleMuted={toggleMuted} onLocalPhase={setLocalPhase} onPlayingChange={onPlayingChange} />
-
-        <PlaybackReporter mediaItemId={mediaItemId} playback={playback} />
+        )}
+        <MediaErrorNotice />
+        {!standalone && <PlaybackReporter mediaItemId={mediaItemId} playback={playback} />}
 
         {userMuted && !hostMuted && (
           <UnmuteButton onClick={toggleMuted} />
         )}
 
-        {phone ? (
-          /* Native-style transport. Call controls live in the room header. */
-            <MobileBottomBar
+        <div style={{ position: 'absolute', left: 'max(8px, env(safe-area-inset-left))', top: '50%', transform: 'translateY(-50%)', zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
+          <PictureBrightness value={brightness} onChange={setBrightness} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
+        </div>
+        <div style={{ position: 'absolute', right: 'max(8px, env(safe-area-inset-right))', top: '50%', transform: 'translateY(-50%)', paddingTop: 100, zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <PlayerVolume userMuted={userMuted} onToggleMuted={toggleMuted} size={44} reveal="always" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
+          {onToggleCam && <BarBtn onClick={onToggleCam} title={camOn ? 'Turn camera off' : 'Turn camera on'} active={camOn}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-4v12l-6-4"/>{!camOn && <path d="M3 3 21 21"/>}</svg>
+          </BarBtn>}
+        </div>
+        <>
+
+            <NativeTransportBar
             mediaItemId={mediaItemId}
             mediaElementRef={videoRef}
             playback={playback}
@@ -260,38 +272,42 @@ export default function Player({
              peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
              visible={visible} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
            />
-        ) : (
-          <>
-            <div style={{ position: 'absolute', right: 18, top: 'calc(50% + 66px)', zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
-              <PlayerVolume userMuted={userMuted} onToggleMuted={toggleMuted} reveal="always" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
-            </div>
-            {/* Timeline row + one control row, pinned bottom, over the single
-                allowed black-alpha scrim. Read-only for guests (no handle, no
-                pointer events on the timeline) — canControl gates
-                interactivity throughout. */}
-            <DesktopControlBar
-              mediaItemId={mediaItemId}
-              mediaElementRef={videoRef}
-              playback={playback}
-              onSetPlaybackTracks={onSetPlaybackTracks}
-              subtitlePreferences={subtitlePreferences}
-              onSetSubtitlePreferences={onSetSubtitlePreferences}
-              canManageMedia={Boolean(isHost)}
-              visible={visible} canControl={canControl}
-              localPhase={localPhase}
-              immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive}
-              userMuted={userMuted} onToggleMuted={toggleMuted}
-              micOn={micOn} camOn={camOn}
-              onToggleMic={onToggleMic} onToggleCam={onToggleCam}
-              hideAllFeeds={hideAllFeeds} onToggleHideAllFeeds={onToggleHideAllFeeds}
-              onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
-              peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
-            />
-          </>
-        )}
+
+        </>
       </div>
     </VPlayer.Provider>
   )
+}
+
+function StandaloneBridge({ onPlayingChange }: { onPlayingChange?: (playing: boolean) => void }) {
+  const media = VPlayer.useMedia() as unknown as MediaLike
+  useEffect(() => {
+    if (!media) return
+    const transport = (event: Event) => {
+      const command = (event as CustomEvent<{kind:string; time?:number; positionTicks?:number}>).detail
+      if (command.kind === 'play') void media.play().catch(() => {})
+      if (command.kind === 'pause') media.pause()
+      if (command.kind === 'seek') media.currentTime = command.time ?? (command.positionTicks ?? 0) / 10_000_000
+    }
+    const playing = () => onPlayingChange?.(!media.paused)
+    window.addEventListener('watch:transport', transport)
+    media.addEventListener('play', playing); media.addEventListener('pause', playing)
+    return () => { window.removeEventListener('watch:transport', transport); media.removeEventListener('play', playing); media.removeEventListener('pause', playing) }
+  }, [media, onPlayingChange])
+  return null
+}
+
+function MediaErrorNotice() {
+  const media = VPlayer.useMedia() as unknown as MediaLike
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!media) return
+    const error = () => setFailed(true)
+    const reset = () => setFailed(false)
+    media.addEventListener('error', error); media.addEventListener('loadstart', reset)
+    return () => { media.removeEventListener('error', error); media.removeEventListener('loadstart', reset) }
+  }, [media])
+  return failed ? <div role="alert" style={{position:'absolute',top:'40%',left:24,right:24,zIndex:Z.controlBar,textAlign:'center',color:'white'}}>Could not read this movie. Reconnect and retry, or download it again if browser storage was cleared.</div> : null
 }
 
 function PlaybackReporter({ mediaItemId, playback }: { mediaItemId?: string; playback?: PlayerPlayback }) {
@@ -549,7 +565,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     TICKS_PER_SECOND,
   } = useSyncPlay({ playerRef: mediaRef as unknown as RefObject<HTMLVideoElement | null>, isHost, collaborativeControl, syncMode, onStruggle, onAutoplayBlocked })
 
-  // Surface localPhase to Player (MobileBottomBar's transport button needs it
+  // Surface localPhase to Player (NativeTransportBar's transport button needs it
   // and is a sibling of this component, not a descendant).
   useEffect(() => { onLocalPhase?.(localPhase) }, [localPhase, onLocalPhase])
 
@@ -1058,13 +1074,13 @@ function FullscreenGlyph({ size, immersive }: { size: number; immersive?: boolea
 //              boundary, again on the same stream (no re-transcode / reload).
 // This is entirely local to each client, so guests may sit on different rungs
 // than the host — bitrate is per-client, transport (play/pause/seek) is shared.
-function useQualityLevels(media: MediaLike | null | undefined): QualityState {
+function useQualityLevels(media: MediaLike | null | undefined, direct = false): QualityState {
   const [levels, setLevels] = useState<HlsLevel[]>([])       // hls.levels snapshot
   const [current, setCurrent] = useState(-1)     // active level index (-1 = none yet)
   const [selected, setSelected] = useState(-1)   // user choice; -1 = Auto
 
   useEffect(() => {
-    if (!media) return
+    if (!media || direct) return
     let hls: HlsLike | undefined
     let poll: ReturnType<typeof setInterval> | undefined
     const sync = () => {
@@ -1095,7 +1111,7 @@ function useQualityLevels(media: MediaLike | null | undefined): QualityState {
       const engine = hls
       if (engine) evs.forEach(e => { try { engine.off(e, sync) } catch {} })
     }
-  }, [media])
+  }, [media, direct])
 
   const choose = (i: number) => {
     const hls = media?.engine
@@ -1178,7 +1194,7 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
     let trackElement = externalTracks.current.get(stream.index)
     const baseUrl = subtitleContentUrl(mediaItemId, stream.index, playback?.mediaSourceId)
     const version = encodeURIComponent(stream.deliveryUrl || String(playback?.subtitleStreams?.length ?? 0))
-    const src = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}v=${version}`
+    const src = stream.deliveryUrl?.startsWith('/__subtitle/') ? stream.deliveryUrl : `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}v=${version}`
     if (trackElement?.src.endsWith(src)) return trackElement
     if (trackElement) {
       trackElement.remove()
@@ -1290,25 +1306,37 @@ function useSubtitleTrack(media: MediaLike | null | undefined, videoRef: RefObje
     const onManifest = () => { if (hls) applySubtitle(hls, selectedIndex.current) }
     const attach = () => {
       const engine = media.engine
-      if (!engine) return false
+      if (!engine) {
+        const stream = playback?.subtitleStreams?.find(candidate => candidate.index === selectedIndex.current)
+        const element = stream && canSideLoadSubtitle(stream) ? ensureExternalTrack(stream) : null
+        const video = videoRef?.current
+        if (video) for (let i = 0; i < video.textTracks.length; i++) video.textTracks[i].mode = video.textTracks[i] === element?.track ? 'showing' : 'disabled'
+        return false
+      }
       hls = engine
       applySubtitle(engine, selectedIndex.current)
       engine.on('hlsCuesParsed', onCuesParsed)
       engine.on('hlsManifestParsed', onManifest)
       return true
     }
-    if (!attach()) poll = setInterval(() => { if (attach() && poll) clearInterval(poll) }, 50)
+    if (!attach() && !playback?.offlineKey) poll = setInterval(() => { if (attach() && poll) clearInterval(poll) }, 50)
     return () => {
       if (poll) clearInterval(poll)
       hls?.off('hlsCuesParsed', onCuesParsed)
       hls?.off('hlsManifestParsed', onManifest)
     }
-  }, [media, playback?.selectedSubtitleIndex, playback?.subtitleStreams, applySubtitle, resolveHlsIdx])
+  }, [media, playback?.offlineKey, playback?.selectedSubtitleIndex, playback?.subtitleStreams, applySubtitle, resolveHlsIdx])
 
   const choose = useCallback((jellyfinIndex: number | null) => {
     selectedIndex.current = jellyfinIndex
     const hls = media?.engine
-    if (!hls) return
+    if (!hls) {
+      const stream = playback?.subtitleStreams?.find(candidate => candidate.index === jellyfinIndex)
+      const element = stream && canSideLoadSubtitle(stream) ? ensureExternalTrack(stream) : null
+      const video = videoRef?.current
+      if (video) for (let i = 0; i < video.textTracks.length; i++) video.textTracks[i].mode = video.textTracks[i] === element?.track ? 'showing' : 'disabled'
+      return
+    }
     applySubtitle(hls, jellyfinIndex)
   }, [media, applySubtitle])
 
@@ -1374,13 +1402,13 @@ const fmtClock = formatClock
 // changes only AnalogTimeline's preview; pointer-up emits one deliberate local
 // transport command, which authors exactly one shared seek.
 //
-// `cached` is left unset: there is no on-disk cache in this client to read time
-// spans from, so the layer renders empty rather than being faked out of the
-// network buffer.
+// Complete saved files cover the whole timeline. Partial byte ranges are not
+// mapped to time: variable bitrate files need sample-table mapping for that.
 interface PlayerTimelineProps {
   canControl?: boolean
   mediaItemId?: string
   mediaSourceId?: string | null
+  cacheKey?: string
   labels?: boolean
   trailing?: ReactNode
   onHoldChrome?: (reason: string) => void
@@ -1388,10 +1416,19 @@ interface PlayerTimelineProps {
   peerPlayback?: Record<string, PeerPlayback>
   showPeerPointers?: boolean
 }
-function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, labels, trailing, onHoldChrome, onReleaseChrome, peerPlayback, showPeerPointers }: PlayerTimelineProps = {}) {
+function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, cacheKey, labels, trailing, onHoldChrome, onReleaseChrome, peerPlayback, showPeerPointers }: PlayerTimelineProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
   const { cur, dur, ranges } = useMediaClock(media)
   const preferences = useDisplayPreferences()
+  const [fullyCached, setFullyCached] = useState(false)
+  useEffect(() => {
+    setFullyCached(false)
+    if (!cacheKey) return
+    let live = true
+    const refresh = () => { void getMedia(cacheKey).then(record => { if (live) setFullyCached(Boolean(record && record.received === record.size)) }).catch(() => {}) }
+    refresh(); const timer = setInterval(refresh, 2000)
+    return () => { live = false; clearInterval(timer) }
+  }, [cacheKey])
   const [manifest, setManifest] = useState<TrickplayManifest | null>(null)
   const [failedSheet, setFailedSheet] = useState<number | null>(null)
   const peerMarkers = showPeerPointers
@@ -1450,6 +1487,7 @@ function PlayerTimeline({ canControl, mediaItemId, mediaSourceId, labels, traili
     <AnalogTimeline
       positionSec={cur}
       durationSec={dur}
+      cached={fullyCached && dur > 0 ? [{start:0,end:dur}] : []}
       buffered={ranges}
       canControl={canControl}
       onScrubCommit={(seconds) => {
@@ -1491,6 +1529,23 @@ function HostControlsHint() {
 // The `volumechange` subscription is new. Without it the ↑/↓ keys moved the
 // element's volume while the control kept rendering its own stale copy, so the
 // two disagreed until the component happened to remount.
+function PictureBrightness({ value, onChange, onHoldChrome, onReleaseChrome }: {
+  value: number; onChange: (value: number) => void
+  onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
+}) {
+  useEffect(() => () => onReleaseChrome?.(CHROME_HOLD.brightness), [onReleaseChrome])
+  return <div className="watch-brightness" onClick={event => event.stopPropagation()}>
+    <input type="range" min={0.5} max={1.5} step={0.05} value={value} aria-label="Picture brightness" aria-orientation="vertical" aria-valuetext={`${Math.round(value * 100)}%`}
+      onChange={event => onChange(Number(event.target.value))}
+      onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); onHoldChrome?.(CHROME_HOLD.brightness) }}
+      onPointerUp={() => onReleaseChrome?.(CHROME_HOLD.brightness)} onPointerCancel={() => onReleaseChrome?.(CHROME_HOLD.brightness)}
+      onFocus={() => onHoldChrome?.(CHROME_HOLD.brightness)} onBlur={() => onReleaseChrome?.(CHROME_HOLD.brightness)} />
+    <BarBtn title="Reset picture brightness" onClick={() => onChange(1)}>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+    </BarBtn>
+  </div>
+}
+
 function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal, onHoldChrome, onReleaseChrome }: {
   userMuted?: boolean; onToggleMuted?: VoidCallback; size?: number; glyph?: number
   reveal?: 'hover' | 'always'
@@ -1530,96 +1585,7 @@ function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal,
 interface ControlBarProps extends Pick<PlayerProps, 'mediaItemId' | 'playback' | 'onSetPlaybackTracks' | 'subtitlePreferences' | 'onSetSubtitlePreferences' | 'visible' | 'immersive' | 'enterImmersive' | 'exitImmersive' | 'micOn' | 'camOn' | 'onToggleMic' | 'onToggleCam' | 'hideAllFeeds' | 'onToggleHideAllFeeds' | 'onHoldChrome' | 'onReleaseChrome' | 'peerPlayback' | 'showPeerPointers'> {
   mediaElementRef?: RefObject<HTMLVideoElement | null>; canControl?: boolean; canManageMedia?: boolean; userMuted?: boolean; onToggleMuted?: VoidCallback; localPhase?: LocalPhase
 }
-function DesktopControlBar({
-  mediaItemId, playback, mediaElementRef, onSetPlaybackTracks,
-  subtitlePreferences: canonicalSubtitlePreferences, onSetSubtitlePreferences,
-  visible, canControl, canManageMedia, immersive, enterImmersive, exitImmersive,
-  userMuted, onToggleMuted, micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds,
-  onHoldChrome, onReleaseChrome,
-  peerPlayback, showPeerPointers,
-  localPhase,
-}: ControlBarProps = {}) {
-  const media = VPlayer.useMedia() as unknown as MediaLike
-  const quality = useQualityLevels(media)
-  const audioTrack = useAudioTrack(media, playback)
-  const subtitlePreferences = useSubtitlePreferences(mediaElementRef, canonicalSubtitlePreferences, onSetSubtitlePreferences)
-  const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences, mediaItemId)
-  const { cur, dur } = useMediaClock(media)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-
-  const [settingsView, setSettingsView] = useState<'main' | 'subs'>('main')
-
-  // Menus never auto-hide: force the row visible while settings is open, even
-  // if the idle timer (owned by the party frame) has already faded `visible`.
-  const shown = visible || settingsOpen
-
-  return (
-    <div className="watch-skin" style={{
-      position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: Z.controlBar,
-      opacity: shown ? 1 : 0, pointerEvents: shown ? 'auto' : 'none', transition: 'opacity .25s',
-    }}>
-      {/* The one allowed gradient: a neutral black-alpha legibility scrim. */}
-      <div aria-hidden style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, height: 140,
-        background: 'linear-gradient(0deg, rgba(0,0,0,.8), transparent)',
-        pointerEvents: 'none',
-      }} />
-      <div style={{
-        position: 'relative', display: 'flex', flexDirection: 'column', gap: 2,
-        padding: '0 18px 12px',
-      }}>
-        {/* Row 1 — the timeline, spanning the full width of the bar. The row
-            wrapper is a flex ROW on purpose: the track sizes itself with
-            `flex: 1`, which would resolve against the column axis (and collapse
-            its height to 0) if it were a direct child of the column above. */}
-        <div style={{ display: 'flex', alignItems: 'center' }}>
-          <PlayerTimeline
-            canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId}
-            onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
-            peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
-          />
-        </div>
-
-        {/* Row 2 — three clusters. A 1fr/auto/1fr grid so the centre trio is
-            truly centred in the bar regardless of how wide the side clusters
-            grow (long durations, the guest hint). */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <TransportButton canControl={canControl} localPhase={localPhase} />
-            <span style={{ fontFamily: MONO_F, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', flexShrink: 0, whiteSpace: 'nowrap' }}>
-              <span style={{ color: '#f4f4f5' }}>{fmtClock(cur)}</span> / {fmtClock(dur)}
-            </span>
-            {!canControl && <HostControlsHint />}
-          </div>
-
-          <div />
-
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-            <IconBtn onClick={() => { setSettingsView('subs'); setSettingsOpen(true) }} title="Subtitles" active={settingsOpen && settingsView === 'subs'}><SubtitleGlyph size={18} /></IconBtn>
-            <div style={{ position: 'relative' }}>
-              <IconBtn onClick={() => { setSettingsView('main'); setSettingsOpen(value => !value || settingsView !== 'main') }} title="Settings" active={settingsOpen && settingsView === 'main'}>
-                <GearGlyph size={18} />
-              </IconBtn>
-              {/* Mounted only while open, as before: the menu's own view stack
-                  and search box reset each time it is opened. */}
-              {settingsOpen && <SettingsMenu key={settingsView} initialView={settingsView} open playback={playback} mediaItemId={mediaItemId} quality={quality} canManageMedia={canManageMedia} onSetPlaybackTracks={onSetPlaybackTracks} onChooseAudio={audioTrack.choose} onChooseSubtitle={subtitleTrack.choose} subtitlePreferences={subtitlePreferences.preferences} onUpdateSubtitlePreferences={subtitlePreferences.update} onResetSubtitlePreferences={subtitlePreferences.reset} onClose={() => setSettingsOpen(false)} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />}
-            </div>
-
-            <IconBtn onClick={() => (immersive ? exitImmersive?.() : enterImmersive?.())} title={immersive ? 'Exit full screen (Ctrl+F)' : 'Full screen (Ctrl+F)'}>
-              <FullscreenGlyph size={18} immersive={immersive} />
-            </IconBtn>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Phone transport ─────────────────────────────────────────────────────────
-// Full-width timeline, play/clock, then direct subtitles, settings and fullscreen.
-// The surface keeps tap-to-reveal and double-tap seek. Camera/mic controls are in
-// the room header; movie mute is in Settings (iOS owns hardware volume).
-function MobileBottomBar({
+function NativeTransportBar({
   mediaItemId,
   playback,
   mediaElementRef,
@@ -1633,7 +1599,7 @@ function MobileBottomBar({
   peerPlayback, showPeerPointers,
 }: ControlBarProps = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
-  const quality = useQualityLevels(media)
+  const quality = useQualityLevels(media, Boolean(playback?.offlineKey))
   const audioTrack = useAudioTrack(media, playback)
   const subtitlePreferences = useSubtitlePreferences(mediaElementRef, canonicalSubtitlePreferences, onSetSubtitlePreferences)
   const subtitleTrack = useSubtitleTrack(media, mediaElementRef, playback, subtitlePreferences.preferences, mediaItemId)
@@ -1689,13 +1655,6 @@ function MobileBottomBar({
       bottom: 'calc(var(--sa-b) + 8px)',
       opacity: shown ? 1 : 0, pointerEvents: shown ? 'auto' : 'none', transition: 'opacity .25s',
     }}>
-      {/* The one allowed gradient: a neutral black-alpha legibility scrim rising
-          behind the bar so glyphs hold contrast over a bright video frame. */}
-      <div aria-hidden style={{
-        position: 'absolute', left: -8, right: -8, bottom: -8, top: -48,
-        background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.4) 60%, rgba(0,0,0,.6) 100%)',
-        pointerEvents: 'none',
-      }} />
       <div ref={barRef} style={{
         position: 'relative',
         display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 6px 2px',
@@ -1705,7 +1664,7 @@ function MobileBottomBar({
             to the room header rather than competing with transport. */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '2px 6px 0' }}>
           <PlayerTimeline
-            canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId}
+            canControl={canControl} mediaItemId={mediaItemId} mediaSourceId={playback?.mediaSourceId} cacheKey={playback?.offlineKey}
             onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome}
             peerPlayback={peerPlayback} showPeerPointers={showPeerPointers}
           />
@@ -1806,7 +1765,7 @@ function BarBtn({ onClick, title, active, danger, primary, children }: ButtonPro
 
 // Density scale for the gear menu. `regular` is the verbatim desktop sizing —
 // nothing here is reachable without passing `compact`, so DesktopControlBar
-// renders pixel-identically to before. `compact` is what MobileBottomBar passes:
+// renders pixel-identically to before. `compact` is what NativeTransportBar passes:
 // a phone is held ~30cm from the eye and the landscape viewport is only ~400px
 // tall, so type, padding, width and the panel's own max height all come down.
 //
@@ -1879,7 +1838,7 @@ interface SettingsMenuProps {
   onSetPlaybackTracks?: (tracks: TrackSelection) => void; onChooseAudio?: (jellyfinIndex: number) => void; onChooseSubtitle?: (jellyfinIndex: number | null) => void
   subtitlePreferences?: SubtitlePreferences; onUpdateSubtitlePreferences?: (patch: Partial<SubtitlePreferences>) => void; onResetSubtitlePreferences?: VoidCallback; onClose?: VoidCallback
   onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
-  /** Phone density (MobileBottomBar). Omitted/false keeps the desktop scale. */
+  /** Phone density (NativeTransportBar). Omitted/false keeps the desktop scale. */
   compact?: boolean
   initialView?: 'main' | 'subs'
   userMuted?: boolean; onToggleMuted?: VoidCallback
@@ -2025,7 +1984,7 @@ function SettingsMenu({ open = false, playback, mediaItemId, quality, canManageM
         {view === 'main' && (
           <div style={{ padding: S.mainPad }}>
             {onToggleMuted && navRow('Movie sound', userMuted ? 'Muted' : 'On', onToggleMuted)}
-            {navRow('Quality', curQuality, () => setView('quality'))}
+            {hasLevels && navRow('Quality', curQuality, () => setView('quality'))}
             {navRow('Subtitles', curSub, () => setView('subs'))}
             {audioStreams.length > 1 && navRow('Audio', curAudio, () => setView('audio'))}
           </div>

@@ -1852,16 +1852,6 @@ class _TransportBar extends StatelessWidget {
         AppSpacing.md,
         AppSpacing.sm,
       ),
-      // The one allowed legibility exception: a bottom-up black-alpha scrim
-      // behind the transport row (mirrors the redesigned web control bar's
-      // `linear-gradient(0deg, rgba(0,0,0,.8), transparent)`).
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Color(0xCC000000), Color(0x00000000)],
-        ),
-      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

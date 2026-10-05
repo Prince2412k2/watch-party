@@ -129,26 +129,20 @@ export interface StageActions {
   label: string
   /** Audio/subtitle selection only applies to something with media behind it. */
   tracks: boolean
-  /** Offline download. Only the native shell can hold a file. */
+  /** Offline download. Offered when local media storage is supported. */
   download: boolean
 }
 
-/**
- * Which actions the stage offers for the focused item.
- *
- * `native` is `IS_NATIVE`. The offline download UI has always been gated on it
- * (native/env.ts says so in as many words) — a browser tab has nowhere to put a
- * downloaded file, and rendering the control disabled everywhere else would
- * leave a permanently dead button on the primary surface.
- */
-export function stageActions(item: StageItem | null, native: boolean): StageActions {
+/** Which actions the focused title supports; local storage may be a native
+ * filesystem or the browser's persistent chunk store. */
+export function stageActions(item: StageItem | null, downloadSupported: boolean): StageActions {
   if (!item) return { plays: false, label: 'Play', tracks: false, download: false }
   const playable = item.Type !== 'BoxSet'
   return {
     plays: playable,
     label: playActionLabel(item),
     tracks: playable,
-    download: playable && native,
+    download: playable && downloadSupported,
   }
 }
 
