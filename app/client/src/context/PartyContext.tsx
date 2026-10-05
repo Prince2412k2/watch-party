@@ -327,13 +327,14 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   }, [socket, userId])
 
   // Actions
-  function createParty(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}): Promise<string> {
+  function createParty(mediaItemId: string, tracks: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}): Promise<string> {
     if (Object.prototype.hasOwnProperty.call(tracks, 'subtitleStreamIndex')) {
       dispatch({ type: 'SET_LOCAL_SUBTITLE', itemId: mediaItemId, index: tracks.subtitleStreamIndex ?? null })
     }
     return new Promise<string>((resolve, reject) => {
       socket.emit('party:create', {
         mediaItemId,
+        ...(tracks.mediaSourceId ? { mediaSourceId: tracks.mediaSourceId } : {}),
         audioStreamIndex: tracks.audioStreamIndex,
         resumePositionTicks: tracks.resumePositionTicks,
       }, (value: unknown) => {
@@ -360,12 +361,13 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   }
 
   // Pick a title from the lobby → everyone transitions into the player.
-  function selectMedia(mediaItemId: string, tracks: { audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}) {
+  function selectMedia(mediaItemId: string, tracks: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null } = {}) {
     if (Object.prototype.hasOwnProperty.call(tracks, 'subtitleStreamIndex')) {
       dispatch({ type: 'SET_LOCAL_SUBTITLE', itemId: mediaItemId, index: tracks.subtitleStreamIndex ?? null })
     }
     socket.emit('party:selectMedia', {
       mediaItemId,
+      ...(tracks.mediaSourceId ? { mediaSourceId: tracks.mediaSourceId } : {}),
       audioStreamIndex: tracks.audioStreamIndex,
       resumePositionTicks: tracks.resumePositionTicks,
     })

@@ -54,6 +54,7 @@ export const CHROME_HOLD = {
   settings: 'settings',
   scrubbing: 'scrubbing',
   volume: 'volume',
+  brightness: 'brightness',
 } as const
 
 export type ChromeHoldReason = (typeof CHROME_HOLD)[keyof typeof CHROME_HOLD]

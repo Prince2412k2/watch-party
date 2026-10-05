@@ -87,21 +87,15 @@ export function showPlayLabel(item: ShowStageItem | null): string {
   return label ? `Resume ${label}` : 'Play'
 }
 
-/**
- * Which actions the stage offers for the focused item.
- *
- * `native` is `IS_NATIVE`: a browser tab has nowhere to put a downloaded file,
- * and rendering the control disabled everywhere else would leave a permanently
- * dead button on a primary surface. Audio/subtitle selection is gated the same
- * way it is on Movies — on there being a media file behind the item at all.
- */
-export function showActions(item: ShowStageItem | null, native: boolean): StageActions {
+/** Which actions the focused title supports; local storage may be a native
+ * filesystem or the browser's persistent chunk store. */
+export function showActions(item: ShowStageItem | null, downloadSupported: boolean): StageActions {
   if (!item) return { plays: false, label: 'Play', tracks: false, download: false }
   const playable = item.Type !== SERIES_TYPE
   return {
     plays: playable,
     label: showPlayLabel(item),
     tracks: playable,
-    download: playable && native,
+    download: playable && downloadSupported,
   }
 }
