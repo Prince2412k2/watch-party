@@ -10,6 +10,7 @@ import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
 import '../../ui/widgets/download_poster.dart';
+import '../../ui/widgets/download_actions.dart';
 import 'media_row.dart';
 import 'servarr_queue_screen.dart';
 
@@ -100,7 +101,10 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Downloads', style: AppTheme.displaySmall.copyWith(color: wp.text)),
+              Text(
+                'Downloads',
+                style: AppTheme.displaySmall.copyWith(color: wp.text),
+              ),
               const SizedBox(height: AppSpacing.sm),
               Text(
                 scope == DownloadsScope.device
@@ -213,8 +217,8 @@ class _DownloadRow extends ConsumerWidget {
                   color: failed
                       ? AppColors.red
                       : paused
-                          ? wp.faint
-                          : wp.dim,
+                      ? wp.faint
+                      : wp.dim,
                 ),
               ),
             ],
@@ -228,7 +232,10 @@ class _DownloadRow extends ConsumerWidget {
                     record.error ?? 'Download failed',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: AppColors.red, fontSize: 12.5),
+                    style: const TextStyle(
+                      color: AppColors.red,
+                      fontSize: 12.5,
+                    ),
                   ),
                 ),
                 const SizedBox(width: AppSpacing.md),
@@ -290,13 +297,13 @@ class _DownloadRow extends ConsumerWidget {
   }
 
   (String, bool) _statusLabel(DownloadStatus status) => switch (status) {
-        DownloadStatus.enqueued => ('Queued', false),
-        DownloadStatus.running => ('Downloading', false),
-        DownloadStatus.paused => ('Paused', true),
-        DownloadStatus.failed => ('Error', false),
-        DownloadStatus.complete => ('Downloaded', false),
-        DownloadStatus.canceled => ('Canceled', false),
-      };
+    DownloadStatus.enqueued => ('Queued', false),
+    DownloadStatus.running => ('Downloading', false),
+    DownloadStatus.paused => ('Paused', true),
+    DownloadStatus.failed => ('Error', false),
+    DownloadStatus.complete => ('Downloaded', false),
+    DownloadStatus.canceled => ('Canceled', false),
+  };
 
   static String _fmtBytes(int bytes) {
     if (bytes <= 0) return '0 MB';
@@ -371,14 +378,11 @@ class _CompletedRow extends ConsumerWidget {
   /// whole film again, so it asks — unlike cancelling a download in progress,
   /// which throws away only what has not finished arriving.
   Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
-    final ok = await showConfirm(
+    await removeLocalDownload(
       context,
-      title: 'Delete download?',
-      body: '${record.title} will be deleted from this device.',
-      confirmLabel: 'Delete',
-      danger: true,
+      ref,
+      itemId: record.itemId,
+      title: record.title,
     );
-    if (!ok) return;
-    await ref.read(offlineProvider.notifier).remove(record.itemId);
   }
 }

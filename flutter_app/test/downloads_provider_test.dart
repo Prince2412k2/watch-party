@@ -290,6 +290,7 @@ void _reconcileTests() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
       for (final id in ['kept', 'deleted', 'unreachable']) {
+        await proxy.markDownload(id, {'title': id});
         final entry = await proxy.openEntry(id);
         entry.setTotalLength(1);
         await entry.write(0, [1]);

@@ -132,6 +132,13 @@ class CacheFillController {
     );
   }
 
+  Future<void> markDownload(String itemId, Map<String, dynamic> metadata) =>
+      _proxy.markDownload(itemId, metadata);
+
+  Future<void> releaseDownload(String itemId) => _proxy.releaseDownload(itemId);
+  Future<List<Map<String, dynamic>>> pendingDownloads() =>
+      _proxy.pendingDownloads();
+
   int _cachedBytesOf(CacheEntry entry) =>
       entry.rangeSet.intervals.fold<int>(0, (sum, iv) => sum + (iv[1] - iv[0]));
 

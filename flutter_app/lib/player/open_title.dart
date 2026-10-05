@@ -1,3 +1,5 @@
+import 'dart:async';
+
 // Opening a library title into the shared player.
 //
 // Lifted out of `_SoloPlayer._open()` unchanged in behaviour. It lived inside a
@@ -78,6 +80,14 @@ Future<OpenTitleResult> openTitleIntoPlayer(
 
     // Routed through the on-device caching proxy rather than a direct signed
     // URL — it mints and re-mints one itself on demand.
+    if (isAuthenticated) {
+      unawaited(
+        ref
+            .read(mediaCacheProxyProvider)
+            .rememberTitle(itemId, mediaSourceId: mediaSourceId)
+            .catchError((_) {}),
+      );
+    }
     final streamUrl = isAuthenticated
         ? ref
               .read(mediaCacheProxyProvider)

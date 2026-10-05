@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../models/models.dart';
 import '../../state/offline_provider.dart';
 import '../../ui/ui.dart';
+import '../../ui/widgets/download_actions.dart';
 
 /// Offline library (PLAN §4 E8.3) — replaces the E0 placeholder at
 /// `/offline`. Router wiring (already frozen, `lib/app/router.dart`):
@@ -119,18 +120,12 @@ class _OfflineTile extends ConsumerWidget {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               onPressed: () async {
-                final confirmed = await showConfirm(
+                await removeLocalDownload(
                   context,
-                  title: 'Remove download?',
-                  body: '${record.title} will be deleted from this device.',
-                  confirmLabel: 'Remove',
-                  danger: true,
+                  ref,
+                  itemId: record.itemId,
+                  title: record.title,
                 );
-                if (confirmed) {
-                  await ref
-                      .read(offlineProvider.notifier)
-                      .remove(record.itemId);
-                }
               },
             ),
           ),

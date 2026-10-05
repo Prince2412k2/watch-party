@@ -79,7 +79,8 @@ class MediaCacheProxy {
   String _origin;
   String get origin => _origin;
 
-  String _key(String itemId, String? source) => source == null
+  String _key(String itemId, String? source) =>
+      source == null || source == itemId
       ? itemId
       : 'source-${sha256.convert(utf8.encode(jsonEncode([itemId, source])))}';
 
@@ -136,6 +137,10 @@ class MediaCacheProxy {
   }
 
   HttpServer? _server;
+  Timer? _cleanupTimer;
+  bool _clearing = false;
+  int _clearEpoch = 0;
+  final Map<String, int> _serving = {};
 
   /// How far past a served request to keep fetching in the background so the
   /// next chunk of playback is already cached by the time mpv asks for it.
@@ -171,9 +176,13 @@ class MediaCacheProxy {
       _handleRequest,
       onError: (_) {}, // a single bad request must not take the server down
     );
+    _cleanupTimer = Timer.periodic(const Duration(hours: 1), (_) {
+      if (!_clearing) unawaited(evict().catchError((_) {}));
+    });
   }
 
   Future<void> dispose() async {
+    _cleanupTimer?.cancel();
     stopTransfers();
     await _server?.close(force: true);
     _server = null;
@@ -211,9 +220,19 @@ class MediaCacheProxy {
   /// [RangeCacheStore] — there's exactly one per proxy.
   Future<CacheEntry> openEntry(String itemId, {String? mediaSourceId}) async {
     final generation = _generation;
+    final clearEpoch = _clearEpoch;
     final entry = await _store.open(_key(itemId, mediaSourceId));
+    if (clearEpoch != _clearEpoch && !entry.keepOffline) {
+      throw StateError('Cache entry cleared while opening');
+    }
     if (generation != _generation) throw StateError('Cache session changed');
     _entryGenerations[entry] = generation;
+    if (entry.mediaMetadata['itemId'] == null) {
+      await entry.updateMediaMetadata({
+        'itemId': itemId,
+        'mediaSourceId': mediaSourceId ?? itemId,
+      });
+    }
     return entry;
   }
 
@@ -234,6 +253,74 @@ class MediaCacheProxy {
   /// Every itemId whose cache entry is fully present on disk.
   Future<List<String>> completedItemIds() => _store.completedItemIds();
 
+  Future<List<String>> downloadedItemIds() async {
+    final ids = await _store.downloadItemIds();
+    final result = <String>[];
+    for (final id in ids) {
+      if (!id.startsWith('source-') && await _store.isComplete(id)) {
+        result.add(id);
+      }
+    }
+    return result;
+  }
+
+  Future<Map<String, dynamic>> metadataFor(String itemId) =>
+      _store.metadataFor(itemId);
+
+  Future<void> markDownload(String itemId, Map<String, dynamic> metadata) =>
+      _store.markDownload(itemId, {'itemId': itemId, ...metadata});
+
+  Future<void> releaseDownload(String itemId) => _store.releaseDownload(itemId);
+
+  Future<List<Map<String, dynamic>>> pendingDownloads() async {
+    final result = <Map<String, dynamic>>[];
+    for (final id in await _store.downloadItemIds()) {
+      if (id.startsWith('source-') || await _store.isComplete(id)) continue;
+      try {
+        await _store.metadataFor(id);
+      } catch (_) {
+        // Unknown ownership is protected, not a resumable download whose
+        // metadata we are entitled to rewrite.
+        continue;
+      }
+      final entry = await openEntry(id);
+      result.add({
+        ...entry.mediaMetadata,
+        'itemId': id,
+        'totalBytes': entry.totalLength ?? 0,
+        'cachedBytes': entry.rangeSet.intervals.fold<int>(
+          0,
+          (sum, r) => sum + r[1] - r[0],
+        ),
+      });
+    }
+    return result;
+  }
+
+  /// Save readable title metadata for playback caches as well as downloads.
+  /// Catalog failure must not prevent otherwise valid offline playback.
+  Future<void> rememberTitle(String itemId, {String? mediaSourceId}) async {
+    if (_clearing) return;
+    final generation = _generation;
+    final entry = await openEntry(itemId, mediaSourceId: mediaSourceId);
+    if (entry.mediaMetadata['title'] != null) return;
+    try {
+      final item = await _apiClient.item(itemId).timeout(requestTimeout);
+      if (generation != _generation || entry.closed) return;
+      await entry.updateMediaMetadata({
+        'itemId': itemId,
+        'mediaSourceId': mediaSourceId ?? itemId,
+        'title': item.name,
+        'seriesName': item.seriesName,
+        'seasonNumber': item.parentIndexNumber,
+        'episodeNumber': item.indexNumber,
+        'runTimeTicks': item.runTimeTicks,
+        'posterTag': item.imageTags?['Primary'],
+        'container': item.container,
+      });
+    } catch (_) {}
+  }
+
   /// Deletes [itemId]'s cached bytes entirely — used when the user removes an
   /// offline title.
   Future<void> deleteEntry(String itemId) {
@@ -241,24 +328,48 @@ class MediaCacheProxy {
     return _store.delete(itemId);
   }
 
-  /// Runs one size-cap + 30-day-TTL eviction pass over the on-device cache
+  /// Runs one size-cap + seven-day-TTL eviction pass over the on-device cache
   /// (see [RangeCacheStore.evict]). Called once at boot (after [start]) so
   /// the cache doesn't grow unbounded across app runs; Phase 3b's
   /// download-fill can call this again after writing to keep the cap honest
   /// between app launches too. [protected] itemIds (e.g. whatever's about to
   /// play) are never evicted, on top of anything currently open/in-use.
-  Future<void> evict({Set<String> protected = const {}}) =>
-      _store.evict(protected: protected);
+  Future<void> evict({Set<String> protected = const {}}) => _store.evict(
+    protected: {...protected, ..._serving.keys, ..._readAheadInFlight},
+  );
 
   /// Drops every cached title except [protected], regardless of size or age.
   /// The user asking for their disk back — see [RangeCacheStore.clear].
-  Future<int> clear({Set<String> protected = const {}}) =>
-      _store.clear(protected: protected);
+  Future<int> clear({Set<String> protected = const {}}) async {
+    if (_clearing) throw StateError('Cache cleanup already running');
+    _clearing = true;
+    _clearEpoch++;
+    try {
+      final keep = {...protected, ...await _store.downloadItemIds()};
+      // Reject late network responses before closing/deleting entries. The
+      // item generation also cancels URL minting that has not returned yet.
+      for (final key in await _store.allItemIds()) {
+        if (keep.contains(key)) continue;
+        final metadata = await _store.metadataFor(key);
+        abortItem(metadata['itemId'] as String? ?? key);
+      }
+      return await _store.clear(protected: keep);
+    } finally {
+      _clearing = false;
+    }
+  }
 
   // ── Request handling ──────────────────────────────────────────────────
 
   Future<void> _handleRequest(HttpRequest request) async {
+    String? servingKey;
+    final clearEpoch = _clearEpoch;
     try {
+      if (_clearing) {
+        request.response.statusCode = HttpStatus.serviceUnavailable;
+        await request.response.close();
+        return;
+      }
       final segments = request.uri.pathSegments;
       if (request.uri.queryParameters['session'] != '$_generation') {
         request.response.statusCode = HttpStatus.gone;
@@ -270,11 +381,20 @@ class MediaCacheProxy {
         await request.response.close();
         return;
       }
-      await _serve(
-        request,
-        segments[1],
-        mediaSourceId: request.uri.queryParameters['mediaSourceId'],
-      );
+      var mediaSourceId = request.uri.queryParameters['mediaSourceId'];
+      // Resolve the same entry that _serve will use before taking the active
+      // lease, including playback before the offline UI has rehydrated.
+      if (mediaSourceId != null && await isComplete(segments[1])) {
+        mediaSourceId = null;
+      }
+      if (_clearing || clearEpoch != _clearEpoch) {
+        request.response.statusCode = HttpStatus.serviceUnavailable;
+        await request.response.close();
+        return;
+      }
+      servingKey = _key(segments[1], mediaSourceId);
+      _serving[servingKey] = (_serving[servingKey] ?? 0) + 1;
+      await _serve(request, segments[1], mediaSourceId: mediaSourceId);
     } catch (_) {
       // Client disconnects surface here too (broken pipe writing the
       // response) — never let one request crash the server.
@@ -282,6 +402,15 @@ class MediaCacheProxy {
         request.response.statusCode = HttpStatus.internalServerError;
         await request.response.close();
       } catch (_) {}
+    } finally {
+      if (servingKey != null) {
+        final count = (_serving[servingKey] ?? 1) - 1;
+        if (count == 0) {
+          _serving.remove(servingKey);
+        } else {
+          _serving[servingKey] = count;
+        }
+      }
     }
   }
 
@@ -291,12 +420,6 @@ class MediaCacheProxy {
     String? mediaSourceId,
   }) async {
     final generation = _generation;
-    // Party auto-open can beat the async offline-library scan and arrive with
-    // a source-qualified URL. Honor the same completed-download preference as
-    // openPreferringOffline using disk state, not the UI's rehydration timing.
-    if (mediaSourceId != null && await isComplete(itemId)) {
-      mediaSourceId = null;
-    }
     if (generation != _generation) throw StateError('Cache session changed');
     final entry = await openEntry(itemId, mediaSourceId: mediaSourceId);
     await entry.touch();

@@ -87,6 +87,21 @@ class CacheEntry {
   int? _totalLength;
   DateTime createdAt;
   DateTime lastAccess;
+  bool keepOffline = false;
+  Map<String, dynamic> mediaMetadata = {};
+
+  /// Retention is independent of byte completeness. Persist the user's
+  /// intent before fetching, including for paused and partial downloads.
+  Future<void> updateMediaMetadata(
+    Map<String, dynamic> metadata, {
+    bool? download,
+  }) => _locked(() async {
+    mediaMetadata.addAll(
+      Map.fromEntries(metadata.entries.where((e) => e.value != null)),
+    );
+    if (download != null) keepOffline = download;
+    await _flushMetadataUnlocked();
+  });
 
   /// Cached spans as 0..1 fractions of [totalLength], kept in sync with
   /// [rangeSet]/[totalLength] so the player's seek-bar overlay can observe
@@ -212,6 +227,8 @@ class CacheEntry {
       'createdAt': createdAt.toIso8601String(),
       'lastAccess': lastAccess.toIso8601String(),
       'ranges': rangeSet.intervals,
+      'retention': keepOffline ? 'download' : 'cache',
+      'media': mediaMetadata,
     };
     await tmp.writeAsString(jsonEncode(json), flush: true);
     await tmp.rename(_metaFile.path);
@@ -315,6 +332,7 @@ class RangeCacheStore {
   RangeCacheStore forNamespace(String namespace) =>
       RangeCacheStore(overrideDir: _overrideDir, namespace: namespace);
   bool _disposed = false;
+  bool _clearing = false;
   final Map<String, Future<void>> _deleting = {};
   static const _subdirName = 'media-cache';
 
@@ -326,7 +344,25 @@ class RangeCacheStore {
 
   /// Entries idle longer than this are evicted outright by [evict],
   /// regardless of total cache size.
-  static const ttl = Duration(days: 30);
+  static const ttl = Duration(days: 7);
+
+  Future<void> _mutations = Future<void>.value();
+  Future<T> _mutate<T>(Future<T> Function() action) {
+    final result = _mutations.then((_) => action());
+    _mutations = result.then((_) {}, onError: (_) {});
+    return result;
+  }
+
+  Future<void> markDownload(String itemId, Map<String, dynamic> metadata) =>
+      _mutate(() async {
+        final entry = await open(itemId);
+        await entry.updateMediaMetadata(metadata, download: true);
+      });
+
+  Future<void> releaseDownload(String itemId) => _mutate(() async {
+    final entry = await open(itemId);
+    await entry.updateMediaMetadata({}, download: false);
+  });
 
   final Map<String, CacheEntry> _open = {};
   final Map<String, Future<CacheEntry>> _opening = {};
@@ -376,6 +412,7 @@ class RangeCacheStore {
   /// instance rather than reopening the file.
   Future<CacheEntry> open(String itemId) {
     if (_disposed) return Future.error(StateError('Cache store disposed'));
+    if (_clearing) return Future.error(StateError('Cache cleanup in progress'));
     if (!RegExp(r'^[a-zA-Z0-9_=.-]+$').hasMatch(itemId) ||
         itemId == '.' ||
         itemId == '..') {
@@ -415,6 +452,8 @@ class RangeCacheStore {
     final metaFile = File('${dir.path}/$itemId.meta.json');
 
     var rangeSet = RangeSet();
+    Map<String, dynamic> metadata = {};
+    String? retention;
     int? totalLength;
     var createdAt = DateTime.now();
     var lastAccess = createdAt;
@@ -425,6 +464,8 @@ class RangeCacheStore {
             jsonDecode(await metaFile.readAsString()) as Map<String, dynamic>;
         final version = (raw['version'] as num?)?.toInt() ?? 1;
         if (version == _cacheVersion && raw['itemId'] == itemId) {
+          retention = raw['retention'] as String?;
+          metadata = Map<String, dynamic>.from(raw['media'] as Map? ?? {});
           totalLength = (raw['totalLength'] as num?)?.toInt();
           createdAt =
               DateTime.tryParse(raw['createdAt'] as String? ?? '') ?? createdAt;
@@ -446,6 +487,9 @@ class RangeCacheStore {
         // failing playback; the proxy will just re-fetch everything.
         rangeSet = RangeSet();
         totalLength = null;
+        // Recovery must not turn unknown historical ownership into permission
+        // for cleanup to delete the title.
+        retention = 'download';
       }
     }
 
@@ -473,6 +517,16 @@ class RangeCacheStore {
       lastAccess,
       _notifierFor(itemId),
     );
+    entry.mediaMetadata = metadata;
+    // Old complete v3 entries have no reliable intent history. Preserve them
+    // as downloads rather than risk deleting a user's existing offline film.
+    entry.keepOffline =
+        retention == 'download' ||
+        (retention == null &&
+            totalLength != null &&
+            totalLength > 0 &&
+            rangeSet.contains(0, totalLength));
+    await entry.flushMetadata();
     _open[itemId] = entry;
     return entry;
   }
@@ -482,14 +536,13 @@ class RangeCacheStore {
   /// every entry has been [open]ed this run — a title downloaded in a past
   /// session and never touched since must still be eligible for TTL removal.
   ///
-  /// [protected] itemIds (typically whatever the caller is about to play or
-  /// is mid-download-fill) are never evicted; every currently-[_open] entry
-  /// is protected automatically on top of that, since an open handle means
-  /// "in use" regardless of what the caller passed.
+  /// Callers lease active playback/read-ahead through [protected]. Explicit
+  /// downloads are protected by persisted retention, including partial files.
+  /// An entry opened earlier in the session is not necessarily still in use.
   ///
   /// Safe to call with no titles cached (no-op) and safe to call repeatedly —
   /// it's a plain scan-and-delete, not incremental state.
-  Future<void> evict({Set<String> protected = const {}}) async {
+  Future<void> evict({Set<String> protected = const {}}) => _mutate(() async {
     final dir = await _cacheDir();
     if (!await dir.exists()) return;
 
@@ -497,9 +550,8 @@ class RangeCacheStore {
     // (or confirmed removal from the library) should remove offline content.
     final effectiveProtected = {
       ...protected,
-      ..._open.keys,
       ..._opening.keys,
-      ...await completedItemIds(),
+      ...await downloadItemIds(),
     };
 
     final stats = <CacheStat>[];
@@ -566,27 +618,10 @@ class RangeCacheStore {
     );
 
     for (final itemId in toEvict) {
-      if (_open.containsKey(itemId) || _opening.containsKey(itemId)) continue;
-      final openEntry = _open.remove(itemId);
-      if (openEntry != null) {
-        try {
-          await openEntry.close();
-        } catch (_) {
-          // Best-effort — the files are being deleted regardless.
-        }
-      }
-      _cachedSpansNotifiers.remove(itemId);
-
-      final dataFile = File('${dir.path}/$itemId.data');
-      final metaFile = File('${dir.path}/$itemId.meta.json');
-      try {
-        if (await dataFile.exists()) await dataFile.delete();
-      } catch (_) {}
-      try {
-        if (await metaFile.exists()) await metaFile.delete();
-      } catch (_) {}
+      if (_opening.containsKey(itemId) || protected.contains(itemId)) continue;
+      await delete(itemId);
     }
-  }
+  });
 
   int _cachedBytesOf(List<List<int>> intervals) =>
       intervals.fold<int>(0, (sum, iv) => sum + (iv[1] - iv[0]));
@@ -658,12 +693,17 @@ class RangeCacheStore {
     final dir = await _cacheDir();
     if (!await dir.exists()) return const [];
     final result = <String>[];
-    for (final entity in await _listSafely(dir)) {
-      if (entity is! File || !entity.path.endsWith('.meta.json')) continue;
+    for (final entity in await dir.list(followLinks: false).toList()) {
+      if (entity is! File) continue;
       final name = entity.path.split(Platform.pathSeparator).last;
-      result.add(name.substring(0, name.length - '.meta.json'.length));
+      for (final suffix in ['.meta.json.tmp', '.meta.json', '.data']) {
+        if (name.endsWith(suffix)) {
+          result.add(name.substring(0, name.length - suffix.length));
+          break;
+        }
+      }
     }
-    return result;
+    return result.toSet().toList();
   }
 
   /// Drops everything the cache is holding except [protected].
@@ -673,15 +713,75 @@ class RangeCacheStore {
   /// asked to keep — the titles they downloaded on purpose.
   ///
   /// Returns how many entries went, so the caller can say so.
-  Future<int> clear({Set<String> protected = const {}}) async {
-    var removed = 0;
-    for (final itemId in await allItemIds()) {
-      if (protected.contains(itemId)) continue;
-      await delete(itemId);
-      removed++;
+  Future<List<String>> downloadItemIds() async {
+    final dir = await _cacheDir();
+    final result = <String>[];
+    for (final id in await allItemIds()) {
+      if (_open[id]?.keepOffline == true) {
+        result.add(id);
+        continue;
+      }
+      final meta = File('${dir.path}/$id.meta.json');
+      if (!await meta.exists()) continue;
+      // Unknown/corrupt ownership must not become permission to delete.
+      final Map<String, dynamic> raw;
+      try {
+        raw = jsonDecode(await meta.readAsString()) as Map<String, dynamic>;
+      } catch (_) {
+        result.add(id);
+        continue;
+      }
+      if (raw['retention'] == 'download' ||
+          (raw['retention'] == null && await isComplete(id))) {
+        result.add(id);
+      }
     }
-    return removed;
+    return result;
   }
+
+  Future<Map<String, dynamic>> metadataFor(String itemId) async {
+    if (_open[itemId] case final entry?) {
+      return Map<String, dynamic>.from(entry.mediaMetadata);
+    }
+    final dir = await _cacheDir();
+    final file = File('${dir.path}/$itemId.meta.json');
+    if (!await file.exists()) return {};
+    final raw = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+    return Map<String, dynamic>.from(raw['media'] as Map? ?? {});
+  }
+
+  Future<int> clear({Set<String> protected = const {}}) => _mutate(() async {
+    _clearing = true;
+    try {
+      // Opens register synchronously. Drain them before discovery, and reject
+      // new opens until deletion finishes so no late empty file escapes it.
+      for (final opening in _opening.values.toList()) {
+        try {
+          await opening;
+        } catch (_) {}
+      }
+      final keep = {...protected, ...await downloadItemIds()};
+      var removed = 0;
+      final failures = <String>[];
+      for (final itemId in await allItemIds()) {
+        if (keep.contains(itemId)) continue;
+        try {
+          await delete(itemId);
+          removed++;
+        } catch (_) {
+          failures.add(itemId);
+        }
+      }
+      if (failures.isNotEmpty) {
+        throw FileSystemException(
+          'Failed to remove ${failures.length} cached titles',
+        );
+      }
+      return removed;
+    } finally {
+      _clearing = false;
+    }
+  });
 
   /// Deletes [itemId]'s cache entirely (data + sidecar), closing an open
   /// handle first if there is one. Used when the user removes an offline
@@ -714,12 +814,28 @@ class RangeCacheStore {
 
     final dataFile = File('${dir.path}/$itemId.data');
     final metaFile = File('${dir.path}/$itemId.meta.json');
-    try {
-      if (await dataFile.exists()) await dataFile.delete();
-    } catch (_) {}
-    try {
-      if (await metaFile.exists()) await metaFile.delete();
-    } catch (_) {}
+    // Keep ownership metadata if media deletion fails. A retry can still find
+    // the title, and callers must not report a successful removal.
+    final type = await FileSystemEntity.type(dataFile.path, followLinks: false);
+    if (type != FileSystemEntityType.file &&
+        type != FileSystemEntityType.notFound) {
+      throw FileSystemException(
+        'Media path is not a regular file',
+        dataFile.path,
+      );
+    }
+    if (await dataFile.exists()) await dataFile.delete();
+    final tempFile = File('${metaFile.path}.tmp');
+    if (await tempFile.exists()) await tempFile.delete();
+    if (await metaFile.exists()) await metaFile.delete();
+    if (await dataFile.exists() ||
+        await metaFile.exists() ||
+        await tempFile.exists()) {
+      throw FileSystemException(
+        'Media files remain after deletion',
+        dataFile.path,
+      );
+    }
   }
 
   Future<void> dispose() async {

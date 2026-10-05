@@ -6,13 +6,10 @@ import '../download/offline_manifest_store.dart';
 import '../models/models.dart';
 import 'providers.dart';
 
-/// The offline (fully-cached) library (Phase 3b-wiring). A title counts as
-/// "offline" purely by whether its [MediaCacheProxy]/[RangeCacheStore] entry
-/// is fully present on disk — [_rehydrate] scans the cache for that, and
-/// [markComplete] adds a record the moment a fill finishes (so the UI flips
-/// live without waiting for the next boot). [OfflineManifestStore] is kept
-/// only as a metadata sidecar (title/poster/runtime) — the bytes themselves
-/// live in the cache, not in anything this class writes.
+/// Completed explicit downloads. Byte completeness proves playability, while
+/// persisted retention proves the user asked to keep it. The manifest is only
+/// a presentation sidecar; cleanup never relies on this asynchronously loaded
+/// UI list to protect files.
 class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   OfflineNotifier(
     this._proxy, {
@@ -53,7 +50,7 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
   Future<void> _rehydrate() => _serialize(() async {
     final persisted = await _manifestStore.load();
     final byId = {for (final r in persisted) r.itemId: r};
-    final completedIds = await _proxy.completedItemIds();
+    final completedIds = await _proxy.downloadedItemIds();
 
     // This runs fire-and-forget from the constructor; bail if the notifier
     // was disposed while the async scan was in flight (never happens in the
@@ -64,9 +61,30 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
     // while the scan was in flight is newer than the scan's snapshot and
     // wins (a fill that completed mid-scan is genuinely offline, and its
     // metadata is richer than a bare record).
-    final merged = <String, OfflineRecord>{
-      for (final id in completedIds) id: byId[id] ?? _bareRecord(id),
-    };
+    final merged = <String, OfflineRecord>{};
+    for (final id in completedIds) {
+      final meta = await _proxy.metadataFor(id);
+      if (!mounted || _origin != _proxy.origin) return;
+      merged[id] =
+          byId[id] ??
+          _bareRecord(id).copyWith(
+            title: meta['title'] as String? ?? id,
+            runTimeTicks: (meta['runTimeTicks'] as num?)?.toInt() ?? 0,
+            posterTag: meta['posterTag'] as String?,
+          );
+      // Recover readable names from the old manifest without trusting it as
+      // proof of byte completeness or importing pre-v3 media.
+      final saved = byId[id];
+      if (meta['title'] == null && saved != null) {
+        await _proxy.markDownload(id, {
+          'title': saved.title,
+          'posterTag': saved.posterTag,
+          'runTimeTicks': saved.runTimeTicks,
+          'container': saved.container,
+        });
+      }
+      if (!mounted || _origin != _proxy.origin) return;
+    }
     for (final live in state) {
       merged[live.itemId] = live;
     }
@@ -99,7 +117,7 @@ class OfflineNotifier extends StateNotifier<List<OfflineRecord>> {
     String? posterTag,
     int runTimeTicks = 0,
   }) => _serialize(() async {
-    if (!await _proxy.isComplete(itemId) ||
+    if (!(await _proxy.downloadedItemIds()).contains(itemId) ||
         !mounted ||
         _origin != _proxy.origin) {
       return;

@@ -964,6 +964,10 @@ class _CopyColumn extends StatelessWidget {
                       itemId: active.id,
                       title: active.name,
                       runTimeTicks: active.runTimeTicks,
+                      seriesName: active.seriesName,
+                      seasonNumber: active.parentIndexNumber,
+                      episodeNumber: active.indexNumber,
+                      container: active.container,
                     ),
                   ],
                   // Deleting a SHOW is deleting all of it, so the target is the

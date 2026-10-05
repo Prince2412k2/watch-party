@@ -89,6 +89,43 @@ void main() {
   });
 
   test(
+    'clear aborts an active temporary writer without resurrecting files',
+    () async {
+      final received = Completer<void>();
+      final release = Completer<void>();
+      entry.setTotalLength(16);
+      await entry.flushMetadata();
+      respond = (request, start, end) async {
+        received.complete();
+        await release.future;
+        try {
+          request.response.statusCode = HttpStatus.partialContent;
+          request.response.headers.set(
+            HttpHeaders.contentRangeHeader,
+            'bytes $start-${end - 1}/16',
+          );
+          request.response.contentLength = end - start;
+          request.response.add(List.filled(end - start, 42));
+          await request.response.close();
+        } catch (_) {
+          // The cache owner deliberately aborted this request.
+        }
+      };
+      final fetch = proxy.fetchAndStore('title', entry, 0, 16);
+      final rejected = expectLater(fetch, throwsA(anything));
+      await received.future;
+      expect(await proxy.clear(), 1);
+      release.complete();
+      await rejected;
+      expect(
+        await Directory('${dir.path}/media-cache').list().toList(),
+        isEmpty,
+      );
+      expect(await proxy.clear(), 0);
+    },
+  );
+
+  test(
     'download uses 8 MiB requests, preserves islands and persists bytes',
     () async {
       const total = 10 * mib + 37;

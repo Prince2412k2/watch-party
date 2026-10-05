@@ -17,7 +17,28 @@ or byte integrity after the fact.
   relative-URL artwork is not trusted across origins and is fetched again;
   ordinary artwork eviction can reclaim the old files.
 
-Valid v3 completed downloads survive logout, origin switches, and automatic
+Media sidecars now record `retention` (`cache` or `download`) separately from
+byte completeness, plus readable `media` metadata (title, series/season/episode,
+item/source identity, container, poster and runtime when available). Pressing
+Download persists retention before fetching and reuses the same validated ranges.
+Partial downloads survive cleanup/restarts and reappear paused with Resume/Cancel.
+Cancel releases download retention; the remaining chunks become playback cache.
+Explicit Remove deletes media, sidecar and interrupted sidecar temporary files;
+failed deletions keep ownership metadata and surface an error for retry.
+
+Fully watched new entries remain cache, not downloads. Temporary entries expire
+after seven days without access; startup, completed fills and an hourly timer run
+cleanup. Active HTTP/read-ahead work is protected, rather than every entry ever
+opened in the process. Clear Cache consults persisted retention, discovers orphan
+`.data`/`.meta.json.tmp` files and cancels temporary transfers before deletion.
+
+Older completed v3 entries lack reliable download intent (the old offline list
+also included fully watched titles). These are conservatively preserved as
+existing downloads; no historical intent is invented. Unreadable ownership
+metadata is preserved, and quarantined pre-v3/other-origin files still require
+deliberate cleanup rather than destructive automatic migration.
+
+Explicit v3 downloads survive logout, origin switches, and automatic
 TTL/size eviction. Returning to the same backend restores them. Explicit removal
 and confirmed per-item 404/410 reconciliation retain their existing deletion
 policy; transient network/authentication failures do not delete downloads.
@@ -28,8 +49,7 @@ URL minting, connection/headers, and whole-body reads have separate 30-second
 deadlines. Cancellation closes active HTTP clients and rejects late signed URLs.
 
 File handles are held only during serialized I/O, and session teardown disposes
-the old store. Eviction remains conservative about entries opened in the current
-store: they remain protected until teardown. This is not a hard process-wide disk
+the old store. Eviction protects explicit downloads and active transfers. This is not a hard process-wide disk
 quota, especially with protected offline downloads and multiple origins. A true
 cross-origin quota/lease-based live-entry eviction policy is a separate change.
 
