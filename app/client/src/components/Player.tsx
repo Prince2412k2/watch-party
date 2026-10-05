@@ -1558,12 +1558,6 @@ function DesktopControlBar({
       position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: Z.controlBar,
       opacity: shown ? 1 : 0, pointerEvents: shown ? 'auto' : 'none', transition: 'opacity .25s',
     }}>
-      {/* The one allowed gradient: a neutral black-alpha legibility scrim. */}
-      <div aria-hidden style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, height: 140,
-        background: 'linear-gradient(0deg, rgba(0,0,0,.8), transparent)',
-        pointerEvents: 'none',
-      }} />
       <div style={{
         position: 'relative', display: 'flex', flexDirection: 'column', gap: 2,
         padding: '0 18px 12px',
@@ -1689,13 +1683,6 @@ function MobileBottomBar({
       bottom: 'calc(var(--sa-b) + 8px)',
       opacity: shown ? 1 : 0, pointerEvents: shown ? 'auto' : 'none', transition: 'opacity .25s',
     }}>
-      {/* The one allowed gradient: a neutral black-alpha legibility scrim rising
-          behind the bar so glyphs hold contrast over a bright video frame. */}
-      <div aria-hidden style={{
-        position: 'absolute', left: -8, right: -8, bottom: -8, top: -48,
-        background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.4) 60%, rgba(0,0,0,.6) 100%)',
-        pointerEvents: 'none',
-      }} />
       <div ref={barRef} style={{
         position: 'relative',
         display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 6px 2px',
