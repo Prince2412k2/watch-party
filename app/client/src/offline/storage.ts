@@ -117,9 +117,10 @@ export async function prepare(
 ) {
   return (await updateMedia(mediaKey(info), (current) =>
     current
-      ? {
-          ...current,
-          accessed: Date.now(),
+        ? {
+            ...current,
+            ...info,
+            accessed: Date.now(),
           retention: retention === 'download' ? 'download' : current.retention
         }
       : {

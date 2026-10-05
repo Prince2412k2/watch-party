@@ -57,7 +57,11 @@ test('watched chunks promote to a download; clear and TTL protect partial downlo
   await setOwner('alice')
   const cache = await prepare(info('promotion'), 'cache')
   await putChunk(cache, 0, new Blob([new Uint8Array(CHUNK_SIZE)]))
-  const pin = await prepare(info('promotion'), 'download')
+  const pin = await prepare(
+    { ...info('promotion'), title: 'Renamed movie' },
+    'download'
+  )
+  assert.equal(pin.title, 'Renamed movie')
   assert.equal(pin.received, CHUNK_SIZE)
   assert.equal(pin.generation, cache.generation)
   await prepare(info('promotion'), 'cache')

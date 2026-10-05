@@ -988,6 +988,11 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
     </div>
   )
 
+  const savedSubtitles = hlsUrl.saved ? localSubtitles(hlsUrl.saved) : []
+  const subtitleStreams = (playback?.subtitleStreams ?? savedSubtitles).map(stream => ({
+    ...stream,
+    ...(savedSubtitles.find(saved => saved.index === stream.index) ?? {})
+  }))
   return (
     <Player
       // A media item has its own HLS engine and text-track collection. Keying
@@ -996,7 +1001,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
       key={hlsUrl.itemId}
       hlsUrl={hlsUrl.url}
       mediaItemId={session.mediaItemId}
-      playback={hlsUrl.saved ? { ...playback, offlineKey: hlsUrl.saved.key, mediaSourceId: hlsUrl.saved.sourceId, subtitleStreams: localSubtitles(hlsUrl.saved) } : playback}
+      playback={hlsUrl.saved ? { ...playback, offlineKey: hlsUrl.saved.key, mediaSourceId: hlsUrl.saved.sourceId, subtitleStreams } : playback}
       isHost={isHost}
       collaborativeControl={collaborativeControl}
       syncMode={session.syncMode}
