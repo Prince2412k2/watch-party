@@ -109,9 +109,8 @@ media-player, media-player:focus, media-player:focus-visible,
    controls become visible — `.media-controls[data-visible] ~ .media-overlay`.
    Hiding the controls above does NOT stop that: `[data-visible]` is still set on
    the hidden element, so the sibling selector still matches and the whole frame
-   dims every time our chrome appears, on top of the one black-alpha scrim we
-   draw ourselves behind the bar. We replaced the skin's controls entirely, so
-   its scrim is redundant. */
+   dims every time our chrome appears. Our controls render directly over the
+   picture without a dimming layer. */
 .watch-skin--nobar .media-overlay { display: none !important; }
 
 ::-webkit-scrollbar { width: 5px; }
