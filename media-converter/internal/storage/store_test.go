@@ -18,6 +18,33 @@ func testStore(t *testing.T) *Store {
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
+
+func TestBrowserPolicyRechecksLegacyMP4Once(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, status := range []string{jobs.Completed, jobs.Skipped, jobs.Failed, jobs.Cancelled} {
+		path := status + ".mp4"
+		input := jobs.Job{SourcePath: path, TargetPath: path, TempPath: path + ".tmp", SourceSize: 100, SourceMtime: 123}
+		if _, err := s.Add(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`UPDATE jobs SET status=?,policy_version='' WHERE source_path=?`, status, path); err != nil {
+			t.Fatal(err)
+		}
+		added, err := s.Add(ctx, input)
+		want := status == jobs.Completed || status == jobs.Skipped
+		if err != nil || added != want {
+			t.Fatalf("%s: requeued=%v err=%v", status, added, err)
+		}
+		if _, err := s.db.Exec(`UPDATE jobs SET status=? WHERE source_path=?`, status, path); err != nil {
+			t.Fatal(err)
+		}
+		added, err = s.Add(ctx, input)
+		if err != nil || added {
+			t.Fatalf("%s retried repeatedly: %v %v", status, added, err)
+		}
+	}
+}
 func add(t *testing.T, s *Store, path string, priority int) {
 	t.Helper()
 	ok, err := s.Add(context.Background(), jobs.Job{SourcePath: path, TargetPath: path + ".mp4", TempPath: path + ".tmp", Priority: priority})

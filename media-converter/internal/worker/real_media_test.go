@@ -25,7 +25,7 @@ func TestRealPreconversionAndInPlaceNormalization(t *testing.T) {
 	if err != nil {
 		t.Skip("ffprobe not installed")
 	}
-	for _, extension := range []string{"avi", "mp4"} {
+	for _, extension := range []string{"avi", "mkv", "mp4"} {
 		t.Run(extension, func(t *testing.T) {
 			dir := t.TempDir()
 			source := filepath.Join(dir, "film."+extension)
@@ -67,10 +67,10 @@ func TestRealPreconversionAndInPlaceNormalization(t *testing.T) {
 			if video.CodecName != "h264" || video.Width != 128 || video.Height != 96 {
 				t.Fatalf("bad output: %+v", out)
 			}
-			if extension == "avi" && out.Streams[1].CodecName != "alac" {
-				t.Fatal("lossless PCM was not preserved as ALAC")
+			if extension != "mp4" && out.Streams[1].CodecName != "aac" {
+				t.Fatal("PCM was not converted to browser-compatible AAC")
 			}
-			if extension == "avi" {
+			if extension != "mp4" {
 				if _, err := os.Stat(source); !os.IsNotExist(err) {
 					t.Fatal("validated source was not removed")
 				}

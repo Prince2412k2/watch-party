@@ -6,16 +6,11 @@
 .converter-header, .converter-toolbar, .converter-section-head, .converter-job-heading, .converter-job-meta, .converter-row-actions { display: flex; align-items: center; gap: 12px; }
 .converter-header, .converter-section-head, .converter-job-heading { justify-content: space-between; }
 .converter-back { display: flex; align-items: center; gap: 8px; }
-.converter-kicker, .converter-position, .converter-job-meta { font-family: var(--an-type-mono); font-size: 12px; color: var(--an-color-ink-dim); }
-.converter-intro { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 48px 0 32px; }
-.converter-intro h1 { margin: 0 0 12px; font-size: clamp(30px, 4vw, 48px); font-weight: 300; letter-spacing: -.04em; }
+.converter-position, .converter-job-meta { font-family: var(--an-type-mono); font-size: 12px; color: var(--an-color-ink-dim); }
+.converter-intro { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 24px 0; }
+.converter-intro h1 { margin: 0 0 6px; font-size: 28px; font-weight: 500; letter-spacing: -.04em; }
 .converter-intro p { max-width: 48ch; margin: 0; color: var(--an-color-ink-dim); line-height: 1.6; }
 .converter-toolbar { flex-shrink: 0; }
-.converter-policy { display: grid; grid-template-columns: .6fr 1.3fr 1.3fr 1fr; gap: 24px; padding: 24px 0; border-block: 1px solid var(--an-color-line); }
-.converter-policy div, .converter-job-heading > div, .converter-file { display: grid; gap: 8px; min-width: 0; }
-.converter-policy span { color: var(--an-color-ink-faint); font-size: 12px; }
-.converter-policy strong { font-size: 14px; font-weight: 500; }
-.converter-policy small { color: var(--an-color-ink-dim); font-size: 12px; line-height: 1.5; }
 .converter-section-head { margin-top: 32px; }
 .converter-section-head h2 { font-size: 18px; font-weight: 500; }
 .converter-section-head span { font-size: 12px; color: var(--an-color-ink-dim); }
@@ -29,21 +24,23 @@
 .converter-tabs button { border: 0; border-radius: 0; padding: 14px 0; color: var(--an-color-ink-dim); }
 .converter-tabs button[aria-current] { color: var(--an-color-ink); border-bottom: 2px solid currentColor; }
 .converter-tabs span { margin-left: 8px; font-family: var(--an-type-mono); }
-.converter-hint, .converter-empty, .converter-footer { color: var(--an-color-ink-dim); font-size: 13px; line-height: 1.6; }
 .converter-list { list-style: none; margin: 0; padding: 0; }
-.converter-list li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 20px 0; border-bottom: 1px solid var(--an-color-line); }
+.converter-list li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--an-color-line); }
 .converter-file strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
-.converter-file small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--an-color-ink-faint); }
 .converter-file > span { font-size: 12px; color: var(--an-color-ink-dim); overflow-wrap: anywhere; }
 .converter-file > span[data-failed='true'], .converter-error { color: var(--an-color-status-danger); }
 .converter-error { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 16px 0; }
-.converter-footer { margin-top: 28px; }
 @media (max-width: 700px) {
   .converter-intro { display: grid; padding-top: 28px; }
   .converter-toolbar { flex-wrap: wrap; }
-  .converter-policy { grid-template-columns: 1fr 1fr; gap: 20px; }
   .converter-list li { grid-template-columns: 24px minmax(0, 1fr); gap: 12px; }
   .converter-row-actions { grid-column: 2; gap: 8px; flex-wrap: wrap; }
   .converter-section-head { align-items: baseline; gap: 16px; }
   .converter-section-head > span { text-align: right; }
 }
+.converter-job-heading > div, .converter-file { display: grid; gap: 6px; min-width: 0; }
+.converter-file details { font-size: 12px; color: var(--an-color-ink-dim); }
+.converter-file summary { cursor: pointer; width: fit-content; padding: 6px 0; }
+.converter-file details p { margin: 4px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.converter-empty { color: var(--an-color-ink-dim); font-size: 13px; padding: 12px 0; }

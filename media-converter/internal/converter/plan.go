@@ -2,7 +2,6 @@ package converter
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/snuffkin/media-converter/internal/probe"
@@ -13,6 +12,7 @@ type StreamAction struct {
 	Type, Codec, Mode, Language string
 	Default, Forced             bool
 	Channels                    int
+	ToneMap                     bool
 }
 type ConversionPlan struct {
 	Operation string
@@ -31,27 +31,17 @@ func Plan(m probe.Media, strict bool) (ConversionPlan, error) {
 		case "video":
 			videos++
 			a.Mode = "copy"
-			// Keep HEVC (including HDR) bit-for-bit. AVC High 10 and other
-			// video codecs need a compatible 8-bit AVC rendition for iOS.
-			compatible := (s.CodecName == "h264" && (s.PixFmt == "" || oneOf(s.PixFmt, "yuv420p", "yuvj420p"))) || (s.CodecName == "hevc" && (s.PixFmt == "" || oneOf(s.PixFmt, "yuv420p", "yuv420p10le")))
+			// Only 8-bit 4:2:0 AVC is portable across our browser targets.
+			a.ToneMap = oneOf(s.ColorTransfer, "smpte2084", "arib-std-b67")
+			compatible := s.CodecName == "h264" && oneOf(s.PixFmt, "yuv420p", "yuvj420p") && !a.ToneMap
 			if !compatible {
-				if oneOf(s.ColorTransfer, "smpte2084", "arib-std-b67") {
-					return p, fmt.Errorf("HDR %s requires a tone-mapping policy; source preserved", s.CodecName)
-				}
 				a.Mode = "libx264"
 				videoTranscode = true
 			}
 			p.Streams = append(p.Streams, a)
 		case "audio":
-			bits, _ := strconv.Atoi(s.BitsPerRawSample)
-			if s.CodecName == "pcm_s32le" || (s.CodecName == "flac" && bits > 24) {
-				return p, fmt.Errorf("audio #%d exceeds ALAC's 24-bit preservation policy; source preserved", s.Index)
-			}
-			if oneOf(s.CodecName, "aac", "ac3", "eac3", "alac", "mp3") {
+			if s.CodecName == "aac" && (s.Profile == "" || s.Profile == "LC") {
 				a.Mode = "copy"
-			} else if oneOf(s.CodecName, "flac", "pcm_s16le", "pcm_s24le") {
-				a.Mode = "alac" // Preserve lossless audio losslessly in MP4.
-				audioTranscode = true
 			} else {
 				a.Mode = "aac"
 				audioTranscode = true
@@ -111,6 +101,24 @@ func ValidateStreams(plan ConversionPlan, out probe.Media) error {
 		if out.Streams[i].CodecType != action.Type || out.Streams[i].CodecName != codec {
 			return fmt.Errorf("stream %d expected %s/%s, got %s/%s", i, action.Type, codec, out.Streams[i].CodecType, out.Streams[i].CodecName)
 		}
+		if action.Type == "video" {
+			stream := out.Streams[i]
+			if !oneOf(stream.PixFmt, "yuv420p", "yuvj420p") {
+				return fmt.Errorf("stream %d has incompatible pixel format %s", i, stream.PixFmt)
+			}
+			if oneOf(stream.ColorTransfer, "smpte2084", "arib-std-b67") {
+				return fmt.Errorf("stream %d is still HDR after conversion", i)
+			}
+		}
+		if action.Type == "audio" {
+			stream := out.Streams[i]
+			if stream.Profile != "" && stream.Profile != "LC" {
+				return fmt.Errorf("stream %d has incompatible AAC profile %s", i, stream.Profile)
+			}
+			if action.Channels > 0 && stream.Channels != action.Channels {
+				return fmt.Errorf("stream %d audio channel count changed: %d -> %d", i, action.Channels, stream.Channels)
+			}
+		}
 	}
 	return nil
 }
@@ -127,19 +135,21 @@ func Args(input, output string, p ConversionPlan) []string {
 		case "video":
 			a = append(a, fmt.Sprintf("-c:v:%d", vi), s.Mode)
 			if s.Mode == "libx264" {
-				a = append(a, fmt.Sprintf("-preset:v:%d", vi), "veryfast", fmt.Sprintf("-crf:v:%d", vi), "18", fmt.Sprintf("-pix_fmt:v:%d", vi), "yuv420p")
-			} else if s.Codec == "hevc" {
-				a = append(a, fmt.Sprintf("-tag:v:%d", vi), "hvc1")
+				a = append(a, fmt.Sprintf("-preset:v:%d", vi), "slow", fmt.Sprintf("-crf:v:%d", vi), "14", fmt.Sprintf("-pix_fmt:v:%d", vi), "yuv420p")
+			}
+			if s.ToneMap {
+				a = append(a, fmt.Sprintf("-filter:v:%d", vi), "zscale=transfer=linear:npl=100,format=gbrpf32le,zscale=primaries=bt709,tonemap=tonemap=mobius:desat=0,zscale=transfer=bt709:matrix=bt709:range=limited:dither=error_diffusion,format=yuv420p",
+					fmt.Sprintf("-x264-params:v:%d", vi), "colorprim=bt709:transfer=bt709:colormatrix=bt709", fmt.Sprintf("-color_primaries:v:%d", vi), "bt709", fmt.Sprintf("-color_trc:v:%d", vi), "bt709", fmt.Sprintf("-colorspace:v:%d", vi), "bt709", fmt.Sprintf("-color_range:v:%d", vi), "tv")
 			}
 			vi++
 		case "audio":
 			a = append(a, fmt.Sprintf("-c:a:%d", ai), s.Mode)
 			if s.Mode == "aac" {
-				bitrate := "256k"
+				bitrate := "320k"
 				if s.Channels > 2 {
-					bitrate = "512k"
+					bitrate = "640k"
 				}
-				a = append(a, fmt.Sprintf("-b:a:%d", ai), bitrate)
+				a = append(a, fmt.Sprintf("-b:a:%d", ai), bitrate, fmt.Sprintf("-profile:a:%d", ai), "aac_low")
 			}
 			if s.Language != "" {
 				a = append(a, fmt.Sprintf("-metadata:s:a:%d", ai), "language="+s.Language)
