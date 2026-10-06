@@ -14,7 +14,8 @@
 
 .an-stage {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto;
+  height: var(--app-vh, 100dvh);
   overflow: hidden;
   isolation: isolate;
   color: var(--an-color-ink);
@@ -1499,7 +1500,7 @@
 .an-stage[data-size='phone'] .an-stage-side { order: 0; margin-bottom: 24px; }
 .an-stage[data-size='phone'] .an-modes { display: flex; justify-content: start; gap: 24px; overflow-x: auto; padding-bottom: 8px; }
 .an-stage[data-size='phone'] .an-modes button { flex: none; font-size: 14px; min-height: 44px; letter-spacing: 0; text-transform: none; }
-.an-stage[data-size='phone'] .an-stage-nav { position: fixed; inset: auto 0 0; padding: 4px 12px var(--app-safe-bottom, 0px); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); z-index: var(--an-z-toolbox); }
+.an-stage[data-size='phone'] .an-stage-nav { position: absolute; inset: auto 0 0; padding: 4px 12px var(--app-safe-bottom, 0px); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); z-index: var(--an-z-toolbox); }
 .an-stage[data-size='phone'] .an-nav { padding: 0; }
 .an-stage[data-size='phone'] .an-nav button { min-height: 64px; font-size: 11px; letter-spacing: 0; gap: 6px; }
 .an-stage[data-size='phone'] .an-corner-trigger { min-width: 44px; min-height: 44px; }

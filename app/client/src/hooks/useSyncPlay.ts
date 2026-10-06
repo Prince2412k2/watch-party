@@ -49,7 +49,7 @@ export function useSyncPlay({
   const userSeekTimer = useRef<number | null>(null)
   const hardSeeks = useRef<number[]>([])
   const lastHardSeekAt = useRef(0)
-  const pendingLocalCommand = useRef<{ kind: 'play' | 'pause'; until: number } | null>(null)
+  const pendingLocalCommand = useRef<{ kind: 'play' | 'pause' | 'seek'; until: number } | null>(null)
   const syncModeRef = useRef(syncMode)
   syncModeRef.current = syncMode
   // Last schedule.version this hook has applied, and the media generation it
@@ -167,7 +167,7 @@ export function useSyncPlay({
   // isSeekingRef suppresses the control loop for the duration (re-entry guard).
   async function bufferAwareSeek(video: HTMLVideoElement | null | undefined) {
     if (!video) return
-    if (isSeekingRef.current) return
+    if (isSeekingRef.current || video.seeking) return
     isSeekingRef.current = true
     holdApplying()
     setLocalPhase('catchingUp')
@@ -233,7 +233,7 @@ export function useSyncPlay({
   // and isSeekingRef suppresses the control loop so it can't stack on top.
   async function bufferAwarePausedSeek(video: HTMLVideoElement | null | undefined) {
     if (!video) return
-    if (isSeekingRef.current) return
+    if (isSeekingRef.current || video.seeking) return
     isSeekingRef.current = true
     holdApplying()
     setLocalPhase('buffering')
@@ -343,7 +343,7 @@ export function useSyncPlay({
       if (!s || !video) return
       // A buffer-aware hard seek is in flight — do not correct or nudge on top
       // of it (that stacking is exactly the chase loop we're killing).
-      if (isSeekingRef.current) return
+      if (isSeekingRef.current || video.seeking) return
       // A locally-authored play/pause/seek is in flight and hasn't round-tripped
       // to the server yet — scheduleRef is still stale. Without this guard a
       // controller's own pause gets raced by this loop, which still sees the
@@ -430,7 +430,13 @@ export function useSyncPlay({
     socket.emit('sync:pause', { positionTicks })
   }, [authorized, socket])
   const requestSeek = useCallback((positionTicks: number, origin: CommandOrigin = 'media-event') => {
-    if (authorized(origin)) socket.emit('sync:seek', { positionTicks, t0: serverNow() })
+    if (!authorized(origin)) return
+    const pending = origin === 'local' ? { kind: 'seek' as const, until: Date.now() + 5000 } : null
+    if (pending) pendingLocalCommand.current = pending
+    socket.emit('sync:seek', { positionTicks, t0: serverNow() }, () => {
+      // A newer local command supersedes this acknowledgement.
+      if (pending && pendingLocalCommand.current === pending) pendingLocalCommand.current = null
+    })
   }, [authorized, socket, serverNow])
   const reportPlayback = useCallback((position: number, rate: number, downloadedChunks: number) => {
     socket.emit('sync:report', {

@@ -13,6 +13,8 @@ import { mediaRequest } from './background.ts'
 import { validateChunk } from './ranges.ts'
 import { runChunkQueue } from './queue.ts'
 import { downloadFile, transferLock, withFileLock } from './opfs.ts'
+import { PROGRESS_CHANNEL, readDownload } from './progress.ts'
+const progressChannel = new BroadcastChannel(PROGRESS_CHANNEL)
 const worker = self as unknown as DedicatedWorkerGlobalScope
 const jobs = new Map<
   string,
@@ -48,6 +50,19 @@ async function transfer(
           ? { ...current, state: 'downloading', error: undefined }
           : current
       )
+    let transferred = 0
+    const run = crypto.randomUUID()
+    const publish = (active = true) =>
+      progressChannel.postMessage({
+        key,
+        generation: record.generation,
+        run,
+        active,
+        transferred,
+        bytes: Math.min(record.size, record.received + transferred)
+      })
+    const progressTimer = full ? setInterval(publish, 150) : undefined
+    if (full) publish()
     try {
       let length = 0
       try {
@@ -88,7 +103,14 @@ async function transfer(
             const start = index * CHUNK_SIZE,
               end = Math.min(record.size - 1, start + CHUNK_SIZE - 1)
             validateChunk(response, start, end, record.size)
-            data = await response.blob()
+            data = await readDownload(
+              response,
+              controller.signal,
+              (count) => {
+                transferred += count
+              },
+              end - start + 1
+            )
           }
           if (controller.signal.aborted)
             throw new DOMException('Paused', 'AbortError')
@@ -131,6 +153,9 @@ async function transfer(
             }
           : current
       )
+    } finally {
+      clearInterval(progressTimer)
+      if (full) publish(false)
     }
   }
   const locked = async () => {

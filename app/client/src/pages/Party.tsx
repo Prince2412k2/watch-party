@@ -296,6 +296,7 @@ function WatchView({
   // "controls hide after three seconds DURING PLAYBACK" — a paused frame keeps
   // its controls.
   const [playing, setPlaying] = useState(true)
+  const [mediaTitle, setMediaTitle] = useState('')
   const chrome = useAutoHideControls({ playing })
   const visible = chrome.visible
   const displayPreferences = useDisplayPreferences()
@@ -507,7 +508,7 @@ function WatchView({
   // height (no `bottom`) is what lets `100dvh` win over the layout viewport.
   const rootStyle: CSSProperties = {
     position: 'fixed', top: 0, left: 0, right: 0,
-    height: '100dvh', minHeight: '100dvh',
+    height: 'var(--app-vh, 100dvh)',
     background: '#000', overflow: 'hidden', cursor: visible ? 'default' : 'none',
     // Kill the tap delay + double-tap-to-zoom (so double-tap-seek is snappy and
     // reliable) while leaving pan/pinch — and iOS edge back-swipe — untouched.
@@ -540,6 +541,7 @@ function WatchView({
         transition: 'margin-left .3s cubic-bezier(.2,0,.1,1), margin-right .3s cubic-bezier(.2,0,.1,1)',
       }}>
         <HlsPlayer
+          onTitle={setMediaTitle}
           session={session} isHost={isHost} collaborativeControl={session.collaborativeControl}
           onSetPlaybackTracks={setPlaybackTracks}
           onSetSubtitlePreferences={setSubtitlePreferences}
@@ -644,7 +646,7 @@ function WatchView({
       )}
 
       <RoomControls
-        stage="watching" visible={visible} phone={phone}
+        stage="watching" mediaTitle={mediaTitle} visible={visible} phone={phone}
         micOn={lk.micOn} camOn={lk.camOn}
         onToggleMic={() => { void guardedToggle(() => lk.enableMic(!lk.micOn)) }}
         onToggleCam={() => { void guardedToggle(() => lk.enableCamera(!lk.camOn)) }}
@@ -720,7 +722,7 @@ function RotateHint() {
 
 // Phone chat as a right-side slide-over sheet. Wraps the existing <Chat> so all
 // chat behavior (alerts, focus, send, Esc) is preserved; only the framing differs.
-function ChatSheet() {
+export function ChatSheet() {
   return (
     <div onClick={(e) => e.stopPropagation()} style={{
       position: 'absolute', zIndex: Z.chat,
@@ -733,10 +735,10 @@ function ChatSheet() {
   )
 }
 
-const CAM_POPUP_DEFAULT_W = 196
-const CAM_POPUP_DEFAULT_H = 116
+const CAM_POPUP_DEFAULT_W = 144
+const CAM_POPUP_DEFAULT_H = 96
 const CAM_POPUP_MARGIN = 10
-const CAM_POPUP_MIN_W = 132
+const CAM_POPUP_MIN_W = 112
 const CAM_POPUP_MIN_H = 76
 
 // Phone camera popup: the "pop-up screen of people" the redesign asked for —
@@ -752,7 +754,7 @@ const CAM_POPUP_MIN_H = 76
 // — a separate show/hide button used to make that a two-step action, which
 // read as "I have to turn on my camera from two places." Respects the
 // Phase-2.1 hide-self flag (localParticipant is dropped upstream).
-function MobileCameraStrip({
+export function MobileCameraStrip({
   localParticipant, participants = [], isHost, removedCameras = new Set(), onRemove = () => {}, hideSelf, visible,
 }: {
   localParticipant?: { identity: string; isLocal?: boolean } | null
@@ -802,7 +804,7 @@ function MobileCameraStrip({
   return (
     <div ref={boundsRef} style={{
       position: 'absolute', zIndex: Z.cameraStrip,
-      top: visible ? 'calc(var(--sa-t) + 60px)' : 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
+      top: visible ? 'calc(var(--sa-t) + 60px)' : 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 8px)', right: visible ? 'calc(var(--sa-r) + 100px)' : 'calc(var(--sa-r) + 8px)',
       // Same clearance the old strip used: sit above the bottom bar when chrome
       // is shown; drop to the safe-area edge when it hides. Clearance derives
       // from the bar's REAL measured height (published as --watch-bar-h by
@@ -944,14 +946,16 @@ function LobbyAVBar({ lk, chatOpen, onToggleChat, hideSelf, onToggleHideSelf }: 
 type HlsPlayerProps = Omit<PlayerProps, 'hlsUrl' | 'mediaItemId' | 'playback' | 'syncMode'> & {
   session: PartySession
   localSubtitleStreamIndex?: number | null
+  onTitle?: (title: string) => void
 }
 
-function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks, localSubtitleStreamIndex = null, ...rest }: HlsPlayerProps) {
+function HlsPlayer({ session, onTitle, isHost, collaborativeControl, onSetPlaybackTracks, localSubtitleStreamIndex = null, ...rest }: HlsPlayerProps) {
   const { user } = useAuth()
   const [hlsUrl, setHlsUrl] = useState<{ itemId: string; url: string; saved?: SavedMedia } | null>(null)
   const [streamError, setStreamError] = useState('')
   const audioStreamIndex = session?.playback?.selectedAudioIndex
   const mediaSourceId = session?.playback?.mediaSourceId ?? session?.mediaSourceId ?? session?.mediaItemId
+  useEffect(() => { onTitle?.(hlsUrl?.saved?.title ?? '') }, [hlsUrl?.saved?.title, onTitle])
   const playback = session.playback
     ? { ...session.playback, selectedSubtitleIndex: localSubtitleStreamIndex }
     : undefined

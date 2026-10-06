@@ -161,7 +161,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
 
   function applySession(sess: PartySession, role: PartyContextValue['role']) {
     dispatch({ type: 'SET_SESSION', session: sess, role })
-    if (shouldOpenPartyPlayer(sess, role, window.location.pathname)) navigate(`/party/${sess.id}`)
+    if (shouldOpenPartyPlayer(sess, role, window.location.pathname, stateRef.current.session)) navigate(`/party/${sess.id}`)
   }
 
   useEffect(() => {

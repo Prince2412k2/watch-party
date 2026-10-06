@@ -5,6 +5,8 @@ import './design/analog.css'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
+import { installViewport } from './viewport.ts'
+installViewport()
 
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing root element')
