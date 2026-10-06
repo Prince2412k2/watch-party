@@ -298,6 +298,18 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     assert.equal((await emitAck(afterLiveKit, 'party:resume')).session.id, firstParty.partyId)
     await delay(150)
     assert.equal(afterLiveKit.connected, true)
+
+    assert.equal((await emitAck(hostBackup, 'party:leave')).error, 'Transfer host or end the party first')
+    assert.equal((await emitAck(guestTwo, 'party:join', { partyId: firstParty.partyId })).status, 'waiting')
+    const reapproved = nextMatching(guestTwo, 'party:approved')
+    await emitAck(hostBackup, 'party:approve', { userId: guestId })
+    await reapproved
+    const departed = nextMatching(hostBackup, 'user:left', value => value.userId === guestId)
+    assert.equal((await emitAck(guestTwo, 'party:leave')).ok, true)
+    await departed
+    assert.equal((await emitAck(guestTwo, 'party:resume')).session, null)
+    assert.equal((await emitAck(hostBackup, 'party:resume')).session.id, firstParty.partyId)
+    assert.equal((await fetch(`${baseUrl}/api/livekit/token?partyId=${firstParty.partyId}`, { headers: { Cookie: guestCookie } })).status, 403)
   } finally {
     for (const socket of sockets) socket.disconnect()
     child.kill('SIGTERM')

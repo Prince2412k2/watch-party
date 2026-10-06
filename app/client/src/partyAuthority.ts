@@ -12,9 +12,9 @@ export function partyRoleForUser(session: PartySession, userId?: string): PartyR
 export function shouldOpenPartyPlayer(session: PartySession, role: PartyRole, pathname: string, currentSession?: PartySession | null): boolean {
   if (role !== 'host' && role !== 'guest') return false
   if (pathname.startsWith('/party/')) return false
-  // Saved playback can host a room in place. Membership/schedule updates must
-  // not navigate away and tear down its video or published camera.
-  if (pathname.startsWith('/saved/watch/') && currentSession?.id === session.id &&
+  // Membership updates must preserve both saved playback and a floating movie
+  // while browsing. A newly selected title still opens the player.
+  if (currentSession?.id === session.id && currentSession.stage === 'watching' &&
       currentSession.mediaItemId === session.mediaItemId) return false
   return session.stage === 'watching' && typeof session.mediaItemId === 'string'
 }

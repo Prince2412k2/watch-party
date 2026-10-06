@@ -10,6 +10,7 @@ import { createLocalTransport } from '../sync/transportCommand.ts'
 import { isBuffered } from '../sync/bufferSeek.ts'
 import { BUFFER_AHEAD_SEC } from '../sync/syncCore.ts'
 import { getMedia } from '../offline/storage.ts'
+import { usePlayerPresentation } from './PlayerPresentation.tsx'
 import { IS_NATIVE } from '../native/env.ts'
 import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc.ts'
@@ -232,7 +233,7 @@ export default function Player({
         )}
 
         {/* Route all playback through SyncPlay + keyboard control */}
-        {standalone ? <StandaloneBridge onPlayingChange={onPlayingChange} /> : (
+        {standalone ? <StandaloneBridge onPlayingChange={onPlayingChange} onToggleMuted={toggleMuted} /> : (
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
           onOpenChat={onOpenChat} onToggleChat={onToggleChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
           seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
@@ -244,14 +245,6 @@ export default function Player({
         <div className="watch-levels watch-levels--volume" style={{ zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div className="watch-level-group">
           <PlayerVolume systemVolumeOnly={phone} userMuted={userMuted} onToggleMuted={toggleMuted} size={44} reveal="always" trackHeight="var(--watch-level-track)" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
-          <div className="watch-call-buttons">
-          {onToggleMic && <BarBtn onClick={onToggleMic} title={micOn ? 'Mute microphone' : 'Share microphone'} active={micOn}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/>{!micOn && <path d="M3 3 21 21"/>}</svg>
-          </BarBtn>}
-          {onToggleCam && <BarBtn onClick={onToggleCam} title={camOn ? 'Turn camera off' : 'Share camera'} active={camOn}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-4v12l-6-4"/>{!camOn && <path d="M3 3 21 21"/>}</svg>
-          </BarBtn>}
-          </div>
           </div>
         </div>
         <>
@@ -280,7 +273,8 @@ export default function Player({
   )
 }
 
-function StandaloneBridge({ onPlayingChange }: { onPlayingChange?: (playing: boolean) => void }) {
+function StandaloneBridge({ onPlayingChange, onToggleMuted }: { onPlayingChange?: (playing: boolean) => void; onToggleMuted: () => void }) {
+  const { floating } = usePlayerPresentation()
   const media = VPlayer.useMedia() as unknown as MediaLike
   useEffect(() => {
     if (!media) return
@@ -290,11 +284,23 @@ function StandaloneBridge({ onPlayingChange }: { onPlayingChange?: (playing: boo
       if (command.kind === 'pause') media.pause()
       if (command.kind === 'seek') media.currentTime = command.time ?? (command.positionTicks ?? 0) / 10_000_000
     }
+    const key = (event: KeyboardEvent) => {
+      if (floating || event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest('input,textarea,button,[contenteditable="true"],[role="dialog"]')) return
+      const name = event.key.toLowerCase()
+      if (name === ' ' || name === 'k') media.paused ? void media.play().catch(() => {}) : media.pause()
+      else if (['arrowleft', 'arrowright', 'j', 'l'].includes(name)) {
+        const step = name === 'j' ? -10 : name === 'l' ? 10 : name === 'arrowleft' ? -5 : 5
+        media.currentTime = Math.max(0, Math.min(media.duration || Infinity, media.currentTime + step))
+      } else if (name === 'm') onToggleMuted()
+      else return
+      event.preventDefault(); event.stopImmediatePropagation()
+    }
     const playing = () => onPlayingChange?.(!media.paused)
+    window.addEventListener('keydown', key, true)
     window.addEventListener('watch:transport', transport)
     media.addEventListener('play', playing); media.addEventListener('pause', playing)
-    return () => { window.removeEventListener('watch:transport', transport); media.removeEventListener('play', playing); media.removeEventListener('pause', playing) }
-  }, [media, onPlayingChange])
+    return () => { window.removeEventListener('keydown', key, true); window.removeEventListener('watch:transport', transport); media.removeEventListener('play', playing); media.removeEventListener('pause', playing) }
+  }, [media, onPlayingChange, onToggleMuted, floating])
   return null
 }
 
@@ -555,6 +561,7 @@ interface SyncBridgeProps extends Pick<PlayerProps, 'isHost' | 'collaborativeCon
   srcUrl?: string; onAutoplayBlocked?: VoidCallback; userMuted?: boolean; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
 }
 function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, onToggleChat, onPlayingChange, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
+  const { floating } = usePlayerPresentation()
   const media = VPlayer.useMedia() as unknown as MediaLike
   const mediaRef = useRef<MediaLike | null>(null)
   mediaRef.current = media
@@ -779,6 +786,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     const pause = (m: MediaLike) => transport.pause(m)
     const seek = (m: MediaLike, time: number) => { transport.seekTo(m, time) }
     function onKey(e: KeyboardEvent) {
+      if (floating || document.querySelector('dialog[open]')) return
       const t = e.target instanceof HTMLElement ? e.target : null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const m = mediaRef.current
@@ -841,7 +849,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('watch:transport', onCommand)
     }
-  }, [canControl, onOpenChat, onToggleChat, userMuted, onToggleMuted, immersive, enterImmersive, exitImmersive, transport])
+  }, [floating, canControl, onOpenChat, onToggleChat, userMuted, onToggleMuted, immersive, enterImmersive, exitImmersive, transport])
 
   // Playback state for the chrome auto-hide, which must never hide over a
   // paused frame. Read through the same localPhase guard the transport glyphs
@@ -1599,7 +1607,7 @@ function NativeTransportBar({
   const shown = visible || settingsOpen
 
   return (
-    <div className="watch-skin" style={{
+    <div className="watch-skin watch-transport" style={{
       position: 'absolute', zIndex: Z.controlBar,
       left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
       bottom: 'calc(var(--sa-b) + 8px)',

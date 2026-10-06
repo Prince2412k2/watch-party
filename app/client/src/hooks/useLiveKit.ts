@@ -15,6 +15,14 @@ export interface LiveKitParticipantView {
 
 export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enabled?: boolean } = {}) {
   const roomRef = useRef<Room | null>(null)
+  const [revision, setRevision] = useState(0)
+  const desired = useRef({ camera: false, mic: false })
+  const reconnect = () => setRevision(value => value + 1)
+  const previousParty = useRef(partyId)
+  if (previousParty.current !== partyId || !enabled) {
+    previousParty.current = partyId
+    desired.current = { camera: false, mic: false }
+  }
   const [participants, setParticipants] = useState<LiveKitParticipantView[]>([])
   const [localParticipant, setLocalParticipant] = useState<LiveKitParticipantView | null>(null)
   const [camOn, setCamOn] = useState(false)
@@ -50,6 +58,8 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
       dispose: room => { Promise.resolve(room.disconnect()).catch(() => {}) },
     })
 
+    const attachedAudio = new Map<string, { track: { detach: (element: HTMLMediaElement) => unknown }; element: HTMLMediaElement }>()
+    const clearAudio = () => { for (const value of attachedAudio.values()) { value.track.detach(value.element); value.element.remove() }; attachedAudio.clear() }
     async function connect() {
       try {
         const res = await fetch(`/api/livekit/token?partyId=${partyId}`, { credentials: 'include', signal: run.signal })
@@ -77,16 +87,31 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
             .map(p => ({
               identity: p.identity,
               name: p.name || p.identity,
-              videoTrack: p.getTrackPublication(Track.Source.Camera)?.track ?? null,
-              audioTrack: p.getTrackPublication(Track.Source.Microphone)?.track ?? null,
+              videoTrack: p.getTrackPublication(Track.Source.Camera)?.isMuted ? null : p.getTrackPublication(Track.Source.Camera)?.track ?? null,
+              audioTrack: p.getTrackPublication(Track.Source.Microphone)?.isMuted ? null : p.getTrackPublication(Track.Source.Microphone)?.track ?? null,
               isSpeaking: p.isSpeaking,
             }))
+          // Audio belongs to the room, never to a visible camera tile.
+          for (const [id, attached] of attachedAudio) {
+            if (parts.find(p => p.identity === id)?.audioTrack !== attached.track) {
+              attached.track.detach(attached.element); attached.element.remove(); attachedAudio.delete(id)
+            }
+          }
+          for (const part of parts) {
+            if (part.audioTrack && !attachedAudio.has(part.identity)) {
+              const element = part.audioTrack.attach()
+              element.autoplay = true
+              element.hidden = true
+              document.body.appendChild(element)
+              attachedAudio.set(part.identity, { track: part.audioTrack, element })
+            }
+          }
           setParticipants(parts)
           setLocalParticipant({
             identity: room.localParticipant.identity,
             name: room.localParticipant.name || room.localParticipant.identity,
-            videoTrack: room.localParticipant.getTrackPublication(Track.Source.Camera)?.track ?? null,
-            audioTrack: room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track ?? null,
+            videoTrack: room.localParticipant.getTrackPublication(Track.Source.Camera)?.isMuted ? null : room.localParticipant.getTrackPublication(Track.Source.Camera)?.track ?? null,
+            audioTrack: room.localParticipant.getTrackPublication(Track.Source.Microphone)?.isMuted ? null : room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track ?? null,
             isSpeaking: room.localParticipant.isSpeaking,
           })
         }
@@ -96,6 +121,8 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
           .on(RoomEvent.ParticipantDisconnected, refresh)
           .on(RoomEvent.TrackPublished, refresh)
           .on(RoomEvent.TrackUnpublished, refresh)
+          .on(RoomEvent.TrackMuted, refresh)
+          .on(RoomEvent.TrackUnmuted, refresh)
           .on(RoomEvent.TrackSubscribed, refresh)
           .on(RoomEvent.TrackUnsubscribed, refresh)
           .on(RoomEvent.ActiveSpeakersChanged, refresh)
@@ -109,6 +136,11 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
         // Cancelled during connect: run.cancel() has already disconnected this
         // room, so publishing its state would describe a dead session.
         if (run.cancelled) return
+        if (desired.current.camera) await room.localParticipant.setCameraEnabled(true)
+        if (desired.current.mic) await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true, autoGainControl: true })
+        if (run.cancelled) return
+        setCamOn(room.localParticipant.isCameraEnabled)
+        setMicOn(room.localParticipant.isMicrophoneEnabled)
         setAudioBlocked(!room.canPlaybackAudio)
         refresh()
       } catch (err) {
@@ -122,6 +154,7 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
     return () => {
       const owned = run.resource
       run.cancel()
+      clearAudio()
       // Only clear the ref if it still points at THIS run's room; a newer run
       // may already own it.
       if (roomRef.current === owned) roomRef.current = null
@@ -133,7 +166,7 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
       setMicOn(false)
       setAudioBlocked(false)
     }
-  }, [partyId, enabled, flagError])
+  }, [partyId, enabled, flagError, revision])
 
   // WebRTC audio processing applied to the PUBLISHED mic track. Echo
   // cancellation is the backstop against the "mic picks up movie audio → echo"
@@ -159,11 +192,13 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
     if (!room) { flagError('Not connected to the room yet.'); return false }
     try {
       await room.localParticipant.setCameraEnabled(on)
+      if (roomRef.current !== room) return false
+      desired.current.camera = on
       setCamOn(on)
       flagError(null)
       return true
     } catch (err) {
-      flagError(mediaError('Camera', err))
+      if (roomRef.current === room) flagError(mediaError('Camera', err))
       return false
     }
   }
@@ -173,11 +208,13 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
     if (!room) { flagError('Not connected to the room yet.'); return false }
     try {
       await room.localParticipant.setMicrophoneEnabled(on, MIC_CAPTURE)
+      if (roomRef.current !== room) return false
+      desired.current.mic = on
       setMicOn(on)
       flagError(null)
       return true
     } catch (err) {
-      flagError(mediaError('Microphone', err))
+      if (roomRef.current === room) flagError(mediaError('Microphone', err))
       return false
     }
   }
@@ -196,7 +233,7 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
 
   return {
     participants, localParticipant, camOn, micOn, enableCamera, enableMic, error,
-    audioBlocked, startAudio,
+    audioBlocked, startAudio, reconnect,
     // Lets a wrapper around enableCamera/enableMic (the player's authoring
     // guard) push its own failure into the SAME visible banner instead of
     // dropping it on the floor.

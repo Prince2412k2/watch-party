@@ -19,7 +19,7 @@ export default function CollapsedFace({ identity, name }: { identity: string; na
       display: 'grid', placeItems: 'center', pointerEvents: 'none',
       borderRadius: '50%', overflow: 'hidden',
     }}>
-      <Avatar userId={identity} name={name} config={avatar} size="100%" circle />
+      <Avatar userId={identity} name={name} config={avatar} size={60} style={{ width: '100%', height: '100%' }} circle />
     </div>
   )
 }

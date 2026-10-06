@@ -652,6 +652,29 @@ io.on('connection', (socket) => {
     ack?.({ ok: true })
   })
 
+  // Explicit departure leaves the movie and other viewers running. Hosts must
+  // transfer ownership or deliberately end the room instead.
+  socket.on('party:leave', async (_payload, ack) => {
+    const sess = getSession(socket.partyId ?? socket.waitingPartyId)
+    if (!sess) return ack?.({ ok: true })
+    if (sess.hostId === userId) return ack?.({ error: 'Transfer host or end the party first' })
+    const departing = [...partySocketsForUser(userId, sess.id), ...waitingSocketsForUser(userId, sess.id)]
+    const guest = removeGuest(sess, userId)
+    rejectGuest(sess, userId)
+    leavePartySockets(userId, sess.id)
+    for (const candidate of departing) {
+      candidate.leave(sess.id)
+      setSocketParticipation(candidate, {})
+      candidate.emit('party:left', {})
+    }
+    const changed = sess.stalled.delete(userId)
+    if (changed) reconcile(sess)
+    persistSession(sess)
+    if (guest) io.to(sess.id).emit('user:left', { userId, name: effectiveName(userId, guest.name) })
+    io.to(sess.hostSocketId).emit('party:state', publicSession(sess))
+    ack?.({ ok: true })
+  })
+
   // party:end — host's explicit "End Party" action. Unlike a host disconnect
   // (handleHostDisconnect below), this is instant and final: no grace period,
   // no promoting a guest to host. The session is torn down immediately and
@@ -690,6 +713,7 @@ io.on('connection', (socket) => {
     supersedeMediaSelection(sess)
     transferHost(sess, targetId, targetGuest.socketId, targetToken)
     io.to(sess.id).emit('host:changed', { hostId: targetId })
+    io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
   })
 

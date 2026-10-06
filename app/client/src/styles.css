@@ -750,4 +750,3 @@ media-player, media-player:focus, media-player:focus-visible,
 .watch-levels { position: absolute; top: calc(var(--sa-t) + 56px); bottom: calc(var(--sa-b) + var(--watch-bar-h, 88px) + 56px); display: flex; justify-content: center; align-items: center; }
 .watch-levels--volume { right: max(12px, env(safe-area-inset-right)); }
 .watch-level-group { position: relative; }
-.watch-call-buttons { position: absolute; top: 100%; right: 0; display: flex; }

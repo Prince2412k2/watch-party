@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import Player, { type PlayerProps } from '../components/Player.tsx'
-import RoomControls from '../components/RoomControls.tsx'
+import RoomControls, {
+  DeviceRail,
+  RoomButton
+} from '../components/RoomControls.tsx'
+import {
+  RoomOverlay,
+  usePlayerPresentation,
+  useRoomConnection
+} from '../components/PlayerPresentation.tsx'
 import CameraGrid from '../components/CameraGrid.tsx'
 import Chat from '../components/Chat.tsx'
-import { MobileCameraStrip, ChatSheet } from './Party.tsx'
 import { useParty } from '../context/PartyContext.tsx'
-import { useLiveKit } from '../hooks/useLiveKit.ts'
 import { useSocket } from '../hooks/useSocket.ts'
 import { usePhone } from '../hooks/useIsMobile.ts'
 import { useAuth } from '../context/AuthContext.tsx'
@@ -27,9 +33,11 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
   const party = useParty()
   const { socket } = useSocket()
   const phone = usePhone()
+  const presentation = usePlayerPresentation()
+  const [hideSelf, setHideSelf] = useState(false)
   const [roomId, setRoomId] = useState<string>()
   const sharing = !!roomId && party.session?.id === roomId
-  const lk = useLiveKit({ partyId: roomId, enabled: sharing })
+  const lk = useRoomConnection()
   const seekBridge =
     useRef<NonNullable<PlayerProps['seekBridgeRef']>['current']>(null)
   const joining = useRef(false)
@@ -45,6 +53,11 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
   const [playing, setPlaying] = useState(false)
   const stage = useRef<HTMLDivElement>(null)
   const chrome = useAutoHideControls({ playing })
+  useEffect(() => {
+    if (!party.chatOpen) return
+    chrome.hold('chat')
+    return () => chrome.release('chat')
+  }, [party.chatOpen, chrome.hold, chrome.release])
   const toggleShare = async (kind: 'camera' | 'microphone') => {
     if (!record || joining.current) return
     if (sharing) {
@@ -122,7 +135,7 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
     participants: lk.participants,
     isHost: party.role === 'host',
     removedCameras: removedCameras.current,
-    hideSelf: !lk.camOn,
+    hideSelf: hideSelf || !lk.camOn,
     onRemove: (identity: string) => party.removeCamera(identity)
   }
   useEffect(() => {
@@ -155,9 +168,9 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
     <div
       ref={stage}
       style={{
-        position: 'fixed',
-        inset: '0 0 auto',
-        height: 'var(--app-vh, 100dvh)',
+        position: 'absolute',
+        inset: 0,
+        height: '100%',
         overflow: 'hidden',
         background: '#000'
       }}
@@ -178,7 +191,7 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
           micOn={lk.micOn}
           hlsUrl={url}
           mediaItemId={record.itemId}
-          visible={chrome.visible}
+          visible={chrome.visible && !presentation.floating}
           onToggleCam={
             navigator.onLine && !user?.offline
               ? () => {
@@ -211,51 +224,72 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
           }}
         />
       )}
-      {sharing && (
-        <>
-          <RoomControls
-            stage="watching"
-            mediaTitle={record?.title}
-            phone={phone}
-            visible={chrome.visible}
-            onOpenChat={() => party.openChat(true)}
-            chatOpen={party.chatOpen}
-            onHoldChrome={chrome.hold}
-            onReleaseChrome={chrome.release}
-          />
-          {(lk.camOn || lk.participants.some((p) => !!p.videoTrack)) &&
-            (phone ? (
-              <MobileCameraStrip {...cameraProps} visible={chrome.visible} />
-            ) : (
-              <CameraGrid {...cameraProps} />
-            ))}
-          {party.chatOpen && (phone ? <ChatSheet /> : <Chat top={76} />)}
-        </>
-      )}
-      {!sharing && (
-        <button
-          onClick={(event) => {
-            event.stopPropagation()
-            navigate('/saved')
-          }}
-          style={{
-            position: 'absolute',
-            top: 'max(16px,env(safe-area-inset-top))',
-            left: 16,
-            zIndex: 50,
-            color: 'white',
-            background: 'transparent',
-            border: 0,
-            padding: 12,
-            display: chrome.visible ? 'block' : 'none'
-          }}
-        >
-          ← {record?.title || 'Saved movies'}
-        </button>
-      )}
-      {(error || lk.error) && (
+      <RoomOverlay>
+        {sharing ? (
+          <>
+            <RoomControls
+              stage="watching"
+              mediaTitle={record?.title}
+              phone={phone}
+              visible={chrome.visible && !presentation.floating}
+              micOn={lk.micOn}
+              camOn={lk.camOn}
+              onToggleMic={() => toggleShare('microphone')}
+              onToggleCam={() => toggleShare('camera')}
+              hideSelf={hideSelf}
+              onToggleHideSelf={() => setHideSelf((value) => !value)}
+              onReconnect={lk.reconnect}
+              onSetMic={(on) =>
+                seekBridge.current?.guardToggle(() => lk.enableMic(on)) ??
+                lk.enableMic(on)
+              }
+              onOpenChat={() => party.openChat(true)}
+              chatOpen={party.chatOpen}
+              onHoldChrome={chrome.hold}
+              onReleaseChrome={chrome.release}
+            />
+            <CameraGrid
+              {...cameraProps}
+              chatOpen={party.chatOpen}
+              controlsVisible={chrome.visible && !presentation.floating}
+              micOn={lk.micOn}
+              camOn={lk.camOn}
+              onToggleMic={() => toggleShare('microphone')}
+              onToggleCam={() => toggleShare('camera')}
+              onToggleHideSelf={() => setHideSelf(true)}
+            />
+            <Chat />
+          </>
+        ) : (
+          <>
+            {!presentation.floating && (
+              <div
+                className="native-player-title"
+                data-visible={chrome.visible}
+              >
+                <RoomButton
+                  label="Minimize movie"
+                  icon="back"
+                  onClick={presentation.minimize}
+                />
+                <span>{record?.title || 'Saved movies'}</span>
+              </div>
+            )}
+            {navigator.onLine && !user?.offline && (
+              <DeviceRail
+                micOn={lk.micOn}
+                camOn={lk.camOn}
+                onToggleMic={() => toggleShare('microphone')}
+                onToggleCam={() => toggleShare('camera')}
+                visible={chrome.visible && !presentation.floating}
+              />
+            )}
+          </>
+        )}
+      </RoomOverlay>
+      {error && (
         <p role="alert" style={{ color: 'white', padding: 60 }}>
-          {error || lk.error}
+          {error}
         </p>
       )}
     </div>

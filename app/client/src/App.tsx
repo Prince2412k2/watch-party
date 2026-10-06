@@ -2,6 +2,7 @@ import { Component, Suspense, lazy, startTransition, useEffect, useState } from 
 import type { ErrorInfo, ReactNode } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext.tsx'
 import RouteLoading from './components/RouteLoading.tsx'
+import PlayerHost from './components/PlayerHost.tsx'
 import { navigate } from './router.ts'
 import { usePhone } from './hooks/useIsMobile.ts'
 import { PartyProvider } from './context/PartyContext.tsx'
@@ -25,9 +26,7 @@ const DiscoverStage = lazy(() => import('./pages/DiscoverStage'))
 const DownloadsStage = lazy(() => import('./pages/DownloadsStage'))
 const DesktopApp = lazy(() => import('./pages/DesktopApp'))
 const Profile = lazy(() => import('./pages/Profile'))
-const WatchRoute = lazy(() => import('./pages/WatchRoute'))
 const SavedMovies = lazy(() => import('./pages/SavedMovies'))
-const SavedWatch = lazy(() => import('./pages/SavedWatch'))
 const Converter = lazy(() => import('./pages/Converter'))
 
 /* Splitting routes into chunks introduces one failure mode a single bundle did
@@ -116,8 +115,6 @@ function UnauthenticatedRouter() {
 
 function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof useAuth>['user']> }) {
   const path = useRoute()
-  const phone = usePhone()
-  const { logout, profile } = useAuth()
 
   useEffect(() => {
     if (path === '/login') {
@@ -140,20 +137,13 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
     else if (path === '/' || path === '/library') navigate('/movies')
   }, [path])
 
-  if (path === '/' || path === '/library' || path === '/login') return null
+  return <PlayerHost path={path} renderLibrary={browsePath => <BrowseRoute path={browsePath} user={user} />} />
+}
 
-  // (1) Party routes — ONE shared, mount-stable element for desktop AND phone.
-  // Rendered above the device branch so a usePhone() flip on rotation never
-  // remounts a live watch session (which would tear down LiveKit + useSyncPlay).
-  // Handles /party/new?itemId=xxx and /party/:id. See mobile/screens/Watch.tsx.
-  // Deliberately OUTSIDE DownloadsProvider: a watch session has no download UI,
-  // and must not be polling qBittorrent/*arr while the player is running.
-  if (path.startsWith('/party/')) return <Suspense fallback={<RouteLoading />}><WatchRoute path={path} /></Suspense>
-
+function BrowseRoute({ path, user }: { path: string; user: NonNullable<ReturnType<typeof useAuth>['user']> }) {
   // Installer downloads must remain reachable from any device size.
   if (path === '/desktop-app') return <Suspense fallback={<RouteLoading />}><DesktopApp /></Suspense>
   if (path === '/saved') return <Suspense fallback={<RouteLoading />}><SavedMovies /></Suspense>
-  if (path.startsWith('/saved/watch/')) return <Suspense fallback={<RouteLoading />}><SavedWatch mediaKey={decodeURIComponent(path.slice('/saved/watch/'.length))} /></Suspense>
   if (path === '/converter' && user.isAdmin) return <Suspense fallback={<RouteLoading />}><Converter /></Suspense>
 
   // One profile editor for both device sizes — it is a full-screen page on each,
@@ -166,8 +156,6 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // its own stage, bottom modes and corner toolboxes, so it is NOT wrapped in
   // WebShell — and it runs on phones too, because the analog model is the same
   // stage and focus behaviour at every size rather than a separate phone tree.
-  // '/library' stays on the superseded implementations: nothing is removed until
-  // parity is verified, and it is the phone shell's Home tab.
   // Every browsing surface is an analog stage: the same full-stage model, the
   // same fixed-cursor rail, the same bottom modes and corner toolboxes at every
   // size. There is no separate phone tree any more — the stage is responsive,
