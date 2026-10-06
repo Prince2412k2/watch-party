@@ -404,9 +404,9 @@ try {
   // Force chrome visible by pausing and tapping the surface if necessary.
   await page.evaluate(() => window.movie.pause())
   await page.setViewportSize({ width: 844, height: 390 })
-  await page
-    .locator('[aria-label="Picture brightness"]')
-    .waitFor({ state: 'attached' })
+  await page.locator('.watch-levels--volume').waitFor({ state: 'attached' })
+  assert.equal(await page.getByLabel('Picture brightness', { exact: true }).count(), 0)
+  assert.equal(await page.getByRole('slider', { name: 'Volume', exact: true }).count(), 0)
   await new Promise((resolve) => setTimeout(resolve, 300))
   await page.evaluate(() => {
     if (
@@ -424,11 +424,17 @@ try {
       .evaluate((e) => getComputedStyle(e).opacity),
     '1'
   )
+  const mute = page.locator('.watch-levels--volume button[aria-pressed]')
+  const initiallyMuted = await page.locator('video').evaluate(video => video.muted)
+  await mute.click()
+  assert.equal(await page.locator('video').evaluate(video => video.muted), !initiallyMuted)
+  await mute.click()
+  assert.equal(await page.locator('video').evaluate(video => video.muted), initiallyMuted)
   await page.screenshot({ path: join(artifacts, 'player-landscape.png') })
   const geometry = await page.evaluate(() =>
     Array.from(
       document.querySelectorAll(
-        '[aria-label="Picture brightness"],[aria-label="Volume"],[aria-label="Share camera"],[aria-label="Seek"]'
+        '.watch-levels--volume button[aria-pressed],[aria-label="Share camera"],[aria-label="Seek"]'
       )
     ).map((e) => ({
       name: e.getAttribute('aria-label'),
@@ -444,6 +450,16 @@ try {
       (r) => r.x >= 0 && r.y >= 0 && r.x + r.w <= 844 && r.y + r.h <= 390
     )
   )
+  await page.setViewportSize({ width: 1280, height: 800 })
+  const desktopVolume = page.getByRole('slider', { name: 'Volume', exact: true })
+  await desktopVolume.waitFor()
+  const volumeBounds = await desktopVolume.boundingBox()
+  await desktopVolume.click({ position: { x: volumeBounds.width / 2, y: volumeBounds.height / 2 } })
+  assert.ok(Math.abs(await page.locator('video').evaluate(video => video.volume) - 0.5) < 0.05)
+  assert.equal(await page.locator('video').evaluate(video => video.muted), false)
+  assert.equal(await page.locator('video').evaluate(video => getComputedStyle(video).filter), 'none')
+  console.log('PASS phone sliders absent, mute toggles playback audio, desktop volume adjusts audio, no brightness filter')
+  await page.setViewportSize({ width: 844, height: 390 })
   await page.goto(base + '/series')
   await page
     .getByRole('button', { name: 'Details for Lanterns', exact: true })
