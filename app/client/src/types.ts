@@ -133,6 +133,7 @@ export interface PartyContextValue {
    * previous room's session/role/messages can't bleed into the new one.
    */
   leaveParty: () => void
+  exitParty: () => Promise<void>
   selectMedia: (mediaItemId: string, tracks?: { mediaSourceId?: string; audioStreamIndex?: number | null; subtitleStreamIndex?: number | null; resumePositionTicks?: number | null }) => void
   backToLobby: () => void
   approveUser: (userId: string) => void
@@ -143,7 +144,7 @@ export interface PartyContextValue {
   setCollaborative: (enabled: boolean) => void
   setSyncMode: (mode: string) => void
   setMessage?: (text: string) => void
-  sendMessage: (text: string) => void
+  sendMessage: (text: string) => Promise<string | undefined>
   removeCamera: (userId: string) => void
   setPlaybackTracks: (tracks?: {
     audioStreamIndex?: number | null

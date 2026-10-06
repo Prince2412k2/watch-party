@@ -207,6 +207,8 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       toast('The host declined your request')
     })
 
+    socket.on('party:left', () => { dispatch({ type: 'CLEAR' }); navigate('/library') })
+
     socket.on('party:kicked', () => {
       dispatch({ type: 'CLEAR' })
       navigate('/library')
@@ -241,8 +243,8 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       if (!isObject(value) || typeof value.hostId !== 'string') return
       const { hostId } = value
       dispatch({ type: 'HOST_CHANGED', hostId })
+      dispatch({ type: 'SET_ROLE', role: hostId === userId ? 'host' : 'guest' })
       if (hostId === userId) {
-        dispatch({ type: 'SET_ROLE', role: 'host' })
         toast('You are now the host', 'success')
       }
     })
@@ -253,7 +255,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       dispatch({ type: 'PUSH_MESSAGE', msg })
       const st = stateRef.current
       if (msg.userId === userId || st.chatOpen) return
-      if (st.alertMode === 'focus') dispatch({ type: 'OPEN_CHAT', focus: true })
+      // Incoming messages are announced by the toast rail without stealing focus.
       else if (st.alertMode === 'on') dispatch({ type: 'RIPPLE' })
     })
 
@@ -283,6 +285,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       socket.off('party:waiting')
       socket.off('party:approved')
       socket.off('party:rejected')
+      socket.off('party:left')
       socket.off('party:kicked')
       socket.off('party:ended')
       socket.off('user:joined')
@@ -403,6 +406,17 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     dispatch({ type: 'CLEAR' })
   }
 
+  function exitParty(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      socket.timeout(10000).emit('party:leave', {}, (timeout: Error | null, result: { error?: string }) => {
+        if (timeout || result?.error) return reject(timeout || new Error(result.error))
+        dispatch({ type: 'CLEAR' })
+        if (window.location.pathname.startsWith('/party/')) navigate('/library')
+        resolve()
+      })
+    })
+  }
+
   function approveUser(targetUserId: string) {
     socket.emit('party:approve', { userId: targetUserId })
     const waiting = (stateRef.current.session?.waiting ?? []).filter(w => w.userId !== targetUserId)
@@ -427,7 +441,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
       socket.emit('party:end', {}, (value: unknown) => {
         if (isObject(value) && typeof value.error === 'string') return reject(new Error(value.error))
         dispatch({ type: 'CLEAR' })
-        navigate('/library')
+        if (window.location.pathname.startsWith('/party/')) navigate('/library')
         resolve()
       })
     })
@@ -459,8 +473,12 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
     dispatch({ type: 'SET_SUBTITLE_PREFERENCES', preferences })
   }
 
-  function sendMessage(text: string) {
-    socket.emit('chat:message', { text })
+  function sendMessage(text: string): Promise<string | undefined> {
+    return new Promise(resolve => {
+      socket.timeout(10000).emit('chat:message', { text }, (timeout: Error | null, result: { error?: string }) => {
+        resolve(timeout ? 'Message not confirmed. Try again.' : result?.error === 'rate limited' ? 'Too many messages. Try again in a moment.' : result?.error)
+      })
+    })
   }
 
   function removeCamera(targetUserId: string) {
@@ -490,7 +508,7 @@ export function PartyProvider({ children, userId }: { children?: ReactNode; user
   return (
     <PartyContext.Provider value={{
       ...state,
-      createParty, createRoom, joinParty, leaveParty,
+      createParty, createRoom, joinParty, leaveParty, exitParty,
       selectMedia, backToLobby,
       approveUser, rejectUser, kickUser, transferHost, endParty,
       setCollaborative, setSyncMode, sendMessage, removeCamera,

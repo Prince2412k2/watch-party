@@ -52,6 +52,7 @@
   --live: #E0655E;                /* active-download / recording dot */
   --green: #5AB98A;                /* success tick, sparingly */
   --scrim: rgba(0,0,0,.6);
+  --app-vh: 100vh;
   --app-safe-bottom: clamp(0px, env(safe-area-inset-bottom, 0px), 34px);
   --r: 12px;
   --r-lg: 16px;
@@ -72,7 +73,9 @@
 }
 
 html, body, #root {
-  height: 100%;
+  /* Percentage/dynamic heights can leave an unpainted bottom strip in iOS
+     standalone with viewport-fit=cover. Keep the document on the CSS viewport. */
+  height: 100vh;
   overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
@@ -679,21 +682,11 @@ media-player, media-player:focus, media-player:focus-visible,
   input, textarea, select { font-size: 16px; }
 }
 
-/* App shell — fixed to the DYNAMIC viewport (100dvh) so the collapsing URL bar
-   never shifts layout. Anchored top/left/right (NOT `inset:0`, which would use
-   the layout viewport height) with an explicit dvh height. The shell itself
-   never scrolls; a single inner region does.
-   `--app-vh` (set in JS, see MobileApp.jsx) overrides the bare unit when
-   present: iOS has documented cases where `dvh` under-reports the actual
-   visible height — standalone (home-screen-installed) mode, or not fully recovering
-   after the keyboard dismisses — leaving dead space below the shell that the
-   fixed-position tab bar still sits above rather than at the real bottom
-   edge. `dvh` remains the value until JS's first measurement lands, and the
-   fallback if JS never runs at all. */
+/* Standalone uses CSS 100vh. viewport.ts follows the visual viewport in browser
+   tabs and while the keyboard is open. Only the inner content scrolls. */
 .mobile-shell {
   position: fixed; top: 0; left: 0; right: 0;
-  height: 100dvh;
-  height: var(--app-vh, 100dvh);
+  height: var(--app-vh, 100vh);
   overflow: hidden;
   display: flex; flex-direction: column;
   background: #0b0d10;
@@ -750,19 +743,10 @@ media-player, media-player:focus, media-player:focus-visible,
     min-width: 0 !important;
   }
 }
-.watch-brightness { display: flex; flex-direction: column; align-items: center; }
-.watch-brightness input { appearance: none; writing-mode: vertical-lr; direction: rtl; width: 44px; height: 96px; margin: 0; background: transparent; cursor: pointer; touch-action: none; }
-.watch-brightness input::-webkit-slider-runnable-track { width: 2px; background: rgba(255,255,255,.45); }
-.watch-brightness input::-webkit-slider-thumb { appearance: none; width: 8px; height: 8px; margin-left: -3px; border-radius: 50%; background: #f4f4f5; }
-.watch-brightness input::-moz-range-track { width: 2px; background: rgba(255,255,255,.45); }
-.watch-brightness input::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: #f4f4f5; }
 
 /* Native arrangement, scaled by available stage height rather than viewport width. */
 .watch-player { --watch-level-track: clamp(32px, calc(var(--app-vh, 100dvh) - var(--sa-t) - var(--sa-b) - 260px), 132px); }
 .watch-player--phone { --watch-level-track: clamp(32px, calc(var(--app-vh, 100dvh) - var(--sa-t) - var(--sa-b) - 260px), 96px); }
 .watch-levels { position: absolute; top: calc(var(--sa-t) + 56px); bottom: calc(var(--sa-b) + var(--watch-bar-h, 88px) + 56px); display: flex; justify-content: center; align-items: center; }
-.watch-levels--brightness { left: max(12px, env(safe-area-inset-left)); }
 .watch-levels--volume { right: max(12px, env(safe-area-inset-right)); }
 .watch-level-group { position: relative; }
-.watch-call-buttons { position: absolute; top: 100%; right: 0; display: flex; }
-.watch-levels .watch-brightness input { height: var(--watch-level-track); }

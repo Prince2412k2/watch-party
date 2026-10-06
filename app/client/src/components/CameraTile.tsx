@@ -32,7 +32,6 @@ interface CameraTileProps {
 
 export default function CameraTile({ participant, isLocal }: CameraTileProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
   const hasVideo = isAttachableTrack(participant.videoTrack)
   const avatar = useMemberAvatar(participant.identity)
 
@@ -45,15 +44,6 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
     }
   }, [participant.videoTrack])
 
-  useEffect(() => {
-    const track = participant.audioTrack
-    const element = audioRef.current
-    if (isAttachableTrack(track) && element && !isLocal) {
-      track.attach(element)
-      return () => { track.detach(element) }
-    }
-  }, [participant.audioTrack, isLocal])
-
   const speaking = participant.isSpeaking
   const muted = !participant.audioTrack
 
@@ -63,7 +53,7 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
     }}>
       {/* Live video always wins; the avatar is what a camera-off tile shows. */}
       {hasVideo
-        ? <video ref={videoRef} autoPlay muted={isLocal} playsInline style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
+        ? <video ref={videoRef} autoPlay muted playsInline style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} />
         : (
           <div style={{
             width: '100%', height: '100%',
@@ -81,7 +71,6 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
           </div>
         )
       }
-      {!isLocal && <audio ref={audioRef} autoPlay />}
 
       {/* Black-alpha legibility scrim (the one allowed gradient) so the name
           row stays readable over any footage */}
@@ -102,8 +91,8 @@ export default function CameraTile({ participant, isLocal }: CameraTileProps) {
       )}
 
       {/* Bottom bar */}
-      <div style={{
-        position: 'absolute', left: 9, bottom: 8, right: 9,
+      <div className="native-camera-caption" style={{
+        position: 'absolute', left: 9, top: 8, right: 38,
         display: 'flex', alignItems: 'center', gap: 5, pointerEvents: 'none',
       }}>
         {muted && (

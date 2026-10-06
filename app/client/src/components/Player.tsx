@@ -10,6 +10,7 @@ import { createLocalTransport } from '../sync/transportCommand.ts'
 import { isBuffered } from '../sync/bufferSeek.ts'
 import { BUFFER_AHEAD_SEC } from '../sync/syncCore.ts'
 import { getMedia } from '../offline/storage.ts'
+import { usePlayerPresentation } from './PlayerPresentation.tsx'
 import { IS_NATIVE } from '../native/env.ts'
 import { IPC } from '../native/contract.ts'
 import { invoke } from '../native/ipc.ts'
@@ -179,7 +180,6 @@ export default function Player({
   // unmuted. Everyone starts muted so autoplay (synced play()) isn't blocked
   // by the browser; the 'm' key / mute button flips this, not canControl.
   const [userMuted, setUserMuted] = useState(true)
-  const [brightness, setBrightness] = useState(1)
   const toggleMuted = () => setUserMuted(m => !m)
 
   // Local (non-shared) playback phase from useSyncPlay, surfaced here so the
@@ -225,7 +225,7 @@ export default function Player({
           {/* Keep type explicit: VideoJS compares its inferred type getter to
               this prop. Passing undefined reassigns type and reloads the same
               source on every chrome/camera render, resetting pending seeks. */}
-          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} type={hlsUrl?.startsWith('blob:') || hlsUrl?.split(/[?#]/)[0].endsWith('.mp4') ? 'video/mp4' : 'application/vnd.apple.mpegurl'} playsInline autoPlay={standalone} preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} type={hlsUrl?.startsWith('blob:') || hlsUrl?.split(/[?#]/)[0].endsWith('.mp4') ? 'video/mp4' : 'application/vnd.apple.mpegurl'} playsInline autoPlay={standalone} preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         </VideoSkin>
 
         {canControl && hostMuted && visible && (
@@ -233,7 +233,7 @@ export default function Player({
         )}
 
         {/* Route all playback through SyncPlay + keyboard control */}
-        {standalone ? <StandaloneBridge onPlayingChange={onPlayingChange} /> : (
+        {standalone ? <StandaloneBridge onPlayingChange={onPlayingChange} onToggleMuted={toggleMuted} /> : (
         <SyncBridge isHost={isHost} collaborativeControl={collaborativeControl} syncMode={syncMode} onStruggle={onStruggle}
           onOpenChat={onOpenChat} onToggleChat={onToggleChat} immersive={immersive} enterImmersive={enterImmersive} exitImmersive={exitImmersive} srcUrl={hlsUrl}
           seekBridgeRef={seekBridgeRef} onAutoplayBlocked={() => setHostMuted(true)}
@@ -242,20 +242,9 @@ export default function Player({
         <MediaErrorNotice />
         {!standalone && <PlaybackReporter mediaItemId={mediaItemId} playback={playback} />}
 
-        <div className="watch-levels watch-levels--brightness" style={{ zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
-          <PictureBrightness value={brightness} onChange={setBrightness} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
-        </div>
         <div className="watch-levels watch-levels--volume" style={{ zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div className="watch-level-group">
-          <PlayerVolume userMuted={userMuted} onToggleMuted={toggleMuted} size={44} reveal="always" trackHeight="var(--watch-level-track)" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
-          <div className="watch-call-buttons">
-          {onToggleMic && <BarBtn onClick={onToggleMic} title={micOn ? 'Mute microphone' : 'Share microphone'} active={micOn}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/>{!micOn && <path d="M3 3 21 21"/>}</svg>
-          </BarBtn>}
-          {onToggleCam && <BarBtn onClick={onToggleCam} title={camOn ? 'Turn camera off' : 'Share camera'} active={camOn}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-4v12l-6-4"/>{!camOn && <path d="M3 3 21 21"/>}</svg>
-          </BarBtn>}
-          </div>
+          <PlayerVolume systemVolumeOnly={phone} userMuted={userMuted} onToggleMuted={toggleMuted} size={44} reveal="always" trackHeight="var(--watch-level-track)" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
           </div>
         </div>
         <>
@@ -284,7 +273,8 @@ export default function Player({
   )
 }
 
-function StandaloneBridge({ onPlayingChange }: { onPlayingChange?: (playing: boolean) => void }) {
+function StandaloneBridge({ onPlayingChange, onToggleMuted }: { onPlayingChange?: (playing: boolean) => void; onToggleMuted: () => void }) {
+  const { floating } = usePlayerPresentation()
   const media = VPlayer.useMedia() as unknown as MediaLike
   useEffect(() => {
     if (!media) return
@@ -294,11 +284,23 @@ function StandaloneBridge({ onPlayingChange }: { onPlayingChange?: (playing: boo
       if (command.kind === 'pause') media.pause()
       if (command.kind === 'seek') media.currentTime = command.time ?? (command.positionTicks ?? 0) / 10_000_000
     }
+    const key = (event: KeyboardEvent) => {
+      if (floating || event.ctrlKey || event.metaKey || event.altKey || (event.target as HTMLElement)?.closest('input,textarea,button,[contenteditable="true"],[role="dialog"]')) return
+      const name = event.key.toLowerCase()
+      if (name === ' ' || name === 'k') media.paused ? void media.play().catch(() => {}) : media.pause()
+      else if (['arrowleft', 'arrowright', 'j', 'l'].includes(name)) {
+        const step = name === 'j' ? -10 : name === 'l' ? 10 : name === 'arrowleft' ? -5 : 5
+        media.currentTime = Math.max(0, Math.min(media.duration || Infinity, media.currentTime + step))
+      } else if (name === 'm') onToggleMuted()
+      else return
+      event.preventDefault(); event.stopImmediatePropagation()
+    }
     const playing = () => onPlayingChange?.(!media.paused)
+    window.addEventListener('keydown', key, true)
     window.addEventListener('watch:transport', transport)
     media.addEventListener('play', playing); media.addEventListener('pause', playing)
-    return () => { window.removeEventListener('watch:transport', transport); media.removeEventListener('play', playing); media.removeEventListener('pause', playing) }
-  }, [media, onPlayingChange])
+    return () => { window.removeEventListener('keydown', key, true); window.removeEventListener('watch:transport', transport); media.removeEventListener('play', playing); media.removeEventListener('pause', playing) }
+  }, [media, onPlayingChange, onToggleMuted, floating])
   return null
 }
 
@@ -559,6 +561,7 @@ interface SyncBridgeProps extends Pick<PlayerProps, 'isHost' | 'collaborativeCon
   srcUrl?: string; onAutoplayBlocked?: VoidCallback; userMuted?: boolean; onToggleMuted?: VoidCallback; onLocalPhase?: (phase: LocalPhase) => void
 }
 function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpenChat, onToggleChat, onPlayingChange, immersive, enterImmersive, exitImmersive, srcUrl, seekBridgeRef, onAutoplayBlocked, userMuted, onToggleMuted, onLocalPhase }: SyncBridgeProps = {}) {
+  const { floating } = usePlayerPresentation()
   const media = VPlayer.useMedia() as unknown as MediaLike
   const mediaRef = useRef<MediaLike | null>(null)
   mediaRef.current = media
@@ -783,6 +786,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     const pause = (m: MediaLike) => transport.pause(m)
     const seek = (m: MediaLike, time: number) => { transport.seekTo(m, time) }
     function onKey(e: KeyboardEvent) {
+      if (floating || document.querySelector('dialog[open]')) return
       const t = e.target instanceof HTMLElement ? e.target : null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const m = mediaRef.current
@@ -845,7 +849,7 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('watch:transport', onCommand)
     }
-  }, [canControl, onOpenChat, onToggleChat, userMuted, onToggleMuted, immersive, enterImmersive, exitImmersive, transport])
+  }, [floating, canControl, onOpenChat, onToggleChat, userMuted, onToggleMuted, immersive, enterImmersive, exitImmersive, transport])
 
   // Playback state for the chrome auto-hide, which must never hide over a
   // paused frame. Read through the same localPhase guard the transport glyphs
@@ -1494,37 +1498,10 @@ function HostControlsHint() {
   )
 }
 
-// Mute + the vertical volume hairline, over the media element.
-//
-// Replaces the horizontal `<input type="range">` that used to sit in the desktop
-// bar's LEFT cluster; the vertical control lives near the right edge instead,
-// per the reference. The phone bar had no volume control at all — it does now.
-//
-// Volume is purely local (media.volume) and — like the mute toggle itself — is
-// deliberately NOT gated on canControl: audio is independent of playback-control
-// permission, so a guest can unmute and set their own level.
-//
-// The `volumechange` subscription is new. Without it the ↑/↓ keys moved the
-// element's volume while the control kept rendering its own stale copy, so the
-// two disagreed until the component happened to remount.
-function PictureBrightness({ value, onChange, onHoldChrome, onReleaseChrome }: {
-  value: number; onChange: (value: number) => void
-  onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
-}) {
-  useEffect(() => () => onReleaseChrome?.(CHROME_HOLD.brightness), [onReleaseChrome])
-  return <div className="watch-brightness" onClick={event => event.stopPropagation()}>
-    <input type="range" min={0.5} max={1.5} step={0.05} value={value} aria-label="Picture brightness" aria-orientation="vertical" aria-valuetext={`${Math.round(value * 100)}%`}
-      onChange={event => onChange(Number(event.target.value))}
-      onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); onHoldChrome?.(CHROME_HOLD.brightness) }}
-      onPointerUp={() => onReleaseChrome?.(CHROME_HOLD.brightness)} onPointerCancel={() => onReleaseChrome?.(CHROME_HOLD.brightness)}
-      onFocus={() => onHoldChrome?.(CHROME_HOLD.brightness)} onBlur={() => onReleaseChrome?.(CHROME_HOLD.brightness)} />
-    <BarBtn title="Reset picture brightness" onClick={() => onChange(1)}>
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
-    </BarBtn>
-  </div>
-}
-
-function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal, trackHeight, onHoldChrome, onReleaseChrome }: {
+// Desktop movie volume is local to the media element. Phones use their system
+// volume controls; iOS also needs this on iPad with its desktop user agent.
+function PlayerVolume({ systemVolumeOnly = false, userMuted, onToggleMuted, size = 34, glyph = 18, reveal, trackHeight, onHoldChrome, onReleaseChrome }: {
+  systemVolumeOnly?: boolean
   userMuted?: boolean; onToggleMuted?: VoidCallback; size?: number; glyph?: number
   reveal?: 'hover' | 'always'
   trackHeight?: number | string
@@ -1544,6 +1521,7 @@ function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal,
 
   return (
     <AnalogVolume
+      showSlider={!systemVolumeOnly && !(/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))}
       volume={volume}
       muted={Boolean(userMuted) || volume === 0}
       onSetVolume={(next) => { setVolume(next); if (media) media.volume = next }}
@@ -1629,7 +1607,7 @@ function NativeTransportBar({
   const shown = visible || settingsOpen
 
   return (
-    <div className="watch-skin" style={{
+    <div className="watch-skin watch-transport" style={{
       position: 'absolute', zIndex: Z.controlBar,
       left: 'calc(var(--sa-l) + 8px)', right: 'calc(var(--sa-r) + 8px)',
       bottom: 'calc(var(--sa-b) + 8px)',

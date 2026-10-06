@@ -1,6 +1,6 @@
-/** iOS standalone can retain a smaller fixed-position viewport after launch or
- * keyboard dismissal. Size app surfaces explicitly from the window, not the
- * stale bottom:0 containing block. Never use screen.height (it includes OS UI). */
+/** iOS standalone can report a shorter innerHeight/visual viewport than CSS vh.
+ * Keep standalone surfaces on 100vh; only measure pixels for browser chrome or
+ * the keyboard. Never use screen.height (it includes OS UI). */
 export function installViewport() {
   const update = () => {
     const standalone =
@@ -14,12 +14,9 @@ export function installViewport() {
       editing && viewport && viewport.height < window.innerHeight - 120
     const height =
       standalone && !keyboard
-        ? window.innerHeight
-        : (viewport?.height ?? window.innerHeight)
-    document.documentElement.style.setProperty(
-      '--app-vh',
-      `${Math.round(height)}px`
-    )
+        ? '100vh'
+        : `${Math.round(viewport?.height ?? window.innerHeight)}px`
+    document.documentElement.style.setProperty('--app-vh', height)
   }
   update()
   window.addEventListener('resize', update)

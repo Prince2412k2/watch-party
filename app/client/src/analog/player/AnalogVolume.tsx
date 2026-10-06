@@ -28,6 +28,8 @@ export interface AnalogVolumeProps {
   muted: boolean
   onSetVolume: (volume: number) => void
   onToggleMute: () => void
+  /** System-volume-only devices keep mute, without a misleading level slider. */
+  showSlider?: boolean
   /** Touch has no hover, so the phone keeps the track permanently revealed. */
   reveal?: 'hover' | 'always'
   /** Button edge: 34 on desktop, 44 to hold the touch floor on phones. */
@@ -44,6 +46,7 @@ export default function AnalogVolume({
   muted,
   onSetVolume,
   onToggleMute,
+  showSlider = true,
   reveal = 'hover',
   size = 34,
   glyph = 18,
@@ -130,7 +133,7 @@ export default function AnalogVolume({
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
     >
-      <div style={{
+      {showSlider && <div style={{
         position: reveal === 'always' ? 'relative' : 'absolute',
         bottom: reveal === 'always' ? undefined : '100%',
         left: reveal === 'always' ? undefined : '50%',
@@ -187,7 +190,7 @@ export default function AnalogVolume({
             pointerEvents: 'none',
           }} />
         </div>
-      </div>
+      </div>}
 
       <button
         onClick={(event) => { event.stopPropagation(); onToggleMute() }}

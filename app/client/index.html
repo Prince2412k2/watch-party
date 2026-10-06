@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Watchparty</title>
 
-    <!-- PWA / installable, chrome-hiding shell. `black-translucent` puts content
-         under the status bar (edge-to-edge) — paired with --sa-t padding on the
-         mobile top bars. iOS uses apple-touch-icon (PNG); Android uses manifest. -->
+    <!-- An opaque status bar avoids iOS's translucent scroll-edge treatment over
+         the header. Safe-area padding still protects landscape controls.
+         iOS uses apple-touch-icon (PNG); Android uses manifest. -->
     <meta name="theme-color" content="#0a0a0b" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Watchparty" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -19,6 +19,9 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
   </head>
   <body>
+    <!-- A solid element at the top edge lets WebKit sample the dark status-bar
+         background before React mounts. It must be an element, not a gradient. -->
+    <div aria-hidden="true" style="position: fixed; top: 0; left: 0; width: 100%; height: 1px; background: #0a0a0b; pointer-events: none"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

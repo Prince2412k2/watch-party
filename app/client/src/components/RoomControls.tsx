@@ -1,190 +1,643 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useParty } from '../context/PartyContext.tsx'
-import { navigate } from '../router.ts'
-import type { PartyUser } from '../types.ts'
-import PartyPanel, { MONO } from './PartyPanel.tsx'
+import { usePlayerPresentation } from './PlayerPresentation.tsx'
+import { useAuth } from '../context/AuthContext.tsx'
+import { AnIcon, type AnIconName } from '../analog/icons.tsx'
 import Avatar from './Avatar.tsx'
 
-/**
- * Room chrome: icon-only Host / Leave buttons (flat surfaces), toasts, and a
- * join-request sidebar with accept/reject. `visible` fades the top cluster with
- * the auto-hide layer; the join sidebar stays put (it's a notification), and
- * toasts are never hidden. The party panel itself lives in `PartyPanel`.
- */
+export function RoomButton({
+  label,
+  icon,
+  children,
+  onClick,
+  active,
+  danger,
+  disabled,
+}: {
+  label: string
+  icon?: AnIconName
+  children?: ReactNode
+  onClick?: () => void
+  active?: boolean
+  danger?: boolean
+  disabled?: boolean
+}) {
+  return (
+    <button
+      className="native-room-button"
+      aria-label={label}
+      title={label}
+      aria-pressed={active}
+      data-danger={danger}
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation()
+        onClick?.()
+      }}
+    >
+      {icon ? <AnIcon name={icon} size={20} /> : children}
+    </button>
+  )
+}
+
+export function DeviceGlyph({
+  kind,
+  off = false,
+}: {
+  kind: 'mic' | 'camera' | 'eye'
+  off?: boolean
+}) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+    >
+      {kind === 'mic' ? (
+        <>
+          <rect x="9" y="2" width="6" height="12" rx="3" />
+          <path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8" />
+        </>
+      ) : kind === 'camera' ? (
+        <>
+          <rect x="3" y="6" width="12" height="12" rx="2" />
+          <path d="m15 10 6-4v12l-6-4" />
+        </>
+      ) : (
+        <>
+          <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" />
+          <circle cx="12" cy="12" r="3" />
+        </>
+      )}
+      {off && <path d="M3 3 21 21" />}
+    </svg>
+  )
+}
+
+export function DeviceRail({
+  micOn,
+  camOn,
+  onToggleMic,
+  onToggleCam,
+  hideSelf,
+  onToggleHideSelf,
+  visible = true,
+}: {
+  micOn?: boolean
+  camOn?: boolean
+  onToggleMic?: () => unknown
+  onToggleCam?: () => unknown
+  hideSelf?: boolean
+  onToggleHideSelf?: () => void
+  visible?: boolean
+}) {
+  const [busy, setBusy] = useState<string>()
+  const toggle = async (kind: string, action?: () => unknown) => {
+    if (busy || !action) return
+    setBusy(kind)
+    try {
+      await action()
+    } finally {
+      setBusy(undefined)
+    }
+  }
+  if (!onToggleMic && !onToggleCam) return null
+  return (
+    <div
+      className="native-device-rail"
+      data-visible={visible}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {onToggleMic && (
+        <RoomButton
+          label={micOn ? 'Mute microphone' : 'Share microphone'}
+          danger={!micOn}
+          disabled={!!busy}
+          onClick={() => {
+            void toggle('mic', onToggleMic)
+          }}
+        >
+          <DeviceGlyph kind="mic" off={!micOn} />
+        </RoomButton>
+      )}
+      {onToggleCam && (
+        <RoomButton
+          label={camOn ? 'Turn camera off' : 'Share camera'}
+          danger={!camOn}
+          disabled={!!busy}
+          onClick={() => {
+            void toggle('cam', onToggleCam)
+          }}
+        >
+          <DeviceGlyph kind="camera" off={!camOn} />
+        </RoomButton>
+      )}
+      {onToggleHideSelf && (
+        <RoomButton
+          label={hideSelf ? 'Show my tile' : 'Hide my tile'}
+          active={hideSelf}
+          onClick={onToggleHideSelf}
+        >
+          <DeviceGlyph kind="eye" off={hideSelf} />
+        </RoomButton>
+      )}
+    </div>
+  )
+}
+
 export default function RoomControls({
-  stage, mediaTitle, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false,
-  layoutMode, onToggleLayout, hideSelf, onToggleHideSelf,
-  micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds, onHoldChrome, onReleaseChrome,
+  stage,
+  mediaTitle,
+  visible = true,
+  onOpenChat,
+  chatOpen,
+  micOn,
+  camOn,
+  onToggleMic,
+  onToggleCam,
+  hideSelf,
+  onToggleHideSelf,
+  onReconnect,
+  onHoldChrome,
+  onReleaseChrome,
+  onSetMic,
 }: {
   stage?: string
   mediaTitle?: string
-  top?: number
   visible?: boolean
   phone?: boolean
+  top?: number
   onOpenChat?: () => void
   chatOpen?: boolean
-  layoutMode?: 'float' | 'dock'
-  onToggleLayout?: () => void
+  micOn?: boolean
+  camOn?: boolean
+  onToggleMic?: () => unknown
+  onToggleCam?: () => unknown
   hideSelf?: boolean
   onToggleHideSelf?: () => void
-  micOn?: boolean; camOn?: boolean; onToggleMic?: () => void; onToggleCam?: () => void
-  hideAllFeeds?: boolean; onToggleHideAllFeeds?: () => void
-  onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
-} = {}) {
-  const { session, role, toasts, approveUser, rejectUser, endParty } = useParty()
-
-  const [open, setOpen] = useState(false)
-  const [callOpen, setCallOpen] = useState(false)
+  onSetMic?: (enabled: boolean) => unknown
+  onReconnect?: () => void
+  onHoldChrome?: (reason: string) => void
+  onReleaseChrome?: (reason: string) => void
+  hideAllFeeds?: boolean
+  onToggleHideAllFeeds?: () => void
+  layoutMode?: 'float' | 'dock'
+  onToggleLayout?: () => void
+}) {
+  const party = useParty()
+  const { user } = useAuth()
+  const presentation = usePlayerPresentation()
+  const [tray, setTray] = useState(false)
+  const [panel, setPanel] = useState(false)
+  const [person, setPerson] = useState<string>()
+  const [confirmEnd, setConfirmEnd] = useState(false)
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const dialog = useRef<HTMLDialogElement>(null)
+  const trayRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!callOpen) return
-    onHoldChrome?.('callMenu')
-    return () => onReleaseChrome?.('callMenu')
-  }, [callOpen, onHoldChrome, onReleaseChrome])
-
+    if (panel) dialog.current?.showModal()
+    else dialog.current?.close()
+  }, [panel])
   useEffect(() => {
-    if (phone || !session) return
-    const openPartyMenu = (event: globalThis.MouseEvent) => {
-      if (event.shiftKey) return
+    if (!tray && !panel) return
+    onHoldChrome?.('partyControls')
+    return () => onReleaseChrome?.('partyControls')
+  }, [tray, panel, onHoldChrome, onReleaseChrome])
+  useEffect(() => {
+    if (!tray) return
+    const outside = (event: PointerEvent) => {
+      if (!trayRef.current?.contains(event.target as Node)) setTray(false)
+    }
+    document.addEventListener('pointerdown', outside)
+    return () => document.removeEventListener('pointerdown', outside)
+  }, [tray])
+  useEffect(() => {
+    const menu = (event: MouseEvent) => {
+      if (
+        event.shiftKey ||
+        !(event.target as HTMLElement).closest('.player-host-content')
+      )
+        return
       event.preventDefault()
-      setOpen(true)
+      setPanel(true)
     }
-    window.addEventListener('contextmenu', openPartyMenu)
-    return () => window.removeEventListener('contextmenu', openPartyMenu)
-  }, [phone, session?.id])
-
-  if (!session) return null
-  const currentSession = session
-
-  const isHost = role === 'host'
-  const watching = stage === 'watching'
-  const waiting = currentSession.waiting ?? []
-  const participantCount = 1 + (currentSession.guests?.length ?? 0)
-
-  async function leaveRoom() {
-    // Back from a host-owned room is a real teardown, not just browser
-    // navigation. Otherwise the app-wide socket remains in the room and guests
-    // keep playing because the server never observes a disconnect.
-    if (isHost) {
-      await endParty()
-      return
+    document.addEventListener('contextmenu', menu)
+    return () => document.removeEventListener('contextmenu', menu)
+  }, [])
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let origin: { x: number; y: number } | undefined
+    const cancel = () => {
+      clearTimeout(timer)
+      origin = undefined
     }
-    if (window.history.length > 1) {
-      window.history.back()
-      return
+    const down = (event: PointerEvent) => {
+      const target = event.target as HTMLElement
+      if (
+        event.pointerType !== 'touch' ||
+        !target.closest('.player-host-content') ||
+        target.closest('button,input,[role="slider"],.player-float-surface')
+      )
+        return
+      origin = { x: event.clientX, y: event.clientY }
+      timer = setTimeout(() => {
+        setPanel(true)
+        origin = undefined
+      }, 550)
     }
-    navigate('/library')
-  }
-
-  const flatPanel = {
-    background: 'var(--glass)',
-    border: '1px solid var(--stroke)',
-    boxShadow: 'var(--shadow)',
-  }
-  const iconBtn = (danger = false) => ({
-    width: phone ? 44 : 34, height: phone ? 44 : 34, borderRadius: 8, display: 'grid', placeItems: 'center',
-    cursor: 'pointer', color: danger ? 'var(--red)' : 'var(--text2)', transition: 'color .15s',
-    background: 'transparent', border: 'none', flexShrink: 0,
+    const move = (event: PointerEvent) => {
+      if (
+        origin &&
+        Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 10
+      )
+        cancel()
+    }
+    document.addEventListener('pointerdown', down)
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', cancel)
+    document.addEventListener('pointercancel', cancel)
+    return () => {
+      cancel()
+      document.removeEventListener('pointerdown', down)
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', cancel)
+      document.removeEventListener('pointercancel', cancel)
+    }
+  }, [])
+  const keyActions = useRef({
+    micOn,
+    onSetMic,
+    floating: presentation.floating,
+    toggleChat: party.toggleChat,
   })
-
+  keyActions.current = {
+    micOn,
+    onSetMic,
+    floating: presentation.floating,
+    toggleChat: party.toggleChat,
+  }
+  useEffect(() => {
+    let held = false
+    let starting: Promise<unknown> | undefined
+    const release = () => {
+      if (!held) return
+      held = false
+      void starting
+        ?.then(() => keyActions.current.onSetMic?.(false))
+        .catch(() => {})
+    }
+    const down = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input,textarea,dialog,[contenteditable="true"]'))
+        return
+      const actions = keyActions.current
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'c' &&
+        !window.getSelection()?.toString()
+      ) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        actions.toggleChat()
+        return
+      }
+      if (
+        event.key.toLowerCase() !== 't' ||
+        event.repeat ||
+        event.ctrlKey ||
+        event.metaKey ||
+        actions.floating ||
+        !actions.onSetMic
+      )
+        return
+      event.preventDefault()
+      if (!actions.micOn) {
+        held = true
+        starting = Promise.resolve()
+          .then(() => actions.onSetMic?.(true))
+          .catch(() => {})
+      }
+    }
+    const up = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === 't') release()
+    }
+    window.addEventListener('keydown', down, true)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', release)
+    return () => {
+      window.removeEventListener('keydown', down, true)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', release)
+      release()
+    }
+  }, [])
+  const waiting = party.session?.waiting ?? []
+  useEffect(() => {
+    if (waiting.length) setTray(true)
+  }, [waiting.length])
+  if (!party.session) return null
+  const session = party.session
+  const host = party.role === 'host'
+  const watching = stage === 'watching'
+  const shown = visible || presentation.floating || !watching || tray || panel
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        `${location.origin}/party/${session.id}`
+      )
+      setCopied(true)
+    } catch {
+      setError('Could not copy the invite. You can select the room code below.')
+    }
+  }
+  const leave = async () => {
+    setBusy(true)
+    try {
+      await party.exitParty()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not leave')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const end = async () => {
+    setBusy(true)
+    try {
+      await party.endParty()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not end party')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const people = [
+    { userId: session.hostId, name: session.hostName || 'Host' },
+    ...(session.guests ?? []),
+  ]
   return (
     <>
-      {/* Toasts */}
-      <div style={{ position: 'absolute', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', pointerEvents: 'none' }}>
-        {toasts.map(t => (
-          <div key={t.id} style={{ ...flatPanel, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 12, animation: 'in .22s cubic-bezier(.2,0,.1,1)' }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: (t.level === 'success') ? 'var(--green)' : (t.level === 'warning' || t.level === 'error') ? 'var(--red)' : 'var(--text3)' }} />
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text)' }}>{t.msg}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Phone: compact top bar with room code + participant count (top-left,
-          clear of the notch via safe-area). Pairs with the top-right cluster. */}
-      {watching && mediaTitle && (
-        <div style={{
-          position: 'absolute', top: phone ? 'calc(var(--sa-t) + 8px)' : top, left: 'calc(var(--sa-l) + 56px)', zIndex: 40,
-          display: 'flex', alignItems: 'center', height: 44, maxWidth: 'calc(100vw - var(--sa-l) - var(--sa-r) - 212px)', whiteSpace: 'nowrap',
-          opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
-        }}>
-          <span title={mediaTitle} style={{ fontSize: 14, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mediaTitle}</span>
+      {watching && !presentation.floating && (
+        <div className="native-player-title" data-visible={shown}>
+          <RoomButton
+            label="Minimize movie"
+            icon="back"
+            onClick={presentation.minimize}
+          />
+          <span>{mediaTitle}</span>
         </div>
       )}
-
-      {/* Top-left room controls (fades with auto-hide) */}
-      <div style={{ position: 'absolute', top: phone ? 'calc(var(--sa-t) + 8px)' : top, left: phone ? 'calc(var(--sa-l) + 8px)' : 14, zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 4, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
-        <button onClick={event => { event.stopPropagation(); void leaveRoom() }} title="Back" aria-label="Back" style={iconBtn()}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /><path d="M9 12h12" /></svg>
-        </button>
-      </div>
-
-      {/* Top-right room cluster: chat + the watch-party menu. Rendered on BOTH
-          desktop and phone now. Desktop used to reach this menu only via a right
-          click on the player, which nobody could discover; the right-click
-          shortcut is still wired above for anyone used to it. */}
-      <div style={{
-        position: 'absolute',
-        top: phone ? 'calc(var(--sa-t) + 8px)' : top,
-        right: phone ? 'calc(var(--sa-r) + 8px)' : 14,
-        zIndex: 40, display: 'flex', alignItems: 'center', gap: phone ? 8 : 6,
-        opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none',
-        transform: visible ? 'translateY(0)' : 'translateY(-6px)', transition: 'opacity .25s, transform .25s',
-      }}>
-        {watching && onToggleCam && <button onClick={event => { event.stopPropagation(); setCallOpen(value => !value) }} title="Camera and microphone" aria-label="Camera and microphone" aria-expanded={callOpen} style={iconBtn()}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/></svg>
-        </button>}
-        {watching && onOpenChat ? (
-          <button onClick={(event) => { event.stopPropagation(); onOpenChat() }} title="Chat" aria-label="Chat" style={{ ...iconBtn(), width: phone ? 44 : 38, height: phone ? 44 : 38, color: chatOpen ? 'var(--text)' : 'var(--text2)' }}>
-            <svg width={phone ? 19 : 18} height={phone ? 19 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-          </button>
-        ) : null}
-        <button onClick={(event) => { event.stopPropagation(); setCallOpen(false); setOpen(value => !value) }} title="Watch party" aria-label="Watch party" aria-expanded={open} style={{ position: 'relative', ...iconBtn(), width: phone ? 44 : 38, height: phone ? 44 : 38 }}>
-          <svg width={phone ? 20 : 18} height={phone ? 20 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
-          {waiting.length > 0 ? <span style={{ position: 'absolute', top: -5, right: -5, minWidth: phone ? 20 : 17, height: phone ? 20 : 17, padding: '0 5px', borderRadius: 10, display: 'grid', placeItems: 'center', color: '#fff', background: 'var(--red)', fontSize: 10, fontWeight: 800 }}>{waiting.length}</span> : null}
-        </button>
-      </div>
-
-      {callOpen && <>
-        <div onClick={event => { event.stopPropagation(); setCallOpen(false) }} style={{ position: 'absolute', inset: 0, zIndex: 40 }} />
-        <div role="group" aria-label="Camera and microphone controls" onClick={event => event.stopPropagation()} style={{ ...flatPanel, position: 'absolute', top: phone ? 'calc(var(--sa-t) + 60px)' : top + 48, right: phone ? 'calc(var(--sa-r) + 12px)' : 14, width: 'min(264px, calc(100vw - 24px))', borderRadius: 12, padding: 8, zIndex: 41 }}>
-          {[
-            { label: micOn ? 'Mute microphone' : 'Enable microphone', onClick: onToggleMic, active: micOn },
-            { label: camOn ? 'Turn camera off' : 'Turn camera on', onClick: onToggleCam, active: camOn },
-            { label: hideAllFeeds ? 'Show camera feeds' : 'Hide camera feeds', onClick: onToggleHideAllFeeds, active: !hideAllFeeds },
-          ].map(control => <button key={control.label} onClick={control.onClick} aria-pressed={control.active} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', minHeight: 48, padding: '8px 12px', width: '100%', border: 0, background: 'transparent', color: 'var(--text)', fontSize: 14, textAlign: 'left' }}>{control.label}<span style={{ color: 'var(--text3)' }}>{control.active ? 'On' : 'Off'}</span></button>)}
-        </div>
-      </>}
-
-      {/* Join-request sidebar (host only) — stays visible; it's a notification */}
-      {isHost && waiting.length > 0 && (
-        <div style={{ ...flatPanel, position: 'absolute', top: phone ? 'calc(var(--sa-t) + 60px)' : top + 54, right: phone ? 'calc(var(--sa-r) + 8px)' : 12, zIndex: 41, width: 'min(268px, calc(100vw - 24px))', borderRadius: 16, overflow: 'hidden', animation: 'up .25s cubic-bezier(.2,0,.1,1)' }}>
-          <div style={{ padding: '11px 15px', borderBottom: '1px solid var(--stroke)', fontSize: 12, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text2)' }}>
-            Wants to join · {waiting.length}
+      <DeviceRail
+        micOn={micOn}
+        camOn={camOn}
+        onToggleMic={onToggleMic}
+        onToggleCam={onToggleCam}
+        hideSelf={hideSelf}
+        onToggleHideSelf={onToggleHideSelf}
+        visible={shown}
+      />
+      <div
+        className="native-party-tray"
+        ref={trayRef}
+        data-visible={shown}
+        data-floating={presentation.floating}
+        data-watching={watching}
+      >
+        {tray && (
+          <div className="native-party-actions">
+            <RoomButton
+              label={host ? 'End party' : 'Leave party'}
+              icon={host ? 'power' : 'logout'}
+              danger
+              disabled={busy}
+              onClick={() =>
+                host ? (setPanel(true), setConfirmEnd(true)) : void leave()
+              }
+            />
+            {host && (
+              <RoomButton
+                label={copied ? 'Invite copied' : 'Copy invite'}
+                icon={copied ? 'check' : 'link'}
+                onClick={() => {
+                  void copy()
+                }}
+              />
+            )}
+            <RoomButton
+              label="Watch party controls"
+              icon="settings"
+              onClick={() => {
+                setTray(false)
+                setPanel(true)
+              }}
+            />
           </div>
-          {waiting.map((w: PartyUser) => (
-            <div key={w.userId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px' }}>
-              {/* The requester's profile is already on their waiting-list entry,
-                  so their face costs nothing extra here. */}
-              <Avatar userId={w.userId} name={w.name} config={w.avatar} size={32} circle style={{ border: '1px solid var(--stroke2)' }} />
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</span>
-              <button onClick={() => rejectUser(w.userId)} title="Reject" style={{ width: 32, height: 32, borderRadius: 9, border: 'none', background: 'var(--glass2)', color: 'var(--red)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M18 6 6 18M6 6l12 12" /></svg>
-              </button>
-              <button onClick={() => approveUser(w.userId)} title="Accept" style={{ width: 32, height: 32, borderRadius: 9, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', display: 'grid', placeItems: 'center', cursor: 'pointer' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8"><path d="M20 6 9 17l-5-5" /></svg>
-              </button>
+        )}
+        <button
+          className="native-popcorn"
+          aria-label="Watch party"
+          aria-expanded={tray}
+          onClick={() => setTray((value) => !value)}
+        >
+          <img src="/popcorn.png" alt="" />
+          {waiting.length > 0 && <span>{waiting.length}</span>}
+        </button>
+      </div>
+      {onOpenChat && (
+        <div
+          className="native-chat-button"
+          data-visible={shown}
+          data-floating={presentation.floating}
+        >
+          <RoomButton label="Chat" active={chatOpen} onClick={onOpenChat}>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+            </svg>
+          </RoomButton>
+        </div>
+      )}
+      {host && waiting.length > 0 && (
+        <div className="native-join-requests">
+          {waiting.map((person) => (
+            <div key={person.userId}>
+              <Avatar
+                userId={person.userId}
+                name={person.name}
+                size={38}
+                circle
+              />
+              <span>
+                {person.name}
+                <small>wants to join</small>
+              </span>
+              <RoomButton
+                label={`Reject ${person.name}`}
+                icon="x"
+                danger
+                onClick={() => party.rejectUser(person.userId)}
+              />
+              <RoomButton
+                label={`Approve ${person.name}`}
+                icon="check"
+                onClick={() => party.approveUser(person.userId)}
+              />
             </div>
           ))}
         </div>
       )}
-
-      {open ? (
-        <PartyPanel
-          phone={phone} watching={watching} top={top}
-          onClose={() => setOpen(false)}
-          layoutMode={layoutMode} onToggleLayout={onToggleLayout}
-          hideSelf={hideSelf} onToggleHideSelf={onToggleHideSelf}
-        />
-      ) : null}
+      <dialog
+        ref={dialog}
+        className="native-party-panel"
+        aria-label="Watch party controls"
+        onCancel={() => setPanel(false)}
+        onClose={() => {
+          setPanel(false)
+          setConfirmEnd(false)
+          setPerson(undefined)
+        }}
+      >
+        <div className="native-panel-close">
+          <RoomButton
+            label="Close party controls"
+            icon="x"
+            onClick={() => setPanel(false)}
+          />
+        </div>
+        <div className="native-party-faces">
+          {people.map((p) => (
+            <button
+              key={p.userId}
+              className="native-party-face"
+              data-host={p.userId === session.hostId}
+              title={`${p.name}${p.userId === session.hostId ? ' · host' : ''}`}
+              aria-label={`${p.name}${p.userId === session.hostId ? ' · host' : ''}`}
+              onClick={() =>
+                setPerson(p.userId === person ? undefined : p.userId)
+              }
+            >
+              <Avatar userId={p.userId} name={p.name} size={40} circle />
+            </button>
+          ))}
+        </div>
+        {person && (
+          <div className="native-person-menu">
+            <span>
+              {people.find((p) => p.userId === person)?.name}
+              {person === user?.userId ? ' · You' : ''}
+            </span>
+            {host && person !== session.hostId && (
+              <>
+                <button
+                  onClick={() => {
+                    party.transferHost(person)
+                    setPerson(undefined)
+                  }}
+                >
+                  Make host
+                </button>
+                <button
+                  onClick={() => {
+                    party.kickUser(person)
+                    setPerson(undefined)
+                  }}
+                >
+                  Remove from party
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {host && (
+          <>
+            <div className="native-sync-modes">
+              {(['dragging', 'hopping'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  aria-pressed={session.syncMode === mode}
+                  onClick={() => party.setSyncMode(mode)}
+                >
+                  {mode === 'dragging' ? 'Follow' : 'Lead'}
+                </button>
+              ))}
+            </div>
+            <p>
+              {session.syncMode === 'dragging'
+                ? 'Wait for viewers who are buffering.'
+                : 'Keep playing while viewers catch up.'}
+            </p>
+          </>
+        )}
+        <div className="native-party-tools">
+          {onReconnect && (
+            <RoomButton
+              label="Reconnect my video and audio"
+              icon="update"
+              onClick={onReconnect}
+            />
+          )}
+          <RoomButton
+            label={copied ? 'Invite copied' : 'Copy invite'}
+            icon={copied ? 'check' : 'link'}
+            onClick={() => {
+              void copy()
+            }}
+          />
+          <RoomButton
+            label="Viewer timeline pointers"
+            icon="tracks"
+            active={party.showPeerPointers}
+            onClick={party.togglePeerPointers}
+          />
+          {host && (
+            <RoomButton
+              label="Allow guests to control playback"
+              icon={session.collaborativeControl ? 'unlock' : 'lock'}
+              active={session.collaborativeControl}
+              onClick={() =>
+                party.setCollaborative(!session.collaborativeControl)
+              }
+            />
+          )}
+          <RoomButton
+            label={host ? 'End party for everyone' : 'Leave party'}
+            icon={host ? 'power' : 'logout'}
+            danger
+            onClick={() => (host ? setConfirmEnd(true) : void leave())}
+          />
+        </div>
+        <code>{session.id}</code>
+        {confirmEnd && (
+          <div className="native-end-confirm">
+            <p>End party for everyone?</p>
+            <button onClick={() => setConfirmEnd(false)}>Cancel</button>
+            <button
+              disabled={busy}
+              onClick={() => {
+                void end()
+              }}
+            >
+              End party
+            </button>
+          </div>
+        )}
+        {error && <p role="alert">{error}</p>}
+      </dialog>
+      <div className="native-room-toasts" role="status">
+        {party.toasts.map((t) => (
+          <div key={t.id}>{t.msg}</div>
+        ))}
+      </div>
     </>
   )
 }

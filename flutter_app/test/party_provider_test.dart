@@ -772,6 +772,23 @@ void main() {
     },
   );
 
+  test('party:left clears the room without stopping local playback', () async {
+    container = build('guest1', (event, data) {
+      if (event == ClientEvent.partyJoin) {
+        return {'status': 'joined', 'session': _session(hostId: 'web-host')};
+      }
+      return {'ok': true};
+    });
+    await container.read(partyProvider.notifier).join('party-1');
+
+    socket.inject(ServerEvent.partyLeft, const {});
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(player.pauseCalls, 0);
+    expect(container.read(partyProvider), isNull);
+    expect(socket.isConnected, isFalse);
+  });
+
   test('party:ended clears the room without stopping local playback', () async {
     container = build('guest1', (event, data) {
       if (event == ClientEvent.partyJoin) {

@@ -65,3 +65,9 @@ test('room updates preserve an existing saved player, but new rooms and titles s
   assert.equal(shouldOpenPartyPlayer({ ...session, id: 'other' }, 'host', '/saved/watch/file', session), true)
   assert.equal(shouldOpenPartyPlayer(session, 'host', '/saved/watch/file', null), true)
 })
+
+test('membership updates preserve a floating movie while browsing; a new title expands it', () => {
+  assert.equal(shouldOpenPartyPlayer({ ...watching, guests: [{ userId: 'guest', name: 'Guest' }] }, 'host', '/series', watching), false)
+  assert.equal(shouldOpenPartyPlayer({ ...watching, mediaItemId: 'next' }, 'host', '/series', watching), true)
+  assert.equal(shouldOpenPartyPlayer(watching, 'host', '/movies', { ...watching, stage: 'lobby' }), true)
+})
