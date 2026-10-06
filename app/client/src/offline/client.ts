@@ -1,7 +1,12 @@
 import { startBackground } from './background.ts'
 import workerUrl from './service-worker.ts?worker&url'
+import downloadWorkerUrl from './download-worker.ts?worker&url'
+import { downloadFile, OPFS_SUPPORTED, transferLock } from './opfs.ts'
 import {
   CHUNK_SIZE,
+  ensureDownloadFile,
+  fileComplete,
+  owner,
   getMedia,
   listMedia,
   mediaKey,
@@ -10,6 +15,36 @@ import {
   type MediaInfo,
   type SavedMedia
 } from './storage.ts'
+let fileWorker: Worker | undefined
+const recoveries = new Map<string, Promise<void>>()
+async function fileCommand(action: string, key?: string) {
+  fileWorker ??= new Worker(downloadWorkerUrl, { type: 'module' })
+  const target = fileWorker
+  return new Promise<void>((resolve, reject) => {
+    const channel = new MessageChannel()
+    const stop = () => {
+      clearTimeout(timer)
+      channel.port1.close()
+      target.removeEventListener('error', failed)
+    }
+    const failed = () => {
+      stop()
+      target.terminate()
+      if (fileWorker === target) fileWorker = undefined
+      reject(new Error('The file writer stopped. Reopen the app to resume.'))
+    }
+    const timer = setTimeout(() => {
+      stop()
+      reject(new Error('The file writer did not respond. Reload and retry.'))
+    }, 30000)
+    target.addEventListener('error', failed)
+    channel.port1.onmessage = (event) => {
+      stop()
+      event.data.error ? reject(new Error(event.data.error)) : resolve()
+    }
+    target.postMessage({ action, key }, [channel.port2])
+  })
+}
 let initialized: Promise<ServiceWorkerRegistration> | undefined
 export const OFFLINE_SUPPORTED =
   typeof navigator !== 'undefined' &&
@@ -97,8 +132,13 @@ export async function command(action: string, key?: string, urls?: string[]) {
         )
           return {}
       }
+      if (!OPFS_SUPPORTED())
+        throw new Error(
+          'Local movie files require OPFS support. Update your browser and retry.'
+        )
       await workerCommand('intent', key)
-      const record = await getMedia(key)
+      const original = await getMedia(key)
+      const record = original ? await ensureDownloadFile(original) : undefined
       // Chromium requires creation in a window; the worker receives the completed
       // transfer even after that window is closed. Unsupported browsers use the queue.
       if (
@@ -106,7 +146,21 @@ export async function command(action: string, key?: string, urls?: string[]) {
         (await startBackground(registration, record, location.origin))
       )
         return workerCommand('background', key)
-      return workerCommand('download', key)
+      await workerCommand('background', key)
+      await fileCommand('download', key)
+      return {}
+    }
+    if (key && ['pause', 'cancel', 'remove'].includes(action)) {
+      const record = await getMedia(key)
+      // Mark the pause for every tab before draining this window's worker.
+      await workerCommand('pause', key)
+      await fileCommand('pause', key)
+      if (record && navigator.locks)
+        await navigator.locks.request(
+          transferLock(record.generation),
+          async () => {}
+        )
+      if (action === 'pause') return {}
     }
     return workerCommand(action, key, urls)
   }
@@ -160,6 +214,24 @@ export async function infoFor(
 }
 export const localUrl = (record: SavedMedia) =>
   `/__media/${encodeURIComponent(record.key)}.mp4`
+export async function playbackSource(record: SavedMedia) {
+  const current = await getMedia(record.key)
+  if (!current || current.owner !== (await owner()))
+    throw new Error('Saved movie not found')
+  if (fileComplete(current)) {
+    try {
+      const file = await downloadFile(current)
+      if (file.size === current.size) {
+        const url = URL.createObjectURL(file)
+        return { url, release: () => URL.revokeObjectURL(url) }
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'NotFoundError'))
+        throw error
+    }
+  }
+  return { url: localUrl(current), release: () => {} }
+}
 export const localSubtitles = (record: SavedMedia) =>
   record.subtitles.map((s) => ({
     ...s,
@@ -208,6 +280,8 @@ export async function cacheShell() {
   const urls = [
     '/',
     '/manifest.webmanifest',
+    downloadWorkerUrl,
+    workerUrl,
     ...performance
       .getEntriesByType('resource')
       .map((e) => e.name)
@@ -217,11 +291,27 @@ export async function cacheShell() {
 }
 export async function initializeOffline(account: string) {
   if (!OFFLINE_SUPPORTED) return
-  await setOwner(account)
-  await ready()
-  const { resume } = await command('recover')
-  for (const key of resume ?? []) await command('resume', key)
-  await command('expire')
+  const pending = recoveries.get(account)
+  if (pending) return pending
+  const task = (async () => {
+    await setOwner(account)
+    await ready()
+    if (OPFS_SUPPORTED()) await fileCommand('reconcile')
+    const { resume } = await command('recover')
+    for (const key of resume ?? []) await command('resume', key)
+    // Existing IDB downloads migrate offline, one bounded range at a time.
+    if (OPFS_SUPPORTED())
+      for (const file of await listMedia(account))
+        if (
+          file.retention === 'download' &&
+          !fileComplete(file) &&
+          !file.backgroundId
+        )
+          await fileCommand('migrate', file.key)
+    await command('expire')
+  })().finally(() => recoveries.delete(account))
+  recoveries.set(account, task)
+  return task
 }
 export { getMedia, listMedia, setOwner }
 export type { SavedMedia }

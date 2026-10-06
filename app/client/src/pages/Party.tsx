@@ -10,7 +10,7 @@ import { useHideSelf } from '../hooks/useHideSelf.ts'
 import { navigate } from '../router.ts'
 import { IS_NATIVE } from '../native/env.ts'
 import Player from '../components/Player.tsx'
-import { cachePlayback, infoFor, localSubtitles, localUrl, OFFLINE_SUPPORTED, type SavedMedia } from '../offline/client.ts'
+import { cachePlayback, infoFor, localSubtitles, playbackSource, OFFLINE_SUPPORTED, type SavedMedia } from '../offline/client.ts'
 import type { PlayerProps } from '../components/Player.tsx'
 import CameraGrid from '../components/CameraGrid.tsx'
 import Dock from '../components/Dock.tsx'
@@ -962,6 +962,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
     setStreamError('')
     if (!itemId) return
     let cancelled = false
+    let release = () => {}
     const resolve = async () => {
       if (!IS_NATIVE && OFFLINE_SUPPORTED) {
         try {
@@ -970,7 +971,10 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
           // Preserve shared track choice by falling back to HLS when needed.
           if (info.owner === user?.userId && (audioStreamIndex == null || audioStreamIndex === info.audioIndex)) {
             const saved = await cachePlayback(info)
-            if (!cancelled) setHlsUrl({itemId,url:localUrl(saved),saved})
+            const source = await playbackSource(saved)
+            release = source.release
+            if (!cancelled) setHlsUrl({itemId,url:source.url,saved})
+            else release()
             return
           }
         } catch { /* Unconverted titles / unsupported browsers retain HLS playback. */ }
@@ -984,7 +988,7 @@ function HlsPlayer({ session, isHost, collaborativeControl, onSetPlaybackTracks,
       if (!cancelled) setHlsUrl({itemId,url})
     }
     void resolve().catch(error=>{if(!cancelled)setStreamError(error.message)})
-    return () => {cancelled=true}
+    return () => { cancelled = true; release() }
   },[session?.mediaItemId,mediaSourceId,audioStreamIndex,user?.userId])
 
   if (!hlsUrl || hlsUrl.itemId !== session.mediaItemId) return (

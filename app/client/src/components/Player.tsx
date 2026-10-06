@@ -222,7 +222,7 @@ export default function Player({
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} playsInline autoPlay={standalone} preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} type={hlsUrl?.startsWith('blob:') ? 'video/mp4' : undefined} playsInline autoPlay={standalone} preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
         </VideoSkin>
 
         {canControl && hostMuted && visible && (

@@ -1025,7 +1025,7 @@
   align-items: stretch;
   justify-content: flex-start;
   gap: var(--an-space-xs-px);
-  padding: var(--an-space-sm-px) 0 calc(var(--an-space-sm-px) + env(safe-area-inset-bottom, 0px));
+  padding: var(--an-space-sm-px) 0 calc(var(--an-space-sm-px) + var(--app-safe-bottom, 0px));
   border-top: var(--an-poster-frame-px) solid var(--an-color-line);
   background: linear-gradient(0deg, var(--an-color-stage-ground), transparent);
 }
@@ -1115,7 +1115,7 @@
    compete with primary navigation. --an-k-nav-px is the nav's measured height. */
 .an-corner[data-corner='bottom-right'] {
   right: var(--an-space-lg-px);
-  bottom: calc(var(--an-k-nav-px, 64px) + var(--an-space-lg-px) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--an-k-nav-px, 64px) + var(--an-space-lg-px) + var(--app-safe-bottom, 0px));
   flex-direction: column-reverse;
   align-items: flex-end;
 }
@@ -1492,14 +1492,14 @@
   flex-direction: column;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  padding: calc(env(safe-area-inset-top) + 76px) max(20px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 140px) max(20px, env(safe-area-inset-left));
+  padding: calc(env(safe-area-inset-top) + 76px) max(20px, env(safe-area-inset-right)) calc(var(--app-safe-bottom, 0px) + 140px) max(20px, env(safe-area-inset-left));
 }
 .an-stage[data-size='phone'] .an-stage-head { align-self: stretch; overflow: visible; flex: none; order: 1; }
 .an-stage[data-size='phone'] .an-stage-shelves { order: 2; flex: none; }
 .an-stage[data-size='phone'] .an-stage-side { order: 0; margin-bottom: 24px; }
 .an-stage[data-size='phone'] .an-modes { display: flex; justify-content: start; gap: 24px; overflow-x: auto; padding-bottom: 8px; }
 .an-stage[data-size='phone'] .an-modes button { flex: none; font-size: 14px; min-height: 44px; letter-spacing: 0; text-transform: none; }
-.an-stage[data-size='phone'] .an-stage-nav { position: fixed; inset: auto 0 0; padding: 4px 12px env(safe-area-inset-bottom); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); z-index: var(--an-z-toolbox); }
+.an-stage[data-size='phone'] .an-stage-nav { position: fixed; inset: auto 0 0; padding: 4px 12px var(--app-safe-bottom, 0px); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); z-index: var(--an-z-toolbox); }
 .an-stage[data-size='phone'] .an-nav { padding: 0; }
 .an-stage[data-size='phone'] .an-nav button { min-height: 64px; font-size: 11px; letter-spacing: 0; gap: 6px; }
 .an-stage[data-size='phone'] .an-corner-trigger { min-width: 44px; min-height: 44px; }

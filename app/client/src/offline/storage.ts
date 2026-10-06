@@ -1,3 +1,4 @@
+import { downloadName, removeDownloadFile } from './opfs.ts'
 export const CHUNK_SIZE = 2 * 1024 * 1024
 export const CACHE_TTL = 7 * 24 * 60 * 60 * 1000
 export interface MediaInfo {
@@ -31,6 +32,8 @@ export interface SavedMedia extends MediaInfo {
   resumeOnOpen?: boolean
   backgroundId?: string
   backgroundBase?: number
+  fileName?: string
+  fileChunks?: number[]
   backgroundDownloaded?: number
 }
 let opened: Promise<IDBDatabase> | undefined
@@ -50,6 +53,9 @@ export function database() {
       request.result.createObjectStore('settings')
     }
     request.onsuccess = () => {
+      request.result.onclose = () => {
+        opened = undefined
+      }
       request.result.onversionchange = () => {
         request.result.close()
         opened = undefined
@@ -58,21 +64,42 @@ export function database() {
     }
     request.onerror = () => {
       opened = undefined
-      reject(request.error)
+      reject(storageError(request.error))
     }
   }))
 }
 export function requestValue<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
+    request.onerror = () => reject(storageError(request.error))
   })
+}
+export function storageError(error: unknown): Error {
+  const name =
+    error && typeof error === 'object' && 'name' in error
+      ? String(error.name)
+      : 'AbortError'
+  const detail = error instanceof Error ? error.message : ''
+  const message =
+    name === 'QuotaExceededError'
+      ? 'Storage is full. Remove a download or clear cache, then retry.'
+      : name === 'TransactionInactiveError'
+        ? 'Storage transaction expired. Reload and retry.'
+        : `Could not save browser storage (${name}). ${detail || 'Reload and retry.'}`
+  const value = new Error(message)
+  value.name = name
+  return value
 }
 export function transactionDone(tx: IDBTransaction) {
   return new Promise<void>((resolve, reject) => {
+    let failure: DOMException | null = null
     tx.oncomplete = () => resolve()
-    tx.onabort = tx.onerror = () =>
-      reject(tx.error || new Error('Storage transaction failed'))
+    // The request error arrives before tx.error is populated. Wait for abort
+    // and keep its cause, rather than replacing it with a generic message.
+    tx.onerror = (event) => {
+      failure = (event.target as IDBRequest | null)?.error ?? failure
+    }
+    tx.onabort = () => reject(storageError(tx.error || failure))
   })
 }
 export async function read<T>(
@@ -105,15 +132,27 @@ export async function updateMedia(
   key: string,
   update: (record: SavedMedia | undefined) => SavedMedia | undefined
 ) {
-  const db = await database()
-  const tx = db.transaction('media', 'readwrite')
-  const done = transactionDone(tx)
-  const store = tx.objectStore('media')
-  const record = update(
-    await requestValue<SavedMedia | undefined>(store.get(key))
-  )
-  if (record) store.put(record)
-  await done
+  const db = await database(),
+    tx = db.transaction('media', 'readwrite'),
+    done = transactionDone(tx),
+    store = tx.objectStore('media')
+  let record: SavedMedia | undefined
+  let failure: unknown
+  const request = store.get(key)
+  request.onsuccess = () => {
+    // Issue dependent IDB requests in this callback, while Safari keeps the
+    // transaction active. No awaits between reading and writing metadata.
+    try {
+      record = update(request.result)
+      if (record) store.put(record)
+    } catch (error) {
+      failure = error
+      tx.abort()
+    }
+  }
+  await done.catch((error) => {
+    throw failure ? storageError(failure) : error
+  })
   return record
 }
 export const mediaKey = (info: MediaInfo) =>
@@ -144,80 +183,200 @@ export async function prepare(
 export async function chunk(key: string, index: number) {
   return (await read<{ data: Blob }>('chunks', [key, index]))?.data
 }
-export async function putChunk(record: SavedMedia, index: number, data: Blob) {
+export const chunkBytes = (record: SavedMedia, index: number) =>
+  Math.min(CHUNK_SIZE, record.size - index * CHUNK_SIZE)
+export const fileComplete = (record: SavedMedia) => {
+  const count = Math.ceil(record.size / CHUNK_SIZE),
+    indexes = new Set(record.fileChunks)
+  return (
+    !!record.fileName &&
+    indexes.size === count &&
+    [...indexes].every(
+      (index) => Number.isInteger(index) && index >= 0 && index < count
+    )
+  )
+}
+export async function allMedia() {
   const db = await database()
-  const tx = db.transaction(['media', 'chunks'], 'readwrite')
-  const done = transactionDone(tx)
-  const store = tx.objectStore('media')
-  const current = await requestValue<SavedMedia | undefined>(
-    store.get(record.key)
+  return requestValue<SavedMedia[]>(
+    db.transaction('media').objectStore('media').getAll()
   )
-  if (current?.generation !== record.generation) {
-    await done
-    return false
+}
+export async function cachedChunks(key: string) {
+  const db = await database()
+  return new Promise<{ index: number; size: number }[]>((resolve, reject) => {
+    const values: { index: number; size: number }[] = []
+    const request = db
+      .transaction('chunks')
+      .objectStore('chunks')
+      .index('media')
+      .openCursor(IDBKeyRange.only(key))
+    request.onerror = () => reject(storageError(request.error))
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (cursor) {
+        values.push({ index: cursor.value.index, size: cursor.value.data.size })
+        cursor.continue()
+      } else resolve(values)
+    }
+  })
+}
+export async function ensureDownloadFile(record: SavedMedia) {
+  return (await updateMedia(record.key, (current) => {
+    if (
+      current?.generation !== record.generation ||
+      current.retention !== 'download'
+    )
+      return current
+    if (current.fileName) return current
+    return {
+      ...current,
+      fileName: downloadName(current),
+      fileChunks: [],
+      state: current.state === 'complete' ? 'paused' : current.state
+    }
+  }))!
+}
+export async function putChunk(
+  record: SavedMedia,
+  index: number,
+  data: Blob,
+  toFile = false
+) {
+  const db = await database(),
+    tx = db.transaction(['media', 'chunks'], 'readwrite'),
+    done = transactionDone(tx),
+    store = tx.objectStore('media'),
+    chunks = tx.objectStore('chunks')
+  let saved = false
+  const request = store.get(record.key)
+  request.onsuccess = () => {
+    const current = request.result as SavedMedia | undefined
+    if (
+      current?.generation !== record.generation ||
+      (toFile &&
+        (current.retention !== 'download' ||
+          current.fileName !== record.fileName))
+    )
+      return
+    if (!toFile && current.fileChunks?.includes(index)) {
+      saved = true
+      return
+    }
+    const previous = chunks.get([record.key, index])
+    previous.onsuccess = () => {
+      if (!previous.result && !current.fileChunks?.includes(index))
+        current.received += data.size
+      if (toFile) {
+        current.fileChunks = [
+          ...new Set([...(current.fileChunks ?? []), index])
+        ]
+        chunks.delete([record.key, index])
+      } else chunks.put({ media: record.key, index, data })
+      if (
+        current.fileName
+          ? fileComplete(current)
+          : current.received === current.size
+      ) {
+        current.state = 'complete'
+        current.error = undefined
+      }
+      store.put(current)
+      saved = true
+    }
   }
-  const previous = await requestValue(
-    tx.objectStore('chunks').get([record.key, index])
-  )
-  tx.objectStore('chunks').put({ media: record.key, index, data })
-  if (!previous) current.received += data.size
-  if (current.received === current.size) {
-    current.state = 'complete'
-    current.error = undefined
-  }
-  store.put(current)
   await done
-  return true
+  return saved
 }
 export async function putSubtitle(
   record: SavedMedia,
   index: number,
   data: Blob
 ) {
-  const db = await database()
-  const tx = db.transaction(['media', 'subtitles'], 'readwrite')
-  const done = transactionDone(tx)
-  const current = await requestValue<SavedMedia | undefined>(
-    tx.objectStore('media').get(record.key)
-  )
-  if (current?.generation === record.generation)
-    tx.objectStore('subtitles').put({ media: record.key, index, data })
+  const db = await database(),
+    tx = db.transaction(['media', 'subtitles'], 'readwrite'),
+    done = transactionDone(tx)
+  const request = tx.objectStore('media').get(record.key)
+  request.onsuccess = () => {
+    if (request.result?.generation === record.generation)
+      tx.objectStore('subtitles').put({ media: record.key, index, data })
+  }
   await done
+}
+export async function cancelDownload(record: SavedMedia) {
+  const db = await database(),
+    tx = db.transaction(['media', 'chunks'], 'readwrite'),
+    done = transactionDone(tx)
+  const request = tx.objectStore('media').get(record.key)
+  request.onsuccess = () => {
+    const current = request.result as SavedMedia | undefined
+    if (current?.generation !== record.generation) return
+    let received = 0
+    const scan = tx
+      .objectStore('chunks')
+      .index('media')
+      .openCursor(IDBKeyRange.only(record.key))
+    scan.onsuccess = () => {
+      const cursor = scan.result
+      if (cursor) {
+        received += cursor.value.data.size
+        cursor.continue()
+        return
+      }
+      tx.objectStore('media').put({
+        ...current,
+        retention: 'cache',
+        fileName: undefined,
+        fileChunks: undefined,
+        received,
+        state: received === current.size ? 'complete' : 'paused',
+        resumeOnOpen: false,
+        backgroundId: undefined,
+        backgroundBase: undefined,
+        error: undefined
+      })
+    }
+  }
+  await done
+  await removeDownloadFile(record)
 }
 export async function removeMedia(
   key: string,
   cacheOnly = false,
   expiredBefore?: number
 ) {
-  const db = await database()
-  const tx = db.transaction(['media', 'chunks', 'subtitles'], 'readwrite')
-  const done = transactionDone(tx)
-  const record = await requestValue<SavedMedia | undefined>(
-    tx.objectStore('media').get(key)
-  )
-  if (
-    (cacheOnly && record?.retention === 'download') ||
-    (expiredBefore !== undefined && record && record.accessed > expiredBefore)
-  ) {
-    await done
-    return false
-  }
-  tx.objectStore('media').delete(key)
-  for (const name of ['chunks', 'subtitles']) {
-    const request = tx
-      .objectStore(name)
-      .index('media')
-      .openKeyCursor(IDBKeyRange.only(key))
-    request.onsuccess = () => {
-      const cursor = request.result
-      if (cursor) {
-        tx.objectStore(name).delete(cursor.primaryKey)
-        cursor.continue()
+  const db = await database(),
+    tx = db.transaction(['media', 'chunks', 'subtitles'], 'readwrite'),
+    done = transactionDone(tx)
+  let record: SavedMedia | undefined,
+    removed = false
+  const request = tx.objectStore('media').get(key)
+  request.onsuccess = () => {
+    record = request.result
+    if (
+      (cacheOnly && record?.retention === 'download') ||
+      (expiredBefore !== undefined && record && record.accessed > expiredBefore)
+    )
+      return
+    tx.objectStore('media').delete(key)
+    removed = true
+    for (const name of ['chunks', 'subtitles']) {
+      const cursorRequest = tx
+        .objectStore(name)
+        .index('media')
+        .openKeyCursor(IDBKeyRange.only(key))
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result
+        if (cursor) {
+          tx.objectStore(name).delete(cursor.primaryKey)
+          cursor.continue()
+        }
       }
     }
   }
   await done
-  return true
+  if (removed && record) await removeDownloadFile(record)
+  return removed
 }
 export async function clearCache(
   account: string,

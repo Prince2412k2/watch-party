@@ -1,16 +1,37 @@
 # Browser downloads
 
 The **Saved** page manages downloads and playback cache. Movie and episode details
-offer Download in secure browsers with service workers and IndexedDB. Downloading
+offer Download in secure browsers with service workers, IndexedDB and OPFS. Downloading
 pins the media before fetching bytes; cached chunks are reused. Pause keeps the
-pin, Cancel download turns it into cache, and Remove deletes metadata, chunks and
-captions in one transaction. Clear cache protects downloads, including incomplete
+pin. Cancel download discards its OPFS file and keeps any remaining IndexedDB
+playback cache; Remove deletes metadata, cached ranges, captions and the OPFS file.
+Clear cache protects downloads, including incomplete
 ones, and reports any cache still being played in another tab. Cache expires after
 seven days without use; cleanup runs when the app/worker starts and hourly while
 the app is open.
 
-Media bytes live in IndexedDB as 2 MiB chunks, alongside title/series metadata,
-small poster images and WebVTT captions. The Saved page uses actual stored-byte
+Explicit downloads live in **one MP4 per movie in OPFS**, inside the app-owned
+`watchparty-downloads-v1` directory. File names include the movie/series title and
+a unique generation. A dedicated worker writes three concurrent, bounded 2 MiB
+ranges through `FileSystemSyncAccessHandle`; it flushes and closes each range
+before publishing its index. Sparse file length alone never means complete.
+Pause drains pending writes, and Resume requests only ranges that are missing.
+
+**Playback cache stays in IndexedDB** as 2 MiB chunks, alongside title/source/
+revision metadata, downloaded-range indexes, small poster images and WebVTT
+captions. Promoting a cache copies existing ranges into the MP4 and deletes their
+duplicate IndexedDB bytes after the file write succeeds. Existing full and partial
+downloads migrate the same way on opening the app, including while offline, without
+fetching their stored ranges again. A manually paused download stays paused.
+
+Inventory on opening removes orphan MP4s from the app's own directory, preserves
+other accounts' files and active writers, and repairs missing/truncated-file
+metadata so Resume can restore absent ranges. Generation checks and shared file/
+transfer locks prevent late writes from recreating removed downloads. IndexedDB
+read/modify/write requests are issued inside callbacks to keep transactions active
+in Safari; abort errors retain their actual cause instead of a generic message.
+
+The Saved page uses actual stored-byte
 counts, compact poster rows, and menus for secondary actions. JavaScript localStorage holds only a remembered account ID/name
 for reopening the offline library. It contains no movies, tokens or privileges.
 Logging out hides local media; signing back into the same account restores access.
@@ -18,14 +39,14 @@ Logging out hides local media; signing back into the same account restores acces
 The authenticated server endpoint accepts converted H.264 8-bit SDR/AAC MP4
 sources. It proxies original byte ranges without transcoding, pins source identity,
 file length and an upstream ETag/Last-Modified revision, and rejects changed files
-before their bytes can enter an existing download. The worker serves seekable local
-MP4 ranges and only fetches missing chunks. Generation checks prevent removed
-files from being resurrected by transfers that finish late. Foreground downloads
-fetch three ranges concurrently. The server shares a short-lived, authenticated
+before their bytes can enter an existing download. Completed OPFS downloads use a
+`File`-backed blob URL directly in the player, revoked when playback unmounts.
+Partial downloads and playback cache use service-worker MP4 range responses,
+reading known OPFS ranges first, then IndexedDB, then the network. The server shares a short-lived, authenticated
 source snapshot between ranges, while validating the revision of every response.
 
 Party playback keeps the existing Socket.IO timeline and local correction logic.
-Each participant independently uses their local chunks for the shared source.
+Each participant independently uses their local file or cached ranges for the shared source.
 Parties still need server connectivity. Non-default shared audio tracks and titles
 that have not been converted retain HLS playback because browsers cannot reliably
 switch the audio tracks in a static MP4. Standalone saved playback works offline.
@@ -38,7 +59,9 @@ and mobile operating systems may stop an ordinary worker download when suspended
 
 Chromium browsers with **Background Fetch** can keep an explicitly requested
 download running after the page closes. The page starts the browser-managed job;
-the worker validates and imports its completed ranges, one chunk at a time.
+the service worker validates and imports its completed ranges into OPFS using one
+asynchronous writable for the batch (sync handles require a dedicated worker).
+Range metadata is published only after the writable closes successfully.
 Existing watched chunks are omitted, and playback can use background ranges that
 have already arrived. If permission, quota, or browser limits prevent this, the
 three-range worker queue remains available. Background responses temporarily
@@ -55,7 +78,8 @@ guarantee; native apps are needed for dependable transfers while suspended.
 Validation: `npm run typecheck`, `npm test`, `npm run build` in `app/client`, and
 `npm test` in `app`. Storage tests cover pin promotion, TTL/account isolation,
 range validation, bounded concurrent downloads, Background Fetch import/fallback,
-and metadata/chunk/caption deletion with late writes. Browser
+OPFS migration, sparse-file integrity, orphan/missing-file repair, transaction
+error causes, and file/metadata/chunk/caption deletion with late writes. Browser
 smoke checks should include offline reload/seek/captions, pause/resume, cache clear
 with a pinned movie, download completion after closing the Chromium app page,
 interrupted-download recovery, camera/mic sharing from Saved, and two party participants playing saved media through the
