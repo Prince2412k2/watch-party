@@ -151,6 +151,11 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       }),
     );
     _unsubs.add(
+      socket.on(ServerEvent.partyLeft, (_) {
+        _leaveLocal();
+      }),
+    );
+    _unsubs.add(
       socket.on(ServerEvent.partyEnded, (_) {
         _toast('The host ended the party');
         _leaveLocal();

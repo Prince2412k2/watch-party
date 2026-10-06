@@ -16,6 +16,7 @@
 ///   party:reject        { userId }                  ack: { ok } | { error }        (host only)
 ///   party:kick          { userId }                  ack: { ok } | { error }        (host only)
 ///   party:end           (none)                      ack: { ok } | { error }        (host only)
+///   party:leave         (none)                      ack: { ok } | { error }        (guest departure)
 ///   party:transferHost  { userId }                  ack: { ok } | { error }        (host only)
 ///   party:setCollaborative { enabled }              ack: { ok } | { error }        (host only)
 ///   party:setSyncMode   { mode: 'hopping'|'dragging' } ack: { ok } | { error }     (host only)
@@ -43,6 +44,7 @@
 ///   party:rejected      {}                           (guest: denied)
 ///   party:kicked        { userId }                   (guest: removed)
 ///   party:ended         {}                           (host ended the party)
+///   party:left          {}                           (this user's devices left the party)
 ///   host:changed        { hostId }                   host migrated / transferred
 ///   user:joined         { userId, name }
 ///   user:left           { userId, name }
@@ -65,6 +67,7 @@ abstract final class ClientEvent {
   static const partyApprove = 'party:approve';
   static const partyReject = 'party:reject';
   static const partyKick = 'party:kick';
+  static const partyLeave = 'party:leave';
   static const partyEnd = 'party:end';
   static const partyTransferHost = 'party:transferHost';
   static const partySetCollaborative = 'party:setCollaborative';
@@ -94,6 +97,7 @@ abstract final class ServerEvent {
   static const partyApproved = 'party:approved';
   static const partyRejected = 'party:rejected';
   static const partyKicked = 'party:kicked';
+  static const partyLeft = 'party:left';
   static const partyEnded = 'party:ended';
   static const hostChanged = 'host:changed';
   static const userJoined = 'user:joined';
