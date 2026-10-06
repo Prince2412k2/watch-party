@@ -33,7 +33,7 @@ export interface AnalogVolumeProps {
   /** Button edge: 34 on desktop, 44 to hold the touch floor on phones. */
   size?: number
   glyph?: number
-  trackHeight?: number
+  trackHeight?: number | string
   preferences?: DisplayPreferences
   onHold?: () => void
   onRelease?: () => void
@@ -131,10 +131,10 @@ export default function AnalogVolume({
       onPointerLeave={() => setHovered(false)}
     >
       <div style={{
-        position: 'absolute',
-        bottom: '100%',
-        left: '50%',
-        transform: 'translateX(-50%)',
+        position: reveal === 'always' ? 'relative' : 'absolute',
+        bottom: reveal === 'always' ? undefined : '100%',
+        left: reveal === 'always' ? undefined : '50%',
+        transform: reveal === 'always' ? undefined : 'translateX(-50%)',
         paddingBottom: 4,
         opacity: open ? 1 : 0,
         pointerEvents: open ? 'auto' : 'none',
@@ -162,7 +162,7 @@ export default function AnalogVolume({
             // A 2px line is not a touch target; the box around it is `hitPx`
             // wide and never changes size with the line inside it.
             position: 'relative',
-            width: hit,
+            width: Math.max(hit, size),
             height: trackHeight,
             cursor: 'pointer',
             touchAction: 'none',

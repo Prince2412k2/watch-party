@@ -214,7 +214,7 @@ export default function Player({
     <VPlayer.Provider>
       {/* isolate so the skin's internal z-indexed layers don't paint over the
           camera tiles / chat that render as siblings of this player */}
-      <div style={{ position: 'relative', width: '100%', height: '100%', background: '#000', isolation: 'isolate' }}>
+      <div className={`watch-player${phone ? ' watch-player--phone' : ''}`} style={{ position: 'relative', width: '100%', height: '100%', background: '#000', isolation: 'isolate' }}>
         {/* The vidstack skin's own control bar is fully replaced by the flat,
             native transport below — always hide it, on every platform. Surface taps belong to the page so they toggle chrome without changing playback. */}
         <VideoSkin className="watch-skin watch-skin--nobar" style={{ width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 0 }}>
@@ -222,7 +222,10 @@ export default function Player({
               `userMuted` (not canControl) governs mute state so guests can
               unmute and stay unmuted. Host forced muted only when
               autoplay-with-sound was blocked (see hostMuted above). */}
-          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} type={hlsUrl?.startsWith('blob:') ? 'video/mp4' : undefined} playsInline autoPlay={standalone} preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
+          {/* Keep type explicit: VideoJS compares its inferred type getter to
+              this prop. Passing undefined reassigns type and reloads the same
+              source on every chrome/camera render, resetting pending seeks. */}
+          <HlsVideo ref={videoRef} className="watch-video" src={hlsUrl} type={hlsUrl?.startsWith('blob:') || hlsUrl?.split(/[?#]/)[0].endsWith('.mp4') ? 'video/mp4' : 'application/vnd.apple.mpegurl'} playsInline autoPlay={standalone} preload="auto" muted={userMuted || hostMuted} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: brightness === 1 ? undefined : `brightness(${brightness})` }} />
         </VideoSkin>
 
         {canControl && hostMuted && visible && (
@@ -239,18 +242,20 @@ export default function Player({
         <MediaErrorNotice />
         {!standalone && <PlaybackReporter mediaItemId={mediaItemId} playback={playback} />}
 
-        <div style={{ position: 'absolute', left: 'max(8px, env(safe-area-inset-left))', top: '50%', transform: 'translateY(-50%)', zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
+        <div className="watch-levels watch-levels--brightness" style={{ zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s' }}>
           <PictureBrightness value={brightness} onChange={setBrightness} onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
         </div>
-        <div style={{ position: 'absolute', right: 'max(8px, env(safe-area-inset-right))', top: '50%', transform: 'translateY(-50%)', paddingTop: 78, zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <PlayerVolume userMuted={userMuted} onToggleMuted={toggleMuted} size={44} reveal="always" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
-          <div style={{display:'flex',alignItems:'center'}}>
+        <div className="watch-levels watch-levels--volume" style={{ zIndex: Z.controlBar, opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div className="watch-level-group">
+          <PlayerVolume userMuted={userMuted} onToggleMuted={toggleMuted} size={44} reveal="always" trackHeight="var(--watch-level-track)" onHoldChrome={onHoldChrome} onReleaseChrome={onReleaseChrome} />
+          <div className="watch-call-buttons">
           {onToggleMic && <BarBtn onClick={onToggleMic} title={micOn ? 'Mute microphone' : 'Share microphone'} active={micOn}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/>{!micOn && <path d="M3 3 21 21"/>}</svg>
           </BarBtn>}
           {onToggleCam && <BarBtn onClick={onToggleCam} title={camOn ? 'Turn camera off' : 'Share camera'} active={camOn}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-4v12l-6-4"/>{!camOn && <path d="M3 3 21 21"/>}</svg>
           </BarBtn>}
+          </div>
           </div>
         </div>
         <>
@@ -1519,9 +1524,10 @@ function PictureBrightness({ value, onChange, onHoldChrome, onReleaseChrome }: {
   </div>
 }
 
-function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal, onHoldChrome, onReleaseChrome }: {
+function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal, trackHeight, onHoldChrome, onReleaseChrome }: {
   userMuted?: boolean; onToggleMuted?: VoidCallback; size?: number; glyph?: number
   reveal?: 'hover' | 'always'
+  trackHeight?: number | string
   onHoldChrome?: (reason: string) => void; onReleaseChrome?: (reason: string) => void
 } = {}) {
   const media = VPlayer.useMedia() as unknown as MediaLike
@@ -1543,6 +1549,7 @@ function PlayerVolume({ userMuted, onToggleMuted, size = 34, glyph = 18, reveal,
       onSetVolume={(next) => { setVolume(next); if (media) media.volume = next }}
       onToggleMute={() => onToggleMuted?.()}
       reveal={reveal}
+      trackHeight={trackHeight}
       size={size}
       glyph={glyph}
       preferences={preferences}
@@ -1666,7 +1673,7 @@ function NativeTransportBar({
             )}
           </div>
 
-          <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', fontFamily: MONO_F, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', fontSize: 11 }}>
+          <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', fontFamily: MONO_F, fontVariantNumeric: 'tabular-nums', color: 'rgba(244,244,245,.62)', fontSize: 12 }}>
             <span style={{ color: '#f4f4f5' }}>{fmtClock(cur)}</span> / {fmtClock(dur)}
           </span>
 

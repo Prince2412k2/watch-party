@@ -1,5 +1,5 @@
-.phone-catalog { position: fixed; inset: 0; isolation: isolate; background: var(--an-color-stage-ground); color: var(--an-color-ink); font-family: var(--an-type-sans); --an-k-nav-px: 70px; }
-.phone-catalog-scroll { height: 100%; overflow-y: auto; overscroll-behavior-y: contain; padding: calc(env(safe-area-inset-top) + 20px) max(20px, env(safe-area-inset-right)) calc(142px + var(--app-safe-bottom, 0px)) max(20px, env(safe-area-inset-left)); }
+.phone-catalog { position: fixed; top: 0; left: 0; right: 0; height: var(--app-vh, 100dvh); isolation: isolate; background: var(--an-color-stage-ground); color: var(--an-color-ink); font-family: var(--an-type-sans); --an-k-nav-px: 70px; }
+.phone-catalog-scroll { position: absolute; top: env(safe-area-inset-top, 0px); bottom: calc(70px + var(--app-safe-bottom, 0px)); left: 0; right: 0; overflow-y: auto; overscroll-behavior-y: contain; padding: 20px max(20px, env(safe-area-inset-right)) 72px max(20px, env(safe-area-inset-left)); }
 .phone-catalog-header h1 { margin: 28px 0 20px; font-size: 34px; font-weight: 300; line-height: 1.1; letter-spacing: -.04em; padding-right: 44px; overflow-wrap: anywhere; }
 .phone-back { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; border: 0; padding: 0 6px; background: transparent; color: var(--an-color-ink-dim); font: inherit; font-size: 14px; cursor: pointer; }
 .phone-search { display: flex; align-items: center; gap: 12px; min-height: 48px; background: var(--an-color-stage-surface); border-radius: 10px; padding: 0 14px; color: var(--an-color-ink-dim); }
@@ -32,7 +32,7 @@
 .phone-catalog .an-corner[data-corner='bottom-right'] { bottom: calc(var(--app-safe-bottom, 0px) + 84px); right: max(20px, env(safe-area-inset-right)); }
 .phone-catalog .an-corner-trigger { min-width: 44px; min-height: 44px; }
 .phone-catalog .an-tray { max-width: calc(100vw - 88px); }
-.phone-title-dialog { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; border: 0; padding: 0 20px calc(28px + var(--app-safe-bottom, 0px)); overflow-y: auto; color: var(--an-color-ink); background: var(--an-color-stage-ground); font-family: var(--an-type-sans); }
+.phone-title-dialog { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none; height: var(--app-vh, 100dvh); max-height: none; border: 0; padding: 0 20px calc(28px + var(--app-safe-bottom, 0px)); overflow-y: auto; color: var(--an-color-ink); background: var(--an-color-stage-ground); font-family: var(--an-type-sans); }
 .phone-title-dialog::backdrop { background: rgba(0,0,0,.65); }
 .phone-title-top { position: sticky; top: 0; z-index: 2; padding-top: env(safe-area-inset-top); background: var(--an-color-stage-ground); }
 .phone-title-art { width: min(52vw, 240px); margin: 24px auto 30px; }
@@ -49,3 +49,12 @@
   .phone-title-copy { padding-top: 24px; }
 }
 @media (max-width: 350px) { .phone-poster-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Keep the status-bar region opaque; scrolling artwork never moves under it. */
+.phone-catalog .an-nav { background: var(--an-color-stage-ground); }
+.route-loading { position: fixed; inset: 0 0 auto; height: var(--app-vh, 100dvh); padding: calc(env(safe-area-inset-top, 0px) + 32px) 20px; background: var(--an-color-stage-ground); }
+.route-loading > p { color: var(--an-color-ink-dim); }
+.route-loading-posters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 12px; margin-top: 24px; }
+.route-loading-posters > span { aspect-ratio: 2 / 3; background: var(--an-color-stage-surface); }
+.route-loading .an-nav { display: flex; justify-content: space-around; padding: 0; background: var(--an-color-stage-ground); }
+.route-loading .an-nav button { flex-direction: column; min-height: 64px; font-size: 11px; gap: 6px; }

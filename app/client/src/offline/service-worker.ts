@@ -17,6 +17,7 @@ import {
   type SavedMedia
 } from './storage.ts'
 import { availableChunk } from './files.ts'
+import { streamMediaRange } from './mediaStream.ts'
 import { transferLock } from './opfs.ts'
 import { byteRange, validateChunk } from './ranges.ts'
 import { runChunkQueue } from './queue.ts'
@@ -275,37 +276,59 @@ async function mediaResponse(request: Request, key: string) {
       headers
     })
   const release = retain(key)
-  let offset = range.start,
-    cancelled = false
+  const abort = new AbortController()
+  const cancel = () => {
+    abort.abort()
+    release()
+  }
+  request.signal.addEventListener('abort', cancel, { once: true })
+  if (request.signal.aborted) cancel()
+  const finish = () => {
+    request.signal.removeEventListener('abort', cancel)
+    release()
+  }
+  const stream = streamMediaRange({
+    ...range,
+    size: record.size,
+    chunkSize: CHUNK_SIZE,
+    signal: abort.signal,
+    stored: async (index) => {
+      if ((await owner()) !== record.owner) throw new Error('Account changed')
+      const current = await getMedia(key)
+      if (current?.generation !== record.generation)
+        throw new Error('File removed')
+      return availableChunk(record, index)
+    },
+    fetchChunk: async (index, signal) => {
+      const request = mediaRequest(record, index, sw.location.origin)
+      return (
+        (await backgroundResponse(sw.registration, record, request)) ||
+        fetch(request, { signal })
+      )
+    },
+    save: async (index, data) => {
+      // Quota errors affect caching, never the already playing stream.
+      await putChunk(record, index, data).catch(() => {})
+    }
+  })
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
-        if (cancelled) return
-        if (offset > range.end) {
+        const next = await stream.next()
+        if (abort.signal.aborted) return
+        if (next.done) {
           controller.close()
-          release()
-          return
-        }
-        const index = Math.floor(offset / CHUNK_SIZE)
-        const data = await loadChunk(record, index)
-        if (cancelled) return
-        const stop = Math.min(range.end + 1, (index + 1) * CHUNK_SIZE)
-        controller.enqueue(
-          new Uint8Array(
-            await data
-              .slice(offset - index * CHUNK_SIZE, stop - index * CHUNK_SIZE)
-              .arrayBuffer()
-          )
-        )
-        offset = stop
+          finish()
+        } else controller.enqueue(next.value)
       } catch (error) {
-        controller.error(error)
-        release()
+        if (!abort.signal.aborted) controller.error(error)
+        finish()
       }
     },
-    cancel() {
-      cancelled = true
-      release()
+    async cancel() {
+      cancel()
+      await stream.return().catch(() => {})
+      finish()
     }
   })
   return new Response(body, {

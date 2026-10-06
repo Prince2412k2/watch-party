@@ -1,6 +1,7 @@
-import { Component, Suspense, lazy, useEffect, useState } from 'react'
+import { Component, Suspense, lazy, startTransition, useEffect, useState } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext.tsx'
+import RouteLoading from './components/RouteLoading.tsx'
 import { navigate } from './router.ts'
 import { usePhone } from './hooks/useIsMobile.ts'
 import { PartyProvider } from './context/PartyContext.tsx'
@@ -70,7 +71,7 @@ class ChunkBoundary extends Component<{ children?: ReactNode }, { failed: boolea
 function useRoute() {
   const [path, setPath] = useState(window.location.pathname)
   useEffect(() => {
-    const handler = () => setPath(window.location.pathname)
+    const handler = () => startTransition(() => setPath(window.location.pathname))
     window.addEventListener('popstate', handler)
     return () => window.removeEventListener('popstate', handler)
   }, [])
@@ -80,7 +81,7 @@ function useRoute() {
 function Router() {
   const { user, loading } = useAuth()
 
-  if (loading) return null
+  if (loading) return <RouteLoading />
   if (!user) return <UnauthenticatedRouter />
 
   return (
@@ -107,7 +108,7 @@ function UnauthenticatedRouter() {
   // that rendered it was MobileApp's '/login' case, and MobileApp is only ever
   // mounted for a signed-IN member. Sign-in is pre-auth, so it belongs here.
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<RouteLoading />}>
       {phone ? <PhoneLogin /> : <Login onSuccess={() => {}} />}
     </Suspense>
   )
@@ -147,18 +148,18 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // Handles /party/new?itemId=xxx and /party/:id. See mobile/screens/Watch.tsx.
   // Deliberately OUTSIDE DownloadsProvider: a watch session has no download UI,
   // and must not be polling qBittorrent/*arr while the player is running.
-  if (path.startsWith('/party/')) return <Suspense fallback={null}><WatchRoute path={path} /></Suspense>
+  if (path.startsWith('/party/')) return <Suspense fallback={<RouteLoading />}><WatchRoute path={path} /></Suspense>
 
   // Installer downloads must remain reachable from any device size.
-  if (path === '/desktop-app') return <Suspense fallback={null}><DesktopApp /></Suspense>
-  if (path === '/saved') return <Suspense fallback={null}><SavedMovies /></Suspense>
-  if (path.startsWith('/saved/watch/')) return <Suspense fallback={null}><SavedWatch mediaKey={decodeURIComponent(path.slice('/saved/watch/'.length))} /></Suspense>
-  if (path === '/converter' && user.isAdmin) return <Suspense fallback={null}><Converter /></Suspense>
+  if (path === '/desktop-app') return <Suspense fallback={<RouteLoading />}><DesktopApp /></Suspense>
+  if (path === '/saved') return <Suspense fallback={<RouteLoading />}><SavedMovies /></Suspense>
+  if (path.startsWith('/saved/watch/')) return <Suspense fallback={<RouteLoading />}><SavedWatch mediaKey={decodeURIComponent(path.slice('/saved/watch/'.length))} /></Suspense>
+  if (path === '/converter' && user.isAdmin) return <Suspense fallback={<RouteLoading />}><Converter /></Suspense>
 
   // One profile editor for both device sizes — it is a full-screen page on each,
   // and rendering it above the phone branch keeps a rotation from remounting it
   // (and discarding unsaved edits).
-  if (path === '/profile') return <Suspense fallback={null}><Profile /></Suspense>
+  if (path === '/profile') return <Suspense fallback={<RouteLoading />}><Profile /></Suspense>
 
 
   // Movies is the first surface rebuilt on the analog kit (issue #66). It brings
@@ -185,7 +186,7 @@ function AuthenticatedRouter({ user }: { user: NonNullable<ReturnType<typeof use
   // DownloadsContext) rather than each screen mounting its own.
   return (
     <DownloadsProvider>
-      <Suspense fallback={null}>{screen}</Suspense>
+      <Suspense fallback={<RouteLoading />}>{screen}</Suspense>
     </DownloadsProvider>
   )
 }

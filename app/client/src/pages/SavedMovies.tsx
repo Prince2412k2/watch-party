@@ -14,9 +14,14 @@ import {
 import { backgroundManager, backgroundProgress } from '../offline/background.ts'
 import '../analog/analogKit.css'
 import './saved.css'
+import {
+  DownloadRate,
+  PROGRESS_CHANNEL,
+  type DownloadProgress
+} from '../offline/progress.ts'
 const size = (n: number) =>
   n < 1024 ** 3
-    ? `${Math.round(n / 1024 ** 2)} MB`
+    ? `${(n / 1024 ** 2).toFixed(1)} MB`
     : `${(n / 1024 ** 3).toFixed(2)} GB`
 const progressBytes = (file: SavedMedia) =>
   Math.min(
@@ -73,6 +78,30 @@ export default function SavedMovies() {
   const [details, setDetails] = useState(false)
   const [background, setBackground] = useState(false)
   const [quota, setQuota] = useState(0)
+  const [live, setLive] = useState<
+    Record<string, DownloadProgress & { mbps: number; at: number }>
+  >({})
+  useEffect(() => {
+    const channel = new BroadcastChannel(PROGRESS_CHANNEL)
+    const meters = new Map<string, DownloadRate>()
+    channel.onmessage = ({ data }: MessageEvent<DownloadProgress>) => {
+      if (
+        !data ||
+        typeof data.key !== 'string' ||
+        typeof data.transferred !== 'number'
+      )
+        return
+      const meter = meters.get(data.key) ?? new DownloadRate()
+      meters.set(data.key, meter)
+      const at = performance.now()
+      const mbps = data.active
+        ? meter.update(data.run, data.transferred, at)
+        : 0
+      setLive((current) => ({ ...current, [data.key]: { ...data, mbps, at } }))
+    }
+    return () => channel.close()
+  }, [])
+  const backgroundMeters = useRef(new Map<string, DownloadRate>())
   const warmed = useRef(new Set<string>())
   useEffect(() => {
     if (!user || !OFFLINE_SUPPORTED) return
@@ -85,6 +114,28 @@ export default function SavedMovies() {
         const estimate = await navigator.storage?.estimate?.()
         if (!mounted) return
         setFiles(files)
+        for (const file of files) {
+          if (!file.backgroundId || file.state !== 'downloading') continue
+          const meter =
+            backgroundMeters.current.get(file.key) ?? new DownloadRate()
+          backgroundMeters.current.set(file.key, meter)
+          const at = performance.now()
+          const transferred = file.backgroundDownloaded ?? 0
+          const mbps = meter.update(file.backgroundId, transferred, at)
+          setLive((current) => ({
+            ...current,
+            [file.key]: {
+              key: file.key,
+              generation: file.generation,
+              run: file.backgroundId!,
+              bytes: progressBytes(file),
+              transferred,
+              active: true,
+              mbps,
+              at
+            }
+          }))
+        }
         setQuota(estimate?.quota ?? 0)
         setBackground(!!backgroundManager(registration))
         for (const file of rows) {
@@ -270,8 +321,17 @@ export default function SavedMovies() {
           className="saved-list"
         >
           {rows.map((file) => {
-            const bytes = progressBytes(file),
-              percent = Math.floor((bytes / file.size) * 100)
+            const sample = live[file.key]
+            const fresh =
+              file.state === 'downloading' &&
+              sample?.active &&
+              sample.generation === file.generation &&
+              performance.now() - sample.at < 2000
+            const bytes = Math.min(
+                file.size,
+                Math.max(progressBytes(file), fresh ? sample.bytes : 0)
+              ),
+              percent = (bytes / file.size) * 100
             const complete = file.state === 'complete',
               downloading = file.state === 'downloading'
             const primary =
@@ -316,7 +376,13 @@ export default function SavedMovies() {
                   <p className="saved-status">
                     {complete
                       ? `${size(file.size)} · Ready to play`
-                      : `${downloading ? `${percent}%` : file.state === 'error' ? 'Interrupted' : 'Paused'} · ${size(bytes)} / ${size(file.size)}`}
+                      : `${downloading ? `${Math.floor(percent)}%` : file.state === 'error' ? 'Interrupted' : 'Paused'} · ${size(bytes)} / ${size(file.size)}`}
+                    {downloading && (
+                      <span className="saved-speed">
+                        {' '}
+                        · {fresh ? sample.mbps.toFixed(1) : '0.0'} Mbps
+                      </span>
+                    )}
                   </p>
                   {!complete && (
                     <div

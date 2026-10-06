@@ -12,11 +12,12 @@ import Avatar from './Avatar.tsx'
  * toasts are never hidden. The party panel itself lives in `PartyPanel`.
  */
 export default function RoomControls({
-  stage, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false,
+  stage, mediaTitle, top = 18, visible = true, phone = false, onOpenChat, chatOpen = false,
   layoutMode, onToggleLayout, hideSelf, onToggleHideSelf,
   micOn, camOn, onToggleMic, onToggleCam, hideAllFeeds, onToggleHideAllFeeds, onHoldChrome, onReleaseChrome,
 }: {
   stage?: string
+  mediaTitle?: string
   top?: number
   visible?: boolean
   phone?: boolean
@@ -99,13 +100,13 @@ export default function RoomControls({
 
       {/* Phone: compact top bar with room code + participant count (top-left,
           clear of the notch via safe-area). Pairs with the top-right cluster. */}
-      {phone && watching && (
+      {watching && mediaTitle && (
         <div style={{
-          position: 'absolute', top: 'calc(var(--sa-t) + 8px)', left: 'calc(var(--sa-l) + 56px)', zIndex: 40,
-          display: 'flex', alignItems: 'center', height: 44, maxWidth: 'calc(100vw - var(--sa-l) - var(--sa-r) - 212px)',
+          position: 'absolute', top: phone ? 'calc(var(--sa-t) + 8px)' : top, left: 'calc(var(--sa-l) + 56px)', zIndex: 40,
+          display: 'flex', alignItems: 'center', height: 44, maxWidth: 'calc(100vw - var(--sa-l) - var(--sa-r) - 212px)', whiteSpace: 'nowrap',
           opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none', transition: 'opacity .25s',
         }}>
-          <span title={`Room ${session.id} · ${participantCount} participants`} style={{ fontFamily: MONO, fontSize: 12, letterSpacing: '.08em', color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.id}</span>
+          <span title={mediaTitle} style={{ fontSize: 14, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mediaTitle}</span>
         </div>
       )}
 

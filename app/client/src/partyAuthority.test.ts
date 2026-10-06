@@ -55,3 +55,13 @@ test('a party surface with no target does nothing', () => {
   assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: undefined }), { kind: 'idle' })
   assert.deepEqual(partyJoinTransition({ joinedFor: 'AAA', partyId: '' }), { kind: 'idle' })
 })
+
+
+test('room updates preserve an existing saved player, but new rooms and titles still open', () => {
+  const session = { id: 'room', hostId: 'host', stage: 'watching', mediaItemId: 'movie' }
+  assert.equal(shouldOpenPartyPlayer(session, 'host', '/saved/watch/file', session), false)
+  assert.equal(shouldOpenPartyPlayer({ ...session, guests: [{ userId: 'guest', name: 'Guest' }] }, 'host', '/saved/watch/file', session), false)
+  assert.equal(shouldOpenPartyPlayer({ ...session, mediaItemId: 'next' }, 'host', '/saved/watch/file', session), true)
+  assert.equal(shouldOpenPartyPlayer({ ...session, id: 'other' }, 'host', '/saved/watch/file', session), true)
+  assert.equal(shouldOpenPartyPlayer(session, 'host', '/saved/watch/file', null), true)
+})
