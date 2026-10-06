@@ -1,8 +1,10 @@
 /// <reference lib="webworker" />
 import {
   CHUNK_SIZE,
+  cancelDownload,
   chunk,
   clearCache,
+  fileComplete,
   getMedia,
   listMedia,
   owner,
@@ -10,9 +12,12 @@ import {
   putSubtitle,
   read,
   removeMedia,
+  storageError,
   updateMedia,
   type SavedMedia
 } from './storage.ts'
+import { availableChunk } from './files.ts'
+import { transferLock } from './opfs.ts'
 import { byteRange, validateChunk } from './ranges.ts'
 import { runChunkQueue } from './queue.ts'
 import {
@@ -80,7 +85,7 @@ async function loadChunk(
   signal?: AbortSignal
 ): Promise<Blob> {
   if ((await owner()) !== record.owner) throw new Error('Account changed')
-  const stored = await chunk(record.key, index)
+  const stored = await availableChunk(record, index)
   if (stored) return stored
   const id = `${record.key}/${record.generation}/${index}`
   const pending = inflight.get(id)
@@ -108,7 +113,7 @@ async function loadChunk(
         (current) =>
           current && {
             ...current,
-            error: 'Storage full; playback continues without saving new chunks.'
+            error: `${storageError(error).message} Playback continues without saving new chunks.`
           }
       ).catch(() => {})
     }
@@ -127,6 +132,11 @@ async function cacheCaptions(
   controller = new AbortController()
 ) {
   const key = record.key
+  await updateMedia(key, (current) =>
+    current?.generation === record.generation
+      ? { ...current, subtitleError: undefined }
+      : current
+  )
   for (const subtitle of record.subtitles) {
     if (controller.signal.aborted)
       throw new DOMException('Paused', 'AbortError')
@@ -346,9 +356,15 @@ sw.addEventListener('message', (event) => {
     }
     if (!account) throw new Error('Sign in first')
     if (message.action === 'recover') {
+      const held = (await sw.navigator.locks?.query())?.held ?? []
       const resume: string[] = []
       for (const record of await listMedia(account)) {
-        if (record.retention !== 'download' || running.has(record.key)) continue
+        if (
+          record.retention !== 'download' ||
+          running.has(record.key) ||
+          held.some((lock) => lock.name === transferLock(record.generation))
+        )
+          continue
         const recover = async () => {
           if (running.has(record.key)) return
           const latest = await getMedia(record.key)
@@ -451,7 +467,13 @@ sw.addEventListener('message', (event) => {
         current?.generation === record.generation
           ? {
               ...current,
-              state: current.received === current.size ? 'complete' : 'paused',
+              state: (
+                current.fileName
+                  ? fileComplete(current)
+                  : current.received === current.size
+              )
+                ? 'complete'
+                : 'paused',
               resumeOnOpen: false
             }
           : current
@@ -459,30 +481,10 @@ sw.addEventListener('message', (event) => {
       return
     }
     if (message.action === 'cancel') {
-      await updateMedia(key, (current) =>
-        current?.generation === record.generation
-          ? {
-              ...current,
-              retention: 'cache',
-              resumeOnOpen: false,
-              backgroundId: undefined,
-              backgroundBase: undefined
-            }
-          : current
-      )
-      await abortBackground(sw.registration, record)
       downloads.get(key)?.abort()
       await running.get(key)
-      await updateMedia(key, (current) =>
-        current?.generation === record.generation
-          ? {
-              ...current,
-              retention: 'cache',
-              resumeOnOpen: false,
-              state: current.received === current.size ? 'complete' : 'paused'
-            }
-          : current
-      )
+      await cancelDownload(record)
+      await abortBackground(sw.registration, record)
       return
     }
     if (message.action === 'remove') {

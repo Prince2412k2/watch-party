@@ -4,7 +4,7 @@
   color: var(--an-color-ink);
   font-family: var(--an-type-sans);
   padding: max(28px, env(safe-area-inset-top)) 28px
-    calc(110px + env(safe-area-inset-bottom));
+    calc(110px + var(--app-safe-bottom, 0px));
 }
 .saved-content {
   max-width: 780px;
@@ -311,7 +311,7 @@
   justify-content: center;
   background: var(--an-color-stage-ground);
   padding: 10px max(12px, env(safe-area-inset-left))
-    max(10px, env(safe-area-inset-bottom));
+    max(10px, var(--app-safe-bottom, 0px));
 }
 .saved-page > .an-nav button {
   flex-direction: column;

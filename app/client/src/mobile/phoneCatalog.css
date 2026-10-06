@@ -1,5 +1,5 @@
 .phone-catalog { position: fixed; inset: 0; isolation: isolate; background: var(--an-color-stage-ground); color: var(--an-color-ink); font-family: var(--an-type-sans); --an-k-nav-px: 70px; }
-.phone-catalog-scroll { height: 100%; overflow-y: auto; overscroll-behavior-y: contain; padding: calc(env(safe-area-inset-top) + 20px) max(20px, env(safe-area-inset-right)) calc(142px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+.phone-catalog-scroll { height: 100%; overflow-y: auto; overscroll-behavior-y: contain; padding: calc(env(safe-area-inset-top) + 20px) max(20px, env(safe-area-inset-right)) calc(142px + var(--app-safe-bottom, 0px)) max(20px, env(safe-area-inset-left)); }
 .phone-catalog-header h1 { margin: 28px 0 20px; font-size: 34px; font-weight: 300; line-height: 1.1; letter-spacing: -.04em; padding-right: 44px; overflow-wrap: anywhere; }
 .phone-back { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; border: 0; padding: 0 6px; background: transparent; color: var(--an-color-ink-dim); font: inherit; font-size: 14px; cursor: pointer; }
 .phone-search { display: flex; align-items: center; gap: 12px; min-height: 48px; background: var(--an-color-stage-surface); border-radius: 10px; padding: 0 14px; color: var(--an-color-ink-dim); }
@@ -24,15 +24,15 @@
 .phone-catalog-empty, .phone-catalog-error { margin-block: 30px; line-height: 1.6; color: var(--an-color-ink-dim); }
 .phone-catalog-error { color: var(--an-color-status-danger); }
 .phone-load-more { display: block; width: 100%; margin-top: 28px; min-height: 48px; border: 1px solid var(--an-color-line-strong); border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 14px; }
-.phone-catalog-nav { position: absolute; inset: auto 0 0; z-index: var(--an-z-toolbox); padding: 4px 12px env(safe-area-inset-bottom); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); }
-.phone-catalog .an-nav { display: flex; gap: 0; justify-content: space-around; padding: 0; }
+.phone-catalog-nav { position: absolute; inset: auto 0 0; z-index: var(--an-z-toolbox); padding: 4px 12px var(--app-safe-bottom, 0px); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); }
+.phone-catalog .an-nav { border-top: 0; display: flex; gap: 0; justify-content: space-around; padding: 0; }
 .phone-catalog .an-nav button { flex: 1; min-height: 64px; min-width: 0; padding: 8px 4px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 11px; letter-spacing: 0; }
 .phone-catalog .an-nav button.is-active::after { left: 25%; right: 25%; }
 .phone-catalog .an-corner[data-corner='top-right'] { top: calc(env(safe-area-inset-top) + 20px); right: max(20px, env(safe-area-inset-right)); }
-.phone-catalog .an-corner[data-corner='bottom-right'] { bottom: calc(env(safe-area-inset-bottom) + 84px); right: max(20px, env(safe-area-inset-right)); }
+.phone-catalog .an-corner[data-corner='bottom-right'] { bottom: calc(var(--app-safe-bottom, 0px) + 84px); right: max(20px, env(safe-area-inset-right)); }
 .phone-catalog .an-corner-trigger { min-width: 44px; min-height: 44px; }
 .phone-catalog .an-tray { max-width: calc(100vw - 88px); }
-.phone-title-dialog { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; border: 0; padding: 0 20px calc(28px + env(safe-area-inset-bottom)); overflow-y: auto; color: var(--an-color-ink); background: var(--an-color-stage-ground); font-family: var(--an-type-sans); }
+.phone-title-dialog { position: fixed; inset: 0; margin: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; border: 0; padding: 0 20px calc(28px + var(--app-safe-bottom, 0px)); overflow-y: auto; color: var(--an-color-ink); background: var(--an-color-stage-ground); font-family: var(--an-type-sans); }
 .phone-title-dialog::backdrop { background: rgba(0,0,0,.65); }
 .phone-title-top { position: sticky; top: 0; z-index: 2; padding-top: env(safe-area-inset-top); background: var(--an-color-stage-ground); }
 .phone-title-art { width: min(52vw, 240px); margin: 24px auto 30px; }

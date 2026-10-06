@@ -2,11 +2,21 @@ import {
   CHUNK_SIZE,
   chunk,
   getMedia,
+  ensureDownloadFile,
+  fileComplete,
+  chunkBytes,
   owner,
   putChunk,
+  storageError,
   updateMedia,
   type SavedMedia
 } from './storage.ts'
+import {
+  downloadDirectory,
+  downloadFile,
+  OPFS_SUPPORTED,
+  withFileLock
+} from './opfs.ts'
 import { validateChunk } from './ranges.ts'
 
 // Background Fetch is implemented by Chromium, but not Safari or Firefox.
@@ -67,8 +77,26 @@ export async function startBackground(
     if (existing && !existing.result) return true
   }
   const requests: Request[] = []
+  let length = 0
+  if (record.fileName && OPFS_SUPPORTED()) {
+    try {
+      length = await withFileLock(
+        record.generation,
+        async () => (await downloadFile(record)).size
+      )
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'NotFoundError'))
+        throw error
+    }
+  }
   for (let index = 0; index < Math.ceil(record.size / CHUNK_SIZE); index++)
-    if (!(await chunk(record.key, index)))
+    if (
+      !(
+        record.fileChunks?.includes(index) &&
+        Math.min(record.size, (index + 1) * CHUNK_SIZE) <= length
+      ) &&
+      !(await chunk(record.key, index))
+    )
       requests.push(mediaRequest(record, index, origin))
   if (!requests.length) return false
   const missing = requests.reduce((sum, request) => {
@@ -85,7 +113,7 @@ export async function startBackground(
   if (
     estimate?.quota &&
     estimate.usage != null &&
-    missing * 2 + CHUNK_SIZE > estimate.quota - estimate.usage
+    record.size + missing + CHUNK_SIZE > estimate.quota - estimate.usage
   )
     return false
   const id = `${PREFIX}${record.generation}:${crypto.randomUUID()}:${encodeURIComponent(record.key)}`
@@ -199,7 +227,102 @@ export async function finishBackground(job: BackgroundJob) {
   )
     return
   let error: string | undefined
-  if (job.recordsAvailable) {
+  if (job.recordsAvailable && OPFS_SUPPORTED()) {
+    const target = await ensureDownloadFile(record)
+    await withFileLock(generation, async () => {
+      const handle = await (
+        await downloadDirectory(true)
+      ).getFileHandle(target.fileName!, { create: true })
+      const writer = await handle.createWritable({ keepExistingData: true })
+      const written: { index: number; size: number }[] = []
+      let closed = false
+      const valid = async () => {
+        const current = await getMedia(key)
+        return (
+          current?.generation === generation &&
+          current.backgroundId === job.id &&
+          current.fileName === target.fileName &&
+          current.retention === 'download' &&
+          (await owner()) === record.owner
+        )
+      }
+      try {
+        // Background completion runs without a window. Use one asynchronous
+        // writer for the entire batch, avoiding a whole-file copy per range.
+        for (
+          let index = 0;
+          index < Math.ceil(record.size / CHUNK_SIZE);
+          index++
+        ) {
+          if (target.fileChunks?.includes(index)) continue
+          const data = await chunk(key, index)
+          if (!data) continue
+          if (!(await valid())) return
+          if (data.size !== chunkBytes(record, index))
+            throw new Error('Incomplete cached chunk')
+          await writer.write({
+            type: 'write',
+            position: index * CHUNK_SIZE,
+            data
+          })
+          written.push({ index, size: data.size })
+        }
+        for (const part of await job.matchAll()) {
+          const index = Number(
+            new URL(part.request.url).searchParams.get('chunk')
+          )
+          if (
+            !Number.isSafeInteger(index) ||
+            index < 0 ||
+            index >= Math.ceil(record.size / CHUNK_SIZE)
+          )
+            continue
+          try {
+            const response = await part.responseReady
+            const start = index * CHUNK_SIZE,
+              end = Math.min(record.size - 1, start + CHUNK_SIZE - 1)
+            validateChunk(response, start, end, record.size)
+            const data = await response.blob()
+            if (data.size !== end - start + 1)
+              throw new Error('Incomplete media chunk')
+            if (!(await valid())) return
+            await writer.write({ type: 'write', position: start, data })
+            written.push({ index, size: data.size })
+          } catch (err) {
+            error =
+              err instanceof DOMException && err.name === 'QuotaExceededError'
+                ? storageError(err).message
+                : err instanceof Error
+                  ? err.message
+                  : 'Could not save media chunk'
+          }
+        }
+        if (!(await valid())) return
+        await writer.close()
+        closed = true
+        // Publish range metadata only after the file is durable. A killed
+        // worker can redownload unindexed bytes, but cannot advertise holes.
+        for (const part of written) {
+          if (!(await valid())) return
+          await putChunk(
+            target,
+            part.index,
+            new Blob([new Uint8Array(part.size)]),
+            true
+          )
+        }
+      } finally {
+        if (!closed) await writer.abort().catch(() => {})
+      }
+    }).catch((err) => {
+      error =
+        err instanceof DOMException && err.name === 'QuotaExceededError'
+          ? storageError(err).message
+          : err instanceof Error
+            ? err.message
+            : 'Could not save downloaded file'
+    })
+  } else if (job.recordsAvailable) {
     for (const part of await job.matchAll()) {
       const index = Number(new URL(part.request.url).searchParams.get('chunk'))
       if (
@@ -234,7 +357,9 @@ export async function finishBackground(job: BackgroundJob) {
   await updateMedia(key, (current) => {
     if (current?.generation !== generation || current.backgroundId !== job.id)
       return current
-    const complete = current.received === current.size
+    const complete = current.fileName
+      ? fileComplete(current)
+      : current.received === current.size
     const paused = !current.resumeOnOpen
     return {
       ...current,

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext.tsx'
 import {
   getMedia,
   localSubtitles,
-  localUrl,
+  playbackSource,
   ready,
   type SavedMedia
 } from '../offline/client.ts'
@@ -17,6 +17,7 @@ import { useAutoHideControls } from '../analog/player/index.ts'
 export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
   const { user } = useAuth()
   const [record, setRecord] = useState<SavedMedia | null>(null)
+  const [url, setUrl] = useState('')
   const [error, setError] = useState('')
   const [subtitle, setSubtitle] = useState(-1)
   const [preferences, setPreferences] = useState<SubtitlePreferences>(
@@ -42,21 +43,28 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
   }
   useEffect(() => {
     let active = true
+    let release = () => {}
     setRecord(null)
     setError('')
     setSubtitle(-1)
     void ready()
       .then(() => getMedia(mediaKey))
-      .then((file) => {
+      .then(async (file) => {
         if (!file || file.owner !== user?.userId)
           throw new Error('Saved movie not found')
-        if (active) setRecord(file)
+        const source = await playbackSource(file)
+        release = source.release
+        if (active) {
+          setUrl(source.url)
+          setRecord(file)
+        } else release()
       })
       .catch((err) => {
         if (active) setError(err.message)
       })
     return () => {
       active = false
+      release()
     }
   }, [mediaKey, user?.userId])
   return (
@@ -71,7 +79,7 @@ export default function SavedWatch({ mediaKey }: { mediaKey: string }) {
       {record && (
         <Player
           standalone
-          hlsUrl={localUrl(record)}
+          hlsUrl={url}
           mediaItemId={record.itemId}
           visible={chrome.visible}
           onToggleCam={

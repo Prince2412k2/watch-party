@@ -284,7 +284,7 @@ export default function SavedMovies() {
                     : file.state === 'error' || file.subtitleError
                       ? 'Retry'
                       : 'Resume'
-            const canPlay = complete || navigator.onLine
+            const canPlay = file.received === file.size || navigator.onLine
             return (
               <li className="saved-card" key={file.key}>
                 <button

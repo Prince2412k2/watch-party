@@ -52,6 +52,7 @@
   --live: #E0655E;                /* active-download / recording dot */
   --green: #5AB98A;                /* success tick, sparingly */
   --scrim: rgba(0,0,0,.6);
+  --app-safe-bottom: clamp(0px, env(safe-area-inset-bottom, 0px), 34px);
   --r: 12px;
   --r-lg: 16px;
   --font-sans: 'Circular XX', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
