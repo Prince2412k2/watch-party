@@ -6,6 +6,29 @@ import { selectBufferedResumeTarget } from './bufferSeek.ts'
 
 const playing = { positionTicks: 100_000_000, t0: 1_000, phase: 'playing', version: 7 }
 
+test('decoder recovery resumes without seeking even when the frozen position moved', () => {
+  for (const isHost of [true, false]) {
+    for (const phase of ['playing', 'stalled', 'paused']) {
+      const intent = decideSyncAction({
+        schedule: { ...playing, phase }, serverNowMs: () => 2_000,
+        clockReady: () => true, currentTime: 5, paused: true,
+        isHost, mode: 'dragging', suppressHardSeek: true,
+      })
+      assert.equal(intent?.seekTo, undefined)
+      assert.equal(intent?.play === true, phase === 'playing')
+    }
+  }
+})
+
+test('the Follow host honors the same recovery cooldown as its guests', () => {
+  const intent = decideSyncAction({
+    schedule: playing, serverNowMs: () => 2_000, clockReady: () => true,
+    currentTime: 5, paused: false, isHost: true, mode: 'dragging',
+    suppressHardSeek: true,
+  })
+  assert.equal(intent?.seekTo, undefined)
+})
+
 test('an aligned player resumes without seeking and triggering another Follow stall', () => {
   for (const isHost of [true, false]) {
     for (const drift of [-0.39, 0, 0.39]) {

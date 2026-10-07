@@ -183,6 +183,34 @@
       "expect": { "seekTo": null, "rate": 1, "play": true, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 0.2 }
     },
     {
+      "name": "a recovering Follow host resumes its decoded frame without another jump",
+      "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
+      "serverNowMs": 3000,
+      "clockReady": true,
+      "currentTime": 49,
+      "paused": true,
+      "isHost": true,
+      "mode": "dragging",
+      "userSeeking": false,
+      "suppressHardSeek": true,
+      "correctionState": null,
+      "expect": { "seekTo": null, "rate": 1, "play": true, "pause": false, "hardSeek": false, "pausedSeek": false, "drift": 3 }
+    },
+    {
+      "name": "a recovering Follow guest holds a frozen room without another jump",
+      "schedule": { "positionTicks": 500000000, "t0": 0, "rate": 0, "paused": true, "phase": "stalled", "version": 3, "mediaGeneration": 1 },
+      "serverNowMs": 3000,
+      "clockReady": true,
+      "currentTime": 49,
+      "paused": false,
+      "isHost": false,
+      "mode": "dragging",
+      "userSeeking": false,
+      "suppressHardSeek": true,
+      "correctionState": null,
+      "expect": { "seekTo": null, "rate": 1, "play": false, "pause": true, "hardSeek": false, "pausedSeek": false, "drift": null }
+    },
+    {
       "name": "a late-joining hopping guest resumes through the buffered rendezvous",
       "schedule": { "positionTicks": 500000000, "t0": 1000, "rate": 1, "paused": false, "phase": "playing", "version": 3, "mediaGeneration": 1 },
       "serverNowMs": 3000,

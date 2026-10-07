@@ -14,6 +14,7 @@ import type { SyncIntent, SyncSchedule } from '../sync/syncCore.ts'
 
 const STRUGGLE_WINDOW_MS = 15_000
 const STRUGGLE_HARD_SEEKS = 3
+const BUFFER_RECOVERY_NO_JUMP_MS = 30_000 // same recovery window as the native player
 
 /**
  * Playback sync with two modes:
@@ -49,6 +50,7 @@ export function useSyncPlay({
   const userSeekTimer = useRef<number | null>(null)
   const hardSeeks = useRef<number[]>([])
   const lastHardSeekAt = useRef(0)
+  const bufferRecoveryUntil = useRef(0)
   const pendingLocalCommand = useRef<{ kind: 'play' | 'pause' | 'seek'; until: number } | null>(null)
   const syncModeRef = useRef(syncMode)
   syncModeRef.current = syncMode
@@ -116,6 +118,13 @@ export function useSyncPlay({
   }
 
   const reportStall = useCallback((stalled: boolean) => {
+    if (stalledRef.current && !stalled) {
+      // Match the native client's recovery window: resume the decoded frame
+      // before attempting another timeline jump that could stall it again.
+      bufferRecoveryUntil.current = Date.now() + BUFFER_RECOVERY_NO_JUMP_MS
+    } else if (stalled) {
+      bufferRecoveryUntil.current = 0
+    }
     stalledRef.current = stalled
     const mediaGeneration = scheduleRef.current?.mediaGeneration
     if (mediaGeneration == null) return
@@ -304,6 +313,13 @@ export function useSyncPlay({
         lastAppliedVersionRef.current = s.version
       }
 
+      const previous = scheduleRef.current
+      // A deliberate transport command or new movie supersedes recovery.
+      // Only stalled -> playing transitions retain the no-jump window.
+      if (generationChanged || (previous?.phase !== 'stalled' && s.phase !== 'stalled')) {
+        bufferRecoveryUntil.current = 0
+        lastHardSeekAt.current = 0
+      }
       scheduleRef.current = s
       if (generationChanged && gen != null) {
         socket.emit('sync:stall', { stalled: stalledRef.current, mediaGeneration: gen })
@@ -374,7 +390,8 @@ export function useSyncPlay({
         isHost,
         mode,
         userSeeking: userSeekRef.current,
-        suppressHardSeek: Date.now() - lastHardSeekAt.current < HARD_SEEK_COOLDOWN_MS,
+        suppressHardSeek: Date.now() < bufferRecoveryUntil.current ||
+          Date.now() - lastHardSeekAt.current < HARD_SEEK_COOLDOWN_MS,
       })
       if (!intent) return
 
@@ -396,6 +413,7 @@ export function useSyncPlay({
       // once per frozen position: once seeked, currentTime ≈ P0 so the next tick
       // no longer emits pausedSeek.
       if (intent.pausedSeek && !isHost) {
+        lastHardSeekAt.current = Date.now()
         bufferAwarePausedSeek(video)
         return
       }
@@ -404,7 +422,10 @@ export function useSyncPlay({
       // events (seek/play) are wrapped in markApplying — a bare playbackRate
       // change never was, so the "controller re-authors on event" flow is
       // preserved exactly as before.
-      if (intent.seekTo != null) { markApplying(); video.currentTime = intent.seekTo }
+      if (intent.seekTo != null) {
+        lastHardSeekAt.current = Date.now()
+        markApplying(); video.currentTime = intent.seekTo
+      }
       if (intent.rate != null) video.playbackRate = intent.rate
       if (intent.play) { markApplying(); video.play().catch(() => {}) }
       if (intent.pause && !video.paused) { markApplying(); video.pause() }

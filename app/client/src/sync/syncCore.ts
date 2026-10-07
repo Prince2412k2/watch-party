@@ -241,7 +241,7 @@ export function decideSyncAction({
     // seek while paused doesn't reliably load the segment on HLS — the loader is
     // never kicked by a play()). pausedSeek routes this through the buffer-aware
     // paused-seek in the caller instead of a bare currentTime write.
-    if (Math.abs(ct - P0) > HOLD_TOLERANCE) { intent.seekTo = P0; intent.pausedSeek = true }
+    if (!suppressHardSeek && Math.abs(ct - P0) > HOLD_TOLERANCE) { intent.seekTo = P0; intent.pausedSeek = true }
     return intent
   }
 
@@ -255,11 +255,11 @@ export function decideSyncAction({
     // decoder readiness, which Follow mode reports as another group stall;
     // unconditionally seeking on every resume makes that cycle repeat forever.
     const intent: SyncIntent = { rate: 1, play: true, drift }
-    if (Math.abs(drift) > HOLD_TOLERANCE) intent.seekTo = expected
+    if (!suppressHardSeek && Math.abs(drift) > HOLD_TOLERANCE) intent.seekTo = expected
     // A paused hopping guest is commonly a late joiner. Large initial drift
     // needs the same buffered rendezvous as a playing guest's hard correction;
     // seek+play directly into unbuffered HLS creates a stall/re-seek loop.
-    if (!isHost && mode === 'hopping' && Math.abs(drift) > HARD_SEEK_SEC) intent.hardSeek = true
+    if (!suppressHardSeek && !isHost && mode === 'hopping' && Math.abs(drift) > HARD_SEEK_SEC) intent.hardSeek = true
     return intent
   }
 
@@ -269,7 +269,7 @@ export function decideSyncAction({
   if (isHost) {
     // dragging host: obey the timeline, correct only gross drift, no nudge
     const intent: SyncIntent = { rate: 1, drift: err }
-    if (ae > HOST_DRAG_SEEK_SEC) intent.seekTo = expected
+    if (!suppressHardSeek && ae > HOST_DRAG_SEEK_SEC) intent.seekTo = expected
     return intent
   }
 
