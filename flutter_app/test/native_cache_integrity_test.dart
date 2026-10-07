@@ -13,6 +13,7 @@ class _Api extends MockApiClient {
   _Api(this.url);
   final String url;
   Completer<void>? mintGate;
+  Completer<void>? mintStarted;
   int mints = 0;
 
   @override
@@ -22,6 +23,7 @@ class _Api extends MockApiClient {
     String? mediaSourceId,
   }) async {
     mints++;
+    if (mintStarted?.isCompleted == false) mintStarted!.complete();
     await mintGate?.future;
     return StreamUrl(url: url, expiresAt: 9999999999999);
   }
@@ -163,10 +165,11 @@ void main() {
 
   test('concurrent start and resume share one startup probe', () async {
     api.mintGate = Completer<void>();
+    api.mintStarted = Completer<void>();
     final first = fills.start('title');
     final second = fills.resume('title');
     expect(identical(first, second), isTrue);
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await api.mintStarted!.future.timeout(const Duration(seconds: 5));
     expect(api.mints, 1);
     api.mintGate!.complete();
     await Future.wait([first, second]);
