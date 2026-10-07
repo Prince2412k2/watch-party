@@ -52,6 +52,10 @@ export function useSyncPlay({
   const pendingLocalCommand = useRef<{ kind: 'play' | 'pause' | 'seek'; until: number } | null>(null)
   const syncModeRef = useRef(syncMode)
   syncModeRef.current = syncMode
+  const hostRef = useRef(isHost)
+  hostRef.current = isHost
+  const autoplayBlockedRef = useRef(onAutoplayBlocked)
+  autoplayBlockedRef.current = onAutoplayBlocked
   // Last schedule.version this hook has applied, and the media generation it
   // was observed under. schedule.version is monotonic per party SESSION (never
   // reset by a media change), so a stale/duplicate/out-of-order sync:schedule
@@ -111,12 +115,12 @@ export function useSyncPlay({
     userSeekTimer.current = window.setTimeout(() => { userSeekRef.current = false }, 3000)
   }
 
-  function reportStall(stalled: boolean) {
+  const reportStall = useCallback((stalled: boolean) => {
     stalledRef.current = stalled
     const mediaGeneration = scheduleRef.current?.mediaGeneration
     if (mediaGeneration == null) return
     socket.emit('sync:stall', { stalled, mediaGeneration })
-  }
+  }, [socket])
 
   function recordHardSeek() {
     const now = Date.now()
@@ -135,7 +139,7 @@ export function useSyncPlay({
   // hopping 'playing' schedule.
   function kickHostPlay(video: HTMLVideoElement | null | undefined) {
     if (!video) return
-    if (!(isHost && syncModeRef.current !== 'dragging'
+    if (!(hostRef.current && syncModeRef.current !== 'dragging'
           && scheduleRef.current?.phase === 'playing' && video.paused)) return
     video.play().catch(() => {
       // Autoplay-with-sound was blocked (no recent user gesture by the time this
@@ -144,7 +148,7 @@ export function useSyncPlay({
       // video.muted directly (not just via the callback) so this retry doesn't
       // wait on a React re-render to take effect.
       video.muted = true
-      onAutoplayBlocked?.()
+      autoplayBlockedRef.current?.()
       video.play().catch(() => {})
     })
   }
