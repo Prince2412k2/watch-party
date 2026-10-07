@@ -178,7 +178,16 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     assert.equal((await emitAck(guestOne, 'party:create')).error, 'already in a party')
 
     otherHost.disconnect()
-    await delay(200)
+    // Wait for server-side disconnect processing AND the grace timer. A fixed
+    // 200ms delay raced CI load; calling resume too early cancels the timer and
+    // legitimately restores the room, invalidating the isolation assertion.
+    let expired = false
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const response = await fetch(`${baseUrl}/api/debug/session/${secondParty.partyId}`)
+      if (response.status === 404) { expired = true; break }
+      await delay(25)
+    }
+    assert.equal(expired, true, 'the disconnected host room must expire')
     assert.equal((await emitAck(otherHostUnrelated, 'party:resume')).session, null)
 
     await expectNoMatching([guestOne, guestTwo], 'chat:message', message => message.text === 'waiting-only', async () => {
