@@ -7,7 +7,7 @@ import { useSyncPlay } from '../hooks/useSyncPlay.ts'
 import { Z } from '../watchLayers.ts'
 import { createTransportIntent } from '../sync/transportIntent.ts'
 import { createLocalTransport } from '../sync/transportCommand.ts'
-import { isPlaybackReady } from '../sync/playbackReadiness.ts'
+import { createPlaybackStallGate, isPlaybackReady } from '../sync/playbackReadiness.ts'
 import { getMedia } from '../offline/storage.ts'
 import { usePlayerPresentation } from './PlayerPresentation.tsx'
 import { IS_NATIVE } from '../native/env.ts'
@@ -914,10 +914,12 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   useEffect(() => {
     if (!media || syncMode !== 'dragging') return
     let stalled = false
+    const localFile = Boolean(srcUrl?.startsWith('blob:'))
+    const stallGate = createPlaybackStallGate(localFile)
     const set = (v: boolean) => { if (stalled !== v) { stalled = v; reportStall(v) } }
     const check = () => {
-      const ready = isPlaybackReady(media, Boolean(srcUrl?.startsWith('blob:')))
-      set(!ready)
+      const ready = isPlaybackReady(media, localFile)
+      set(stallGate(ready, performance.now()))
     }
     check()
     const poll = setInterval(check, 250)

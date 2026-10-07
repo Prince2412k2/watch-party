@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { isPlaybackReady } from './playbackReadiness.ts'
+import { createPlaybackStallGate, isPlaybackReady } from './playbackReadiness.ts'
 import { waitForBuffer } from './bufferSeek.ts'
 
 function video(ranges: number[][] = []) {
@@ -9,6 +9,26 @@ function video(ranges: number[][] = []) {
     buffered: { length: ranges.length, start: (i: number) => ranges[i][0], end: (i: number) => ranges[i][1] },
   }
 }
+
+test('short local decoder seeks do not repeatedly freeze the party', () => {
+  const stalled = createPlaybackStallGate(true)
+  assert.equal(stalled(false, 0), false)
+  assert.equal(stalled(false, 250), false)
+  assert.equal(stalled(true, 500), false)
+  assert.equal(stalled(false, 900), false)
+  assert.equal(stalled(true, 1200), false)
+  assert.equal(stalled(false, 1500), false)
+  assert.equal(stalled(false, 2499), false)
+  assert.equal(stalled(false, 2500), true)
+  assert.equal(stalled(true, 2750), false)
+  assert.equal(stalled(false, 3000), false)
+})
+
+test('streaming readiness still reports missing network runway immediately', () => {
+  const stalled = createPlaybackStallGate(false)
+  assert.equal(stalled(false, 0), true)
+  assert.equal(stalled(true, 10), false)
+})
 
 test('a decoded local file does not freeze a party because buffered ranges are sparse', () => {
   const media = video([[60, 61]])

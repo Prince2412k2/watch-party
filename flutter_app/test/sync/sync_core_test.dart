@@ -29,6 +29,7 @@ void main() {
           paused: true,
           isHost: isHost,
           mode: 'dragging',
+          userSeeking: false,
         )!;
         expect(intent.play, true);
         expect(intent.seekToSec, isNull);
