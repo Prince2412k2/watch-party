@@ -7,8 +7,7 @@ import { useSyncPlay } from '../hooks/useSyncPlay.ts'
 import { Z } from '../watchLayers.ts'
 import { createTransportIntent } from '../sync/transportIntent.ts'
 import { createLocalTransport } from '../sync/transportCommand.ts'
-import { isBuffered } from '../sync/bufferSeek.ts'
-import { BUFFER_AHEAD_SEC } from '../sync/syncCore.ts'
+import { isPlaybackReady } from '../sync/playbackReadiness.ts'
 import { getMedia } from '../offline/storage.ts'
 import { usePlayerPresentation } from './PlayerPresentation.tsx'
 import { IS_NATIVE } from '../native/env.ts'
@@ -39,7 +38,7 @@ interface SeekBridge { canControl: boolean; seekBy: (delta: number) => void; gua
 type SeekBridgeRef = MutableRefObject<SeekBridge | null>
 interface MediaLike {
   currentTime: number; duration: number; paused: boolean; playbackRate: number; volume: number; muted: boolean
-  buffered: TimeRanges; engine?: HlsLike
+  buffered: TimeRanges; readyState: number; seeking?: boolean; ended?: boolean; engine?: HlsLike
   play: () => Promise<void>; pause: () => void
   addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void
@@ -909,20 +908,15 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
   }, [media, isHost])
 
   // Dragging mode: report our buffering state so the group waits for us.
-  // Readiness is measured directly off buffered runway ahead of the current
-  // position (the same isBuffered() check bufferSeek.js's catch-up routines
-  // use), not inferred from 'canplaythrough' (unreliable on adaptive HLS,
-  // which may never fire it) or 'playing' (only proves playback started, not
-  // that there's enough runway left to keep it going). Polled on a timer plus
-  // the events that can plausibly change the answer, since there's no single
-  // reliable "buffer changed" DOM event across engines.
+  // Complete OPFS files use decoder readiness. Streams retain a contiguous
+  // runway check, clamped to the actual movie end. Keep reportStall stable so
+  // React renders cannot clear/re-add a real stall and oscillate the timeline.
   useEffect(() => {
     if (!media || syncMode !== 'dragging') return
     let stalled = false
     const set = (v: boolean) => { if (stalled !== v) { stalled = v; reportStall(v) } }
     const check = () => {
-      const t = media.currentTime || 0
-      const ready = isBuffered(media, t) && isBuffered(media, t + BUFFER_AHEAD_SEC)
+      const ready = isPlaybackReady(media, Boolean(srcUrl?.startsWith('blob:')))
       set(!ready)
     }
     check()
@@ -932,6 +926,9 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
     media.addEventListener('playing', check)
     media.addEventListener('timeupdate', check)
     media.addEventListener('progress', check)
+    media.addEventListener('canplay', check)
+    media.addEventListener('seeked', check)
+    media.addEventListener('ended', check)
     return () => {
       clearInterval(poll)
       if (stalled) reportStall(false)   // don't leave the group frozen on unmount
@@ -940,8 +937,11 @@ function SyncBridge({ isHost, collaborativeControl, syncMode, onStruggle, onOpen
       media.removeEventListener('playing', check)
       media.removeEventListener('timeupdate', check)
       media.removeEventListener('progress', check)
+      media.removeEventListener('canplay', check)
+      media.removeEventListener('seeked', check)
+      media.removeEventListener('ended', check)
     }
-  }, [media, syncMode, reportStall])
+  }, [media, srcUrl, syncMode, reportStall])
 
   // Translate only explicitly armed desktop-skin gestures into requests.
   // Unarmed media events (buffering, catch-up, device/source changes) are

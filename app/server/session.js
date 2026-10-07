@@ -244,9 +244,11 @@ export function randomConnectedGuest(session, isConnected, random = Math.random)
   return connected[Math.floor(random() * connected.length)] ?? null
 }
 
-export function transferHost(session, newHostUserId, newHostSocketId, newHostToken) {
+export function transferHost(session, newHostUserId, newHostSocketId, newHostToken, { temporary = false } = {}) {
   const guest = session.guests.find(g => g.userId === newHostUserId)
   if (!guest) return false
+  clearTimeout(session.hostDisconnectTimer)
+  session.hostDisconnectTimer = null
   const previousHost = {
     userId: session.hostId,
     name: session.hostName,
@@ -256,6 +258,9 @@ export function transferHost(session, newHostUserId, newHostSocketId, newHostTok
     joinedAt: Date.now(),
   }
   session.hostId = newHostUserId
+  // A deliberate handover changes the owner who may reclaim the room. Only
+  // automatic disconnect failover preserves the previous owner's claim.
+  if (!temporary) session.originalHostId = newHostUserId
   session.hostName = guest.name
   session.hostSocketId = newHostSocketId
   session.hostToken = newHostToken
@@ -268,6 +273,8 @@ export function transferHost(session, newHostUserId, newHostSocketId, newHostTok
 
 export function reclaimOriginalHost(session, { socketId, token, deviceId, name }) {
   if (session.hostId === session.originalHostId) return false
+  clearTimeout(session.hostDisconnectTimer)
+  session.hostDisconnectTimer = null
   const currentHost = {
     userId: session.hostId,
     name: session.hostName,

@@ -5,6 +5,7 @@
 //   WP_MOVIE_FILE=/tmp/pwa.mp4 node scripts/pwa-native-parity-smoke.mjs
 // WP_PARTIAL=1 repeats the flow using an incomplete download.
 // Optional: CHROMIUM, PLAYWRIGHT_MODULE, LIVEKIT_URL/KEY/SECRET.
+// WP_SYNC_ONLY=1 runs local-file sync/host-handover regressions without LiveKit.
 // All accounts, app data and upstream media are isolated local fixtures.
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -14,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
+import { runMixedSyncSmoke } from './pwa-mixed-sync-smoke.mjs'
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const { io } = createRequire(resolve('app/package.json'))('socket.io-client')
 const artifacts = mkdtempSync(join(tmpdir(), 'wp-native-parity-'))
@@ -219,7 +221,7 @@ async function participant(name) {
   assert.equal(login.status(), 200)
   const page = await context.newPage()
   page.on('console', (m) => {
-    if (m.type() === 'error') console.log('browser', m.text())
+    if (m.type() === 'error') console.log('browser', m.text().replace(/access_token=[^&\s]+/g, 'access_token=[redacted]'))
   })
   await page.goto(base + '/saved')
   await until(page, () => !!navigator.serviceWorker.controller)
@@ -297,7 +299,7 @@ async function participant(name) {
   )
   return { page, user, context, key }
 }
-try {
+async function runNativeParity() {
   const host = await participant('Camera Host ' + Date.now()),
     guest = await participant('Camera Guest ' + Date.now())
   await host.page.goto(`${base}/saved/watch/${encodeURIComponent(host.key)}`)
@@ -662,6 +664,13 @@ try {
   console.log(
     'PASS native parity: minimize/browse/expand preserve video and room; chat overlays without resizing/focus stealing; independent camera collapse/hide and audio; reconnect preserves movie; portrait bounds; guest leave retains host'
   )
+}
+try {
+  if (process.env.WP_SYNC_ONLY === '1') {
+    await runMixedSyncSmoke({ participant, base, sockets, io, ack, until })
+  } else {
+    await runNativeParity()
+  }
 } catch (err) {
   console.log(
     'camera failed',

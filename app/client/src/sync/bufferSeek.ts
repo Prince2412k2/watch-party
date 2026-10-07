@@ -80,7 +80,10 @@ export function selectBufferedResumeTarget(media: { buffered?: TimeRanges | null
 // of it (i.e. some buffered range covers [targetTime, targetTime + aheadSec]),
 // or after timeoutMs. Polls video.buffered because there is no single reliable
 // "enough buffered" DOM event across engines.
-export function waitForBuffer(media: { duration?: number; buffered?: TimeRanges | null }, targetTime: number, aheadSec: number, timeoutMs: number) {
+export function waitForBuffer(media: {
+  duration?: number; buffered?: TimeRanges | null
+  currentSrc?: string; currentTime?: number; readyState?: number; seeking?: boolean
+}, targetTime: number, aheadSec: number, timeoutMs: number) {
   // A target within aheadSec of the media end can never accumulate the full
   // look-ahead (there simply isn't that much media left), so the wait would
   // hang until timeout. Clamp the required runway to what's actually reachable:
@@ -91,6 +94,13 @@ export function waitForBuffer(media: { duration?: number; buffered?: TimeRanges 
     ? Math.min(aheadSec, Math.max(0, dur - targetTime))
     : aheadSec
   const hasRunway = () => {
+    // Complete OPFS files are already available locally. After seeked, a
+    // decoded target frame is sufficient; sparse Safari ranges must not hold
+    // the sync operation open for the entire network-buffer timeout.
+    if (media.currentSrc?.startsWith('blob:')) {
+      return !media.seeking && (media.readyState ?? 0) >= 2
+        && Math.abs((media.currentTime ?? NaN) - targetTime) <= 0.25
+    }
     try {
       const b = media.buffered
       if (!b) return false

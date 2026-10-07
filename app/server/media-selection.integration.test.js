@@ -142,7 +142,8 @@ test('media selection commits only the latest still-authorized request', { timeo
 
   try {
     await waitForServer(baseUrl, child, () => stdout + stderr)
-    const host = await connect(baseUrl, await login(baseUrl, 'Selection Host'))
+    const hostCookie = await login(baseUrl, 'Selection Host')
+    const host = await connect(baseUrl, hostCookie)
     const guest = await connect(baseUrl, await login(baseUrl, 'Selection Guest'))
     sockets.push(host, guest)
 
@@ -192,6 +193,24 @@ test('media selection commits only the latest still-authorized request', { timeo
     assert.equal(session.hostId, guestId)
     assert.equal(session.stage, 'lobby')
     assert.equal(session.mediaItemId, null)
+
+    // Explicit handover survives both page restoration and transport reconnect.
+    // Previously the room creator silently reclaimed control on either path.
+    const resumed = (await emitAck(host, 'party:resume')).session
+    assert.equal(resumed.hostId, guestId)
+    host.disconnect()
+    const formerHost = await connect(baseUrl, hostCookie)
+    sockets.push(formerHost)
+    const rejoined = await emitAck(formerHost, 'party:join', { partyId: created.partyId })
+    assert.equal(rejoined.session.hostId, guestId)
+    assert.deepEqual(await emitAck(formerHost, 'sync:pause', { positionTicks: 0 }), { error: 'not allowed' })
+    // Native clients supply the observed version; the new host must retain
+    // authority to issue such commands after the PWA reconnects.
+    assert.equal((await emitAck(guest, 'sync:play', {
+      positionTicks: 0, baseVersion: rejoined.session.schedule.version,
+      commandId: 'native-host-after-handover',
+    })).ok, true)
+    assert.deepEqual(await emitAck(formerHost, 'party:transferHost', { userId: guestId }), { error: 'not host' })
 
     const endGate = holdPlayback('after-end')
     const endedSelection = emitAck(guest, 'party:selectMedia', { mediaItemId: 'after-end' })

@@ -423,6 +423,15 @@ io.on('connection', (socket) => {
 
   const waitingSocketsForUser = (targetId, partyId) => indexedSockets(waitingSocketIndex, targetId, partyId)
 
+  // State-changing decisions only; never log tokens, names, URLs or per-frame
+  // telemetry. Production logs can then distinguish user pauses from buffering
+  // and identify which member actually held authority after a reconnect.
+  const logSync = (event, sess, detail = {}) => console.info('[party-sync]', JSON.stringify({
+    event, partyId: sess.id, userId, hostId: sess.hostId,
+    mediaGeneration: sess.mediaGeneration, version: sess.schedule.version,
+    phase: sess.schedule.phase, syncMode: sess.syncMode, ...detail,
+  }))
+
   const leavePartySockets = (targetId, partyId) => {
     for (const candidate of partySocketsForUser(targetId, partyId)) {
       candidate.leave(partyId)
@@ -437,6 +446,7 @@ io.on('connection', (socket) => {
     if (sess.originalHostId === userId && sess.hostId !== userId) {
       supersedeMediaSelection(sess)
       reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
+      logSync('host_reclaimed', sess)
       io.to(sess.id).emit('host:changed', { hostId: userId })
     } else if (sess.hostId === userId) {
       clearTimeout(sess.hostDisconnectTimer)
@@ -452,6 +462,7 @@ io.on('connection', (socket) => {
     }
     socket.join(sess.id)
     io.to(socket.id).emit('chat:history', sess.messages)
+    io.to(socket.id).emit('sync:schedule', sess.schedule)
     ack?.({ session: publicSession(sess) })
     socket.to(sess.id).emit('party:state', publicSession(sess))
   })
@@ -531,6 +542,7 @@ io.on('connection', (socket) => {
       clearTimeout(sess.hostDisconnectTimer)
       sess.hostDisconnectTimer = null
       reclaimOriginalHost(sess, { socketId: socket.id, token, deviceId, name })
+      logSync('host_reclaimed', sess)
       restoreSocket()
       io.to(sess.id).emit('host:changed', { hostId: userId })
       io.to(sess.id).emit('party:state', publicSession(sess))
@@ -712,6 +724,7 @@ io.on('connection', (socket) => {
     const targetToken = targetSocket?.user?.token ?? token
     supersedeMediaSelection(sess)
     transferHost(sess, targetId, targetGuest.socketId, targetToken)
+    logSync('host_transferred', sess)
     io.to(sess.id).emit('host:changed', { hostId: targetId })
     io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
@@ -869,11 +882,14 @@ io.on('connection', (socket) => {
   // on since the controller last observed it. baseVersion is optional and
   // omitting it (older/legacy clients) falls back to plain last-writer-wins, so
   // this stays backward-compatible without a protocol bump.
-  function acceptSyncCommand(sess, payload, ack) {
+  function acceptSyncCommand(sess, payload, ack, kind) {
     const parsed = validateSyncCommand(payload)
     if (parsed.error) { ack?.({ error: parsed.error }); return null }
     const authorized = authorizeSyncCommand(sess, parsed.value)
-    if (authorized.error) { ack?.(authorized); return null }
+    if (authorized.error) {
+      logSync('command_rejected', sess, { kind, reason: authorized.error })
+      ack?.(authorized); return null
+    }
     const now = Date.now()
     socket._syncCommandTimes = (socket._syncCommandTimes || []).filter(t => now - t < 3000)
     if (socket._syncCommandTimes.length >= 30) { ack?.({ error: 'rate limited' }); return null }
@@ -883,31 +899,39 @@ io.on('connection', (socket) => {
 
   socket.on('sync:play', (payload = {}, ack) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
-    const command = acceptSyncCommand(sess, payload, ack)
+    if (!sess || !canDrive(sess)) {
+      if (sess) logSync('command_rejected', sess, { kind: 'play', reason: 'not allowed' })
+      return ack?.({ error: 'not allowed' })
+    }
+    const command = acceptSyncCommand(sess, payload, ack, 'play')
     if (!command) return
     sess.intent.playing = true
     sess.pos = command.positionTicks
     startSegment(sess, Date.now())
+    logSync('play', sess)
     ack?.({ ok: true, version: sess.schedule.version })
   })
 
   socket.on('sync:pause', (payload = {}, ack) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
-    const command = acceptSyncCommand(sess, payload, ack)
+    if (!sess || !canDrive(sess)) {
+      if (sess) logSync('command_rejected', sess, { kind: 'pause', reason: 'not allowed' })
+      return ack?.({ error: 'not allowed' })
+    }
+    const command = acceptSyncCommand(sess, payload, ack, 'pause')
     if (!command) return
     sess.intent.playing = false
     sess.pos = command.positionTicks
     sess.effPlaying = false
     setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'paused' })
+    logSync('pause', sess)
     ack?.({ ok: true, version: sess.schedule.version })
   })
 
   socket.on('sync:seek', (payload = {}, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess || !canDrive(sess)) return ack?.({ error: 'not allowed' })
-    const command = acceptSyncCommand(sess, payload, ack)
+    const command = acceptSyncCommand(sess, payload, ack, 'seek')
     if (!command) return
     sess.pos = command.positionTicks
     // Preserve intent: scrubbing while paused must not start the room playing.
@@ -944,7 +968,10 @@ io.on('connection', (socket) => {
   socket.on('sync:stall', (payload = {}) => {
     const sess = findSessionForMember(userId)
     if (!sess) return
-    if (applyStallReport(sess, userId, payload)) reconcile(sess)
+    if (applyStallReport(sess, userId, payload)) {
+      reconcile(sess)
+      logSync('buffering_changed', sess, { stalled: sess.stalled.has(userId), waitingCount: sess.stalled.size })
+    }
   })
 
   // party:setSyncMode — host switches hopping ↔ dragging
@@ -1176,7 +1203,7 @@ function handleHostDisconnect(sess) {
     const nextToken = nextSocket?.user?.token ?? sess.hostToken
     sess.hostSocketId = null
     supersedeMediaSelection(sess)
-    transferHost(sess, next.userId, next.socketId, nextToken)
+    transferHost(sess, next.userId, next.socketId, nextToken, { temporary: true })
     io.to(sess.id).emit('host:changed', { hostId: next.userId })
   }, HOST_GRACE_MS)
 }

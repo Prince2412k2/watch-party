@@ -165,7 +165,23 @@ test('randomConnectedGuest selects only connected guests', () => {
   } finally { deleteSession(sess.id) }
 })
 
-test('host transfer persists ownership and original host can reclaim it', () => {
+test('explicit handover persists the new reclaim owner across a server restart', () => {
+  const sess = fresh()
+  try {
+    sess.guests.push({ userId: 'next', name: 'Next', socketId: 'next-socket', token: 'next-token' })
+    assert.equal(transferHost(sess, 'next', 'next-socket', 'next-token'), true)
+    assert.equal(sess.originalHostId, 'next')
+    assert.equal(loadParty(sess.id).originalHostId, 'next')
+    assert.equal(reclaimOriginalHost(sess, {}), false)
+    sess.guests.push({ userId: 'standin', name: 'Standin', socketId: 'standin-socket' })
+    assert.equal(transferHost(sess, 'standin', 'standin-socket', 'standin-token', { temporary: true }), true)
+    assert.equal(sess.originalHostId, 'next')
+    assert.equal(reclaimOriginalHost(sess, { socketId: 'next-reconnected', name: 'Next' }), true)
+    assert.equal(sess.hostId, 'next')
+  } finally { deleteSession(sess.id) }
+})
+
+test('temporary failover preserves the owner who can reclaim the room', () => {
   const sess = createSession({
     hostId: 'owner', hostName: 'Owner', hostToken: 'owner-token',
     hostDeviceId: 'owner-device', hostSocketId: null,
@@ -176,7 +192,7 @@ test('host transfer persists ownership and original host can reclaim it', () => 
   })
 
   try {
-    assert.equal(transferHost(sess, 'guest', 'guest-socket', 'new-guest-token'), true)
+    assert.equal(transferHost(sess, 'guest', 'guest-socket', 'new-guest-token', { temporary: true }), true)
     assert.equal(sess.hostId, 'guest')
     assert.equal(sess.originalHostId, 'owner')
     assert.equal(sess.guests.some(guest => guest.userId === 'owner'), true)
