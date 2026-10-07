@@ -251,7 +251,11 @@ export function decideSyncAction({
 
   if (paused) {
     const drift = expected - ct
-    const intent: SyncIntent = { seekTo: expected, rate: 1, play: true, drift }
+    // Resuming an already aligned player must not seek again. Seeking resets
+    // decoder readiness, which Follow mode reports as another group stall;
+    // unconditionally seeking on every resume makes that cycle repeat forever.
+    const intent: SyncIntent = { rate: 1, play: true, drift }
+    if (Math.abs(drift) > HOLD_TOLERANCE) intent.seekTo = expected
     // A paused hopping guest is commonly a late joiner. Large initial drift
     // needs the same buffered rendezvous as a playing guest's hard correction;
     // seek+play directly into unbuffered HLS creates a stall/re-seek loop.

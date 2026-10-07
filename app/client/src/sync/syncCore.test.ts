@@ -6,6 +6,28 @@ import { selectBufferedResumeTarget } from './bufferSeek.ts'
 
 const playing = { positionTicks: 100_000_000, t0: 1_000, phase: 'playing', version: 7 }
 
+test('an aligned player resumes without seeking and triggering another Follow stall', () => {
+  for (const isHost of [true, false]) {
+    for (const drift of [-0.39, 0, 0.39]) {
+      const intent = decideSyncAction({
+        schedule: playing, serverNowMs: () => 2_000, clockReady: () => true,
+        currentTime: 11 - drift, paused: true, isHost, mode: 'dragging',
+      })
+      assert.equal(intent?.play, true)
+      assert.equal(intent?.seekTo, undefined)
+    }
+  }
+})
+
+test('a paused Follow player still seeks when it needs to catch up', () => {
+  const intent = decideSyncAction({
+    schedule: playing, serverNowMs: () => 2_000, clockReady: () => true,
+    currentTime: 10, paused: true, isHost: false, mode: 'dragging',
+  })
+  assert.equal(intent?.play, true)
+  assert.equal(intent?.seekTo, 11)
+})
+
 test('schedule ordering rejects a delayed older media generation', () => {
   assert.equal(acceptsSchedule(2, 10, { ...playing, mediaGeneration: 1, version: 11 }), false)
   assert.equal(acceptsSchedule(2, 10, { ...playing, mediaGeneration: 2, version: 10 }), false)

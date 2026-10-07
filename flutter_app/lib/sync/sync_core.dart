@@ -178,7 +178,9 @@ SyncIntent? decideSyncAction({
     }
     final hard = !isHost && mode == 'hopping' && drift.abs() > hardSeekSec;
     return SyncIntent(
-      seekToSec: expected,
+      // Seeking an aligned paused player resets its decoder and can start
+      // another Follow-mode stall. Resume directly inside the hold tolerance.
+      seekToSec: drift.abs() > holdTolerance ? expected : null,
       rate: 1,
       play: true,
       drift: drift,
