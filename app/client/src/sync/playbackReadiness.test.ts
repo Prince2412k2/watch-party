@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { isPlaybackReady } from './playbackReadiness.ts'
+import { waitForBuffer } from './bufferSeek.ts'
 
 function video(ranges: number[][] = []) {
   return {
@@ -40,4 +41,14 @@ test('streaming can finish the final seconds without impossible runway past EOF'
 test('separate buffered ranges cannot hide a missing segment', () => {
   assert.equal(isPlaybackReady(video([[60, 61], [63, 66]]), false), false)
   assert.equal(isPlaybackReady(video([[60, 64]]), false), true)
+})
+
+test('local paused catch-up finishes on a decoded target without a network buffer timeout', async () => {
+  const media = { ...video(), readyState: 2, currentSrc: 'blob:complete-opfs-movie' }
+  assert.equal(await waitForBuffer(media, 60, 4, 20), 'ready')
+  media.currentTime = 10
+  assert.equal(await waitForBuffer(media, 60, 4, 20), 'timeout')
+  media.currentTime = 60
+  media.seeking = true
+  assert.equal(await waitForBuffer(media, 60, 4, 20), 'timeout')
 })

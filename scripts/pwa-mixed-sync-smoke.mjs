@@ -105,7 +105,9 @@ export async function runMixedSyncSmoke({ participant, base, sockets, io, ack, u
     positionTicks: 5e7, baseVersion: (await phase()).version, commandId: 'native-play',
   })
   assert.equal(nativePlay.ok, true)
+  const resumedAt = Date.now()
   await until(host.page, () => !window.movie.paused && window.movie.currentTime > 6)
+  assert.ok(Date.now() - resumedAt < 3000, 'decoded local catch-up must not wait for the 8-second network timeout')
   await ack(n, 'party:end')
   console.log('PASS mixed sync: OPFS sparse ranges, stable real stall/recovery, explicit host transfer, PWA transport reconnect, native versioned pause/play')
 }
