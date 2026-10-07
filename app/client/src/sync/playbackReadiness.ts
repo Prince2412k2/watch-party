@@ -1,5 +1,20 @@
 import { BUFFER_AHEAD_SEC } from './syncCore.ts'
 
+/** A local seek briefly discards decoded frames even though all bytes exist.
+ * Only a sustained decoder stall should stop the other viewers. */
+export function createPlaybackStallGate(localFile: boolean) {
+  let unreadySince: number | null = null
+  return (ready: boolean, nowMs: number): boolean => {
+    if (ready) {
+      unreadySince = null
+      return false
+    }
+    if (!localFile) return true
+    unreadySince ??= nowMs
+    return nowMs - unreadySince >= 1000
+  }
+}
+
 /** Readiness for Follow mode; downloaded files need decoded frames, not
  * network runway. Safari's buffered ranges need not describe the whole file. */
 export function isPlaybackReady(media: {

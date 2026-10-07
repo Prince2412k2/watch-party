@@ -18,6 +18,25 @@ void main() {
 
   double at(double ms) => ms;
 
+  test('aligned Follow players resume without starting another decoder seek', () {
+    for (final isHost in [true, false]) {
+      for (final drift in [-0.39, 0.0, 0.39]) {
+        final intent = decideSyncAction(
+          schedule: playing,
+          serverNowMs: () => at(2000),
+          clockReady: () => true,
+          currentTime: 11 - drift,
+          paused: true,
+          isHost: isHost,
+          mode: 'dragging',
+          userSeeking: false,
+        )!;
+        expect(intent.play, true);
+        expect(intent.seekToSec, isNull);
+      }
+    }
+  });
+
   group('predictPosition', () {
     test('advances at wall rate while playing', () {
       // P0 = 10s, elapsed (2000-1000)=1s → 11s.
