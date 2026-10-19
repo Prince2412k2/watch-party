@@ -11,30 +11,19 @@ import 'providers.dart';
 /// Whether the party connection is currently lost, and what is being done
 /// about it.
 class PartyConnection {
-  const PartyConnection({
-    this.lost = false,
-    this.attempt = 0,
-    this.minimised = false,
-  });
+  const PartyConnection({this.lost = false, this.attempt = 0});
 
   /// The socket is down while a party is (or was) open. Not merely "the socket
   /// is down": with no party there is nothing to be cut off from.
   final bool lost;
 
-  /// Retries made since the drop. Shown so a long outage reads as effort
-  /// rather than as a spinner that might have given up.
+  /// Retries made since the drop, used to schedule the next backoff.
   final int attempt;
 
-  /// The reconnect surface has been sent to the corner with Back. The retrying
-  /// itself is unaffected — this is only where it is drawn.
-  final bool minimised;
-
-  PartyConnection copyWith({bool? lost, int? attempt, bool? minimised}) =>
-      PartyConnection(
-        lost: lost ?? this.lost,
-        attempt: attempt ?? this.attempt,
-        minimised: minimised ?? this.minimised,
-      );
+  PartyConnection copyWith({bool? lost, int? attempt}) => PartyConnection(
+    lost: lost ?? this.lost,
+    attempt: attempt ?? this.attempt,
+  );
 }
 
 /// How long to wait before the nth retry: 1s, 2s, 4s, 8s, then every 15s.
@@ -54,8 +43,7 @@ Duration partyRetryBackoff(int attempt) {
 /// Two connections can drop, and they are not the same failure:
 ///
 ///   * **The socket** carries party state, chat and playback sync. Losing it
-///     cuts you out of the room, so it raises the reconnect surface and retries
-///     until it is back.
+///     cuts you out of the room, so it shows a small tag and retries until back.
 ///   * **LiveKit** carries camera and mic. Losing it costs you A/V and nothing
 ///     else — the film plays on, in sync — so it retries QUIETLY. Throwing a
 ///     full-window page over a film someone is still watching, because a camera
@@ -83,19 +71,16 @@ class PartyConnectionNotifier extends StateNotifier<PartyConnection> {
       socketConnectedProvider,
       (_, connected) => _onSocket(connected.valueOrNull ?? false),
     );
-    // Leaving the party — by any route, including the one on this surface —
+    // Leaving the party — by any route —
     // ends the retrying with it. Otherwise a "leave" that happened while
     // offline would keep dialling a room nobody is in.
     _ref.listen<PartyState?>(partyProvider, (_, party) {
       if (party == null) _settle();
     });
-    _ref.listen<LiveKitState>(
-      livekitProvider,
-      (_, live) => _onLiveKit(live),
-    );
+    _ref.listen<LiveKitState>(livekitProvider, (_, live) => _onLiveKit(live));
   }
 
-  // ── The socket: the one that raises the surface ────────────────────────────
+  // ── The socket: the one that shows the tag ─────────────────────────────────
 
   void _onSocket(bool connected) {
     if (connected) {
@@ -116,7 +101,7 @@ class PartyConnectionNotifier extends StateNotifier<PartyConnection> {
   void _settle() {
     _retry?.cancel();
     _retry = null;
-    if (state.lost || state.minimised) state = const PartyConnection();
+    if (state.lost) state = const PartyConnection();
   }
 
   void _scheduleRetry() {
@@ -167,13 +152,7 @@ class PartyConnectionNotifier extends StateNotifier<PartyConnection> {
 
   // ── What the surface can do ────────────────────────────────────────────────
 
-  /// Send the surface to the corner. Retrying continues.
-  void minimise() => state = state.copyWith(minimised: true);
-
-  /// Bring it back to full window.
-  void expand() => state = state.copyWith(minimised: false);
-
-  /// Stop trying and leave the party — the cross in the corner.
+  /// Stop trying and leave the party.
   Future<void> stopAndLeave() async {
     _retry?.cancel();
     _retry = null;

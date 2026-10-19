@@ -201,6 +201,9 @@ class IoSocketClient implements SocketClient {
   }
 
   Future<void> _dial(String target, String? cookie) async {
+    // Retire the old manager before a manual retry creates a new one. Otherwise
+    // its automatic reconnect can leave two live sockets for the same party.
+    _socket?.dispose();
     final probe = SocketDialProbe();
     final socket = io.io(target, socketOptionsFor(_url, cookie, probe: probe));
     _socket = socket;
@@ -291,7 +294,7 @@ class IoSocketClient implements SocketClient {
   @override
   Future<dynamic> emitWithAck(String event, [Object? data]) {
     final socket = _socket;
-    if (socket == null) {
+    if (socket == null || !socket.connected) {
       return Future.error(StateError('socket not connected'));
     }
     final completer = Completer<dynamic>();

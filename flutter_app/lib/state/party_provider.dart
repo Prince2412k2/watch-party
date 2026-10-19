@@ -25,7 +25,8 @@ class PartyNotifier extends StateNotifier<PartyState?> {
 
   StreamSubscription<bool>? _connectionSubscription;
   bool _subscribed = false;
-  bool _recoveringConnection = false;
+  Future<void>? _connectionRecovery;
+  bool _chatConnectionReady = false;
   int _connectionGeneration = 0;
   int _generation = 0;
   Future<void>? _teardown;
@@ -96,7 +97,10 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _subscribed = true;
     final socket = _socket;
     _connectionSubscription = socket.connectionState.listen((connected) {
-      if (!connected) _connectionGeneration++;
+      if (!connected) {
+        _connectionGeneration++;
+        _chatConnectionReady = false;
+      }
       if (connected && (state != null || _pendingPartyId != null)) {
         unawaited(_recoverAfterReconnect());
       }
@@ -230,9 +234,48 @@ class PartyNotifier extends StateNotifier<PartyState?> {
     _subscribed = false;
   }
 
-  Future<void> _recoverAfterReconnect() async {
-    if (_recoveringConnection) return;
-    _recoveringConnection = true;
+  Future<void> _recoverAfterReconnect() {
+    final recovery = _connectionRecovery;
+    if (recovery != null) return recovery;
+    final generation = _generation;
+    final connection = _connectionGeneration;
+    final future = _performConnectionRecovery();
+    _connectionRecovery = future.whenComplete(() {
+      _connectionRecovery = null;
+      if (generation == _generation &&
+          connection != _connectionGeneration &&
+          _socket.isConnected &&
+          (state != null || _pendingPartyId != null)) {
+        unawaited(_recoverAfterReconnect());
+      }
+    });
+    return _connectionRecovery!;
+  }
+
+  /// A connected transport is not enough: the server must have restored room
+  /// membership before a chat message can be sent on the new socket.
+  Future<void> ensureChatReady() async {
+    final partyId = state?.id;
+    final generation = _generation;
+    if (partyId == null) throw StateError('No active party');
+    if (!_socket.isConnected) _chatConnectionReady = false;
+    await _ensureConnected();
+    if (!mounted || generation != _generation || state?.id != partyId) {
+      throw StateError('Party changed while reconnecting');
+    }
+    if (_connectionRecovery != null) await _connectionRecovery;
+    if (!_chatConnectionReady && state?.id == partyId) {
+      await _recoverAfterReconnect();
+    }
+    if (generation != _generation ||
+        state?.id != partyId ||
+        !_socket.isConnected ||
+        !_chatConnectionReady) {
+      throw StateError('Party connection is not ready');
+    }
+  }
+
+  Future<void> _performConnectionRecovery() async {
     final generation = _generation;
     final connection = _connectionGeneration;
     try {
@@ -308,14 +351,6 @@ class PartyNotifier extends StateNotifier<PartyState?> {
       // A later Socket.IO reconnect will retry with a fresh acknowledgement.
     } catch (_) {
       // The connection lifecycle will trigger another attempt after recovery.
-    } finally {
-      _recoveringConnection = false;
-      if (generation == _generation &&
-          connection != _connectionGeneration &&
-          _socket.isConnected &&
-          (state != null || _pendingPartyId != null)) {
-        unawaited(_recoverAfterReconnect());
-      }
     }
   }
 
@@ -323,6 +358,7 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   /// frozen [PartyState] — field names differ (`guests` → `participants`) and
   /// the host isn't itself in `guests`, so it's synthesized as a participant.
   void _applySession(Map<String, dynamic> json) {
+    _chatConnectionReady = true;
     final previousPartyId = state?.id;
     final previousMediaGeneration = state?.schedule.mediaGeneration;
     final hostId = json['hostId']?.toString() ?? '';

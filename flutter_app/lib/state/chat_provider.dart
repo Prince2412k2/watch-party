@@ -7,6 +7,7 @@ import '../models/models.dart';
 import '../net/events.dart';
 import '../net/socket_client.dart';
 import 'auth_provider.dart';
+import 'party_provider.dart';
 import 'providers.dart';
 
 /// Mirrors the server's per-socket chat rate limit
@@ -29,8 +30,11 @@ const String _rateLimitedMessage = 'Rate limited — slow down.';
 /// window so the UI can show the same "rate limited" state without waiting on
 /// a round trip.
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
-  ChatNotifier(this._socket, {this.ackTimeout = chatAckTimeout})
-    : super(const []) {
+  ChatNotifier(
+    this._socket, {
+    this.ackTimeout = chatAckTimeout,
+    this.ensureReady,
+  }) : super(const []) {
     _unsubscribes = [
       _socket.on(ServerEvent.chatMessage, _onIncoming),
       _socket.on(ServerEvent.chatHistory, _onHistory),
@@ -42,6 +46,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   /// How long [send] waits for the server ack. Injectable so a test doesn't
   /// have to wait out the real [chatAckTimeout].
   final Duration ackTimeout;
+  final Future<void> Function()? ensureReady;
 
   late final List<void Function()> _unsubscribes;
   String? _partyId;
@@ -142,6 +147,16 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     if (trimmed.isEmpty) return null;
     if (isRateLimited) return _rateLimitedMessage;
 
+    final partyId = _partyId;
+    try {
+      await ensureReady?.call().timeout(ackTimeout);
+    } catch (_) {
+      return 'Still reconnecting — your message has not been sent. Try again shortly.';
+    }
+    if (!mounted || _partyId != partyId) {
+      return 'The party changed — your message has not been sent.';
+    }
+    if (isRateLimited) return _rateLimitedMessage;
     _sendTimes.add(DateTime.now());
     try {
       final resp = await _socket
@@ -182,7 +197,14 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
 }
 
 final chatProvider = StateNotifierProvider<ChatNotifier, List<ChatMessage>>(
-  (ref) => ChatNotifier(ref.watch(socketClientProvider)),
+  (ref) => ChatNotifier(
+    ref.watch(socketClientProvider),
+    ensureReady: () async {
+      if (ref.read(partyProvider) != null) {
+        await ref.read(partyProvider.notifier).ensureChatReady();
+      }
+    },
+  ),
 );
 
 /// The current user's id, so the chat panel can align "own" messages.
