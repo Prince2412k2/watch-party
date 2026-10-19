@@ -11,7 +11,6 @@ import 'package:watchparty/net/events.dart';
 import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/party/party_reconnect_screen.dart';
-import 'package:watchparty/ui/ui.dart';
 import 'package:watchparty/state/state.dart';
 
 /// Getting back into a party without anyone pressing anything.
@@ -19,8 +18,7 @@ import 'package:watchparty/state/state.dart';
 /// The bug: a drop left the room silently gone, and the only way back was the
 /// Reconnect button in the party panel. Two connections can drop and they are
 /// not the same failure — the socket cuts you out of the room, LiveKit only
-/// costs you camera and mic — so only one of them is allowed to put a page in
-/// front of the film.
+/// costs you camera and mic. Neither should cover the film.
 
 /// Counts dials, answers a join, and lets the test decide whether a dial
 /// actually restores the link.
@@ -44,6 +42,19 @@ class _PartySocket extends MockSocketClient {
       return {'status': 'joined', 'session': _session};
     }
     return {'ok': true};
+  }
+}
+
+class _GatedResumeSocket extends _PartySocket {
+  final resume = Completer<dynamic>();
+
+  @override
+  Future<dynamic> emitWithAck(String event, [Object? data]) {
+    if (event == ClientEvent.partyResume) {
+      emitted.add((event, data));
+      return resume.future;
+    }
+    return super.emitWithAck(event, data);
   }
 }
 
@@ -188,34 +199,98 @@ void main() {
     });
   });
 
-  test('minimising keeps the retrying, it only moves the surface', () {
-    fakeAsync((async) {
-      final socket = _PartySocket();
-      final container = _container(socket);
-      final notifier = container.read(partyConnectionProvider.notifier);
-      notifier.start();
-      _joinParty(container, async);
+  _surfaceTests();
 
-      socket.acceptDials = false;
+  test('chat reconnects and waits for room recovery before sending', () {
+    fakeAsync((async) {
+      final socket = _GatedResumeSocket();
+      final container = _container(socket);
+      _joinParty(container, async);
       unawaited(socket.disconnect());
       async.flushMicrotasks();
 
-      notifier.minimise();
-      expect(container.read(partyConnectionProvider).minimised, isTrue);
-      expect(container.read(partyConnectionProvider).lost, isTrue);
+      String? result = 'pending';
+      unawaited(
+        container.read(chatProvider.notifier).send('hello').then((e) {
+          result = e;
+        }),
+      );
+      async.flushMicrotasks();
 
-      final before = socket.connects;
-      async.elapse(const Duration(seconds: 30));
-      // The whole point of Back here: it gives you the picture back WITHOUT
-      // giving up on the room.
-      expect(socket.connects, greaterThan(before));
+      expect(socket.isConnected, isTrue);
+      expect(result, 'pending');
+      expect(
+        socket.emitted.where((e) => e.$1 == ClientEvent.chatMessage),
+        isEmpty,
+      );
+      expect(
+        socket.emitted.where((e) => e.$1 == ClientEvent.partyResume),
+        hasLength(1),
+      );
 
-      notifier.expand();
-      expect(container.read(partyConnectionProvider).minimised, isFalse);
+      socket.resume.complete({'session': _session});
+      async.flushMicrotasks();
+      expect(result, isNull);
+      expect(
+        socket.emitted.where((e) => e.$1 == ClientEvent.chatMessage),
+        hasLength(1),
+      );
     });
   });
 
-  _surfaceTests();
+  test('a timed-out chat wait never sends later when recovery finishes', () {
+    fakeAsync((async) {
+      final socket = _GatedResumeSocket();
+      final container = _container(socket);
+      _joinParty(container, async);
+      unawaited(socket.disconnect());
+      async.flushMicrotasks();
+
+      String? result;
+      unawaited(
+        container.read(chatProvider.notifier).send('hello').then((e) {
+          result = e;
+        }),
+      );
+      async.elapse(const Duration(seconds: 6));
+      expect(result, contains('reconnecting'));
+      expect(container.read(chatProvider.notifier).isRateLimited, isFalse);
+
+      socket.resume.complete({'session': _session});
+      async.flushMicrotasks();
+      expect(
+        socket.emitted.where((e) => e.$1 == ClientEvent.chatMessage),
+        isEmpty,
+      );
+    });
+  });
+
+  test('leaving during chat recovery prevents the message from being sent', () {
+    fakeAsync((async) {
+      final socket = _GatedResumeSocket();
+      final container = _container(socket);
+      _joinParty(container, async);
+      unawaited(socket.disconnect());
+      async.flushMicrotasks();
+
+      String? result;
+      unawaited(
+        container.read(chatProvider.notifier).send('hello').then((e) {
+          result = e;
+        }),
+      );
+      async.flushMicrotasks();
+      unawaited(container.read(partyProvider.notifier).leave());
+      async.flushMicrotasks();
+      socket.resume.complete({'session': _session});
+      async.flushMicrotasks();
+      expect(result, isNotNull);
+      expect(
+        socket.emitted.where((e) => e.$1 == ClientEvent.chatMessage),
+        isEmpty,
+      );
+    });
+  });
 
   test('leaving stops the retrying for good', () {
     fakeAsync((async) {
@@ -243,10 +318,9 @@ void main() {
 
 /// The surface itself: what a disconnected party looks like.
 void _surfaceTests() {
-  Future<ProviderContainer> showSurface(
-    WidgetTester tester, {
-    bool minimised = false,
-  }) async {
+  var movieTaps = 0;
+  Future<ProviderContainer> showSurface(WidgetTester tester) async {
+    movieTaps = 0;
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1280, 900);
     addTearDown(tester.view.reset);
@@ -269,13 +343,24 @@ void _surfaceTests() {
 
     socket.acceptDials = false;
     await socket.disconnect();
-    if (minimised) container.read(partyConnectionProvider.notifier).minimise();
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(
-          home: AnalogToastHost(child: PartyReconnectScreen()),
+        child: MaterialApp(
+          home: AnalogToastHost(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => movieTaps++,
+                  child: const ColoredBox(color: Colors.blue),
+                ),
+                const Positioned.fill(child: PartyReconnectScreen()),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -293,52 +378,50 @@ void _surfaceTests() {
     await tester.pump();
   }
 
-  testWidgets('shows the room you are trying to get back into', (tester) async {
+  testWidgets('shows only a small non-modal reconnecting tag', (tester) async {
     final container = await showSurface(tester);
 
     expect(find.text('Reconnecting…'), findsOneWidget);
-    // The people in it, host marked as such.
-    expect(find.text('Ada'), findsOneWidget);
-    expect(find.text('Grace'), findsOneWidget);
-    expect(find.text('Host'), findsOneWidget);
-    // And the way out, which is not the same as the way back.
-    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.text('Ada'), findsNothing);
+    expect(find.byIcon(Icons.close), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(PartyReconnectScreen),
+        matching: find.byType(ModalBarrier),
+      ),
+      findsNothing,
+    );
+    final tag = tester.getRect(find.text('Reconnecting…'));
+    expect(tag.top, lessThan(50));
+    expect(tag.right, lessThan(240));
+    expect(container.read(nowPlayingProvider).itemId, 'movie-1');
     await settle(tester, container);
   });
 
-  testWidgets('Back sends it to the corner without giving up', (tester) async {
+  testWidgets('movie controls receive taps even through the tag', (
+    tester,
+  ) async {
     final container = await showSurface(tester);
 
-    await tester.tap(find.byType(GlassBackButton));
-    await tester.pump();
-
-    expect(container.read(partyConnectionProvider).minimised, isTrue);
-    // Still lost, still retrying — only the drawing moved.
+    await tester.tapAt(tester.getCenter(find.text('Reconnecting…')));
+    await tester.tapAt(const Offset(640, 450));
+    expect(movieTaps, 2);
     expect(container.read(partyConnectionProvider).lost, isTrue);
     expect(find.text('Ada'), findsNothing);
     expect(find.textContaining('Reconnecting'), findsOneWidget);
     await settle(tester, container);
   });
 
-  testWidgets('the pill goes back to the full surface', (tester) async {
-    final container = await showSurface(tester, minimised: true);
-
-    expect(find.text('Ada'), findsNothing);
-    await tester.tap(find.textContaining('Reconnecting'));
-    await tester.pump();
-
-    expect(container.read(partyConnectionProvider).minimised, isFalse);
-    expect(find.text('Ada'), findsOneWidget);
-    await settle(tester, container);
-  });
-
-  testWidgets('the cross stops the retrying and leaves', (tester) async {
+  testWidgets('the tag disappears after recovery', (tester) async {
     final container = await showSurface(tester);
 
-    await tester.tap(find.byIcon(Icons.close));
-    await tester.pump(const Duration(milliseconds: 100));
+    final socket = container.read(socketClientProvider) as _PartySocket;
+    socket.acceptDials = true;
+    await socket.connect();
+    await tester.pump();
 
-    expect(container.read(partyProvider), isNull);
     expect(container.read(partyConnectionProvider).lost, isFalse);
+    expect(find.text('Reconnecting…'), findsNothing);
+    await settle(tester, container);
   });
 }

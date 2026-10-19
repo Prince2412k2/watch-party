@@ -161,10 +161,8 @@ class _RootChrome extends StatelessWidget {
       // wrapping the app and started sitting beside it.
       Positioned.fill(child: PlayerHost()),
       Positioned.fill(child: PartyOverlay()),
-      // Above both: a party whose connection has dropped covers the room's
-      // chrome, because the room is exactly what is not there. It draws
-      // nothing at all while the socket is up, and shrinks to a corner pill
-      // once Back has minimised it.
+      // A pointer-transparent corner tag: connection loss must never cover or
+      // dim the movie, or take focus away from its controls.
       Positioned.fill(child: PartyReconnectScreen()),
       _PopcornLayer(),
     ],
