@@ -296,8 +296,8 @@ void main() {
     });
   }
 
-  test('movies fill the player surface by default', () {
-    expect(VideoView(controller: _SpyController()).fit, BoxFit.cover);
+  test('movies preserve their original aspect ratio without cropping', () {
+    expect(VideoView(controller: _SpyController()).fit, BoxFit.contain);
   });
 
   testWidgets('directional key repeats remain handled by the player', (
