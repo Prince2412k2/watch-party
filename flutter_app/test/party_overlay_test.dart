@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/livekit/livekit_room.dart';
 import 'package:watchparty/models/models.dart';
+import 'package:watchparty/net/events.dart';
 import 'package:watchparty/net/socket_client.dart';
 import 'package:watchparty/party/party_overlay.dart';
 import 'package:watchparty/player/mock_player_controller.dart';
@@ -256,6 +257,13 @@ void main() {
     await tester.pump();
     await tester.pump();
 
+    expect(container.read(partyProvider)?.id, 'ROOM1234');
+    expect(container.read(chatDrawerOpenProvider), isTrue);
+    final socket = container.read(socketClientProvider) as MockSocketClient;
+    expect(socket.emitted, hasLength(1));
+    expect(socket.emitted.single.$1, ClientEvent.chatMessage);
+    expect(socket.emitted.single.$2, {'text': 'Still typing'});
+    expect(editable().controller.text, isEmpty);
     expect(editable().focusNode.hasFocus, isTrue);
   });
 
