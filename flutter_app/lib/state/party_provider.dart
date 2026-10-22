@@ -60,6 +60,9 @@ class PartyNotifier extends StateNotifier<PartyState?> {
   // ── Direct state mutations (kept for tests / callers that already have a
   // ready-made snapshot) ────────────────────────────────────────────────────
   void setState(PartyState? party) {
+    // A supplied session is already admitted, just like _applySession. Do not
+    // rejoin it on the first chat send when its transport is still connected.
+    _chatConnectionReady = party != null && _socket.isConnected;
     state = party;
   }
 
