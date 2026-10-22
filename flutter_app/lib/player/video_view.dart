@@ -62,11 +62,15 @@ const _netflixSubtitleViewConfiguration = SubtitleViewConfiguration(
 /// backed by [MediaKitPlayerController] it mounts the real `Video` widget;
 /// otherwise (e.g. the Phase-0 mock in tests) it shows a neutral placeholder so
 /// chrome layout still works without libmpv.
+///
+/// Preserve the source aspect ratio and the entire frame in every player size.
+/// Letterboxing or pillarboxing is preferable to cropping a movie to fill the
+/// window, including when switching between floating and fullscreen playback.
 class VideoView extends StatelessWidget {
   const VideoView({
     super.key,
     required this.controller,
-    this.fit = BoxFit.cover,
+    this.fit = BoxFit.contain,
     this.fill = Colors.black,
   });
 
