@@ -11,7 +11,8 @@
   style.textContent += `.launcher{display:flex;align-items:center;gap:9px;padding:11px 14px;background:#241d1f;border-color:#62474b;border-radius:10px;font-weight:500;box-shadow:0 4px 24px #1a0b0d66}.launcher::before{content:'';width:21px;height:21px;background:url('${chrome.runtime.getURL('brand.svg')}') center/contain no-repeat}.panel{width:392px;height:min(760px,calc(100vh - 40px));background:#171616;border-color:#4d3a3e;border-radius:15px;box-shadow:0 12px 45px #150a0c88}.bar{height:34px;min-height:34px;padding:5px 8px;background:#201b1d;border-bottom:1px solid #392c30}.bar strong{display:flex;align-items:center;gap:7px;color:#b8a7a0;font-size:10px;font-weight:400}.bar strong::before{content:'';width:7px;height:10px;opacity:.6;background:radial-gradient(circle,#b8a7a0 1px,transparent 1.5px) 0 0/4px 4px}.bar button{background:#2b2225;border-color:#503b42;border-radius:5px;color:#ddc8cb;font-size:9px;min-height:23px;padding:4px 7px}.bar button:hover{background:#3a292f}`
   launcher.className = 'launcher'
   style.textContent += '.panel{width:420px;height:min(840px,calc(100vh - 40px))}.bar{height:38px;min-height:38px}.bar strong{font-size:11px}.bar button{font-size:11px;min-height:27px}'
-  launcher.textContent = 'Watch Party'
+  launcher.setAttribute('aria-label', 'Watch Party')
+  launcher.title = 'Watch Party'
   const panel = document.createElement('section')
   panel.className = 'panel'
   panel.setAttribute('aria-label', 'Watch Party overlay')
@@ -19,7 +20,7 @@
   const bar = document.createElement('div')
   bar.className = 'bar'
   const title = document.createElement('strong')
-  title.textContent = 'Move panel'
+  title.textContent = 'Party'
   const fullscreen = document.createElement('button')
   fullscreen.textContent = 'Fullscreen'
   const hide = document.createElement('button')
@@ -28,13 +29,13 @@
   const frame = document.createElement('iframe')
   frame.src = chrome.runtime.getURL('index.html')
   frame.allow = 'camera; microphone; speaker-selection; clipboard-write; autoplay; fullscreen'
-  frame.title = 'Watch Party room, chat, and cameras'
+  frame.title = 'Watch Party controls'
   frame.referrerPolicy = 'no-referrer'
   // Keep the owner iframe in the document's light tree so sibling extension
   // camera frames can discover its WindowProxy without involving YouTube in
   // camera transport. A slot still isolates the surrounding panel styles.
   frame.slot = 'room'
-  frame.style.cssText = 'display:block;width:100%;height:100%;min-height:0;border:0;background:#171d22;'
+  frame.style.cssText = 'display:block;width:100%;height:100%;min-height:0;border:0;background:#17181b;'
   const roomSlot = document.createElement('slot')
   roomSlot.name = 'room'
   roomSlot.style.cssText = 'display:block;flex:1;min-height:0;'
@@ -55,8 +56,13 @@
   cameraStyle.textContent += '.camera-layer.overflow-rail{inset:64px 448px 112px auto;display:flex;flex-direction:column;gap:8px;width:184px;overflow-y:auto;pointer-events:auto;padding:4px}.overflow-rail .floating-camera{position:relative!important;left:0!important;top:0!important;width:168px!important;height:126px!important;flex:none}.overflow-rail .floating-camera.collapsed{width:60px!important;height:60px!important}'
   document.documentElement.append(camerasHost)
   const cameras = new globalThis.WatchPartyCameraLayer(camerasShadow, chrome.runtime.getURL('camera.html'), data => send(data))
+  for (const root of [shadow, camerasShadow]) {
+    const nativeStyle = document.createElement('link'); nativeStyle.rel = 'stylesheet'; nativeStyle.href = chrome.runtime.getURL('overlay.css'); root.append(nativeStyle)
+  }
+  const panels = new globalThis.WatchPartyPanelLayer(camerasShadow, camerasHost, chrome.runtime.getURL('panel.html'), data => send(data))
 
-  launcher.onclick = () => { panel.hidden = false; launcher.hidden = true; snapshot() }
+  let launcherMoved = false
+  launcher.onclick = () => { if (launcherMoved) { launcherMoved = false; return }; panel.hidden = false; launcher.hidden = true; clampHost(); snapshot() }
   hide.onclick = () => { panel.hidden = true; launcher.hidden = false }
   async function toggleFullscreen() {
     try {
@@ -74,23 +80,34 @@
     else target.append(host)
     if (target.moveBefore && camerasHost.isConnected) target.moveBefore(camerasHost, null)
     else target.append(camerasHost)
-    host.style.left = ''; host.style.top = ''; host.style.right = '18px'; host.style.bottom = '18px'
+    clampHost()
   })
-  let drag = null
-  bar.addEventListener('pointerdown', event => {
-    if (event.target.closest('button')) return
+  function clampHost() {
     const rect = host.getBoundingClientRect()
-    drag = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-    bar.setPointerCapture(event.pointerId)
-  })
-  bar.addEventListener('pointermove', event => {
-    if (!drag) return
-    host.style.left = `${Math.max(0, Math.min(innerWidth - host.offsetWidth, event.clientX - drag.x))}px`
-    host.style.top = `${Math.max(0, Math.min(innerHeight - 50, event.clientY - drag.y))}px`
+    host.style.left = `${Math.max(0, Math.min(Math.max(0, innerWidth - rect.width), rect.left))}px`
+    host.style.top = `${Math.max(0, Math.min(Math.max(0, innerHeight - rect.height), rect.top))}px`
     host.style.right = 'auto'; host.style.bottom = 'auto'
-  })
-  bar.addEventListener('pointerup', () => { drag = null })
-  bar.addEventListener('pointercancel', () => { drag = null })
+  }
+  for (const handle of [bar, launcher]) {
+    let drag = null
+    handle.addEventListener('pointerdown', event => {
+      if (handle === bar && event.target.closest('button')) return
+      const rect = host.getBoundingClientRect()
+      if (handle === launcher) launcherMoved = false
+      drag = { x: event.clientX - rect.left, y: event.clientY - rect.top, startX: event.clientX, startY: event.clientY }
+      handle.setPointerCapture(event.pointerId)
+    })
+    handle.addEventListener('pointermove', event => {
+      if (!drag) return
+      if (Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY) < 5) return
+      if (handle === launcher) launcherMoved = true
+      host.style.left = `${Math.max(0, Math.min(Math.max(0, innerWidth - host.offsetWidth), event.clientX - drag.x))}px`
+      host.style.top = `${Math.max(0, Math.min(Math.max(0, innerHeight - host.offsetHeight), event.clientY - drag.y))}px`
+      host.style.right = 'auto'; host.style.bottom = 'auto'
+    })
+    for (const name of ['pointerup', 'pointercancel']) handle.addEventListener(name, () => { drag = null })
+  }
+  window.addEventListener('resize', clampHost)
 
   const send = data => frame.contentWindow?.postMessage({ source: 'watchparty-youtube', ...data }, extensionOrigin)
   chrome.runtime.onMessage?.addListener((message, sender, respond) => {
@@ -159,12 +176,15 @@
     const command = event.data
     if (command.type === 'hello') { snapshot(); return }
     if (command.type === 'panel-mode') {
-      panel.style.width = command.active ? '420px' : '340px'
-      panel.style.height = command.active ? 'min(840px, calc(100vh - 40px))' : '290px'
+      panel.style.width = command.active ? '360px' : '344px'
+      panel.style.height = command.active ? 'min(440px, calc(100vh - 32px))' : '290px'
+      if (command.active) { host.style.top = '16px'; host.style.bottom = 'auto' }
       return
     }
     if (command.type === 'open') { panel.hidden = false; launcher.hidden = true; return }
     if (command.type === 'cameras' && typeof command.owner === 'string' && Array.isArray(command.people)) { cameras.update(command); return }
+    if (command.type === 'panels' && typeof command.owner === 'string') { panels.update(command); return }
+    if (command.type === 'toggle-panel' && ['chat', 'av'].includes(command.id)) { panels.toggle(command.id); return }
     if (command.type === 'layout') {
       if (Number.isFinite(command.opacity)) panel.style.opacity = String(Math.max(.5, Math.min(1, command.opacity)))
       if (['left', 'right'].includes(command.dock)) {

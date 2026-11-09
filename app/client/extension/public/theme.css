@@ -1,3 +1,5 @@
+@font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Light.woff2') format('woff2'); font-weight: 300; font-display: swap; }
 @font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Book.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
 @font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Bold.woff2') format('woff2'); font-weight: 600 900; font-display: swap; }
-:root { color-scheme: dark; --font: 'WP Circular', system-ui, sans-serif; --bg: #171616; --surface: #201e1e; --surface-raised: #292626; --line: #393333; --text: #f6f0ec; --muted: #b5aaa5; --faint: #8e8580; --accent: #ef767b; --accent-soft: #302123; --good: #a7cfb0; }
+/* Mirrors flutter_app/lib/ui/palette.dart kDarkPalette and tokens.dart. */
+:root { color-scheme: dark; --font: 'WP Circular', system-ui, sans-serif; --bg: #101113; --surface: #17181b; --surface-raised: #222327; --surface-3: #2c2e33; --line: #ffffff1a; --line-2: #ffffff2b; --text: #f2f1ed; --muted: #f2f1eda3; --faint: #f2f1ed61; --accent: #f2f1ed; --on-accent: #101113; --accent-soft: #222327; --good: #78c99f; --danger: #e0655e; --brand: #d81f2a; }

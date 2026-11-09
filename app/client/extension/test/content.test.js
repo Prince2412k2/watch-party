@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 
-const source = readFileSync(new URL('../public/floating.js', import.meta.url), 'utf8') + '\n;\n' + readFileSync(new URL('../public/content.js', import.meta.url), 'utf8')
+const source = ['floating.js', 'panels.js', 'content.js'].map(name => readFileSync(new URL(`../public/${name}`, import.meta.url), 'utf8')).join('\n;\n')
 
 function harness() {
   const sent = [], windows = {}, documents = {}, intervals = [], nodes = []
@@ -15,6 +15,9 @@ function harness() {
     attachShadow() { return new Element('shadow') }
     setAttribute() {}
     setPointerCapture() {}
+    getBoundingClientRect() { return { left: parseFloat(this.style.left) || 0, top: parseFloat(this.style.top) || 0, width: parseFloat(this.style.width) || 320, height: parseFloat(this.style.height) || 180 } }
+    get offsetWidth() { return this.getBoundingClientRect().width }
+    get offsetHeight() { return this.getBoundingClientRect().height }
     remove() { this.removed = true }
     addEventListener(event, fn) { (this.listeners[event] ??= new Set()).add(fn) }
     removeEventListener(event, fn) { this.listeners[event]?.delete(fn) }
@@ -150,4 +153,37 @@ test('navigation accepts only YouTube URLs, including shared search pages', asyn
   assert.equal(h.location.assigned, null)
   await h.apply({ type: 'navigate', url: 'https://www.youtube.com/results?search_query=space' })
   assert.equal(h.location.assigned, 'https://www.youtube.com/results?search_query=space')
+})
+
+test('chat and AV panels hide independently without removing their frames', async () => {
+  const h = harness()
+  await h.apply({ type: 'panels', owner: 'panel-owner', active: true })
+  const chat = h.nodes.find(node => node.className === 'panel independent-panel chat-window')
+  const av = h.nodes.find(node => node.className === 'panel independent-panel av-window')
+  assert.ok(chat); assert.ok(av)
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  assert.equal(chat.hidden, true)
+  assert.equal(av.hidden, false)
+  assert.equal(h.nodes.find(node => node.title === 'Chat').removed, undefined)
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  assert.equal(chat.hidden, false)
+  await h.apply({ type: 'panels', owner: 'panel-owner', active: false })
+  assert.equal(chat.removed, true)
+  assert.equal(av.removed, true)
+})
+test('the collapsed launcher drags without opening, and a subsequent click opens it', () => {
+  const h = harness()
+  const launcher = h.nodes.find(node => node.className === 'launcher')
+  const panel = h.nodes.find(node => node.className === 'panel')
+  launcher.fire('pointerdown', { clientX: 20, clientY: 20, pointerId: 1 })
+  launcher.fire('pointermove', { clientX: 120, clientY: 80, pointerId: 1 })
+  launcher.fire('pointerup')
+  launcher.onclick()
+  assert.equal(panel.hidden, true)
+  assert.equal(h.host.style.left, '100px')
+  assert.equal(h.host.style.top, '60px')
+  launcher.fire('pointerdown', { clientX: 120, clientY: 80, pointerId: 2 })
+  launcher.fire('pointerup')
+  launcher.onclick()
+  assert.equal(panel.hidden, false)
 })

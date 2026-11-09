@@ -1,7 +1,7 @@
-import { localGet, rpc } from './platform.ts'
-import type { Connection, Session, Setup } from './core.ts'
+import { localGet, observeStorage, rpc } from './platform.ts'
+import { DEFAULT_SERVER, type Connection, type Session, type Setup } from './core.ts'
 
-interface Status { configured: boolean; connected: boolean; isAdmin: boolean; authError?: string; setup?: Setup | null; connection?: Connection; party?: Session | null }
+interface Status { configured: boolean; connected: boolean; isAdmin: boolean; active?: boolean; authError?: string; setup?: Setup | null; connection?: Connection; party?: Session | null }
 const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 const input = (id: string) => element<HTMLInputElement>(id)
 let current: Status = { configured: false, connected: false, isAdmin: false }
@@ -20,14 +20,26 @@ function render() {
   element('connection-status').dataset.connected = String(current.connected)
   element('create').hidden = !current.isAdmin
   element<HTMLButtonElement>('create').disabled = busy || !current.connected
-  element('join-form').hidden = current.isAdmin
+  element('join-form').hidden = false
   element<HTMLButtonElement>('join').disabled = busy || !current.connected
   element('auth-status').textContent = current.isAdmin ? 'Admin' : 'Guest'
   element('sign-out').hidden = !current.connection
   const code = current.party?.inviteCode
   element('party-code').hidden = !code
+  element('disconnect').hidden = !current.active
+  element<HTMLButtonElement>('disconnect').disabled = busy
   element('code-value').textContent = code ? format(code) : ''
 }
+observeStorage((changes, area) => {
+  if (area !== 'local') return
+  if (changes.activeParty) {
+    const active = changes.activeParty.newValue as { id: string } | null
+    current.active = !!active
+    if (!active || current.party?.id !== active.id) current.party = null
+  }
+  if (changes.connection && !changes.connection.newValue) { current.connection = undefined; current.isAdmin = false }
+  render()
+})
 async function refresh() {
   current = await rpc<Status>('status', {}, 11_000)
   render()
@@ -36,6 +48,7 @@ async function refresh() {
 async function action(button: HTMLButtonElement, label: string, operation: () => Promise<void>) {
   if (busy) return
   busy = true; button.disabled = true
+  render()
   const text = button.textContent
   button.textContent = label
   error()
@@ -75,19 +88,25 @@ element('copy').addEventListener('click', async () => {
   catch { error('Could not copy code.') }
 })
 element('sign-out').addEventListener('click', () => void action(element<HTMLButtonElement>('sign-out'), 'Signing out…', async () => {
-  await rpc('sign-out')
+  await rpc('sign-out', {}, 25_000)
   input('username').value = ''; input('password').value = ''
+  await refresh()
+}))
+element('disconnect').addEventListener('click', () => void action(element<HTMLButtonElement>('disconnect'), 'Disconnecting…', async () => {
+  await rpc('disconnect-party', {}, 25_000)
+  current.party = null; current.active = false
+  render()
   await refresh()
 }))
 void (async () => {
   try {
     const stored = await localGet<{ setup?: Setup; connection?: Connection }>(['setup', 'connection'])
-    input('server').value = stored.setup?.server ?? stored.connection?.server ?? ''
+    input('server').value = stored.setup?.server ?? stored.connection?.server ?? DEFAULT_SERVER
     input('name').value = stored.setup?.name ?? stored.connection?.user.name ?? ''
     input('username').value = stored.setup?.username ?? ''
     current.configured = !!input('server').value
     render()
-    if (!current.configured) settings(true)
+    if (location.hash === '#settings') settings(true)
     await refresh()
   } catch (cause) { element('connection-label').textContent = 'Disconnected'; error(cause instanceof Error ? cause.message : 'Could not load settings.') }
 })()

@@ -126,6 +126,15 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   assert.equal(preflight.status, 204)
   assert.equal(preflight.headers.get('access-control-allow-origin'), extensionOrigin)
   assert.equal(preflight.headers.get('access-control-allow-credentials'), null)
+  const safariOrigin = 'safari-web-extension://12345678-1234-1234-1234-123456789ABC'
+  const safariPreflight = await fetch(tokenPath, { method: 'OPTIONS', headers: { Origin: safariOrigin, 'Access-Control-Request-Headers': 'authorization' } })
+  assert.equal(safariPreflight.status, 204)
+  assert.equal(safariPreflight.headers.get('access-control-allow-origin'), safariOrigin)
+  assert.equal(safariPreflight.headers.get('access-control-allow-credentials'), null)
+  for (const origin of ['null', 'https://www.youtube.com', `${safariOrigin}.evil.example`, `${safariOrigin}/path`]) {
+    const denied = await fetch(`${base}/api/extension/health`, { headers: { Origin: origin } })
+    assert.equal(denied.headers.get('access-control-allow-origin'), null)
+  }
   assert.equal((await fetch(tokenPath, { headers: { Authorization: `Bearer ${guestToken}` } })).status, 403)
   assert.ok((await ack(guest, 'sync:play', { positionTicks: 30 * TICKS, mediaGeneration: generation })).error)
   const approved = once(guest, 'party:approved')

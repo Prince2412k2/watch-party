@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { acceptsSchedule, type SyncSchedule } from '../../src/sync/syncCore.ts'
 import { bridge, canControl, isPlayerState, isSession, playbackPlan, timelinePosition, TICKS, type Connection, type Message, type PlayerState, type Session, type Setup } from './core.ts'
-import { rpc, localGet, localSet, localRemove, sessionSet, sessionRemove, observeStorage } from './platform.ts'
+import { rpc, localGet, sessionSet, sessionRemove, observeStorage } from './platform.ts'
 
 export interface Settings { gentle: boolean; tolerance: number; followVideo: boolean; showSelf: boolean; tileSize: number; opacity: number; dock: 'left' | 'right'; chatSize: number; hideCameras: boolean; voiceVolume: number; cameraId: string; micId: string; speakerId: string }
 export const defaults: Settings = { gentle: true, tolerance: .25, followVideo: true, showSelf: true, tileSize: 168, opacity: 1, dock: 'right', chatSize: 14, hideCameras: false, voiceVolume: .8, cameraId: '', micId: '', speakerId: '' }
@@ -15,6 +15,7 @@ export function useRoom(settings: Settings) {
   const [serverStatus, setServerStatus] = useState('Connecting')
   const [startupRevision, setStartupRevision] = useState(0)
   const [connected, setConnected] = useState(false)
+  const [ownsTab, setOwnsTab] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [waiting, setWaiting] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -33,6 +34,7 @@ export function useRoom(settings: Settings) {
   const followingUrl = useRef('')
   const restored = useRef<{ id: string; canControl?: boolean } | null>(null)
   const publishingUrl = useRef('')
+  const navigating = useRef<Promise<void> | null>(null)
 
   const request = useCallback((event: string, payload: Record<string, unknown> = {}): Promise<Record<string, any>> => new Promise((resolve, reject) => {
     if (!socket.current?.connected) { reject(new Error('Reconnecting to Watch Party…')); return }
@@ -59,7 +61,7 @@ export function useRoom(settings: Settings) {
       force.current = true
     }
     lastStall.current = ''
-    void localSet({ activeParty: { id: next.id, inviteCode: next.inviteCode, server: state.current.connection?.server, userId: state.current.connection?.user.userId, tabId: tabId.current, canControl: canControl(next, ownId) } }).catch(error => setError(error.message))
+    void rpc('party-state', { partyId: next.id, inviteCode: next.inviteCode, canControl: canControl(next, ownId) }).catch(error => setError(error.message))
     void rpc('room-ready', { partyId: next.id }).catch(() => {})
     return true
   }, [])
@@ -69,10 +71,11 @@ export function useRoom(settings: Settings) {
     setLoaded(false)
     setStartupError('')
     setError('')
-    void rpc<{ connection?: Connection; setup?: Setup; activeParty?: { id: string; canControl?: boolean }; tabId: number | null; follow: string }>('bootstrap', {}, 5000).then(stored => {
+    void rpc<{ connection?: Connection; setup?: Setup; activeParty?: { id: string; tabId: number; canControl?: boolean }; tabId: number | null; follow: string }>('bootstrap', {}, 5000).then(stored => {
       if (cancelled) return
       tabId.current = stored.tabId
       restored.current = stored.activeParty ?? null
+      setOwnsTab(!!stored.activeParty && stored.activeParty.tabId === stored.tabId)
       followingUrl.current = stored.follow
       setSetup(stored.setup ?? (stored.connection ? { server: stored.connection.server, name: stored.connection.user.name } : null))
       setConnection(stored.connection ?? null)
@@ -88,9 +91,11 @@ export function useRoom(settings: Settings) {
         setSetup((changes.setup.newValue as Setup | undefined) ?? null)
         void rpc('status', {}, 10_000).then(status => { setServerStatus(status.connected ? 'Connected' : 'Not configured'); if (status.connected) setError('') }).catch(error => { setServerStatus('Disconnected'); setError(error.message) })
       }
-      if (area === 'local' && changes.activeParty?.newValue) {
-        const active = changes.activeParty.newValue as { id: string; tabId: number; userId: string; server: string }
-        if (active.tabId !== tabId.current || active.userId !== state.current.connection?.user.userId || active.server !== state.current.connection.server) return
+      if (area === 'local' && changes.activeParty) {
+        const active = changes.activeParty.newValue as { id: string; tabId: number; userId: string; server: string } | null
+        const owner = !!active && active.tabId === tabId.current
+        setOwnsTab(owner)
+        if (!owner) { followingUrl.current = ''; socket.current?.disconnect(); return }
         if (active.id === state.current.session?.id) { void rpc('room-ready', { partyId: active.id }).catch(() => {}); return }
         if (socket.current?.connected) void request('party:join', { partyId: active.id }).then(result => { if (result.status === 'waiting') setWaiting(true); else accept(result.session) }).catch(error => setError(error.message))
       }
@@ -100,14 +105,17 @@ export function useRoom(settings: Settings) {
   }, [startupRevision, accept, request])
 
   useEffect(() => {
-    if (!connection) return
+    if (!connection || !ownsTab) return
     const transport = io(connection.server, { transports: ['websocket'], auth: { extensionToken: connection.token }, reconnectionDelayMax: 5000 })
     socket.current = transport
     let alive = true
     const clearRoom = () => {
-      state.current.session = null; setSession(null); setWaiting(false); setMessages([])
+      if (!alive) return
+      const partyId = state.current.session?.id ?? restored.current?.id
+      restored.current = null
+      state.current.session = null; followingUrl.current = ''; setSession(null); setWaiting(false); setMessages([])
       schedule.current = null
-      void localRemove('activeParty').catch(() => {})
+      if (partyId) void rpc('clear-party', { partyId }).catch(() => {})
     }
     transport.on('connect', () => {
       setConnected(true); setError(''); clock.current = { offset: 0, rtt: Infinity, ready: false }
@@ -159,8 +167,8 @@ export function useRoom(settings: Settings) {
     }
     transport.on('connect', ping)
     const timer = setInterval(ping, 3000)
-    return () => { alive = false; clearInterval(timer); transport.disconnect(); socket.current = null; setConnected(false); state.current.session = null; setSession(null); setWaiting(false); schedule.current = null }
-  }, [connection, accept])
+    return () => { alive = false; clearInterval(timer); transport.disconnect(); socket.current = null; setConnected(false); state.current.session = null; setSession(null); setWaiting(false); setMessages([]); schedule.current = null }
+  }, [connection, ownsTab, accept])
 
   const command = useCallback(async (action: string, position?: number, rate?: number) => {
     const current = state.current
@@ -195,12 +203,17 @@ export function useRoom(settings: Settings) {
   }, [command])
 
   const followRoom = useCallback(async () => {
-    const target = state.current.session?.externalMedia.url
-    if (!target) return
-    followingUrl.current = target
-    await request('party:navigating')
-    await sessionSet({ [`follow-${tabId.current}`]: target })
-    if (state.current.session?.externalMedia.url === target) bridge({ type: 'navigate', url: target })
+    if (navigating.current) return navigating.current
+    const current = state.current.session
+    const target = current?.externalMedia.url
+    if (!target || !socket.current?.connected) return
+    navigating.current = (async () => {
+      followingUrl.current = target
+      await request('party:navigating')
+      await sessionSet({ [`follow-${tabId.current}`]: target })
+      if (state.current.session?.id === current.id && state.current.session.externalMedia.url === target) await rpc('navigate-party', { partyId: current.id, url: target })
+    })().finally(() => { navigating.current = null })
+    return navigating.current
   }, [request])
 
   useEffect(() => {
@@ -211,8 +224,10 @@ export function useRoom(settings: Settings) {
       return
     }
     if (followingUrl.current || !canControl(session, connection.user.userId)) {
-      void followRoom().catch(error => setError(error.message))
-      return
+      const follow = () => { void followRoom().catch(error => setError(error.message)) }
+      follow()
+      const retry = setInterval(follow, 2500)
+      return () => clearInterval(retry)
     }
     const url = player.url
     if (publishingUrl.current === url) return
@@ -258,27 +273,19 @@ export function useRoom(settings: Settings) {
   }, [])
 
   async function create() {
-    const player = state.current.player
     if (!state.current.connection?.user.isAdmin) throw new Error('Sign in as admin in the extension setup to create party codes.')
-    const result = await request('party:create', { externalMedia: { provider: 'youtube', url: player?.url ?? 'https://www.youtube.com/', title: player?.title ?? 'YouTube' }, resumePositionTicks: Math.round((player?.position ?? 0) * TICKS) })
-    if (!accept(result.session)) throw new Error('Server returned an unsupported room.')
+    await rpc('create-party', {}, 30_000)
   }
   async function join(code: string) {
-    const server = setup?.server ?? connection?.server
-    if (!server) throw new Error('Save your server URL in the extension toolbar popup first.')
-    const response = await fetch(`${server}/api/extension/join-invite`, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name: setup?.name, token: connection?.server === server ? connection.token : undefined }) })
-    const result = await response.json()
-    if (!response.ok) throw new Error(result.error || 'Could not join party')
-    await localSet({ connection: { server, token: result.token, user: result.user, expiresAt: result.expiresAt }, activeParty: { id: result.partyId, server, userId: result.user.userId, tabId: tabId.current, canControl: false } })
+    await rpc('join-party', { code }, 30_000)
   }
   async function leave() {
-    await request(session?.hostId === connection?.user.userId ? 'party:end' : 'party:leave')
+    await rpc('disconnect-party', {}, 25_000)
     schedule.current = null; state.current.session = null; setSession(null); setWaiting(false); setMessages([])
-    await localRemove('activeParty')
   }
   async function refresh() {
     const result = await request('party:resume')
     accept(result.session)
   }
-  return { connection, setup, loaded, startupError, retryStartup: () => setStartupRevision(value => value + 1), serverStatus, connected, session, waiting, messages, player, error, setError, drift, request, command, create, join, leave, refresh, followRoom }
+  return { connection, setup, loaded, startupError, retryStartup: () => setStartupRevision(value => value + 1), serverStatus, connected, ownsTab, session, waiting, messages, player, error, setError, drift, request, command, create, join, leave, refresh, followRoom }
 }

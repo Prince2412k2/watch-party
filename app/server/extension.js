@@ -56,7 +56,7 @@ export function registerExtensionRoutes(app, { rateLimit, onRevoke = () => {} } 
   // credentials here: pairing/session-management routes remain cookie-scoped.
   app.use('/api/extension', (req, res, next) => {
     const origin = req.headers.origin
-    if (typeof origin === 'string' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin)) {
+    if (typeof origin === 'string' && (/^chrome-extension:\/\/[a-p]{32}$/.test(origin) || /^safari-web-extension:\/\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(origin))) {
       res.set('Access-Control-Allow-Origin', origin)
       res.vary('Origin')
       res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type')

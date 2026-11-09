@@ -20,6 +20,7 @@ export interface Message { userId: string; name: string; text: string; timestamp
 export interface Connection { server: string; token: string; user: Member; expiresAt: number }
 export interface Setup { server: string; name: string; username?: string }
 export const TICKS = 10_000_000
+export const DEFAULT_SERVER = 'https://watch.sniffkin.tech'
 
 export function timelinePosition(schedule: SyncSchedule, now: number) {
   return Math.max(0, schedule.positionTicks / TICKS + (schedule.phase === 'playing' ? (now - schedule.t0) / 1000 * (schedule.rate ?? 1) : 0))

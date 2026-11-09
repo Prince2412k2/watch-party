@@ -11,7 +11,7 @@ export default defineConfig({
     closeBundle() {
       const output = fileURLToPath(new URL('./dist/', import.meta.url))
       mkdirSync(`${output}/fonts`, { recursive: true })
-      for (const weight of ['Book', 'Bold']) copyFileSync(fileURLToPath(new URL(`../public/fonts/CircularXXWeb-${weight}.woff2`, import.meta.url)), `${output}/fonts/CircularXXWeb-${weight}.woff2`)
+      for (const weight of ['Light', 'Book', 'Bold']) copyFileSync(fileURLToPath(new URL(`../public/fonts/CircularXXWeb-${weight}.woff2`, import.meta.url)), `${output}/fonts/CircularXXWeb-${weight}.woff2`)
       copyFileSync(fileURLToPath(new URL('../public/icon.svg', import.meta.url)), `${output}/brand.svg`)
       copyFileSync(fileURLToPath(new URL('../public/icon-192.png', import.meta.url)), `${output}/icon-192.png`)
     },
