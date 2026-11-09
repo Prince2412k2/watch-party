@@ -93,6 +93,14 @@
   bar.addEventListener('pointercancel', () => { drag = null })
 
   const send = data => frame.contentWindow?.postMessage({ source: 'watchparty-youtube', ...data }, extensionOrigin)
+  chrome.runtime.onMessage?.addListener((message, sender, respond) => {
+    if (sender.id !== chrome.runtime.id) return false
+    if (message?.type === 'watchparty-page') { respond({ url: location.href }); return false }
+    if (message?.type !== 'watchparty-open-panel') return false
+    panel.hidden = false; launcher.hidden = true; snapshot()
+    respond({ ready: true })
+    return false
+  })
   let video = null
   let gestureUntil = 0
   let applyingUntil = 0
@@ -150,6 +158,11 @@
     if (!event.isTrusted || event.source !== frame.contentWindow || event.origin !== extensionOrigin || event.data?.source !== 'watchparty-extension') return
     const command = event.data
     if (command.type === 'hello') { snapshot(); return }
+    if (command.type === 'panel-mode') {
+      panel.style.width = command.active ? '420px' : '340px'
+      panel.style.height = command.active ? 'min(840px, calc(100vh - 40px))' : '290px'
+      return
+    }
     if (command.type === 'open') { panel.hidden = false; launcher.hidden = true; return }
     if (command.type === 'cameras' && typeof command.owner === 'string' && Array.isArray(command.people)) { cameras.update(command); return }
     if (command.type === 'layout') {

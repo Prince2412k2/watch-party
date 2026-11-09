@@ -5,14 +5,10 @@ import { bridge, canControl as mayControl, formatInvite, type Member } from './c
 import { defaults, useRoom, type Settings } from './useRoom.ts'
 import { useFloatingCameras } from './useFloatingCameras.tsx'
 import { AnIcon } from '../../src/analog/icons.tsx'
+import { rpc, localGet, localSet, sessionGet, sessionSet } from './platform.ts'
 
-function Brand({ detail }: { detail: string }) {
-  return <div className="brand"><img src="brand.svg" width="30" height="30" alt="" /><div><strong>Watch Party</strong><span>{detail}</span></div></div>
-}
-function ServerLabel({ server }: { server: string }) {
-  let label = server
-  try { label = new URL(server).host } catch {}
-  return <div className="server-label"><AnIcon name="link" size={13} /><span>{label}</span><small>Saved</small></div>
+function Brand({ detail }: { detail?: string }) {
+  return <div className="brand"><img src="brand.svg" width="26" height="26" alt="" /><div><strong>Watch Party</strong>{detail && <span>{detail}</span>}</div></div>
 }
 function MediaCover({ videoId }: { videoId: string | null }) {
   const [failed, setFailed] = useState(false)
@@ -64,12 +60,13 @@ export default function App() {
   const canControl = !!session && mayControl(session, connection?.user.userId)
   const mismatched = !!session && player?.videoId !== session.externalMedia.videoId
   useEffect(() => { setInviteOpen(!!session && isHost); setCopied(false) }, [session?.id])
+  useEffect(() => { bridge({ type: 'panel-mode', active: !!session }) }, [session?.id])
 
   useEffect(() => {
-    void chrome.storage.local.get<{ settings?: Partial<Settings> }>('settings').then(({ settings }) => { setSettings({ ...defaults, ...settings }); setSettingsLoaded(true) }).catch(() => setSettingsLoaded(true))
+    void localGet<{ settings?: Partial<Settings> }>('settings').then(({ settings }) => { setSettings({ ...defaults, ...settings }); setSettingsLoaded(true) }).catch(() => setSettingsLoaded(true))
   }, [])
   useEffect(() => {
-    if (settingsLoaded) void chrome.storage.local.set({ settings })
+    if (settingsLoaded) void localSet({ settings }).catch(() => {})
     bridge({ type: 'layout', dock: settings.dock, opacity: settings.opacity })
   }, [settings, settingsLoaded])
   useEffect(() => {
@@ -117,12 +114,12 @@ export default function App() {
     const partyId = session.id
     restoredAV.current = partyId
     let cancelled = false
-    void chrome.storage.session.get<{ [key: string]: { camera: boolean; mic: boolean } }>(`av-${partyId}-${connection.user.userId}`).then(value => {
+    void sessionGet<{ [key: string]: { camera: boolean; mic: boolean } }>(`av-${partyId}-${connection.user.userId}`).then(value => {
       if (cancelled) return
       const previous = value[`av-${partyId}-${connection.user.userId}`]
       if (previous?.camera) void media.enableCamera(true)
       if (previous?.mic) void media.enableMic(true)
-    })
+    }).catch(() => {})
     return () => { cancelled = true }
   }, [session?.id, connection?.user.userId, media.connected])
 
@@ -131,7 +128,7 @@ export default function App() {
     const camera = kind === 'camera' ? !media.camOn : media.camOn
     const mic = kind === 'mic' ? !media.micOn : media.micOn
     const changed = kind === 'camera' ? await media.enableCamera(camera) : await media.enableMic(mic)
-    if (changed) await chrome.storage.session.set({ [`av-${session.id}-${connection.user.userId}`]: { camera, mic } })
+    if (changed) await sessionSet({ [`av-${session.id}-${connection.user.userId}`]: { camera, mic } })
   }
 
   function update<K extends keyof Settings>(key: K, value: Settings[K]) { setSettings(previous => ({ ...previous, [key]: value })) }
@@ -155,36 +152,27 @@ export default function App() {
     return participant ? <Tile participant={participant} local={participant.identity === connection?.user.userId} volume={volumes[id] ?? settings.voiceVolume} onVolume={value => setVolumes(previous => ({ ...previous, [id]: value }))} /> : null
   })
 
-  if (!room.loaded) return <main className="empty" aria-busy="true"><Brand detail="Getting your room ready" /><div className="loading-skeleton"><span /><span /><span /></div><span className="sr-only">Loading Watch Party…</span></main>
-  if (!connection) return <main className="empty"><Brand detail="For YouTube" /><div className="welcome-heading"><span className="eyebrow">BETTER WITH COMPANY</span><h1>Pull up a seat.</h1><p>One invite code. A whole room of friends.</p></div>{setup?.server ? <><ServerLabel server={setup.server} /><form className="join-form" onSubmit={event => { event.preventDefault(); void act(() => room.join(invite)) }}><Field label="Party invite code"><input className="invite-input" value={invite} onChange={event => setInvite(event.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" maxLength={20} required /></Field><p className="join-caption">Joining as <strong>{setup.name || 'Guest'}</strong> · no account needed</p><button className="primary wide" disabled={busy}>{busy ? 'Joining…' : 'Join party'}<AnIcon name="enter" size={17} /></button></form></> : <div className="first-setup"><AnIcon name="settings" size={22} /><h2>A quick setup first.</h2><p>Save your server URL in the toolbar popup. Admin sign-in is only needed if you’re hosting.</p><button className="primary" onClick={() => void chrome.runtime.sendMessage({ type: 'watchparty-open-setup' }).then(result => { if (result?.error) room.setError(result.error) })}>Open setup</button></div>}{room.error && <p className="notice" role="alert">{room.error}</p>}<p className="welcome-footer">Your friends, wherever you’re watching.</p></main>
+  const openSettings = () => void rpc('open-settings').catch(error => room.setError(error.message))
+  const connectionLabel = !room.loaded ? 'Connecting' : room.startupError ? 'Disconnected' : connection ? room.connected ? 'Connected' : room.error ? 'Disconnected' : 'Connecting' : room.serverStatus
+  if (!room.loaded || !connection || !session) return <main className="launch"><header className="room-header"><Brand /><div className="header-actions"><span className={`connection-status${connectionLabel === 'Connected' ? ' online' : ''}`} role="status"><i className="connection-dot" />{connectionLabel}</span><button className="connection-settings" aria-label="Connection settings" title="Settings" onClick={openSettings}><AnIcon name="settings" size={18} /></button></div></header>{room.loaded && (connection?.user.isAdmin ? <button className="primary wide" disabled={busy || !room.connected} onClick={() => void act(room.create)}>{busy ? 'Creating…' : 'Create code'}</button> : <form className="join-form" onSubmit={event => { event.preventDefault(); void act(() => room.join(invite)) }}><input aria-label="Invite code" placeholder="Code" value={invite} onChange={event => setInvite(event.target.value.toUpperCase())} maxLength={20} disabled={!setup?.server || !!room.startupError} required /><button className="primary" disabled={busy || !setup?.server || !!room.startupError}>{busy ? 'Joining…' : 'Join'}</button></form>)}{(room.startupError || room.error) && <p className="launch-error" role="alert">{room.startupError || room.error}</p>}{room.startupError && <button onClick={room.retryStartup}>Retry</button>}</main>
 
   return <main className="app" style={{ '--chat-size': `${settings.chatSize}px`, '--tile-size': `${settings.tileSize}px` } as CSSProperties}>
     {floatingCameras}
-    <header className="room-header"><div><Brand detail={session ? isHost ? 'You’re hosting' : 'Watching together' : 'For YouTube'} /><h1 className="sr-only">{session ? `Room ${session.id}` : 'Watch together'}</h1></div><div className="header-actions"><span className={`connection-status${room.connected ? ' online' : ''}`}><i className="connection-dot" />{room.connected ? 'Connected' : 'Reconnecting'}</span>{session && <button className="invite-trigger" aria-expanded={inviteOpen} aria-controls="room-invite" onClick={() => setInviteOpen(value => !value)}><AnIcon name="users" size={16} />Invite</button>}</div></header>
+    <header className="room-header"><div><Brand /><h1 className="sr-only">Room {session.id}</h1></div><div className="header-actions"><span className={`connection-status${room.connected ? ' online' : ''}`}><i className="connection-dot" />{room.connected ? 'Connected' : 'Disconnected'}</span><button className="invite-trigger" aria-expanded={inviteOpen} aria-controls="room-invite" onClick={() => setInviteOpen(value => !value)}>Code</button><button className="connection-settings" aria-label="Connection settings" title="Settings" onClick={openSettings}><AnIcon name="settings" size={18} /></button></div></header>
     {(room.error || media.error) && <div className="notice" role="alert">{room.error || media.error}<button onClick={() => { room.setError(''); media.reportError(null) }} aria-label="Dismiss message">Dismiss</button></div>}
-    {!session ? <div className="setup">
-      <div className="welcome-heading"><h2>{connection.user.isAdmin ? 'Make it a watch party.' : 'Your seat is waiting.'}</h2><p>{connection.user.isAdmin ? 'Start a room, send the code, pick something good.' : 'Paste the code your host shared with you.'}</p></div>
-      {player?.available && <div className="current-title"><MediaCover videoId={player.videoId} /><div><small>ON YOUR SCREEN</small><strong>{player.title}</strong></div></div>}
-      {player?.live && <p className="notice">Live streams are not supported in this first version.</p>}
-      {room.waiting ? <><h2>Waiting for the host</h2><p>Your request is in. The host needs to let you into the room.</p><button onClick={() => void act(room.leave)} disabled={busy}>Cancel request</button></> : <>
-        {connection.user.isAdmin ? <button className="primary wide" disabled={busy || !room.connected} onClick={() => void act(room.create)}><AnIcon name="plus" size={17} />{busy ? 'Creating your room…' : 'Create party & invite code'}</button> : <p className="hint">No password needed to join. Hosting? Add your admin login in the toolbar popup.</p>}
-        <div className="divider">or join your friends</div>
-        <form className="join-form" onSubmit={event => { event.preventDefault(); void act(() => room.join(invite)) }}><Field label="Party invite code"><input className="invite-input" value={invite} onChange={event => setInvite(event.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" maxLength={20} required /></Field><button className="wide" disabled={busy}>{busy ? 'Joining…' : 'Join party'}<AnIcon name="enter" size={17} /></button></form>
-      </>}
-      <a href={`${connection.server}/extension`} target="_blank" rel="noreferrer">Extension setup & help</a>
-    </div> : <>
+    <>
       <div className="now-playing"><MediaCover videoId={session.externalMedia.videoId} /><div className="media-copy"><small>{session.externalMedia.videoId ? 'NOW WATCHING' : 'BROWSING TOGETHER'}</small><strong>{session.externalMedia.title || 'YouTube'}</strong><span><i className={session.schedule.phase === 'playing' ? 'playback-dot' : 'playback-dot paused'} />{!session.externalMedia.videoId ? 'Everyone follows this page' : <>{session.schedule.phase === 'stalled' ? 'Waiting for a viewer or ad…' : session.schedule.phase === 'playing' ? 'Playing together' : 'Paused'}<b>·</b>{Math.abs(room.drift) < .3 ? 'In sync' : `${Math.abs(room.drift).toFixed(1)}s ${room.drift > 0 ? 'behind' : 'ahead'}`}</>}</span></div></div>
       {mismatched && <div className="notice"><p>{canControl ? 'Sharing your YouTube navigation with the room…' : 'Following the host’s YouTube page…'}</p><button onClick={() => void room.followRoom()}>Open shared page</button></div>}
       {player?.ad && <p className="notice">YouTube is showing an ad. Timeline corrections are paused until it ends.</p>}
-      <section className="invite-card" id="room-invite" aria-label="Invite friends" hidden={!inviteOpen}><div className="invite-strip"><div><span>PARTY INVITE CODE</span><strong>{formatInvite(session.inviteCode)}</strong></div><button className={copied ? 'is-copied' : ''} onClick={() => void act(async () => { await navigator.clipboard.writeText(formatInvite(session.inviteCode)); setCopied(true) })}><AnIcon name={copied ? 'check' : 'copy'} size={16} /><span aria-live="polite">{copied ? 'Copied' : 'Copy code'}</span></button></div><p>Send this to your friends. They don’t need an account.</p></section>
-      <div className="playback-buttons"><button disabled={!canControl || mismatched || busy || !room.connected || !session.externalMedia.videoId} onClick={() => void room.command(session.schedule.phase === 'playing' ? 'pause' : 'play')}>{session.schedule.phase === 'playing' ? 'Pause room' : 'Play room'}</button><span className="hint">{canControl ? 'Your navigation is shared' : 'Host controls playback'}</span></div>
+      <section className="invite-card" id="room-invite" aria-label="Invite code" hidden={!inviteOpen}><div className="invite-strip"><strong>{formatInvite(session.inviteCode)}</strong><button className={copied ? 'is-copied' : ''} onClick={() => void act(async () => { await navigator.clipboard.writeText(formatInvite(session.inviteCode)); setCopied(true) })}><AnIcon name={copied ? 'check' : 'copy'} size={16} /><span aria-live="polite">{copied ? 'Copied' : 'Copy'}</span></button></div></section>
+      <div className="playback-buttons"><button disabled={!canControl || mismatched || busy || !room.connected || !session.externalMedia.videoId} onClick={() => void room.command(session.schedule.phase === 'playing' ? 'pause' : 'play')}>{session.schedule.phase === 'playing' ? 'Pause room' : 'Play room'}</button><span className="hint">{canControl ? 'Control enabled' : 'View only'}</span></div>
       <div className="av-buttons"><button disabled={!media.connected} aria-pressed={media.camOn} onClick={() => void toggleAV('camera')}><AnIcon name="tv" size={17} /><span>{media.camOn ? 'Camera on' : 'Camera off'}</span></button><button disabled={!media.connected} aria-pressed={media.micOn} onClick={() => void toggleAV('mic')}><AnIcon name={media.micOn ? 'sound' : 'mute'} size={17} /><span>{media.micOn ? 'Mic on' : 'Mic off'}</span></button><button aria-pressed={!settings.hideCameras} onClick={() => update('hideCameras', !settings.hideCameras)}><AnIcon name="users" size={17} /><span>{settings.hideCameras ? 'Show feeds' : 'Hide feeds'}</span></button></div>
       {!media.connected && <p className="hint">Connecting voice & cameras… <button onClick={media.reconnect}>Retry connection</button></p>}
       {media.audioBlocked && <button className="primary" onClick={() => void media.startAudio()}>Enable room audio</button>}
-      {!settings.hideCameras && <div className="floating-summary"><span className="mini-avatars" aria-hidden="true">{members.slice(0, 4).map(member => <i key={member.userId}>{member.name.slice(0, 1).toUpperCase()}</i>)}</span><span>{tileParticipants.length} floating {tileParticipants.length === 1 ? 'screen' : 'screens'}</span><span className="floating-tip">Drag · resize · collapse</span></div>}
+      {!settings.hideCameras && <div className="floating-summary"><span className="mini-avatars" aria-hidden="true">{members.slice(0, 4).map(member => <i key={member.userId}>{member.name.slice(0, 1).toUpperCase()}</i>)}</span><span>{tileParticipants.length}</span></div>}
       <nav className="tabs" aria-label="Room panels">{(['chat', 'people', 'settings'] as const).map(name => <button key={name} aria-label={name === 'people' ? `People (${members.length})` : name === 'chat' ? 'Chat' : 'Settings'} aria-current={tab === name ? 'page' : undefined} onClick={() => setTab(name)}>{name === 'people' ? `People (${members.length})` : name === 'chat' ? 'Chat' : 'Settings'}{name === 'chat' && unread > 0 && <span className="unread-badge" aria-hidden="true">{unread > 9 ? '9+' : unread}</span>}</button>)}</nav>
-      {tab === 'chat' && <section className="chat-panel" aria-label="Party chat"><div className="messages" role="log" aria-live="polite">{room.messages.length ? room.messages.map((message, index) => <article className={`message${message.userId === connection.user.userId ? ' own' : ''}`} key={`${message.timestamp}-${index}`}><span className="message-avatar" aria-hidden="true">{message.name.slice(0, 1).toUpperCase()}</span><div className="message-content"><header><strong>{message.userId === connection.user.userId ? 'You' : message.name}</strong><time>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{message.text}</p></div></article>) : <div className="chat-empty"><AnIcon name="users" size={28} /><strong>Good company. Good commentary.</strong><p>Say hello to the room.</p></div>}<div ref={bottom} /></div><form className="chat-compose" onSubmit={send}><label className="sr-only" htmlFor="chat-draft">Message the room</label><input id="chat-draft" placeholder="Message the room…" value={draft} maxLength={2000} onChange={event => setDraft(event.target.value)} autoComplete="off" /><button aria-label="Send" title="Send message" disabled={busy || !draft.trim() || !room.connected}><AnIcon name="enter" size={18} /></button></form></section>}
-      {tab === 'people' && <section className="panel-scroll"><div className="panel-heading"><h2>In this room</h2><span>{members.length} {members.length === 1 ? 'person' : 'people'}</span></div><p className="hint">{isHost ? 'Choose who can control playback and share videos.' : `${session.hostName} is hosting. Control access is managed by the host.`}</p>
+      {tab === 'chat' && <section className="chat-panel" aria-label="Party chat"><div className="messages" role="log" aria-live="polite">{room.messages.map((message, index) => <article className={`message${message.userId === connection.user.userId ? ' own' : ''}`} key={`${message.timestamp}-${index}`}><span className="message-avatar" aria-hidden="true">{message.name.slice(0, 1).toUpperCase()}</span><div className="message-content"><header><strong>{message.userId === connection.user.userId ? 'You' : message.name}</strong><time>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></header><p>{message.text}</p></div></article>)}<div ref={bottom} /></div><form className="chat-compose" onSubmit={send}><label className="sr-only" htmlFor="chat-draft">Message</label><input id="chat-draft" placeholder="Message" value={draft} maxLength={2000} onChange={event => setDraft(event.target.value)} autoComplete="off" /><button aria-label="Send" title="Send" disabled={busy || !draft.trim() || !room.connected}><AnIcon name="enter" size={18} /></button></form></section>}
+      {tab === 'people' && <section className="panel-scroll"><div className="panel-heading"><h2>People</h2><span>{members.length}</span></div>
         {isHost && session.waiting.length > 0 && <div><h2>Waiting to join</h2>{session.waiting.map(member => <div className="member" key={member.userId}><strong>{member.name}</strong><div className="row"><button disabled={busy} onClick={() => void act(() => room.request('party:approve', { userId: member.userId }))}>Allow</button><button disabled={busy} onClick={() => void act(async () => { await room.request('party:reject', { userId: member.userId }); await room.refresh() })}>Decline</button></div></div>)}</div>}
         {members.map(member => <div className="member" key={member.userId}><span className="member-avatar" aria-hidden="true">{member.name.slice(0, 1).toUpperCase()}</span><strong>{member.name}{member.userId === connection.user.userId ? ' (you)' : ''}<small className={session.controllers.includes(member.userId) ? 'controller-label' : ''}>{member.userId === session.hostId ? 'Host' : session.controllers.includes(member.userId) ? 'Can control' : 'Viewer'}</small></strong>{isHost && member.userId !== connection.user.userId && <div className="row"><button disabled={busy} aria-pressed={session.controllers.includes(member.userId)} onClick={() => void act(() => room.request('party:setController', { userId: member.userId, enabled: !session.controllers.includes(member.userId) }))}>{session.controllers.includes(member.userId) ? 'Revoke control' : 'Give control'}</button><button className="remove-member" disabled={busy} onClick={() => void act(() => room.request('party:kick', { userId: member.userId }))}>Remove</button></div>}</div>)}
       </section>}
@@ -202,6 +190,6 @@ export default function App() {
         <details><summary>Overlay & chat</summary><p className="hint">Drag the top bar to move the overlay. Drag its lower corner to resize it. It stays visible in YouTube fullscreen.</p><Field label="Dock"><select value={settings.dock} onChange={event => update('dock', event.target.value as Settings['dock'])}><option value="right">Right</option><option value="left">Left</option></select></Field><Field label={`Overlay opacity: ${Math.round(settings.opacity * 100)}%`}><input type="range" min=".5" max="1" step=".05" value={settings.opacity} onChange={event => update('opacity', Number(event.target.value))} /></Field><Field label="Default floating camera width"><input type="range" min="112" max="480" step="8" value={settings.tileSize} onChange={event => update('tileSize', Number(event.target.value))} /></Field><Field label="Chat text size"><input type="range" min="12" max="20" step="1" value={settings.chatSize} onChange={event => update('chatSize', Number(event.target.value))} /></Field><button onClick={() => setSettings(defaults)}>Reset personal settings</button></details>
       </section>}
       <footer className="room-footer"><span className="footer-identity"><i aria-hidden="true">{connection.user.name.slice(0, 1).toUpperCase()}</i><span>{connection.user.name}<small>{isHost ? 'Host' : canControl ? 'Guest · can control' : 'Guest'}</small></span></span><button className="danger" disabled={busy} onClick={() => void act(room.leave)}><AnIcon name="logout" size={14} />{isHost ? 'End party' : 'Leave party'}</button></footer>
-    </>}
+    </>
   </main>
 }

@@ -17,5 +17,11 @@ export default defineConfig({
     },
   }],
   define: { 'process.env': {} },
-  build: { outDir: 'dist', emptyOutDir: true, target: 'es2022' },
+  build: {
+    outDir: 'dist', emptyOutDir: true, target: 'es2022',
+    rollupOptions: {
+      input: { room: fileURLToPath(new URL('./index.html', import.meta.url)), popup: fileURLToPath(new URL('./popup.html', import.meta.url)), background: fileURLToPath(new URL('./src/background.ts', import.meta.url)) },
+      output: { entryFileNames: chunk => chunk.name === 'background' ? 'background.js' : 'assets/[name]-[hash].js' },
+    },
+  },
 })

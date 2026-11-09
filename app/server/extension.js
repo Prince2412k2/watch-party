@@ -4,7 +4,7 @@ import { requireAuth } from './auth.js'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { authenticate } from './jellyfin.js'
-import { allSessions, persistSession } from './session.js'
+import { allSessions, persistSession, findSessionForMember, publicSession } from './session.js'
 
 db.exec(`CREATE TABLE IF NOT EXISTS extension_devices (
   id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
@@ -45,7 +45,7 @@ export function extensionIdentity(token) {
 
 export function requireExtension(req, res, next) {
   const user = extensionIdentity(req.headers.authorization?.replace(/^Bearer /, ''))
-  if (!user) return res.status(401).json({ error: 'Extension pairing expired or was revoked. Pair again in Watch Party.' })
+  if (!user) return res.status(401).json({ error: 'Sign in again.' })
   req.extensionUser = user
   next()
 }
@@ -60,7 +60,7 @@ export function registerExtensionRoutes(app, { rateLimit, onRevoke = () => {} } 
       res.set('Access-Control-Allow-Origin', origin)
       res.vary('Origin')
       res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type')
-      res.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+      res.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS')
       if (req.method === 'OPTIONS') return res.status(204).end()
     }
     next()
@@ -70,13 +70,26 @@ export function registerExtensionRoutes(app, { rateLimit, onRevoke = () => {} } 
     if (!existsSync(archive)) return res.status(503).json({ error: 'Extension package is not built. Run npm run build:extension in app/client.' })
     res.download(archive, 'watchparty-youtube.zip')
   })
+  app.get('/api/extension/health', (_req, res) => res.json({ ok: true, protocol: 3 }))
+  const me = (user) => {
+    const party = findSessionForMember(user.userId)
+    return { user: { userId: user.userId, name: user.name, isAdmin: user.extensionAdmin }, expiresAt: user.expiresAt, session: party?.externalMedia && (!user.extensionPartyId || user.extensionPartyId === party.id) ? publicSession(party) : null }
+  }
+  app.get('/api/extension/me', requireExtension, (req, res) => res.set('Cache-Control', 'no-store').json(me(req.extensionUser)))
+  app.patch('/api/extension/me', requireExtension, (req, res) => {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : ''
+    if (!name || name.length > 32 || /[\r\n]/.test(name)) return res.status(400).json({ error: 'Name must be one line, up to 32 characters.' })
+    db.prepare('UPDATE extension_devices SET name = ? WHERE id = ?').run(name, req.extensionUser.deviceId.slice('extension-'.length))
+    res.set('Cache-Control', 'no-store').json(me({ ...req.extensionUser, name }))
+  })
   app.post('/api/extension/login', ...(rateLimit ? [rateLimit] : []), async (req, res) => {
     const { username, password } = req.body ?? {}
     if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) return res.status(400).json({ error: 'Admin username and password are required' })
     try {
       const data = await authenticate(username.trim(), password, `extension-${randomBytes(8).toString('hex')}`)
       if (!data.User?.Policy?.IsAdministrator) return res.status(403).json({ error: 'Only administrators can create parties. Guests can join with an invite code instead.' })
-      res.set('Cache-Control', 'no-store').json(createCredential({ userId: data.User.Id, name: data.User.Name, isAdmin: true }))
+      const name = typeof req.body.name === 'string' ? req.body.name.trim().replace(/[\r\n]/g, ' ').slice(0, 32) : ''
+      res.set('Cache-Control', 'no-store').json(createCredential({ userId: data.User.Id, name: name || data.User.Name, isAdmin: true }))
     } catch (error) {
       res.status(error.status === 401 ? 401 : 502).json({ error: error.status === 401 ? 'Invalid admin username or password' : 'Could not reach the account server' })
     }

@@ -88,6 +88,11 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   assert.equal(adminLogin.response.status, 200)
   assert.equal(adminLogin.body.user.isAdmin, true)
   assert.equal(adminLogin.body.password, undefined)
+  const verified = await fetch(`${base}/api/extension/me`, { headers: { Authorization: `Bearer ${adminLogin.body.token}` } }).then(response => response.json())
+  assert.equal(verified.user.isAdmin, true)
+  assert.equal((await fetch(`${base}/api/extension/me`)).status, 401)
+  const renamed = await fetch(`${base}/api/extension/me`, { method: 'PATCH', headers: { Authorization: `Bearer ${adminLogin.body.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Updated name' }) }).then(response => response.json())
+  assert.equal(renamed.user.name, 'Updated name')
   assert.ok((await ack(guest, 'party:create', { externalMedia: media })).error, 'guests cannot create invite codes')
   const web = await connect({ extraHeaders: { Cookie: hostAccount.cookie } })
 

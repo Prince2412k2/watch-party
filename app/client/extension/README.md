@@ -1,4 +1,4 @@
-# Watch Party for YouTube (v0.2)
+# Watch Party for YouTube (v0.3)
 
 Uses the existing Watch Party timeline, chat, SQLite session store, and LiveKit
 server. Each person watches YouTube directly; Jellyfin media import is not needed.
@@ -15,22 +15,23 @@ without a Watch Party account. Chrome/Edge **133+** is required.
 
 1. Extract the ZIP, open `chrome://extensions` or `edge://extensions`, enable
    Developer mode, and **Load unpacked** the folder containing `manifest.json`.
-2. In the toolbar popup, save the required HTTPS **server URL** and your display
+2. In the popup's corner **Settings** button, enter the required HTTPS **server URL** and your display
    name. HTTP is allowed for localhost/127.0.0.1 development only.
-3. The host fills in the optional **admin username/password** once. Guests leave
+3. The host fills in the optional **admin username/password** and uses **Validate & save**. Guests leave
    them blank. Server URL, name, username, and the reusable admin login are saved
    in trusted extension storage. The password itself is not stored. Admin login
    lasts thirty days, or until revoked; it authenticates the existing Jellyfin
    administrator account and grants external-party access only.
+   Invalid credentials or an unreachable server leave the saved settings unchanged.
 4. Existing v0.1 users should sign into the new admin setup once. Legacy paired
    devices are migrated without silently granting administrator privileges.
 
 ## A fresh party code each time
 
-- **Host:** open any YouTube page, choose **Create party & invite code**, and send
+- **Host:** click **Create code** in the popup or YouTube panel, and send
   the displayed `XXXX-XXXX-XXXX` code to everyone. Each party generates a new
   code. Ending a party invalidates that code.
-- **Guest:** enter the code and display name in the popup or overlay. The server
+- **Guest:** enter the code in the popup or panel and click **Join**. The server
   creates a party-scoped guest identity, so no account or password is required.
   Valid invites join directly; the room still supports host removal.
 - **Navigation:** the host browses YouTube normally. Home, search, channel pages,
@@ -53,13 +54,26 @@ windows, and a 60px collapsed avatar that restores the previous size. Layouts
 are saved locally. Large groups use an overflow camera rail rather than piling
 windows onto one position. Cameras remain independent when the chat panel hides.
 
-The popup has separate Join/Setup views with remembered admin status. The room
-uses the app's reel branding and bundled Circular font, current-video artwork,
-one-click invite copying with confirmation, clear camera/mic states, unread chat
-badges, participant role labels, and keyboard-visible focus throughout.
-The room uses comfortable text sizes and an expandable Invite card; copying a
-code closes that card after confirmation to leave more space for chat. Guests
-see their saved server before joining, and host controls live in the People tab.
+The popup shows connection status and Create code for verified admins, or a
+code field and Join for guests. Setup fields are only in Settings. The panel
+uses the same minimal pre-party controls. Host controls live in the People tab.
+
+## Startup and popup lifecycle
+
+The MV3 module worker owns validation and create/join requests. Those actions
+survive popup closure, and write the active tab/party before handing off to its
+panel. The panel acknowledges joining before the worker releases its temporary
+socket, avoiding host-disconnect races. Existing YouTube tabs receive an open
+message; tabs with an old content script are reloaded during handoff.
+
+Embedded panels use a trusted runtime storage broker rather than reading
+iframe storage directly. Startup has a five-second deadline and a Retry action;
+optional navigation cache reads cannot block it. The broker rejects content
+script callers. `/api/extension/me` verifies the saved admin role instead of
+relying solely on a cached flag.
+
+After updating, reload the extension **and the YouTube tab**. Version 0.3 needs
+the updated backend endpoints (`health` and `me`) deployed with the new ZIP.
 
 Fullscreen atomically moves both overlay layers into the fullscreen subtree,
 preserving iframe state. After a full page reload, the same tab rejoins its room

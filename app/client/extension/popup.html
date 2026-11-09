@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Watch Party</title><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/popup.css"></head><body>
+<header><strong>Watch Party</strong><button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-view">Settings</button></header>
+<div id="connection-status" role="status"><i aria-hidden="true"></i><span id="connection-label">Connecting</span></div>
+<main id="home">
+  <button id="create" class="primary" type="button" hidden>Create code</button>
+  <form id="join-form"><input id="invite" aria-label="Invite code" placeholder="Code" maxlength="20" autocomplete="off" spellcheck="false" required><button id="join" class="primary" type="submit" disabled>Join</button></form>
+  <output id="party-code" hidden><code id="code-value"></code><button id="copy" type="button">Copy</button></output>
+</main>
+<section id="settings-view" hidden>
+  <form id="settings-form">
+    <label for="server">Server URL</label><input id="server" type="url" required spellcheck="false" autocomplete="url">
+    <label for="name">Name</label><input id="name" maxlength="32" autocomplete="nickname">
+    <label for="username">Username <small>Optional</small></label><input id="username" autocomplete="username">
+    <label for="password">Password <small>Optional</small></label><input id="password" type="password" autocomplete="current-password">
+    <div class="settings-actions"><button id="save" class="primary" type="submit">Validate & save</button><button id="cancel" type="button">Cancel</button></div>
+  </form>
+  <div class="account"><span id="auth-status">Guest</span><button id="sign-out" type="button" hidden>Sign out</button></div>
+</section>
+<p id="error" role="alert" hidden></p>
+<script type="module" src="/src/popup.ts"></script></body></html>

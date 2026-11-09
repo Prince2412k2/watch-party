@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { acceptsSchedule, type SyncSchedule } from '../../src/sync/syncCore.ts'
 import { bridge, canControl, isPlayerState, isSession, playbackPlan, timelinePosition, TICKS, type Connection, type Message, type PlayerState, type Session, type Setup } from './core.ts'
+import { rpc, localGet, localSet, localRemove, sessionSet, sessionRemove, observeStorage } from './platform.ts'
 
 export interface Settings { gentle: boolean; tolerance: number; followVideo: boolean; showSelf: boolean; tileSize: number; opacity: number; dock: 'left' | 'right'; chatSize: number; hideCameras: boolean; voiceVolume: number; cameraId: string; micId: string; speakerId: string }
 export const defaults: Settings = { gentle: true, tolerance: .25, followVideo: true, showSelf: true, tileSize: 168, opacity: 1, dock: 'right', chatSize: 14, hideCameras: false, voiceVolume: .8, cameraId: '', micId: '', speakerId: '' }
@@ -10,6 +11,9 @@ export function useRoom(settings: Settings) {
   const [connection, setConnection] = useState<Connection | null>(null)
   const [setup, setSetup] = useState<Setup | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [startupError, setStartupError] = useState('')
+  const [serverStatus, setServerStatus] = useState('Connecting')
+  const [startupRevision, setStartupRevision] = useState(0)
   const [connected, setConnected] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [waiting, setWaiting] = useState(false)
@@ -55,26 +59,45 @@ export function useRoom(settings: Settings) {
       force.current = true
     }
     lastStall.current = ''
-    void chrome.storage.local.set({ activeParty: { id: next.id, server: state.current.connection?.server, userId: state.current.connection?.user.userId, tabId: tabId.current, canControl: canControl(next, ownId) } })
+    void localSet({ activeParty: { id: next.id, inviteCode: next.inviteCode, server: state.current.connection?.server, userId: state.current.connection?.user.userId, tabId: tabId.current, canControl: canControl(next, ownId) } }).catch(error => setError(error.message))
+    void rpc('room-ready', { partyId: next.id }).catch(() => {})
     return true
   }, [])
 
   useEffect(() => {
-    void Promise.all([chrome.storage.local.get<{ connection?: Connection; setup?: Setup; activeParty?: { id: string; canControl?: boolean } }>(['connection', 'setup', 'activeParty']), chrome.runtime.sendMessage({ type: 'watchparty-context' })]).then(async ([stored, context]) => {
-      tabId.current = context?.tabId ?? null
+    let cancelled = false
+    setLoaded(false)
+    setStartupError('')
+    setError('')
+    void rpc<{ connection?: Connection; setup?: Setup; activeParty?: { id: string; canControl?: boolean }; tabId: number | null; follow: string }>('bootstrap', {}, 5000).then(stored => {
+      if (cancelled) return
+      tabId.current = stored.tabId
       restored.current = stored.activeParty ?? null
-      const follow = await chrome.storage.session.get<{ [key: string]: string }>(`follow-${tabId.current}`)
-      followingUrl.current = follow[`follow-${tabId.current}`] ?? ''
+      followingUrl.current = stored.follow
       setSetup(stored.setup ?? (stored.connection ? { server: stored.connection.server, name: stored.connection.user.name } : null))
-      setConnection(stored.connection ?? null); setLoaded(true)
-    }).catch(() => { setError('Could not load extension settings. Reload this YouTube tab.'); setLoaded(true) })
+      setConnection(stored.connection ?? null)
+      void rpc('status', {}, 10_000).then(status => {
+        if (cancelled) return
+        setServerStatus(status.connected ? 'Connected' : 'Not configured')
+        if (status.connection) setConnection(previous => JSON.stringify(previous) === JSON.stringify(status.connection) ? previous : status.connection)
+      }).catch(error => { if (!cancelled) { setServerStatus('Disconnected'); setError(error.message) } })
+    }).catch(error => { if (!cancelled) { setStartupError(error.message); setServerStatus('Disconnected') } }).finally(() => { if (!cancelled) setLoaded(true) })
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === 'local' && changes.connection) setConnection((changes.connection.newValue as Connection | undefined) ?? null)
-      if (area === 'local' && changes.setup) setSetup((changes.setup.newValue as Setup | undefined) ?? null)
+      if (area === 'local' && changes.setup) {
+        setSetup((changes.setup.newValue as Setup | undefined) ?? null)
+        void rpc('status', {}, 10_000).then(status => { setServerStatus(status.connected ? 'Connected' : 'Not configured'); if (status.connected) setError('') }).catch(error => { setServerStatus('Disconnected'); setError(error.message) })
+      }
+      if (area === 'local' && changes.activeParty?.newValue) {
+        const active = changes.activeParty.newValue as { id: string; tabId: number; userId: string; server: string }
+        if (active.tabId !== tabId.current || active.userId !== state.current.connection?.user.userId || active.server !== state.current.connection.server) return
+        if (active.id === state.current.session?.id) { void rpc('room-ready', { partyId: active.id }).catch(() => {}); return }
+        if (socket.current?.connected) void request('party:join', { partyId: active.id }).then(result => { if (result.status === 'waiting') setWaiting(true); else accept(result.session) }).catch(error => setError(error.message))
+      }
     }
-    chrome.storage.onChanged.addListener(changed)
-    return () => chrome.storage.onChanged.removeListener(changed)
-  }, [])
+    const stop = observeStorage(changed)
+    return () => { cancelled = true; stop() }
+  }, [startupRevision, accept, request])
 
   useEffect(() => {
     if (!connection) return
@@ -84,11 +107,11 @@ export function useRoom(settings: Settings) {
     const clearRoom = () => {
       state.current.session = null; setSession(null); setWaiting(false); setMessages([])
       schedule.current = null
-      void chrome.storage.local.remove('activeParty')
+      void localRemove('activeParty').catch(() => {})
     }
     transport.on('connect', () => {
       setConnected(true); setError(''); clock.current = { offset: 0, rtt: Infinity, ready: false }
-      void chrome.storage.local.get<{ activeParty?: { id: string; tabId: number; server: string; userId: string } }>('activeParty').then(({ activeParty }) => {
+      void localGet<{ activeParty?: { id: string; tabId: number; server: string; userId: string } }>('activeParty').then(({ activeParty }) => {
         if (!alive || activeParty?.tabId !== tabId.current || activeParty?.server !== connection.server || activeParty?.userId !== connection.user.userId) return
         restored.current = activeParty
         transport.emit('party:join', { partyId: activeParty.id }, (result: Record<string, any>) => {
@@ -97,11 +120,11 @@ export function useRoom(settings: Settings) {
           else if (result.status === 'waiting') setWaiting(true)
           else accept(result.session)
         })
-      })
+      }).catch(error => setError(error.message))
     })
     transport.on('disconnect', reason => {
       setConnected(false); clock.current.ready = false
-      if (reason === 'io server disconnect') { clearRoom(); setError('Your extension pairing was revoked or expired. Pair again using the toolbar popup.') }
+      if (reason === 'io server disconnect') { clearRoom(); setError('Sign in again.') }
     })
     transport.on('connect_error', error => setError(error.message || 'Could not connect to your Watch Party server'))
     transport.on('party:state', accept)
@@ -176,7 +199,7 @@ export function useRoom(settings: Settings) {
     if (!target) return
     followingUrl.current = target
     await request('party:navigating')
-    await chrome.storage.session.set({ [`follow-${tabId.current}`]: target })
+    await sessionSet({ [`follow-${tabId.current}`]: target })
     if (state.current.session?.externalMedia.url === target) bridge({ type: 'navigate', url: target })
   }, [request])
 
@@ -184,7 +207,7 @@ export function useRoom(settings: Settings) {
     if (!session || !player || !connection || !connected) return
     if (player.url === session.externalMedia.url) {
       followingUrl.current = ''
-      void chrome.storage.session.remove(`follow-${tabId.current}`)
+      void sessionRemove(`follow-${tabId.current}`).catch(() => {})
       return
     }
     if (followingUrl.current || !canControl(session, connection.user.userId)) {
@@ -238,7 +261,7 @@ export function useRoom(settings: Settings) {
     const player = state.current.player
     if (!state.current.connection?.user.isAdmin) throw new Error('Sign in as admin in the extension setup to create party codes.')
     const result = await request('party:create', { externalMedia: { provider: 'youtube', url: player?.url ?? 'https://www.youtube.com/', title: player?.title ?? 'YouTube' }, resumePositionTicks: Math.round((player?.position ?? 0) * TICKS) })
-    accept(result.session)
+    if (!accept(result.session)) throw new Error('Server returned an unsupported room.')
   }
   async function join(code: string) {
     const server = setup?.server ?? connection?.server
@@ -246,16 +269,16 @@ export function useRoom(settings: Settings) {
     const response = await fetch(`${server}/api/extension/join-invite`, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name: setup?.name, token: connection?.server === server ? connection.token : undefined }) })
     const result = await response.json()
     if (!response.ok) throw new Error(result.error || 'Could not join party')
-    await chrome.storage.local.set({ connection: { server, token: result.token, user: result.user, expiresAt: result.expiresAt }, activeParty: { id: result.partyId, server, userId: result.user.userId, tabId: tabId.current, canControl: false } })
+    await localSet({ connection: { server, token: result.token, user: result.user, expiresAt: result.expiresAt }, activeParty: { id: result.partyId, server, userId: result.user.userId, tabId: tabId.current, canControl: false } })
   }
   async function leave() {
     await request(session?.hostId === connection?.user.userId ? 'party:end' : 'party:leave')
     schedule.current = null; state.current.session = null; setSession(null); setWaiting(false); setMessages([])
-    await chrome.storage.local.remove('activeParty')
+    await localRemove('activeParty')
   }
   async function refresh() {
     const result = await request('party:resume')
     accept(result.session)
   }
-  return { connection, setup, loaded, connected, session, waiting, messages, player, error, setError, drift, request, command, create, join, leave, refresh, followRoom }
+  return { connection, setup, loaded, startupError, retryStartup: () => setStartupRevision(value => value + 1), serverStatus, connected, session, waiting, messages, player, error, setError, drift, request, command, create, join, leave, refresh, followRoom }
 }

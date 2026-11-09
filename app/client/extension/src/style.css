@@ -21,6 +21,14 @@ h1 { font-size: 29px; letter-spacing: -.045em; line-height: 1.15; font-weight: 6
 h2 { font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -.035em; }
 .app { height: 100%; padding: 18px 18px 13px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; scrollbar-width: thin; }
 .app > * { flex-shrink: 0; }
+.launch { padding: 16px; height: 100%; display: flex; flex-direction: column; gap: 13px; overflow: auto; }
+.launch .brand strong { font-size: 16px; }
+.launch .room-header { min-height: 32px; padding-bottom: 0; }
+.launch .join-form { display: flex; gap: 8px; }
+.launch .join-form input { flex: 1; width: 0; font-family: ui-monospace,monospace; text-transform: uppercase; }
+.launch .wide { min-height: 38px; }
+.launch-error { font-size: 12px; color: #f0afb4; margin: 0; }
+.connection-settings { width: 32px; min-height: 32px; padding: 6px; border: 0; background: transparent; color: var(--muted); }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand img { flex: none; }
 .brand strong { display: block; font-size: 19px; font-weight: 600; letter-spacing: -.025em; line-height: 1.2; }
@@ -81,6 +89,7 @@ h2 { font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -.035
 .invite-card > p { font-size: 11px; line-height: 1.5; color: #c7a8aa; margin: 8px 0 0; }
 .invite-strip { display: flex; align-items: center; gap: 14px; padding: 0; }
 .invite-strip > div { flex: 1; min-width: 0; }
+.invite-strip > strong { flex: 1; }
 .invite-strip > div > span { display: block; color: #c39a9b; font-size: 10px; letter-spacing: .07em; margin-bottom: 5px; }
 .invite-strip strong { display: block; color: #f5dddd; font: 500 18px ui-monospace, monospace; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
 .invite-strip button { background: #322426; border-color: #80545b; color: #f0b6ba; min-height: 38px; padding: 8px 10px; font-size: 12px; }
