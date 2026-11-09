@@ -208,6 +208,7 @@ export default function Profile() {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
         </button>
         <h1 style={{ flex: 1, minWidth: 0, margin: 0, fontSize: 17, fontWeight: 700 }}>Profile</h1>
+        <a href="/extension" style={{ color: 'var(--text)', fontSize: 12 }}>YouTube extension</a>
         <button
           type="button" onClick={save} disabled={saving || !loaded}
           style={{

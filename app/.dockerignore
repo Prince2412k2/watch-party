@@ -1,6 +1,8 @@
 node_modules
 client/node_modules
 client/dist
+client/extension/dist
+client/extension/watchparty-youtube.zip
 npm-debug.log*
 .env
 .env.local

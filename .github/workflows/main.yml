@@ -130,10 +130,19 @@ jobs:
         run: npm run typecheck
 
       - working-directory: app/client
+        run: npm run typecheck:extension
+
+      - working-directory: app/client
         run: npm test
 
       - working-directory: app/client
+        run: npm run test:extension
+
+      - working-directory: app/client
         run: npm run build
+
+      - working-directory: app/client
+        run: npm run build:extension
 
       - working-directory: app/client
         run: npm audit --audit-level=high

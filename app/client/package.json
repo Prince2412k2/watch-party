@@ -6,6 +6,9 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "typecheck:extension": "tsc --noEmit -p extension/tsconfig.json",
+    "build:extension": "vite build --config extension/vite.config.ts && node extension/package.mjs",
+    "test:extension": "node --test \"extension/src/**/*.test.ts\" \"extension/test/**/*.test.js\"",
     "test": "node --test \"src/**/*.test.ts\"",
     "preview": "vite preview"
   },
@@ -24,11 +27,13 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
+    "@types/chrome": "^0.3.7",
     "@types/node": "^26.1.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "fake-indexeddb": "^6.2.5",
+    "fflate": "^0.8.3",
     "typescript": "^7.0.2",
     "vite": "^6.4.5"
   }

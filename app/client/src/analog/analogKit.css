@@ -1501,8 +1501,8 @@
 .an-stage[data-size='phone'] .an-modes { display: flex; justify-content: start; gap: 24px; overflow-x: auto; padding-bottom: 8px; }
 .an-stage[data-size='phone'] .an-modes button { flex: none; font-size: 14px; min-height: 44px; letter-spacing: 0; text-transform: none; }
 .an-stage[data-size='phone'] .an-stage-nav { position: absolute; inset: auto 0 0; padding: 4px 12px var(--app-safe-bottom, 0px); background: var(--an-color-stage-ground); border-top: 1px solid var(--an-color-line); z-index: var(--an-z-toolbox); }
-.an-stage[data-size='phone'] .an-nav { padding: 0; }
-.an-stage[data-size='phone'] .an-nav button { min-height: 64px; font-size: 11px; letter-spacing: 0; gap: 6px; }
+.an-stage[data-size='phone'] .an-nav { padding: 0; overflow-x: auto; }
+.an-stage[data-size='phone'] .an-nav button { flex: 1 0 auto; min-width: 44px; min-height: 64px; font-size: 11px; letter-spacing: 0; gap: 6px; }
 .an-stage[data-size='phone'] .an-corner-trigger { min-width: 44px; min-height: 44px; }
 .an-touch-track { display: flex; gap: 14px; overflow-x: auto; overflow-y: hidden; padding: 12px 4px 20px; scroll-snap-type: x proximity; }
 .an-touch-slot { flex: 0 0 116px; min-width: 0; border: 0; padding: 0; color: inherit; background: transparent; font: inherit; text-align: left; scroll-snap-align: start; }

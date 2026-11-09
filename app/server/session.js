@@ -53,6 +53,7 @@ function durableState(session) {
     hostDeviceId: session.hostDeviceId,
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
+    externalMedia: session.externalMedia,
     playback: session.playback,
     playbackRevision: session.playbackRevision,
     subtitlePreferences: session.subtitlePreferences,
@@ -84,6 +85,8 @@ function runtimeState(saved) {
     hostSocketId: null,
     mediaItemId: saved.mediaItemId ?? null,
     mediaSourceId: saved.mediaSourceId ?? null,
+    externalMedia: saved.externalMedia ?? null,
+    externalAds: new Set(),
     playback: saved.playback ?? null,
     playbackRevision: saved.playbackRevision ?? 0,
     subtitlePreferences: validateSubtitlePreferences(saved.subtitlePreferences).value ?? { ...DEFAULT_SUBTITLE_PREFERENCES },
@@ -136,6 +139,8 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     hostSocketId,
     mediaItemId,      // null until a title is chosen in the lobby
     mediaSourceId,
+    externalMedia: null,
+    externalAds: new Set(),
     playback: null,   // normalized PlaybackInfo for the current title
     playbackRevision: 0,
     subtitlePreferences: { ...DEFAULT_SUBTITLE_PREFERENCES },
@@ -236,6 +241,7 @@ export function removeGuest(session, userId) {
   const idx = session.guests.findIndex(g => g.userId === userId)
   if (idx === -1) return null
   const [g] = session.guests.splice(idx, 1)
+  session.externalAds?.delete(userId)
   return g
 }
 
@@ -360,6 +366,7 @@ export function publicSession(session) {
     stage: session.stage,
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
+    externalMedia: session.externalMedia,
     playback,
     playbackRevision: session.playbackRevision,
     guests: session.guests.map(publicMember),
@@ -401,18 +408,26 @@ export function authorizeSyncCommand(session, command) {
 export function beginMediaGeneration(session) {
   session.mediaGeneration++
   session.stalled.clear()
+  session.externalAds?.clear()
   session.seenCommandIds.clear()
   return session.mediaGeneration
 }
 
-export function applyStallReport(session, userId, { stalled = false, mediaGeneration } = {}) {
+export function applyStallReport(session, userId, { stalled = false, mediaGeneration, ad = false } = {}) {
   if (mediaGeneration !== session.mediaGeneration) return false
+  let adChanged = false
+  if (session.externalMedia && session.externalAds) {
+    const wasAd = session.externalAds.has(userId)
+    if (ad === true) session.externalAds.add(userId)
+    else session.externalAds.delete(userId)
+    adChanged = wasAd !== session.externalAds.has(userId)
+  }
   if (!stalled) {
-    return session.stalled.delete(userId)
+    return session.stalled.delete(userId) || adChanged
   }
   const before = session.stalled.size
   session.stalled.add(userId)
-  return session.stalled.size !== before
+  return session.stalled.size !== before || adChanged
 }
 
 export function allSessions() {

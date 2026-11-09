@@ -58,7 +58,7 @@ COPY shared/ /build/shared/
 # /build/shared — to restore the same resolution path deliberately.
 COPY --from=server-deps /build/node_modules /build/node_modules
 
-RUN npm run build
+RUN npm run build && npm run build:extension
 
 # ── Stage 3: runtime ──────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS runtime
@@ -82,6 +82,7 @@ COPY --chown=node:node package.json ./
 COPY --chown=node:node server/ ./server/
 COPY --chown=node:node shared/ ./shared/
 COPY --from=client-build --chown=node:node /build/client/dist ./client/dist
+COPY --from=client-build --chown=node:node /build/client/extension/watchparty-youtube.zip ./client/extension/watchparty-youtube.zip
 
 # Created in the image (not left to the bind mount) so it also runs without
 # volumes — e.g. a CI smoke test.

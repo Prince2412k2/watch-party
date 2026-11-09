@@ -66,6 +66,7 @@ const shapeMovieLookup = (m) => ({
   images: shapeImages('radarr', m.images), hasFile: !!m.hasFile, monitored: !!m.monitored, id: m.id ?? null,
 })
 const shapeMovie = (m) => ({
+  ...shapeMovieLookup(m),
   id: m.id, tmdbId: m.tmdbId, title: m.title, year: m.year, hasFile: !!m.hasFile,
   monitored: !!m.monitored, sizeOnDisk: m.sizeOnDisk, status: m.status,
   qualityProfileId: m.qualityProfileId,
@@ -112,6 +113,9 @@ const shapeSeriesLookup = (s) => ({
   seasons: Array.isArray(s.seasons) ? s.seasons.map(shapeSeason) : [],
 })
 const shapeSeries = (s) => ({
+  ...shapeSeriesLookup(s),
+  episodeFileCount: s.statistics?.episodeFileCount ?? 0,
+  episodeCount: s.statistics?.episodeCount ?? 0,
   id: s.id, tvdbId: s.tvdbId, title: s.title, year: s.year, status: s.status,
   monitored: !!s.monitored, seasonCount: s.statistics?.seasonCount ?? s.seasons?.length,
   sizeOnDisk: s.statistics?.sizeOnDisk, qualityProfileId: s.qualityProfileId,

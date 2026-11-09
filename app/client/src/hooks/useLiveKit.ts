@@ -13,7 +13,7 @@ export interface LiveKitParticipantView {
   isSpeaking: boolean
 }
 
-export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enabled?: boolean } = {}) {
+export function useLiveKit({ partyId, enabled = true, tokenEndpoint = '/api/livekit/token', authToken }: { partyId?: string; enabled?: boolean; tokenEndpoint?: string; authToken?: string } = {}) {
   const roomRef = useRef<Room | null>(null)
   const [revision, setRevision] = useState(0)
   const desired = useRef({ camera: false, mic: false })
@@ -62,7 +62,10 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
     const clearAudio = () => { for (const value of attachedAudio.values()) { value.track.detach(value.element); value.element.remove() }; attachedAudio.clear() }
     async function connect() {
       try {
-        const res = await fetch(`/api/livekit/token?partyId=${partyId}`, { credentials: 'include', signal: run.signal })
+        const res = await fetch(`${tokenEndpoint}?partyId=${encodeURIComponent(partyId!)}`, {
+          credentials: authToken ? 'omit' : 'include', signal: run.signal,
+          ...(authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}),
+        })
         if (!res.ok) throw new Error('Failed to get LiveKit token')
         const payload = await apiJson(res)
         if (run.cancelled) return
@@ -166,7 +169,7 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
       setMicOn(false)
       setAudioBlocked(false)
     }
-  }, [partyId, enabled, flagError, revision])
+  }, [partyId, enabled, flagError, revision, tokenEndpoint, authToken])
 
   // WebRTC audio processing applied to the PUBLISHED mic track. Echo
   // cancellation is the backstop against the "mic picks up movie audio → echo"
@@ -231,9 +234,27 @@ export function useLiveKit({ partyId, enabled = true }: { partyId?: string; enab
     }
   }
 
+  async function switchDevice(kind: 'audioinput' | 'videoinput' | 'audiooutput', deviceId: string) {
+    if (!roomRef.current) { flagError('Not connected to the room yet.'); return }
+    try {
+      if (!deviceId) {
+        const devices = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === kind)
+        deviceId = devices.find(device => device.deviceId === 'default')?.deviceId ?? devices[0]?.deviceId ?? ''
+        if (!deviceId) return
+      }
+      await roomRef.current.switchActiveDevice(kind, deviceId, false)
+    }
+    catch (error) { flagError(error instanceof Error ? error.message : 'Could not change device') }
+  }
+
+  function setParticipantVolume(identity: string, volume: number) {
+    roomRef.current?.remoteParticipants.get(identity)?.setVolume(Math.max(0, Math.min(1, volume)))
+  }
+
   return {
     participants, localParticipant, camOn, micOn, enableCamera, enableMic, error,
-    audioBlocked, startAudio, reconnect,
+    connected: localParticipant !== null,
+    audioBlocked, startAudio, reconnect, switchDevice, setParticipantVolume,
     // Lets a wrapper around enableCamera/enableMic (the player's authoring
     // guard) push its own failure into the SAME visible banner instead of
     // dropping it on the floor.

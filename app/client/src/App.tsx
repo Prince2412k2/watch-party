@@ -28,6 +28,8 @@ const DesktopApp = lazy(() => import('./pages/DesktopApp'))
 const Profile = lazy(() => import('./pages/Profile'))
 const SavedMovies = lazy(() => import('./pages/SavedMovies'))
 const Converter = lazy(() => import('./pages/Converter'))
+const ServarrBrowser = lazy(() => import('./pages/ServarrBrowser'))
+const ExtensionConnect = lazy(() => import('./pages/ExtensionConnect'))
 
 /* Splitting routes into chunks introduces one failure mode a single bundle did
  * not have: after a redeploy, an open tab still holds the previous index.html and
@@ -79,9 +81,11 @@ function useRoute() {
 
 function Router() {
   const { user, loading } = useAuth()
+  const path = useRoute()
 
   if (loading) return <RouteLoading />
   if (!user) return <UnauthenticatedRouter />
+  if (path === '/extension') return <Suspense fallback={<RouteLoading />}><ExtensionConnect /></Suspense>
 
   return (
     <PartyProvider userId={user.userId}>
@@ -144,6 +148,7 @@ function BrowseRoute({ path, user }: { path: string; user: NonNullable<ReturnTyp
   // Installer downloads must remain reachable from any device size.
   if (path === '/desktop-app') return <Suspense fallback={<RouteLoading />}><DesktopApp /></Suspense>
   if (path === '/saved') return <Suspense fallback={<RouteLoading />}><SavedMovies /></Suspense>
+  if (path === '/servarr') return <Suspense fallback={<RouteLoading />}><ServarrBrowser /></Suspense>
   if (path === '/converter' && user.isAdmin) return <Suspense fallback={<RouteLoading />}><Converter /></Suspense>
 
   // One profile editor for both device sizes — it is a full-screen page on each,

@@ -63,6 +63,7 @@ import { registerProfileRoutes } from './profile.js'
 import { registerAvatarRoutes } from './avatar.js'
 import { registerConverterRoutes } from './converter.js'
 import { registerOfflineRoutes } from './offline.js'
+import { extensionIdentity, registerExtensionRoutes, parseExternalMedia, EXTERNAL_RATES } from './extension.js'
 import { resolveMediaSourceId, getItemDetail } from './jellyfin.js'
 
 // Fail fast: never run in production with a missing or default session secret.
@@ -353,6 +354,24 @@ app.post('/api/auth/logout', logout)
 // Rate-limited like login: it takes the current password, so it is a place
 // someone can guess one.
 app.post('/api/auth/password', loginRateLimit, requireAuth, password)
+registerExtensionRoutes(app, { rateLimit: loginRateLimit, onRevoke: deviceId => {
+  const affected = new Map()
+  for (const socket of [...io.sockets.sockets.values()]) {
+    if (!socket.extensionClient || socket.user.deviceId !== deviceId) continue
+    const party = getSession(socket.partyId)
+    if (party) {
+      const revokeTokenTs = BigInt(Math.floor(Date.now() / 1000) + 1)
+      party.livekitRevokedBefore.set(socket.user.userId, Number(revokeTokenTs))
+      persistSession(party)
+      affected.set(`${party.id}:${socket.user.userId}`, { partyId: party.id, userId: socket.user.userId, revokeTokenTs })
+    }
+    socket.disconnect(true)
+  }
+  for (const { partyId, userId, revokeTokenTs } of affected.values()) {
+    if (livekitRoomService) void livekitRoomService.removeParticipant(partyId, userId, { revokeTokenTs })
+      .catch(error => console.warn('livekit: revoked extension eviction failed:', error.message))
+  }
+} })
 registerLibraryRoutes(app)
 registerSubtitleRoutes(app, io, { enqueuePlaybackMutation })
 registerLiveKitRoutes(app)
@@ -408,6 +427,13 @@ if (process.env.SERVE_CLIENT === '1') {
 // ── Socket.io auth middleware ─────────────────────────────────────────────
 
 io.use((socket, next) => {
+  if (socket.handshake.auth?.extensionToken) {
+    const user = extensionIdentity(socket.handshake.auth.extensionToken)
+    if (!user) return next(new Error('Extension pairing expired or revoked'))
+    socket.user = user
+    socket.extensionClient = true
+    return next()
+  }
   const jf = socket.request.session?.jellyfin
   if (!jf) return next(new Error('unauthenticated'))
   socket.user = { userId: jf.userId, name: jf.name, token: jf.accessToken, deviceId: jf.deviceId }
@@ -418,6 +444,24 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   const { userId, name, token, deviceId } = socket.user
+  // Extension credentials grant external rooms only, never Jellyfin APIs/media.
+  socket.use(([event, _payload, ack], next) => {
+    if (socket.extensionClient && !extensionIdentity(socket.handshake.auth.extensionToken)) {
+      if (typeof ack === 'function') ack({ error: 'Extension pairing expired or revoked' })
+      socket.disconnect(true)
+      return
+    }
+    if (socket.extensionClient && ['party:selectMedia', 'party:setPlaybackTracks', 'party:backToLobby'].includes(event)) {
+      if (typeof ack === 'function') ack({ error: 'Use the Watch Party app for Jellyfin playback' })
+      return
+    }
+    const existing = socket.extensionClient && findSessionByUser(userId)
+    if (existing && !existing.externalMedia && !['clock:ping', 'party:resume', 'party:join', 'party:create'].includes(event)) {
+      if (typeof ack === 'function') ack({ error: 'This account is in a Jellyfin party. Leave it in Watch Party first.' })
+      return
+    }
+    next()
+  })
 
   const partySocketsForUser = (targetId, partyId) => indexedSockets(partySocketIndex, targetId, partyId)
 
@@ -442,6 +486,7 @@ io.on('connection', (socket) => {
   socket.on('party:resume', (_payload, ack) => {
     const sess = findSessionForMember(userId)
     if (!sess) return ack?.({ session: null })
+    if (!!sess.externalMedia !== !!socket.extensionClient) return ack?.({ session: null })
     setSocketParticipation(socket, { partyId: sess.id })
     if (sess.originalHostId === userId && sess.hostId !== userId) {
       supersedeMediaSelection(sess)
@@ -468,10 +513,13 @@ io.on('connection', (socket) => {
   })
 
   // party:create ────────────────────────────────────────────────────────────
-  socket.on('party:create', async ({ mediaItemId = null, mediaSourceId: requestedSourceId = null, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
+  socket.on('party:create', async ({ mediaItemId = null, mediaSourceId: requestedSourceId = null, audioStreamIndex = null, resumePositionTicks = 0, externalMedia = null } = {}, ack) => {
     let sess = null
     try {
       if (findSessionByUser(userId)) return ack?.({ error: 'already in a party' })
+      const external = parseExternalMedia(externalMedia)
+      if (socket.extensionClient && (!external || mediaItemId)) return ack?.({ error: 'A valid YouTube video is required' })
+      if (!socket.extensionClient && externalMedia) return ack?.({ error: 'Use the YouTube extension to create this party' })
       // Room can start empty (lobby) — media is optional at creation.
       let mediaSourceId = null
       if (mediaItemId) {
@@ -485,6 +533,14 @@ io.on('connection', (socket) => {
         hostSocketId: socket.id, mediaItemId, mediaSourceId,
       })
       setSocketParticipation(socket, { partyId: sess.id })
+      if (external) {
+        sess.externalMedia = external
+        sess.stage = 'watching'
+        sess.syncMode = 'hopping'
+        beginMediaGeneration(sess)
+        sess.pos = Number.isSafeInteger(resumePositionTicks) && resumePositionTicks > 0 ? resumePositionTicks : 0
+        setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'paused' })
+      }
       if (mediaItemId) {
         await refreshPlayback(sess, {
           token, userId, itemId: mediaItemId, mediaSourceId,
@@ -515,6 +571,7 @@ io.on('connection', (socket) => {
   socket.on('party:join', ({ partyId } = {}, ack) => {
     const sess = getSession(partyId)
     if (!sess) return ack?.({ error: 'party not found' })
+    if (!!sess.externalMedia !== !!socket.extensionClient) return ack?.({ error: sess.externalMedia ? 'Join this party using the YouTube extension' : 'Join this party in the Watch Party app' })
     const current = findSessionByUser(userId)
     if (current && current.id !== sess.id) return ack?.({ error: 'already in a party' })
 
@@ -745,6 +802,31 @@ io.on('connection', (socket) => {
 
   const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl
 
+  socket.on('party:selectExternalMedia', (payload, ack) => {
+    const sess = getSession(socket.partyId)
+    const media = parseExternalMedia(payload)
+    if (!socket.extensionClient || !sess?.externalMedia || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    if (!media) return ack?.({ error: 'Invalid YouTube video' })
+    sess.externalMedia = media
+    beginMediaGeneration(sess)
+    resetTimeline(sess)
+    persistSession(sess)
+    io.to(sess.id).emit('party:state', publicSession(sess))
+    ack?.({ ok: true })
+  })
+
+  socket.on('party:setExternalPlaybackRate', ({ rate } = {}, ack) => {
+    const sess = getSession(socket.partyId)
+    if (!socket.extensionClient || !sess?.externalMedia || !canDrive(sess)) return ack?.({ error: 'not allowed' })
+    if (!EXTERNAL_RATES.includes(rate)) return ack?.({ error: 'Invalid playback speed' })
+    sess.pos = livePositionTicks(sess)
+    sess.externalMedia.playbackRate = rate
+    if (sess.intent.playing) startSegment(sess, Date.now())
+    else setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: 'paused' })
+    io.to(sess.id).emit('party:state', publicSession(sess))
+    ack?.({ ok: true })
+  })
+
   // party:selectMedia — a title was chosen in the lobby → enter watching stage
   socket.on('party:selectMedia', async ({ mediaItemId, mediaSourceId: requestedSourceId = null, audioStreamIndex = null, resumePositionTicks = 0 } = {}, ack) => {
     const sess = findSessionForMember(userId)
@@ -883,6 +965,10 @@ io.on('connection', (socket) => {
   // omitting it (older/legacy clients) falls back to plain last-writer-wins, so
   // this stays backward-compatible without a protocol bump.
   function acceptSyncCommand(sess, payload, ack, kind) {
+    if (sess.externalMedia && payload?.mediaGeneration !== sess.mediaGeneration) {
+      ack?.({ error: 'media changed' })
+      return null
+    }
     const parsed = validateSyncCommand(payload)
     if (parsed.error) { ack?.({ error: parsed.error }); return null }
     const authorized = authorizeSyncCommand(sess, parsed.value)
@@ -1119,11 +1205,11 @@ function resetTimeline(sess) {
 function livePositionTicks(sess) {
   const s = sess.schedule
   if (s.paused || s.phase !== 'playing') return s.positionTicks
-  return Math.max(0, s.positionTicks + (Date.now() - s.t0) * TICKS_PER_MS)
+  return Math.max(0, s.positionTicks + (Date.now() - s.t0) * TICKS_PER_MS * (s.rate ?? 1))
 }
 
 function gated(sess) {
-  return sess.syncMode === 'dragging' && sess.stalled.size > 0
+  return sess.externalAds?.has(sess.hostId) || (sess.syncMode === 'dragging' && sess.stalled.size > 0)
 }
 
 // Begin (or restart) a play segment from sess.pos, unless readiness gates it.
@@ -1135,7 +1221,7 @@ function startSegment(sess, t0) {
   }
   sess.effPlaying = true
   sess.playT0 = t0
-  setSchedule(sess, { positionTicks: sess.pos, t0, rate: 1, paused: false, phase: 'playing' })
+  setSchedule(sess, { positionTicks: sess.pos, t0, rate: sess.externalMedia?.playbackRate ?? 1, paused: false, phase: 'playing' })
 }
 
 // Re-evaluate the effective schedule against intent + readiness (stall changes).
@@ -1147,7 +1233,7 @@ function reconcile(sess) {
     startSegment(sess, Date.now())              // all clear → resume from frozen pos
   } else if (!shouldPlay && sess.effPlaying) {
     // freeze where we are (media didn't advance while we wait)
-    sess.pos = Math.max(0, sess.pos + (Date.now() - sess.playT0) * TICKS_PER_MS)
+    sess.pos = livePositionTicks(sess)
     sess.effPlaying = false
     setSchedule(sess, { positionTicks: sess.pos, t0: 0, rate: 0, paused: true, phase: g ? 'stalled' : 'paused' })
   } else if (!sess.effPlaying) {

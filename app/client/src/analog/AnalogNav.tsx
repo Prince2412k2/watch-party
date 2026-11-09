@@ -9,7 +9,7 @@ import { AnIcon, type AnIconName } from './icons.tsx'
  * selection must never rely on colour alone.
  */
 
-export type AnalogMode = 'home' | 'movies' | 'shows' | 'discover' | 'downloads' | 'saved'
+export type AnalogMode = 'home' | 'movies' | 'shows' | 'discover' | 'downloads' | 'saved' | 'servarr'
 
 interface ModeSpec {
   id: AnalogMode
@@ -22,6 +22,7 @@ export const ANALOG_MODES: readonly ModeSpec[] = [
   { id: 'home', label: 'Home', href: '/movies', icon: 'home' },
   { id: 'movies', label: 'Movies', href: '/movies', icon: 'film' },
   { id: 'shows', label: 'Shows', href: '/series', icon: 'tv' },
+  { id: 'servarr', label: 'Services', href: '/servarr', icon: 'film' },
   { id: 'discover', label: 'Discover', href: '/discover', icon: 'compass' },
   { id: 'saved', label: 'Saved', href: '/saved', icon: 'download' },
   { id: 'downloads', label: 'Downloads', href: '/downloads', icon: 'download' },

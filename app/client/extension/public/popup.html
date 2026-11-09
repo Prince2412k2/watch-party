@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Watch Party setup</title><link rel="stylesheet" href="popup.css"></head><body>
+<h1>Watch Party</h1><p>Connect your server. Then watch together on YouTube.</p>
+<form id="pair-form"><label for="server">Watch Party server</label><input id="server" type="url" placeholder="https://watch.example.com" required>
+<button id="open-pair" type="button">Open pairing page</button>
+<label for="code">Pairing code</label><input id="code" autocomplete="off" placeholder="Paste code from Watch Party" required>
+<button id="pair" type="submit">Pair extension</button></form>
+<p id="status" role="status"></p><button id="youtube" type="button">Open YouTube</button><button id="disconnect" type="button" hidden>Forget this pairing</button>
+<script src="popup.js"></script></body></html>
