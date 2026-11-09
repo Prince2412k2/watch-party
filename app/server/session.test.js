@@ -150,6 +150,22 @@ test('create, save, reload, and delete preserve only durable state', async () =>
   }
 })
 
+test('legacy YouTube rooms gain a canonical URL and retain durable control grants on reload', async () => {
+  const sess = fresh()
+  sess.externalMedia = { provider: 'youtube', videoId: 'dQw4w9WgXcQ', title: 'Legacy video', playbackRate: 1 }
+  sess.controllers.add('guest')
+  try {
+    persistSession(sess)
+    const restored = await import(`./session.js?youtube-migration=${Date.now()}`)
+    const loaded = restored.getSession(sess.id)
+    assert.equal(loaded.externalMedia.url, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+    assert.match(loaded.inviteCode, /^[A-F0-9]{12}$/)
+    assert.deepEqual([...loaded.controllers], ['guest'])
+    clearTimeout(loaded.hostDisconnectTimer)
+    restored.deleteSession(sess.id)
+  } finally { deleteSession(sess.id) }
+})
+
 test('randomConnectedGuest selects only connected guests', () => {
   const sess = fresh()
   try {

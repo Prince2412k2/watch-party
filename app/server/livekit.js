@@ -11,6 +11,7 @@ export function registerLiveKitRoutes(app) {
     const session = getSession(partyId)
     if (!session) return res.status(404).json({ error: 'party not found' })
     if (req.extensionUser && !session.externalMedia) return res.status(403).json({ error: 'not an extension party' })
+    if (req.extensionUser?.extensionPartyId && req.extensionUser.extensionPartyId !== session.id) return res.status(403).json({ error: 'not a party member' })
     if (!isMember(session, userId) && session.hostId !== userId) {
       return res.status(403).json({ error: 'not a party member' })
     }

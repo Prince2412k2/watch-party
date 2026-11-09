@@ -84,8 +84,8 @@ function Router() {
   const path = useRoute()
 
   if (loading) return <RouteLoading />
-  if (!user) return <UnauthenticatedRouter />
   if (path === '/extension') return <Suspense fallback={<RouteLoading />}><ExtensionConnect /></Suspense>
+  if (!user) return <UnauthenticatedRouter />
 
   return (
     <PartyProvider userId={user.userId}>

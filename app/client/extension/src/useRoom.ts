@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { acceptsSchedule, type SyncSchedule } from '../../src/sync/syncCore.ts'
-import { bridge, isPlayerState, isSession, playbackPlan, timelinePosition, TICKS, type Connection, type Message, type PlayerState, type Session } from './core.ts'
+import { bridge, canControl, isPlayerState, isSession, playbackPlan, timelinePosition, TICKS, type Connection, type Message, type PlayerState, type Session, type Setup } from './core.ts'
 
 export interface Settings { gentle: boolean; tolerance: number; followVideo: boolean; showSelf: boolean; tileSize: number; opacity: number; dock: 'left' | 'right'; chatSize: number; hideCameras: boolean; voiceVolume: number; cameraId: string; micId: string; speakerId: string }
-export const defaults: Settings = { gentle: true, tolerance: .25, followVideo: true, showSelf: true, tileSize: 120, opacity: 1, dock: 'right', chatSize: 13, hideCameras: false, voiceVolume: .8, cameraId: '', micId: '', speakerId: '' }
+export const defaults: Settings = { gentle: true, tolerance: .25, followVideo: true, showSelf: true, tileSize: 168, opacity: 1, dock: 'right', chatSize: 14, hideCameras: false, voiceVolume: .8, cameraId: '', micId: '', speakerId: '' }
 
 export function useRoom(settings: Settings) {
   const [connection, setConnection] = useState<Connection | null>(null)
+  const [setup, setSetup] = useState<Setup | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [connected, setConnected] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
@@ -25,6 +26,9 @@ export function useRoom(settings: Settings) {
   const pendingUntil = useRef(0)
   const tabId = useRef<number | null>(null)
   const lastStall = useRef('')
+  const followingUrl = useRef('')
+  const restored = useRef<{ id: string; canControl?: boolean } | null>(null)
+  const publishingUrl = useRef('')
 
   const request = useCallback((event: string, payload: Record<string, unknown> = {}): Promise<Record<string, any>> => new Promise((resolve, reject) => {
     if (!socket.current?.connected) { reject(new Error('Reconnecting to Watch Party…')); return }
@@ -38,7 +42,11 @@ export function useRoom(settings: Settings) {
   const accept = useCallback((next: unknown) => {
     if (!isSession(next)) return false
     const previous = state.current.session
-    if (previous?.id !== next.id) schedule.current = null
+    const ownId = state.current.connection?.user.userId
+    const ownPage = state.current.player?.url
+    const returningController = !previous && restored.current?.id === next.id && restored.current.canControl
+    if (ownPage !== next.externalMedia.url && ((previous && previous.externalMedia.url !== next.externalMedia.url) || (!previous && next.hostId !== ownId && !returningController))) followingUrl.current = next.externalMedia.url
+    if (previous?.id !== next.id) { schedule.current = null; bridge({ type: 'open' }) }
     state.current.session = next
     setSession(next); setWaiting(false)
     const current = schedule.current
@@ -47,17 +55,22 @@ export function useRoom(settings: Settings) {
       force.current = true
     }
     lastStall.current = ''
-    void chrome.storage.local.set({ activeParty: { id: next.id, server: state.current.connection?.server, userId: state.current.connection?.user.userId, tabId: tabId.current } })
+    void chrome.storage.local.set({ activeParty: { id: next.id, server: state.current.connection?.server, userId: state.current.connection?.user.userId, tabId: tabId.current, canControl: canControl(next, ownId) } })
     return true
   }, [])
 
   useEffect(() => {
-    void Promise.all([chrome.storage.local.get<{ connection?: Connection }>('connection'), chrome.runtime.sendMessage({ type: 'watchparty-context' })]).then(([stored, context]) => {
+    void Promise.all([chrome.storage.local.get<{ connection?: Connection; setup?: Setup; activeParty?: { id: string; canControl?: boolean } }>(['connection', 'setup', 'activeParty']), chrome.runtime.sendMessage({ type: 'watchparty-context' })]).then(async ([stored, context]) => {
       tabId.current = context?.tabId ?? null
+      restored.current = stored.activeParty ?? null
+      const follow = await chrome.storage.session.get<{ [key: string]: string }>(`follow-${tabId.current}`)
+      followingUrl.current = follow[`follow-${tabId.current}`] ?? ''
+      setSetup(stored.setup ?? (stored.connection ? { server: stored.connection.server, name: stored.connection.user.name } : null))
       setConnection(stored.connection ?? null); setLoaded(true)
     }).catch(() => { setError('Could not load extension settings. Reload this YouTube tab.'); setLoaded(true) })
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === 'local' && changes.connection) setConnection((changes.connection.newValue as Connection | undefined) ?? null)
+      if (area === 'local' && changes.setup) setSetup((changes.setup.newValue as Setup | undefined) ?? null)
     }
     chrome.storage.onChanged.addListener(changed)
     return () => chrome.storage.onChanged.removeListener(changed)
@@ -77,6 +90,7 @@ export function useRoom(settings: Settings) {
       setConnected(true); setError(''); clock.current = { offset: 0, rtt: Infinity, ready: false }
       void chrome.storage.local.get<{ activeParty?: { id: string; tabId: number; server: string; userId: string } }>('activeParty').then(({ activeParty }) => {
         if (!alive || activeParty?.tabId !== tabId.current || activeParty?.server !== connection.server || activeParty?.userId !== connection.user.userId) return
+        restored.current = activeParty
         transport.emit('party:join', { partyId: activeParty.id }, (result: Record<string, any>) => {
           if (!alive) return
           if (result.error) { clearRoom(); setError(result.error) }
@@ -129,7 +143,7 @@ export function useRoom(settings: Settings) {
     const current = state.current
     const room = current.session
     if (!room || !current.player || current.player.videoId !== room.externalMedia.videoId) return
-    if (room.hostId !== current.connection?.user.userId && !room.collaborativeControl) { force.current = true; return }
+    if (!canControl(room, current.connection?.user.userId)) { force.current = true; return }
     pendingUntil.current = Date.now() + 1500
     try {
       if (action === 'rate') await request('party:setExternalPlaybackRate', { rate })
@@ -143,7 +157,7 @@ export function useRoom(settings: Settings) {
 
   useEffect(() => {
     const receive = (event: MessageEvent) => {
-      if (event.source !== window.parent || event.origin !== 'https://www.youtube.com' || event.data?.source !== 'watchparty-youtube') return
+      if (!event.isTrusted || event.source !== window.parent || event.origin !== 'https://www.youtube.com' || event.data?.source !== 'watchparty-youtube') return
       const data = event.data
       if (isPlayerState(data)) {
         const snapshot = { ...data, observedAt: Date.now() }
@@ -157,12 +171,46 @@ export function useRoom(settings: Settings) {
     return () => window.removeEventListener('message', receive)
   }, [command])
 
+  const followRoom = useCallback(async () => {
+    const target = state.current.session?.externalMedia.url
+    if (!target) return
+    followingUrl.current = target
+    await request('party:navigating')
+    await chrome.storage.session.set({ [`follow-${tabId.current}`]: target })
+    if (state.current.session?.externalMedia.url === target) bridge({ type: 'navigate', url: target })
+  }, [request])
+
+  useEffect(() => {
+    if (!session || !player || !connection || !connected) return
+    if (player.url === session.externalMedia.url) {
+      followingUrl.current = ''
+      void chrome.storage.session.remove(`follow-${tabId.current}`)
+      return
+    }
+    if (followingUrl.current || !canControl(session, connection.user.userId)) {
+      void followRoom().catch(error => setError(error.message))
+      return
+    }
+    const url = player.url
+    if (publishingUrl.current === url) return
+    const timer = setTimeout(() => {
+      publishingUrl.current = url
+      const latest = state.current.player
+      if (latest?.url !== url) { publishingUrl.current = ''; return }
+      void request('party:selectExternalMedia', { provider: 'youtube', url, title: latest.title, position: latest.ad ? 0 : latest.position })
+        .catch(error => setError(error.message))
+        .finally(() => { publishingUrl.current = '' })
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [session?.id, session?.externalMedia.url, session?.controllers.join(','), session?.collaborativeControl, player?.url, connected, connection?.user.userId, followRoom, request])
+
   useEffect(() => {
     let heartbeat = 0
     const timer = setInterval(() => {
       const { session, player, connection, settings } = state.current
       const timeline = schedule.current
       if (!session || !player || !connection || !timeline || !socket.current?.connected) return
+      if (!session.externalMedia.videoId) return
       const matched = player.videoId === session.externalMedia.videoId
       const stalled = !matched || player.ad || (!player.ready && player.buffered < .5)
       const ad = player.ad && matched
@@ -188,16 +236,17 @@ export function useRoom(settings: Settings) {
 
   async function create() {
     const player = state.current.player
-    if (!player?.available || player.live) throw new Error('Open a standard YouTube video first. Live streams are not supported yet.')
-    const result = await request('party:create', { externalMedia: { provider: 'youtube', videoId: player.videoId, title: player.title }, resumePositionTicks: Math.round(player.position * TICKS) })
+    if (!state.current.connection?.user.isAdmin) throw new Error('Sign in as admin in the extension setup to create party codes.')
+    const result = await request('party:create', { externalMedia: { provider: 'youtube', url: player?.url ?? 'https://www.youtube.com/', title: player?.title ?? 'YouTube' }, resumePositionTicks: Math.round((player?.position ?? 0) * TICKS) })
     accept(result.session)
   }
-  async function join(partyId: string) {
-    const result = await request('party:join', { partyId: partyId.trim().toUpperCase() })
-    if (result.status === 'waiting') {
-      setWaiting(true)
-      await chrome.storage.local.set({ activeParty: { id: partyId.trim().toUpperCase(), server: connection?.server, userId: connection?.user.userId, tabId: tabId.current } })
-    } else accept(result.session)
+  async function join(code: string) {
+    const server = setup?.server ?? connection?.server
+    if (!server) throw new Error('Save your server URL in the extension toolbar popup first.')
+    const response = await fetch(`${server}/api/extension/join-invite`, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name: setup?.name, token: connection?.server === server ? connection.token : undefined }) })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.error || 'Could not join party')
+    await chrome.storage.local.set({ connection: { server, token: result.token, user: result.user, expiresAt: result.expiresAt }, activeParty: { id: result.partyId, server, userId: result.user.userId, tabId: tabId.current, canControl: false } })
   }
   async function leave() {
     await request(session?.hostId === connection?.user.userId ? 'party:end' : 'party:leave')
@@ -208,5 +257,5 @@ export function useRoom(settings: Settings) {
     const result = await request('party:resume')
     accept(result.session)
   }
-  return { connection, loaded, connected, session, waiting, messages, player, error, setError, drift, request, command, create, join, leave, refresh }
+  return { connection, setup, loaded, connected, session, waiting, messages, player, error, setError, drift, request, command, create, join, leave, refresh, followRoom }
 }

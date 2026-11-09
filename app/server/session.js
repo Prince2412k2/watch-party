@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto'
+import { randomUUID, randomBytes } from 'crypto'
 import { loadParties, removeParty, saveParty } from './party-store.js'
 import { getProfile } from './profile-store.js'
 
@@ -54,6 +54,8 @@ function durableState(session) {
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
     externalMedia: session.externalMedia,
+    inviteCode: session.inviteCode,
+    controllers: [...session.controllers],
     playback: session.playback,
     playbackRevision: session.playbackRevision,
     subtitlePreferences: session.subtitlePreferences,
@@ -85,7 +87,9 @@ function runtimeState(saved) {
     hostSocketId: null,
     mediaItemId: saved.mediaItemId ?? null,
     mediaSourceId: saved.mediaSourceId ?? null,
-    externalMedia: saved.externalMedia ?? null,
+    externalMedia: saved.externalMedia ? { ...saved.externalMedia, url: saved.externalMedia.url ?? `https://www.youtube.com/watch?v=${saved.externalMedia.videoId}` } : null,
+    inviteCode: saved.inviteCode ?? (saved.externalMedia ? randomBytes(6).toString('hex').toUpperCase() : null),
+    controllers: new Set(saved.controllers ?? []),
     externalAds: new Set(),
     playback: saved.playback ?? null,
     playbackRevision: saved.playbackRevision ?? 0,
@@ -140,6 +144,8 @@ export function createSession({ hostId, hostToken, hostDeviceId, hostName, hostS
     mediaItemId,      // null until a title is chosen in the lobby
     mediaSourceId,
     externalMedia: null,
+    inviteCode: null,
+    controllers: new Set(),
     externalAds: new Set(),
     playback: null,   // normalized PlaybackInfo for the current title
     playbackRevision: 0,
@@ -367,6 +373,8 @@ export function publicSession(session) {
     mediaItemId: session.mediaItemId,
     mediaSourceId: session.mediaSourceId,
     externalMedia: session.externalMedia,
+    inviteCode: session.externalMedia ? session.inviteCode : null,
+    controllers: session.externalMedia ? [...session.controllers] : [],
     playback,
     playbackRevision: session.playbackRevision,
     guests: session.guests.map(publicMember),

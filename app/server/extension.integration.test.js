@@ -20,9 +20,17 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   await new Promise(resolve => probe.close(resolve))
   const base = `http://127.0.0.1:${port}`
   const scratch = mkdtempSync(join(tmpdir(), 'watchparty-extension-'))
+  const accounts = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk
+    const body = JSON.parse(raw || '{}')
+    res.setHeader('content-type', 'application/json')
+    if (body.Pw !== 'correct-password') { res.writeHead(401); res.end('{}'); return }
+    res.end(JSON.stringify({ AccessToken: 'upstream-test-token', User: { Id: body.Username === 'admin' ? 'youtube-admin' : 'youtube-nonadmin', Name: body.Username, Policy: { IsAdministrator: body.Username === 'admin' } } }))
+  })
+  accounts.listen(0, '127.0.0.1'); await once(accounts, 'listening')
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: join(import.meta.dirname, '..'),
-    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', WP_TEST_MODE: '1', SESSION_SECRET: 'extension-integration-secret', SESSION_STORE_DIR: join(scratch, 'sessions'), PARTY_DB_PATH: join(scratch, 'parties.sqlite'), LIVEKIT_API_KEY: 'extension-test', LIVEKIT_API_SECRET: 'extension-test-secret-with-entropy', LIVEKIT_URL: 'ws://127.0.0.1:1', LIVEKIT_PUBLIC_URL: `ws://127.0.0.1:${port}/livekit` },
+    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', WP_TEST_MODE: '1', JELLYFIN_URL: `http://127.0.0.1:${accounts.address().port}`, SESSION_SECRET: 'extension-integration-secret', SESSION_STORE_DIR: join(scratch, 'sessions'), PARTY_DB_PATH: join(scratch, 'parties.sqlite'), LIVEKIT_API_KEY: 'extension-test', LIVEKIT_API_SECRET: 'extension-test-secret-with-entropy', LIVEKIT_URL: 'ws://127.0.0.1:1', LIVEKIT_PUBLIC_URL: `ws://127.0.0.1:${port}/livekit` },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
@@ -32,6 +40,7 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   t.after(async () => {
     for (const socket of sockets) socket.disconnect()
     if (child.exitCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited }
+    await new Promise(resolve => accounts.close(resolve))
     rmSync(scratch, { recursive: true, force: true })
   })
   let ready = false
@@ -47,7 +56,7 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
     return { response, body: await response.json() }
   }
   async function account(name) {
-    const { response, body } = await post('/api/auth/test-login', { name })
+    const { response, body } = name === 'YouTube Host' ? await post('/api/auth/login', { username: 'admin', password: 'correct-password' }) : await post('/api/auth/test-login', { name })
     return { user: body, cookie: response.headers.get('set-cookie').split(';')[0] }
   }
   async function pair(account) {
@@ -73,6 +82,13 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   const guestToken = await pair(guestAccount)
   const host = await connect({ auth: { extensionToken: hostToken } })
   const guest = await connect({ auth: { extensionToken: guestToken } })
+  assert.equal((await post('/api/extension/login', { username: 'admin', password: 'wrong' })).response.status, 401)
+  assert.equal((await post('/api/extension/login', { username: 'viewer', password: 'correct-password' })).response.status, 403)
+  const adminLogin = await post('/api/extension/login', { username: 'admin', password: 'correct-password' })
+  assert.equal(adminLogin.response.status, 200)
+  assert.equal(adminLogin.body.user.isAdmin, true)
+  assert.equal(adminLogin.body.password, undefined)
+  assert.ok((await ack(guest, 'party:create', { externalMedia: media })).error, 'guests cannot create invite codes')
   const web = await connect({ extraHeaders: { Cookie: hostAccount.cookie } })
 
   assert.equal((await post('/api/extension/pair-code', {})).response.status, 401)
@@ -92,6 +108,7 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   assert.equal(created.session.schedule.positionTicks, 30 * TICKS)
   assert.equal(created.session.schedule.phase, 'paused')
   assert.equal(created.session.syncMode, 'hopping')
+  assert.match(created.session.inviteCode, /^[A-F0-9]{12}$/)
   const partyId = created.partyId
   let generation = created.session.schedule.mediaGeneration
   assert.equal((await ack(web, 'party:resume')).session, null, 'ordinary web app must not auto-enter an extension party')
@@ -121,8 +138,11 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   assert.equal((await ack(host, 'chat:message', { text: 'YouTube together' })).ok, true)
   assert.equal((await message)[0].text, 'YouTube together')
   assert.ok((await ack(guest, 'sync:seek', { positionTicks: 40 * TICKS, mediaGeneration: generation })).error)
-  await ack(host, 'party:setCollaborative', { enabled: true })
+  assert.ok((await ack(guest, 'party:setController', { userId: guestAccount.user.userId, enabled: true })).error)
+  await ack(host, 'party:setController', { userId: guestAccount.user.userId, enabled: true })
   assert.equal((await ack(guest, 'sync:seek', { positionTicks: 40 * TICKS, mediaGeneration: generation })).ok, true)
+  await ack(host, 'party:setController', { userId: guestAccount.user.userId, enabled: false })
+  assert.ok((await ack(guest, 'sync:seek', { positionTicks: 40 * TICKS, mediaGeneration: generation })).error, 'revoked controls are rejected by the server')
   await ack(host, 'sync:play', { positionTicks: 40 * TICKS, mediaGeneration: generation })
   await ack(host, 'party:setExternalPlaybackRate', { rate: 2 })
   let state = (await ack(host, 'party:resume')).session
@@ -148,14 +168,37 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   state = (await ack(host, 'party:resume')).session
   assert.ok(state.schedule.mediaGeneration > generation)
   assert.equal(state.externalMedia.videoId, 'aaaaaaaaaaa')
-  assert.equal(state.schedule.phase, 'paused')
-  assert.equal((await ack(guest, 'sync:play', { positionTicks: 99 * TICKS, mediaGeneration: generation })).error, 'media changed')
+  assert.equal(state.schedule.phase, 'playing')
+  assert.equal((await ack(host, 'sync:play', { positionTicks: 99 * TICKS, mediaGeneration: generation })).error, 'media changed')
   generation = state.schedule.mediaGeneration
   assert.equal((await ack(host, 'sync:play', { positionTicks: 0, mediaGeneration: generation })).ok, true)
   assert.ok(!JSON.stringify(state).includes(hostToken), 'public session never exposes extension token')
 
+  const invited = await post('/api/extension/join-invite', { code: created.session.inviteCode, name: 'No Jellyfin account' })
+  assert.equal(invited.response.status, 200)
+  assert.equal(invited.body.user.isAdmin, false)
+  const codeGuest = await connect({ auth: { extensionToken: invited.body.token } })
+  assert.equal((await ack(codeGuest, 'party:join', { partyId })).status, 'joined', 'an invite code is sufficient to join')
+  assert.ok((await ack(codeGuest, 'party:create', { externalMedia: media })).error)
+  assert.ok((await ack(codeGuest, 'sync:seek', { positionTicks: 1, mediaGeneration: generation })).error)
+  await ack(host, 'party:setController', { userId: invited.body.user.userId, enabled: true })
+  assert.equal((await ack(codeGuest, 'sync:seek', { positionTicks: 1, mediaGeneration: generation })).ok, true)
+  await ack(host, 'party:selectExternalMedia', { provider: 'youtube', url: 'https://www.youtube.com/results?search_query=space', title: 'Search' })
+  const browsing = (await ack(host, 'party:resume')).session
+  assert.equal(browsing.externalMedia.videoId, null)
+  assert.equal(browsing.externalMedia.url, 'https://www.youtube.com/results?search_query=space')
+  assert.equal(browsing.schedule.phase, 'paused')
+  const secondAdmin = await connect({ auth: { extensionToken: adminLogin.body.token } })
+  assert.equal((await ack(secondAdmin, 'party:resume')).session.id, partyId, 'admin login survives independently of the web cookie')
+  assert.ok((await ack(host, 'party:selectExternalMedia', { provider: 'youtube', url: 'https://evil.example/video' })).error)
+  await ack(secondAdmin, 'party:end')
+  assert.equal((await post('/api/extension/join-invite', { code: created.session.inviteCode })).response.status, 404, 'ended party codes cannot be reused')
+  const nextParty = await ack(secondAdmin, 'party:create', { externalMedia: media })
+  assert.notEqual(nextParty.session.inviteCode, created.session.inviteCode, 'every party has a fresh invite code')
+  assert.ok((await ack(codeGuest, 'party:join', { partyId: nextParty.partyId })).error, 'guest credentials are scoped to the invited party')
+  await ack(secondAdmin, 'party:end')
   const list = await fetch(`${base}/api/extension/devices`, { headers: { Cookie: hostAccount.cookie } }).then(response => response.json())
-  assert.equal(list.length, 1)
+  assert.equal(list.length, 2)
   const disconnected = once(host, 'disconnect')
   const revoked = await fetch(`${base}/api/extension/devices/${list[0].id}`, { method: 'DELETE', headers: { Cookie: hostAccount.cookie } })
   assert.equal(revoked.status, 200)

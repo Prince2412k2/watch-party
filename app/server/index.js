@@ -64,6 +64,7 @@ import { registerAvatarRoutes } from './avatar.js'
 import { registerConverterRoutes } from './converter.js'
 import { registerOfflineRoutes } from './offline.js'
 import { extensionIdentity, registerExtensionRoutes, parseExternalMedia, EXTERNAL_RATES } from './extension.js'
+import { randomBytes } from 'node:crypto'
 import { resolveMediaSourceId, getItemDetail } from './jellyfin.js'
 
 // Fail fast: never run in production with a missing or default session secret.
@@ -519,6 +520,7 @@ io.on('connection', (socket) => {
       if (findSessionByUser(userId)) return ack?.({ error: 'already in a party' })
       const external = parseExternalMedia(externalMedia)
       if (socket.extensionClient && (!external || mediaItemId)) return ack?.({ error: 'A valid YouTube video is required' })
+      if (socket.extensionClient && !socket.user.extensionAdmin) return ack?.({ error: 'Admin login is required to create a party. Guests can join with an invite code.' })
       if (!socket.extensionClient && externalMedia) return ack?.({ error: 'Use the YouTube extension to create this party' })
       // Room can start empty (lobby) — media is optional at creation.
       let mediaSourceId = null
@@ -535,6 +537,7 @@ io.on('connection', (socket) => {
       setSocketParticipation(socket, { partyId: sess.id })
       if (external) {
         sess.externalMedia = external
+        sess.inviteCode = randomBytes(6).toString('hex').toUpperCase()
         sess.stage = 'watching'
         sess.syncMode = 'hopping'
         beginMediaGeneration(sess)
@@ -572,6 +575,7 @@ io.on('connection', (socket) => {
     const sess = getSession(partyId)
     if (!sess) return ack?.({ error: 'party not found' })
     if (!!sess.externalMedia !== !!socket.extensionClient) return ack?.({ error: sess.externalMedia ? 'Join this party using the YouTube extension' : 'Join this party in the Watch Party app' })
+    if (socket.user.extensionPartyId && socket.user.extensionPartyId !== sess.id) return ack?.({ error: 'This guest credential belongs to a different party. Enter its invite code to join.' })
     const current = findSessionByUser(userId)
     if (current && current.id !== sess.id) return ack?.({ error: 'already in a party' })
 
@@ -695,6 +699,7 @@ io.on('connection', (socket) => {
     if (!sess) return ack?.({ error: 'not host' })
     const g = removeGuest(sess, targetId)
     if (!g) return ack?.({ error: 'user not found' })
+    sess.controllers.delete(targetId)
     const stallChanged = sess.stalled.delete(targetId)
     sess.approved.delete(targetId)   // revoke — kicked users must re-request
     const revokeTokenTs = BigInt(Math.floor(Date.now() / 1000) + 1)
@@ -729,6 +734,7 @@ io.on('connection', (socket) => {
     if (sess.hostId === userId) return ack?.({ error: 'Transfer host or end the party first' })
     const departing = [...partySocketsForUser(userId, sess.id), ...waitingSocketsForUser(userId, sess.id)]
     const guest = removeGuest(sess, userId)
+    sess.controllers.delete(userId)
     rejectGuest(sess, userId)
     leavePartySockets(userId, sess.id)
     for (const candidate of departing) {
@@ -800,16 +806,40 @@ io.on('connection', (socket) => {
   // clock:ping — NTP-lite; client computes its offset from server time ───────
   socket.on('clock:ping', (_t1, ack) => ack?.(Date.now()))
 
-  const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl
+  const canDrive = (sess) => isHost(sess, userId) || sess.collaborativeControl || (sess.externalMedia && sess.controllers.has(userId))
+
+  socket.on('party:navigating', (_payload, ack) => {
+    const sess = getSession(socket.partyId)
+    if (!socket.extensionClient || !sess?.externalMedia) return ack?.({ error: 'not allowed' })
+    socket.expectedNavigationUntil = Date.now() + 15_000
+    ack?.({ ok: true })
+  })
+
+  socket.on('party:setController', ({ userId: targetId, enabled } = {}, ack) => {
+    const sess = getSession(socket.partyId)
+    if (!socket.extensionClient || !sess?.externalMedia || sess.hostId !== userId) return ack?.({ error: 'not host' })
+    if (typeof enabled !== 'boolean' || !sess.guests.some(guest => guest.userId === targetId)) return ack?.({ error: 'Guest not found' })
+    if (enabled) sess.controllers.add(targetId)
+    else sess.controllers.delete(targetId)
+    persistSession(sess)
+    io.to(sess.id).emit('party:state', publicSession(sess))
+    ack?.({ ok: true })
+  })
 
   socket.on('party:selectExternalMedia', (payload, ack) => {
     const sess = getSession(socket.partyId)
     const media = parseExternalMedia(payload)
     if (!socket.extensionClient || !sess?.externalMedia || !canDrive(sess)) return ack?.({ error: 'not allowed' })
     if (!media) return ack?.({ error: 'Invalid YouTube video' })
+    if (media.url === sess.externalMedia.url) return ack?.({ ok: true })
     sess.externalMedia = media
     beginMediaGeneration(sess)
     resetTimeline(sess)
+    if (media.videoId) {
+      sess.pos = Number.isFinite(payload.position) && payload.position > 0 ? Math.round(payload.position * 10_000_000) : 0
+      sess.intent.playing = true
+      startSegment(sess, Date.now())
+    }
     persistSession(sess)
     io.to(sess.id).emit('party:state', publicSession(sess))
     ack?.({ ok: true })
@@ -1131,7 +1161,10 @@ io.on('connection', (socket) => {
         persistSession(sess)
         return
       }
-      handleHostDisconnect(sess)
+      if (socket.extensionClient && socket.expectedNavigationUntil > Date.now()) {
+        clearTimeout(sess.hostDisconnectTimer)
+        sess.hostDisconnectTimer = setTimeout(() => handleHostDisconnect(sess), 15_000)
+      } else handleHostDisconnect(sess)
     } else {
       const remainingSockets = partySocketsForUser(userId, sess.id)
       if (remainingSockets.length > 0) {

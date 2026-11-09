@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 
-const source = readFileSync(new URL('../public/content.js', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../public/floating.js', import.meta.url), 'utf8') + '\n;\n' + readFileSync(new URL('../public/content.js', import.meta.url), 'utf8')
 
 function harness() {
   const sent = [], windows = {}, documents = {}, intervals = [], nodes = []
@@ -14,6 +14,8 @@ function harness() {
     moveBefore(node) { this.atomicMoves = (this.atomicMoves ?? 0) + 1; this.children.push(node) }
     attachShadow() { return new Element('shadow') }
     setAttribute() {}
+    setPointerCapture() {}
+    remove() { this.removed = true }
     addEventListener(event, fn) { (this.listeners[event] ??= new Set()).add(fn) }
     removeEventListener(event, fn) { this.listeners[event]?.delete(fn) }
     fire(type, extra = {}) { for (const fn of this.listeners[type] ?? []) fn({ type, target: this, ...extra }) }
@@ -40,12 +42,13 @@ function harness() {
     async exitFullscreen() { document.fullscreenElement = null; documents.fullscreenchange() },
   }
   const window = { addEventListener: (name, fn) => { windows[name] = fn } }
-  runInNewContext(source, { document, window, chrome: { runtime: { getURL: path => `chrome-extension://test-id/${path.replace(/^\//, '')}` } }, location: { href: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', assign() {} }, URL, Date: class extends Date { static now() { return now } }, innerWidth: 1400, innerHeight: 900, setInterval: fn => intervals.push(fn) })
+  const location = { href: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', assigned: null, assign(url) { this.assigned = url } }
+  runInNewContext(source, { document, window, chrome: { runtime: { getURL: path => `chrome-extension://test-id/${path.replace(/^\//, '')}` } }, location, URL, Date: class extends Date { static now() { return now } }, innerWidth: 1400, innerHeight: 900, setInterval: fn => intervals.push(fn) })
   const host = root.children[0]
   const frame = nodes.find(node => node.tagName === 'IFRAME')
   intervals[0]()
-  const apply = (data, origin = 'chrome-extension://test-id', source = frame.contentWindow) => windows.message({ source, origin, data: { source: 'watchparty-extension', type: 'apply', videoId: 'dQw4w9WgXcQ', ...data } })
-  return { sent, video, player, document, documents, windows, apply, tick: () => intervals[0](), advance: ms => { now += ms }, setAd: value => { ad = value }, host }
+  const apply = (data, origin = 'chrome-extension://test-id', source = frame.contentWindow, isTrusted = true) => windows.message({ source, origin, isTrusted, data: { source: 'watchparty-extension', type: 'apply', videoId: 'dQw4w9WgXcQ', ...data } })
+  return { sent, video, player, document, documents, windows, nodes, location, apply, tick: () => intervals[0](), advance: ms => { now += ms }, setAd: value => { ad = value }, host }
 }
 
 test('content bridge reports the current video and native playback settings', () => {
@@ -103,6 +106,7 @@ test('foreign windows and origins cannot control the player', async () => {
   const h = harness()
   await h.apply({ paused: false, position: 25 }, 'https://www.youtube.com')
   await h.apply({ paused: false, position: 25 }, 'chrome-extension://test-id', {})
+  await h.apply({ paused: false, position: 25 }, 'chrome-extension://test-id', undefined, false)
   assert.equal(h.video.currentTime, 5)
   assert.equal(h.video.paused, true)
 })
@@ -116,8 +120,34 @@ test('commands for an old video or an ad cannot seek the current player', async 
 test('fullscreen moves the floating overlay into the actual fullscreen subtree', async () => {
   const h = harness()
   await h.player.requestFullscreen()
-  assert.equal(h.player.children.at(-1), h.host)
-  assert.equal(h.player.atomicMoves, 1, 'fullscreen must use atomic movement to avoid reloading the room iframe')
+  assert.ok(h.player.children.includes(h.host))
+  assert.equal(h.player.atomicMoves, 2, 'fullscreen atomically moves both room and floating-camera layers')
   await h.document.exitFullscreen()
-  assert.equal(h.document.documentElement.children.at(-1), h.host)
+  assert.ok(h.document.documentElement.children.includes(h.host))
+})
+test('native-style floating cameras resize, collapse to a 60px avatar, and preserve their expanded size', async () => {
+  const h = harness()
+  await h.apply({ type: 'cameras', owner: 'test-owner', people: [{ id: 'guest', name: 'Guest', speaking: false }], defaultWidth: 168 })
+  const tile = h.nodes.find(node => node.className === 'floating-camera')
+  assert.equal(tile.style.width, '168px')
+  assert.equal(tile.style.height, '126px')
+  const resize = h.nodes.find(node => node.className === 'camera-resize')
+  resize.fire('keydown', { key: 'ArrowRight', preventDefault() {} })
+  assert.equal(tile.style.width, '184px')
+  h.nodes.find(node => node.title === 'Collapse Guest').onclick()
+  assert.equal(tile.style.width, '60px')
+  assert.equal(tile.style.height, '60px')
+  assert.equal(h.sent.at(-1).layout.collapsed, true)
+  h.nodes.find(node => node.className === 'camera-ball').onclick()
+  assert.equal(tile.style.width, '184px')
+  assert.equal(tile.style.height, '138px')
+  await h.apply({ type: 'cameras', owner: 'test-owner', people: [] })
+  assert.equal(tile.removed, true, 'left participants must not leave orphan camera windows')
+})
+test('navigation accepts only YouTube URLs, including shared search pages', async () => {
+  const h = harness()
+  await h.apply({ type: 'navigate', url: 'https://evil.example/path' })
+  assert.equal(h.location.assigned, null)
+  await h.apply({ type: 'navigate', url: 'https://www.youtube.com/results?search_query=space' })
+  assert.equal(h.location.assigned, 'https://www.youtube.com/results?search_query=space')
 })

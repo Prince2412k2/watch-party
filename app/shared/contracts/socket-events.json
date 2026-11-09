@@ -17,6 +17,8 @@
     "party:selectMedia",
     "party:selectExternalMedia",
     "party:setExternalPlaybackRate",
+    "party:setController",
+    "party:navigating",
     "party:setCollaborative",
     "party:setPlaybackTracks",
     "party:setSubtitlePreferences",

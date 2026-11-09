@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { playbackPlan, timelinePosition, type PlayerState } from './core.ts'
 
 const schedule = { positionTicks: 10 * 10_000_000, t0: 1000, phase: 'playing', rate: 1, version: 2, mediaGeneration: 1 }
-const player: PlayerState = { type: 'state', videoId: 'dQw4w9WgXcQ', title: 'Example', position: 11, duration: 300, paused: false, rate: 1, volume: 1, ready: true, seeking: false, ad: false, buffered: 20, available: true, live: false }
+const player: PlayerState = { type: 'state', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', videoId: 'dQw4w9WgXcQ', title: 'Example', position: 11, duration: 300, paused: false, rate: 1, volume: 1, ready: true, seeking: false, ad: false, buffered: 20, available: true, live: false }
 
 test('YouTube timeline follows the selected shared speed, not wall-rate only', () => {
   assert.equal(timelinePosition({ ...schedule, rate: 2 }, 3000), 14)

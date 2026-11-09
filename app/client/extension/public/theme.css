@@ -1,0 +1,3 @@
+@font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Book.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+@font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Bold.woff2') format('woff2'); font-weight: 600 900; font-display: swap; }
+:root { color-scheme: dark; --font: 'WP Circular', system-ui, sans-serif; --bg: #171616; --surface: #201e1e; --surface-raised: #292626; --line: #393333; --text: #f6f0ec; --muted: #b5aaa5; --faint: #8e8580; --accent: #ef767b; --accent-soft: #302123; --good: #a7cfb0; }
