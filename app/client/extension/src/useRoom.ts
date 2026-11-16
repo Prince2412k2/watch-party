@@ -19,6 +19,7 @@ export function useRoom(settings: Settings) {
   const [session, setSession] = useState<Session | null>(null)
   const [waiting, setWaiting] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
+  const [incomingCount, setIncomingCount] = useState(0)
   const [player, setPlayer] = useState<PlayerState | null>(null)
   const [error, setError] = useState('')
   const [drift, setDrift] = useState(0)
@@ -147,7 +148,11 @@ export function useRoom(settings: Settings) {
     transport.on('user:left', ({ userId }) => setSession(current => current ? { ...current, guests: current.guests.filter(guest => guest.userId !== userId) } : current))
     transport.on('host:changed', ({ hostId }) => setSession(current => current ? { ...current, hostId, hostName: current.guests.find(guest => guest.userId === hostId)?.name ?? current.hostName } : current))
     transport.on('chat:history', history => { if (Array.isArray(history)) setMessages(history.slice(-200)) })
-    transport.on('chat:message', message => { if (typeof message?.text === 'string') setMessages(current => [...current.slice(-199), message]) })
+    transport.on('chat:message', message => {
+      if (typeof message?.text !== 'string') return
+      setMessages(current => [...current.slice(-199), message])
+      if (message.userId !== connection.user.userId) setIncomingCount(count => count + 1)
+    })
     transport.on('sync:schedule', (next: SyncSchedule) => {
       if (!Number.isFinite(next?.positionTicks)) return
       const current = schedule.current
@@ -287,5 +292,5 @@ export function useRoom(settings: Settings) {
     const result = await request('party:resume')
     accept(result.session)
   }
-  return { connection, setup, loaded, startupError, retryStartup: () => setStartupRevision(value => value + 1), serverStatus, connected, ownsTab, session, waiting, messages, player, error, setError, drift, request, command, create, join, leave, refresh, followRoom }
+  return { connection, setup, loaded, startupError, retryStartup: () => setStartupRevision(value => value + 1), serverStatus, connected, ownsTab, session, waiting, messages, incomingCount, player, error, setError, drift, request, command, create, join, leave, refresh, followRoom }
 }

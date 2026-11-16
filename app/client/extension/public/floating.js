@@ -34,7 +34,7 @@ globalThis.WatchPartyCameraLayer = class {
       if (!tile) {
         const width = Math.max(112, Number(defaultWidth) || 168), height = width * .75
         const rows = Math.max(1, Math.floor((innerHeight - 24) / (height + 8)))
-        tile = { id: person.id, owner, width, x: innerWidth - width - 448 - Math.floor(index / rows) * (width + 8), y: innerHeight - 16 - (index % rows + 1) * (height + 8), collapsed: false, customized: false, ...layouts[person.id] }
+        tile = { id: person.id, owner, width, x: innerWidth - width - 360 - Math.floor(index / rows) * (width + 12), y: innerHeight - 96 - (index % rows + 1) * (height + 12), collapsed: false, customized: false, ...layouts[person.id] }
         const node = document.createElement('section'); node.setAttribute('aria-label', `${person.name} floating camera`)
         const frame = document.createElement('iframe'); frame.src = `${this.frameUrl}?owner=${encodeURIComponent(owner)}&id=${encodeURIComponent(person.id)}`; frame.title = `${person.name} camera`; frame.allow = 'autoplay'
         const bar = document.createElement('div'); bar.className = 'camera-drag'

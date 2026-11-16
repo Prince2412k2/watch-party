@@ -3,7 +3,7 @@
   const extensionOrigin = chrome.runtime.getURL('/').replace(/\/$/, '')
   const host = document.createElement('div')
   host.id = 'watchparty-extension-root'
-  host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;color-scheme:dark;'
+  host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;color-scheme:dark;pointer-events:none;'
   const shadow = host.attachShadow({ mode: 'closed' })
   const style = document.createElement('style')
   style.textContent = `:host{font:13px system-ui,sans-serif;color:#eef2f3}button{font:inherit;color:inherit;background:#243039;border:1px solid #46535b;border-radius:7px;padding:8px 11px;cursor:pointer}button:focus-visible{outline:2px solid #98d3b9;outline-offset:2px}.launcher{box-shadow:0 5px 25px #0008}.panel{width:380px;height:min(740px,calc(100vh - 40px));min-width:300px;min-height:220px;max-width:calc(100vw - 20px);max-height:calc(100vh - 20px);resize:both;overflow:hidden;border:1px solid #46535b;border-radius:12px;background:#171d22;box-shadow:0 8px 40px #0007;display:flex;flex-direction:column}.bar{display:flex;align-items:center;gap:6px;padding:8px;background:#20282e;cursor:move;touch-action:none}.bar strong{flex:1;font-size:12px}.bar button{font-size:11px;padding:6px}iframe{display:block;flex:1;width:100%;min-height:0;border:0;background:#171d22}[hidden]{display:none!important}`
@@ -22,9 +22,11 @@
   const title = document.createElement('strong')
   title.textContent = 'Party'
   const fullscreen = document.createElement('button')
-  fullscreen.textContent = 'Fullscreen'
+  fullscreen.setAttribute('aria-label', 'Toggle fullscreen'); fullscreen.title = 'Toggle fullscreen'
+  const fullscreenIcon = document.createElement('img'); fullscreenIcon.src = chrome.runtime.getURL('expand.svg'); fullscreenIcon.alt = ''; fullscreen.append(fullscreenIcon)
   const hide = document.createElement('button')
-  hide.textContent = 'Hide'
+  hide.setAttribute('aria-label', 'Close party controls')
+  const hideIcon = document.createElement('img'); hideIcon.src = chrome.runtime.getURL('close.svg'); hideIcon.alt = ''; hide.append(hideIcon)
   hide.title = 'Hide overlay; your room stays connected'
   const frame = document.createElement('iframe')
   frame.src = chrome.runtime.getURL('index.html')
@@ -61,13 +63,23 @@
   }
   const panels = new globalThis.WatchPartyPanelLayer(camerasShadow, camerasHost, chrome.runtime.getURL('panel.html'), data => {
     if (data.type === 'panel-visibility' && data.id === 'chat') {
-      panel.style.right = data.visible && innerWidth >= 760 ? '346px' : '0px'
+      clampHost()
     }
     send(data)
   })
 
   let launcherMoved = false
   let partyActive = false
+  let hostCustomized = false
+  let preferredDock = 'right'
+  let lastActivity = Date.now()
+  function idleState() {
+    const idle = partyActive && Date.now() - lastActivity >= 3000
+    host.setAttribute('data-idle', String(idle)); camerasHost.setAttribute('data-idle', String(idle))
+  }
+  function wake() { lastActivity = Date.now(); idleState() }
+  document.addEventListener('pointermove', wake, { passive: true })
+  document.addEventListener('pointerdown', wake, { passive: true })
   launcher.onclick = () => { if (launcherMoved) { launcherMoved = false; return }; panel.hidden = partyActive ? !panel.hidden : false; launcher.hidden = !partyActive; launcher.setAttribute('aria-expanded', String(!panel.hidden)); if (!partyActive) clampHost(); snapshot() }
   hide.onclick = () => { panel.hidden = true; launcher.hidden = false; launcher.setAttribute('aria-expanded', 'false'); launcher.focus?.() }
   async function toggleFullscreen() {
@@ -86,10 +98,20 @@
     else target.append(host)
     if (target.moveBefore && camerasHost.isConnected) target.moveBefore(camerasHost, null)
     else target.append(camerasHost)
+    panels.reflow()
     clampHost()
   })
   function clampHost() {
-    if (partyActive) panel.style.right = !panels.panels.get('chat')?.node.hidden && innerWidth >= 760 ? '346px' : '0px'
+    if (partyActive && !hostCustomized) {
+      const chat = panels.panels.get('chat')
+      const chatOpen = !!chat && !chat.node.hidden
+      const left = preferredDock === 'left' || (chatOpen && innerWidth < 760)
+      host.style.left = left ? '12px' : 'auto'
+      host.style.right = left ? 'auto' : chatOpen ? `${(parseFloat(chat.node.style.width) || 312) + 40}px` : '20px'
+      host.style.top = 'auto'; host.style.bottom = '20px'
+      panel.style.left = left ? '0px' : 'auto'; panel.style.right = '0px'
+      return
+    }
     const rect = host.getBoundingClientRect()
     host.style.left = `${Math.max(0, Math.min(Math.max(0, innerWidth - rect.width), rect.left))}px`
     host.style.top = `${Math.max(0, Math.min(Math.max(0, innerHeight - rect.height), rect.top))}px`
@@ -108,6 +130,7 @@
       if (!drag) return
       if (Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY) < 5) return
       if (handle === launcher) launcherMoved = true
+      hostCustomized = true
       host.style.left = `${Math.max(0, Math.min(Math.max(0, innerWidth - host.offsetWidth), event.clientX - drag.x))}px`
       host.style.top = `${Math.max(0, Math.min(Math.max(0, innerHeight - host.offsetHeight), event.clientY - drag.y))}px`
       host.style.right = 'auto'; host.style.bottom = 'auto'
@@ -121,7 +144,7 @@
     if (sender.id !== chrome.runtime.id) return false
     if (message?.type === 'watchparty-page') { respond({ url: location.href }); return false }
     if (message?.type !== 'watchparty-open-panel') return false
-    panel.hidden = false; launcher.hidden = true; snapshot()
+    wake(); panel.hidden = false; launcher.hidden = partyActive ? false : true; snapshot()
     respond({ ready: true })
     return false
   })
@@ -135,6 +158,7 @@
     return url.pathname === '/watch' ? url.searchParams.get('v') : /^\/shorts\/([A-Za-z0-9_-]{11})/.exec(url.pathname)?.[1] ?? null
   }
   for (const name of ['pointerdown', 'keydown']) document.addEventListener(name, event => {
+    if (event.isTrusted) wake()
     if (!event.isTrusted || event.target === host) return
     const inPlayer = document.querySelector('#movie_player')?.contains(event.target)
     if (name === 'keydown') {
@@ -167,6 +191,7 @@
     applyingUntil = Date.now() + 1500
   }
   function snapshot() {
+    idleState()
     if (!host.isConnected) document.documentElement.append(host)
     if (!camerasHost.isConnected) document.documentElement.append(camerasHost)
     bindVideo()
@@ -179,14 +204,24 @@
     send({ type: 'state', url: page.href, videoId: id, title: document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(/ - YouTube$/, ''), position: video?.currentTime || 0, duration: Number.isFinite(video?.duration) ? video.duration : 0, paused: video?.paused ?? true, rate: video?.playbackRate || 1, volume: video?.volume ?? 1, ready: !!video && video.readyState >= 3, seeking: video?.seeking || Date.now() < seekingUntil, ad: adPlaying(), buffered, available: !!video && /^[A-Za-z0-9_-]{11}$/.test(id || ''), live: !!video && !Number.isFinite(video.duration) })
   }
   window.addEventListener('message', async event => {
+    if (event.isTrusted && event.origin === extensionOrigin && event.data?.source === 'watchparty-activity') {
+      const known = event.source === frame.contentWindow || [...panels.panels.values()].some(panel => event.source === panel.frame.contentWindow) || [...cameras.tiles.values()].some(tile => event.source === tile.frame.contentWindow)
+      if (known) wake()
+      return
+    }
     if (!event.isTrusted || event.source !== frame.contentWindow || event.origin !== extensionOrigin || event.data?.source !== 'watchparty-extension') return
     const command = event.data
+    if (command.type === 'activity') { wake(); return }
+    if (command.type === 'chat-unread') { panels.notify(command.count); return }
+    if (command.type === 'fullscreen') { wake(); await toggleFullscreen(); return }
     if (command.type === 'hello') { snapshot(); return }
     if (command.type === 'panel-mode') {
       partyActive = !!command.active
+      hostCustomized = false
+      wake()
       panel.className = partyActive ? 'panel party-controls' : 'panel'
-      panel.style.width = partyActive ? '292px' : '344px'
-      panel.style.height = partyActive ? 'min(420px, calc(100vh - 100px))' : '290px'
+      panel.style.width = partyActive ? '300px' : '344px'
+      panel.style.height = partyActive ? 'min(440px, calc(100vh - 108px))' : '290px'
       if (partyActive) {
         host.style.left = 'auto'; host.style.top = 'auto'; host.style.right = '20px'; host.style.bottom = '20px'
         panel.hidden = true; launcher.hidden = false; launcher.title = 'Party controls'; launcher.setAttribute('aria-label', 'Party controls'); launcher.setAttribute('aria-expanded', 'false')
@@ -196,7 +231,7 @@
       return
     }
     if (command.type === 'open') { if (!partyActive) { panel.hidden = false; launcher.hidden = true }; return }
-    if (command.type === 'open-controls') { panel.hidden = false; launcher.hidden = false; launcher.setAttribute('aria-expanded', 'true'); return }
+    if (command.type === 'open-controls') { wake(); panel.hidden = false; launcher.hidden = false; launcher.setAttribute('aria-expanded', 'true'); return }
     if (command.type === 'close-controls') { hide.onclick(); return }
     if (command.type === 'cameras' && typeof command.owner === 'string' && Array.isArray(command.people)) { cameras.update(command); return }
     if (command.type === 'panels' && typeof command.owner === 'string') { panels.update(command); return }
@@ -204,9 +239,12 @@
     if (command.type === 'layout') {
       if (Number.isFinite(command.opacity)) panel.style.opacity = String(Math.max(.5, Math.min(1, command.opacity)))
       if (['left', 'right'].includes(command.dock)) {
+        preferredDock = command.dock
+        hostCustomized = false
         host.style.left = command.dock === 'left' ? '18px' : 'auto'
         host.style.right = command.dock === 'right' ? '18px' : 'auto'
         host.style.top = 'auto'; host.style.bottom = '18px'
+        if (partyActive) clampHost()
       }
       return
     }

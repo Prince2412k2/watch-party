@@ -1,9 +1,6 @@
-@font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Light.woff2') format('woff2'); font-weight: 300; font-display: swap; }
-@font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Book.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
+@font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Book.woff2') format('woff2'); font-weight: 300 500; font-display: swap; }
 @font-face { font-family: 'WP Circular'; src: url('fonts/CircularXXWeb-Bold.woff2') format('woff2'); font-weight: 600 900; font-display: swap; }
-/* Mirrors flutter_app/lib/ui/palette.dart kDarkPalette and tokens.dart. */
-:root { color-scheme: dark; --font: 'WP Circular', system-ui, sans-serif; --bg: #101113; --surface: #17181b; --surface-raised: #222327; --surface-3: #2c2e33; --line: #ffffff1a; --line-2: #ffffff2b; --text: #f2f1ed; --muted: #f2f1eda3; --faint: #f2f1ed61; --accent: #f2f1ed; --on-accent: #101113; --accent-soft: #222327; --good: #78c99f; --danger: #e0655e; --brand: #d81f2a; }
-:root { --faint: #a1a3aa; --accent-hover: #deded9; }
+:root { color-scheme: dark; --font: 'WP Circular', system-ui, sans-serif; --bg: #10161c; --surface: #192128; --surface-raised: #232e37; --surface-3: #303e49; --line: #d8e5ee14; --line-2: #d8e5ee2b; --text: #edf3f7; --muted: #aabac7; --faint: #aabac7; --accent: #c4edda; --accent-hover: #dbf5e9; --on-accent: #172b22; --accent-soft: #263e36; --good: #a2dbc0; --danger: #f29d98; --brand: #d81f2a; --selection: #426858; }
 @media(prefers-color-scheme:light) {
-  :root { color-scheme: light; --bg: #f1f2f3; --surface: #fafaf8; --surface-raised: #ebedef; --surface-3: #dfe2e5; --line: #22252b1a; --line-2: #22252b33; --text: #202329; --muted: #5a5f67; --faint: #626873; --accent: #24272d; --accent-hover: #3c414a; --on-accent: #fafaf8; --accent-soft: #e4e7ea; --good: #26734c; --danger: #aa3434; }
+  :root { color-scheme: light; --bg: #edf1f4; --surface: #fbfcfd; --surface-raised: #eef2f5; --surface-3: #dfe7ed; --line: #1b354014; --line-2: #1b354029; --text: #1c303e; --muted: #526775; --faint: #526775; --accent: #245f4a; --accent-hover: #1a4c3a; --on-accent: #f2fbf7; --accent-soft: #e1eee7; --good: #267353; --danger: #a33535; --selection: #cbe5d7; }
 }

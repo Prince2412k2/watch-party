@@ -13,9 +13,10 @@ function harness() {
     append(...nodes) { this.children.push(...nodes) }
     moveBefore(node) { this.atomicMoves = (this.atomicMoves ?? 0) + 1; this.children.push(node) }
     attachShadow() { return new Element('shadow') }
-    setAttribute() {}
+    setAttribute(name, value) { (this.attributes ??= {})[name] = value }
+    getAttribute(name) { return this.attributes?.[name] ?? null }
     setPointerCapture() {}
-    getBoundingClientRect() { return { left: parseFloat(this.style.left) || 0, top: parseFloat(this.style.top) || 0, width: parseFloat(this.style.width) || 320, height: parseFloat(this.style.height) || 180 } }
+    getBoundingClientRect() { return this.hidden ? { left: 0, top: 0, width: 0, height: 0 } : { left: parseFloat(this.style.left) || 0, top: parseFloat(this.style.top) || 0, width: parseFloat(this.style.width) || 320, height: parseFloat(this.style.height) || 180 } }
     get offsetWidth() { return this.getBoundingClientRect().width }
     get offsetHeight() { return this.getBoundingClientRect().height }
     remove() { this.removed = true }
@@ -44,14 +45,16 @@ function harness() {
     },
     async exitFullscreen() { document.fullscreenElement = null; documents.fullscreenchange() },
   }
-  const window = { addEventListener: (name, fn) => { windows[name] = fn } }
+  const windowListeners = {}
+  const window = { addEventListener: (name, fn) => { (windowListeners[name] ??= []).push(fn); windows[name] = event => { let result; for (const listener of windowListeners[name]) result = listener(event); return result } } }
   const location = { href: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', assigned: null, assign(url) { this.assigned = url } }
-  runInNewContext(source, { document, window, chrome: { runtime: { getURL: path => `chrome-extension://test-id/${path.replace(/^\//, '')}` } }, location, URL, Date: class extends Date { static now() { return now } }, innerWidth: 1400, innerHeight: 900, setInterval: fn => intervals.push(fn) })
+  const context = { document, window, chrome: { runtime: { getURL: path => `chrome-extension://test-id/${path.replace(/^\//, '')}` } }, location, URL, Date: class extends Date { static now() { return now } }, innerWidth: 1400, innerHeight: 900, setInterval: fn => intervals.push(fn) }
+  runInNewContext(source, context)
   const host = root.children[0]
   const frame = nodes.find(node => node.tagName === 'IFRAME')
   intervals[0]()
   const apply = (data, origin = 'chrome-extension://test-id', source = frame.contentWindow, isTrusted = true) => windows.message({ source, origin, isTrusted, data: { source: 'watchparty-extension', type: 'apply', videoId: 'dQw4w9WgXcQ', ...data } })
-  return { sent, video, player, document, documents, windows, nodes, location, apply, tick: () => intervals[0](), advance: ms => { now += ms }, setAd: value => { ad = value }, host }
+  return { sent, video, player, document, documents, windows, nodes, location, apply, tick: () => intervals[0](), advance: ms => { now += ms }, setAd: value => { ad = value }, host, resize: (width, height) => { context.innerWidth = width; context.innerHeight = height; windows.resize() } }
 }
 
 test('content bridge reports the current video and native playback settings', () => {
@@ -161,12 +164,13 @@ test('chat and AV panels hide independently without removing their frames', asyn
   const chat = h.nodes.find(node => node.className === 'panel independent-panel chat-window')
   const av = h.nodes.find(node => node.className === 'panel independent-panel av-window')
   assert.ok(chat); assert.ok(av)
+  assert.equal(chat.hidden, true, 'chat starts closed so the video leads')
   await h.apply({ type: 'toggle-panel', id: 'chat' })
-  assert.equal(chat.hidden, true)
+  assert.equal(chat.hidden, false)
   assert.equal(av.hidden, false)
   assert.equal(h.nodes.find(node => node.title === 'Chat').removed, undefined)
   await h.apply({ type: 'toggle-panel', id: 'chat' })
-  assert.equal(chat.hidden, false)
+  assert.equal(chat.hidden, true)
   await h.apply({ type: 'panels', owner: 'panel-owner', active: false })
   assert.equal(chat.removed, true)
   assert.equal(av.removed, true)
@@ -202,4 +206,75 @@ test('the active party trigger remains available while controls toggle', async (
   assert.equal(panel.hidden, true)
   await h.apply({ type: 'open-controls' })
   assert.equal(panel.hidden, false)
+})
+
+test('three-second inactivity hides chrome without closing chat or removing feeds', async () => {
+  const h = harness()
+  await h.apply({ type: 'panel-mode', active: true })
+  await h.apply({ type: 'panels', owner: 'owner', active: true })
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  const chat = h.nodes.find(node => node.className === 'panel independent-panel chat-window')
+  h.advance(2999); h.tick()
+  assert.equal(h.host.getAttribute('data-idle'), 'false')
+  h.advance(1); h.tick()
+  assert.equal(h.host.getAttribute('data-idle'), 'true')
+  assert.equal(chat.hidden, false)
+  assert.equal(chat.removed, undefined)
+  h.documents.pointermove()
+  assert.equal(h.host.getAttribute('data-idle'), 'false')
+  h.advance(3000); h.tick()
+  await h.apply({ source: 'watchparty-activity' }, 'chrome-extension://test-id', {})
+  assert.equal(h.host.getAttribute('data-idle'), 'true', 'unknown iframe activity cannot wake extension UI')
+  await h.apply({ source: 'watchparty-activity' })
+  assert.equal(h.host.getAttribute('data-idle'), 'false', 'owner iframe activity wakes controls')
+})
+
+test('closed chat gets a distinct counted notification icon until opened', async () => {
+  const h = harness()
+  await h.apply({ type: 'panels', owner: 'owner', active: true })
+  const reopen = h.nodes.find(node => node.className === 'chat-reopen')
+  const icon = reopen.children[0], badge = reopen.children[1]
+  assert.equal(reopen.textContent, undefined, 'the launcher has no written Chat label')
+  await h.apply({ type: 'chat-unread', count: 2 })
+  assert.equal(reopen.getAttribute('data-unread'), 'true')
+  assert.equal(reopen.getAttribute('aria-label'), '2 unread messages. Open chat')
+  assert.ok(icon.src.endsWith('chat-unread.svg'))
+  assert.equal(badge.textContent, '2')
+  reopen.onclick()
+  assert.equal(reopen.hidden, true)
+  assert.equal(reopen.getAttribute('data-unread'), 'false')
+  assert.ok(icon.src.endsWith('chat.svg'))
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  assert.equal(reopen.hidden, false)
+  assert.equal(badge.hidden, true)
+})
+
+test('chat opens fully inside the viewport after resizing while closed', async () => {
+  const h = harness()
+  await h.apply({ type: 'panels', owner: 'owner', active: true })
+  const chat = h.nodes.find(node => node.className === 'panel independent-panel chat-window')
+  h.resize(1000, 700)
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  assert.ok(parseFloat(chat.style.left) + parseFloat(chat.style.width) <= 988, 'closed panels must not be clamped using a zero-width rectangle')
+  assert.equal(chat.style.height, '676px')
+  assert.equal(chat.style.top, '12px')
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  h.resize(1400, 900)
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  assert.equal(chat.style.height, '876px')
+  assert.equal(chat.style.top, '12px')
+  assert.ok(parseFloat(chat.style.left) + parseFloat(chat.style.width) <= 1388)
+})
+
+test('full-height chat keeps the party launcher outside its composer', async () => {
+  const h = harness()
+  await h.apply({ type: 'panel-mode', active: true })
+  await h.apply({ type: 'panels', owner: 'owner', active: true })
+  await h.apply({ type: 'toggle-panel', id: 'chat' })
+  assert.equal(h.host.style.right, '352px')
+  h.resize(390, 844)
+  assert.equal(h.host.style.left, '12px')
+  assert.equal(h.host.style.right, 'auto')
+  const controls = h.nodes.find(node => node.className === 'panel party-controls')
+  assert.equal(controls.style.left, '0px')
 })

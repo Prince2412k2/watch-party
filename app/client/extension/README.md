@@ -1,4 +1,4 @@
-# Watch Party for YouTube (v0.5)
+# Watch Party for YouTube (v0.6.1)
 
 Uses the existing Watch Party timeline, chat, SQLite session store, and LiveKit
 server. Each person watches YouTube directly; Jellyfin media import is not needed.
@@ -72,12 +72,27 @@ The extension mirrors `flutter_app/lib/ui/palette.dart`, `tokens.dart`, and
 and compact monochrome icon trays. Red is reserved for the brand and semantic
 danger/off-device states. Participant avatars replace the old roster/tab layout.
 
-Chat opens on the right, a two-button camera/mic dock sits on the left, and a
-small connection/count indicator sits at the top left. A persistent bottom-right
-launcher toggles the compact party controls, beside chat on wide viewports and
-above it on small ones. Chat closes independently and has its own reopen button.
+Chat opens on the right from an icon-only launcher. A compact playback, microphone,
+camera, and fullscreen strip sits at the bottom center. Party details open from
+the bottom-right launcher; preferences replace that view instead of expanding it.
+Chat starts closed, closes independently, and has its own reopen icon.
+The right-side chat fills the viewport height with a 12px top/bottom inset and
+can be resized horizontally. Opening chat remeasures its position; hidden panels
+retain valid geometry through window resizing and fullscreen transitions, including
+Edge/Chromium's zero-size layout boxes for display:none panels.
 The launcher is draggable; dragging does not open it. Chat and camera windows
 remain draggable/resizable. Device selection lives in Party settings.
+
+After three seconds without pointer movement, all extension chrome fades out.
+Open chat and participant feeds stay visible. Moving the pointer (including inside
+an extension iframe), typing, or using keyboard controls restores the chrome.
+Frames remain mounted throughout this transition: it does not reconnect the room
+or media session. Reduced-motion mode changes visibility without the fade.
+
+When closed chat receives a new message from someone else, the launcher changes
+to a filled notification icon with an unread count and stays visible even while
+everything else is idle. Opening chat clears the notification. Replayed chat
+history and your own outgoing messages do not create unread alerts.
 
 The extension-origin frames use React portals into the owner's existing tree:
 they create no extra Socket.IO or LiveKit connections. Chat has an expanding

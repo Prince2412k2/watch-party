@@ -1,6 +1,12 @@
 // Same-origin extension frames let the owner attach its LiveKit tracks through
 // React portals. Camera pixels and streams never pass through the YouTube page.
 const params = new URLSearchParams(location.search)
+let lastActivity = 0
+for (const type of ['pointermove', 'pointerdown', 'keydown']) document.addEventListener(type, () => {
+  if (Date.now() - lastActivity < 80) return
+  lastActivity = Date.now()
+  parent.postMessage({ source: 'watchparty-activity' }, 'https://www.youtube.com')
+}, { passive: true })
 function announce() {
   for (let index = 0; index < window.parent.length; index++) {
     const candidate = window.parent.frames[index]

@@ -1,5 +1,11 @@
 // Sibling extension frames share the owner's React tree, not a second socket.
 const params = new URLSearchParams(location.search)
+let lastActivity = 0
+for (const type of ['pointermove', 'pointerdown', 'keydown', 'input']) document.addEventListener(type, () => {
+  if (Date.now() - lastActivity < 80) return
+  lastActivity = Date.now()
+  parent.postMessage({ source: 'watchparty-activity' }, 'https://www.youtube.com')
+}, { passive: true })
 function announce() {
   for (let index = 0; index < parent.length; index++) {
     const candidate = parent.frames[index]

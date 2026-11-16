@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "133",
   "name": "Watch Party for YouTube",
-  "version": "0.5.0",
+  "version": "0.6.1",
   "description": "Use your Watch Party server for synchronized YouTube, chat, and floating camera feeds.",
   "icons": { "48": "icon-192.png", "128": "icon-192.png" },
   "permissions": ["storage", "activeTab"],
@@ -11,6 +11,6 @@
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "Watch Party", "default_icon": { "32": "icon-192.png" } },
   "content_scripts": [{ "matches": ["https://www.youtube.com/*"], "js": ["floating.js", "panels.js", "content.js"], "run_at": "document_idle" }],
-  "web_accessible_resources": [{ "resources": ["index.html", "camera.html", "camera.js", "camera.css", "panel.html", "panel.js", "overlay.css", "theme.css", "brand.svg", "fonts/*", "assets/*"], "matches": ["https://www.youtube.com/*"] }],
+  "web_accessible_resources": [{ "resources": ["index.html", "camera.html", "camera.js", "camera.css", "panel.html", "panel.js", "overlay.css", "theme.css", "brand.svg", "chat.svg", "chat-unread.svg", "expand.svg", "close.svg", "smile.svg", "fonts/*", "assets/*"], "matches": ["https://www.youtube.com/*"] }],
   "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src https: http://localhost:* http://127.0.0.1:* wss: ws://localhost:* ws://127.0.0.1:*; media-src 'self' blob:; img-src 'self' data: https:; font-src 'self'; style-src 'self' 'unsafe-inline'" }
 }

@@ -67,9 +67,9 @@ export default function App() {
   const [avBusy, setAVBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [optionsOpen, setOptionsOpen] = useState(false)
-  const [chatVisible, setChatVisible] = useState(true)
+  const [chatVisible, setChatVisible] = useState(false)
   const [unread, setUnread] = useState(0)
-  const lastMessage = useRef('')
+  const readIncoming = useRef(0)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [volumes, setVolumes] = useState<Record<string, number>>({})
   const restoredAV = useRef('')
@@ -95,13 +95,18 @@ export default function App() {
     bridge({ type: 'layout', dock: settings.dock, opacity: settings.opacity })
   }, [settings, settingsLoaded])
   useEffect(() => {
-    const latest = room.messages[room.messages.length - 1]
-    const key = latest ? `${latest.timestamp}:${latest.userId}:${latest.text}` : ''
-    if (chatVisible || !latest) {
-      setUnread(0)
-    } else if (key !== lastMessage.current && latest.userId !== connection?.user.userId) setUnread(value => value + 1)
-    lastMessage.current = key
-  }, [room.messages, chatVisible, connection?.user.userId])
+    const delta = Math.max(0, room.incomingCount - readIncoming.current)
+    readIncoming.current = room.incomingCount
+    if (chatVisible || !session) setUnread(0)
+    else if (delta) setUnread(value => value + delta)
+  }, [room.incomingCount, chatVisible, session?.id])
+  useEffect(() => { bridge({ type: 'chat-unread', count: unread }) }, [unread, chatVisible])
+  useEffect(() => {
+    let lastActivity = 0
+    const wake = () => { if (Date.now() - lastActivity < 80) return; lastActivity = Date.now(); bridge({ type: 'activity' }) }
+    for (const type of ['pointermove', 'pointerdown', 'keydown', 'input']) window.addEventListener(type, wake, { passive: true })
+    return () => { for (const type of ['pointermove', 'pointerdown', 'keydown', 'input']) window.removeEventListener(type, wake) }
+  }, [])
   useEffect(() => {
     if (!copied) return
     const timer = setTimeout(() => setCopied(false), 1800)
@@ -164,8 +169,10 @@ export default function App() {
   const floatingPanels = useFloatingPanels(!!session, id => <main className={`independent-content ${id}-content`} style={{ '--chat-size': `${settings.chatSize}px` } as CSSProperties}>
     {id === 'chat' ? <Chat key={session?.id} messages={room.messages} members={members} ownId={connection?.user.userId} connected={room.connected} onSend={content => room.request('chat:message', content)} onError={room.setError} onClose={() => bridge({ type: 'toggle-panel', id: 'chat' })} /> : id === 'status' ? <button className={`watch-status${room.connected ? ' online' : ''}`} title={room.connected ? `${members.length} people in your party` : 'Reconnecting to your party'} onClick={() => bridge({ type: 'open-controls' })}><i className="connection-dot" /><AnIcon name="link" size={14} /><span>{members.length}</span><span className="sr-only">{room.connected ? 'Connected' : 'Reconnecting'}</span></button> : <>
       <div className="av-buttons">
+        <button className="icon-button" aria-label={session?.schedule.phase === 'playing' ? 'Pause room' : 'Play room'} title={canControl ? session?.schedule.phase === 'playing' ? 'Pause room' : 'Play room' : 'Playback is controlled by the host'} disabled={!canControl || mismatched || busy || !room.connected || !session?.externalMedia.videoId} onClick={() => void room.command(session?.schedule.phase === 'playing' ? 'pause' : 'play')}>{session?.schedule.phase === 'playing' ? <Glyph name="pause" /> : <AnIcon name="play" size={17} />}</button>
         <button className={`icon-button${!media.micOn ? ' device-off' : ''}`} disabled={!media.connected || avBusy} aria-label={media.micOn ? 'Mic on' : 'Mic off'} title={media.micOn ? 'Mute microphone' : 'Unmute microphone'} aria-pressed={media.micOn} onClick={() => void toggleAV('mic')}><Glyph name="mic" /></button>
         <button className={`icon-button${!media.camOn ? ' device-off' : ''}`} disabled={!media.connected || avBusy} aria-label={media.camOn ? 'Camera on' : 'Camera off'} title={media.camOn ? 'Turn camera off' : 'Turn camera on'} aria-pressed={media.camOn} onClick={() => void toggleAV('camera')}><Glyph name="camera" /></button>
+        <button className="icon-button" aria-label="Toggle fullscreen" title="Toggle fullscreen" onClick={() => bridge({ type: 'fullscreen' })}><img src="expand.svg" width="18" height="18" alt="" /></button>
       </div>
     </>}
   </main>, (id, visible) => { if (id === 'chat') setChatVisible(visible) })
@@ -185,34 +192,46 @@ export default function App() {
 
   return <main className="app">
     {floatingCameras}{floatingPanels}<h1 className="sr-only">Room {session.id}</h1>
+    <header className="panel-heading">
+      {optionsOpen && <button className="icon-button" aria-label="Back to party" onClick={() => setOptionsOpen(false)}><AnIcon name="back" /></button>}
+      <div><h2>{optionsOpen ? 'Preferences' : 'Your party'}</h2><span>{optionsOpen ? 'Make yourself comfortable' : `${members.length} watching together`}</span></div>
+      {!optionsOpen && <button className="icon-button" aria-label="Party settings" title="Party settings" onClick={() => setOptionsOpen(true)}><AnIcon name="settings" size={18} /></button>}
+      <button className="icon-button" aria-label="Close party controls" title="Close party controls" onClick={() => bridge({ type: 'close-controls' })}><AnIcon name="x" size={17} /></button>
+    </header>
     {(room.error || media.error) && <div className="notice" role="alert">{room.error || media.error}<button onClick={() => { room.setError(''); media.reportError(null) }} aria-label="Dismiss message">Dismiss</button></div>}
-    <div className="now-playing"><MediaCover videoId={session.externalMedia.videoId} /><div className="media-copy"><strong>{session.externalMedia.title || 'YouTube'}</strong><span>{mismatched ? 'Syncing shared page…' : player?.ad ? 'Waiting for ad…' : !session.externalMedia.videoId ? 'Browsing together' : session.schedule.phase === 'stalled' ? 'Waiting for a viewer…' : Math.abs(room.drift) < .3 ? 'In sync' : `${Math.abs(room.drift).toFixed(1)}s ${room.drift > 0 ? 'behind' : 'ahead'}`}</span></div></div>
-    <nav className="party-tray" aria-label="Party controls">
-      <button className="primary" aria-label={session.schedule.phase === 'playing' ? 'Pause room' : 'Play room'} title={canControl ? session.schedule.phase === 'playing' ? 'Pause room' : 'Play room' : 'View only'} disabled={!canControl || mismatched || busy || !room.connected || !session.externalMedia.videoId} onClick={() => void room.command(session.schedule.phase === 'playing' ? 'pause' : 'play')}>{session.schedule.phase === 'playing' ? <Glyph name="pause" /> : <AnIcon name="play" size={17} />}</button>
-      <button className="icon-button" aria-label="Chat" title="Chat" aria-pressed={chatVisible} onClick={() => bridge({ type: 'toggle-panel', id: 'chat' })}><Glyph name="chat" />{unread > 0 && <span className="unread-badge">{unread > 9 ? '9+' : unread}</span>}</button>
-      <button className="icon-button" aria-label="Party settings" title="Party settings" aria-expanded={optionsOpen} onClick={() => setOptionsOpen(value => !value)}><AnIcon name="settings" size={18} /></button>
-    </nav>
-    <section className="faces" aria-label={`People (${members.length})`}>{members.map(member => <details className="member-menu" key={member.userId}><summary className={`member-avatar${member.userId === session.hostId ? ' host' : ''}`} title={member.name} aria-label={`${member.name} actions`}><Avatar userId={member.userId} name={member.name} config={member.avatar} size={34} circle /></summary><div className="member-actions"><strong>{member.name}{member.userId === connection.user.userId ? ' (you)' : ''}</strong><small>{member.userId === session.hostId ? 'Host' : session.controllers.includes(member.userId) ? 'Can control' : 'Viewer'}</small>{isHost && member.userId !== connection.user.userId && <><button disabled={busy} aria-pressed={session.controllers.includes(member.userId)} onClick={() => void act(() => room.request('party:setController', { userId: member.userId, enabled: !session.controllers.includes(member.userId) }))}>{session.controllers.includes(member.userId) ? 'Revoke control' : 'Give control'}</button><button disabled={busy} onClick={() => void act(() => room.request('party:transferHost', { userId: member.userId }))}>Make host</button><button className="danger" disabled={busy} onClick={() => void act(() => room.request('party:kick', { userId: member.userId }))}>Remove</button></>}</div></details>)}<span className="roster-count">{members.length} watching</span></section>
-    <Field label="Sync mode"><select disabled={!isHost || busy} value={session.syncMode} onChange={event => void act(() => room.request('party:setSyncMode', { mode: event.target.value }))}><option value="hopping">Host sync · keep playing</option><option value="dragging">Together · wait for everyone</option></select></Field>
-    <div className="invite-strip" aria-label="Invite code"><AnIcon name="link" size={16} /><strong>{formatInvite(session.inviteCode)}</strong><button title="Copy invite code" aria-label="Copy invite code" className={copied ? 'is-copied' : ''} onClick={() => void act(async () => { await navigator.clipboard.writeText(formatInvite(session.inviteCode)); setCopied(true) })}><AnIcon name={copied ? 'check' : 'copy'} size={16} /><span className="sr-only" aria-live="polite">{copied ? 'Copied' : 'Copy'}</span></button></div>
-    {isHost && session.waiting.map(member => <div key={member.userId}><span className="hint">{member.name}</span><button disabled={busy} onClick={() => void act(() => room.request('party:approve', { userId: member.userId }))}>Allow</button><button disabled={busy} onClick={() => void act(() => room.request('party:reject', { userId: member.userId }))}>Decline</button></div>)}
-    {optionsOpen && <section className="party-options" aria-label="Party settings">
-      <div className="options-heading"><h2>Preferences</h2><button className="icon-button" aria-label="Connection settings" title="Connection settings" onClick={openSettings}><AnIcon name="settings" size={16} /></button></div>
-      <Field label="Playback speed"><select disabled={!canControl} value={session.externalMedia.playbackRate} onChange={event => void room.command('rate', undefined, Number(event.target.value))}>{[.25, .5, .75, 1, 1.25, 1.5, 1.75, 2].map(rate => <option key={rate} value={rate}>{rate}×</option>)}</select></Field>
-      {isHost && <Toggle label="Everyone can control playback" value={session.collaborativeControl} onChange={value => void act(() => room.request('party:setCollaborative', { enabled: value }))} />}
-      <details className="device-settings"><summary>Camera & microphone</summary>
-        {([['cameraId', 'videoinput', 'Camera'], ['micId', 'audioinput', 'Microphone'], ['speakerId', 'audiooutput', 'Speakers']] as const).map(([key, kind, name]) => <Field key={key} label={name}><select value={settings[key]} onChange={event => update(key, event.target.value)}><option value="">System default</option>{devices.filter(device => device.kind === kind).map((device, index) => <option key={device.deviceId || index} value={device.deviceId}>{device.label || `${name} ${index + 1}`}</option>)}</select></Field>)}
-        <Field label="Voice volume"><input type="range" min="0" max="1" step=".05" value={settings.voiceVolume} onChange={event => { update('voiceVolume', Number(event.target.value)); setVolumes({}) }} /></Field>
-        <Toggle label="Show my camera" value={settings.showSelf} onChange={value => update('showSelf', value)} /><Toggle label="Hide all camera tiles" value={settings.hideCameras} onChange={value => update('hideCameras', value)} /><button onClick={() => void refreshDevices()}>Refresh devices</button><button onClick={media.reconnect}>Reconnect audio</button>
-      </details>
-      <Toggle label="Gentle sync correction" value={settings.gentle} onChange={value => update('gentle', value)} /><Field label={`Sync tolerance · ${settings.tolerance.toFixed(2)}s`}><input type="range" min=".1" max="1" step=".05" value={settings.tolerance} onChange={event => update('tolerance', Number(event.target.value))} /></Field>
-      <Field label="YouTube volume"><input type="range" min="0" max="1" step=".05" value={player?.volume ?? 1} onChange={event => bridge({ type: 'volume', videoId: player?.videoId, volume: Number(event.target.value) })} /></Field>
-      <Field label="Dock"><select value={settings.dock} onChange={event => update('dock', event.target.value as Settings['dock'])}><option value="right">Right</option><option value="left">Left</option></select></Field>
-      <Field label="Opacity"><input type="range" min=".5" max="1" step=".05" value={settings.opacity} onChange={event => update('opacity', Number(event.target.value))} /></Field>
-      <Field label="Camera width"><input type="range" min="112" max="480" step="8" value={settings.tileSize} onChange={event => update('tileSize', Number(event.target.value))} /></Field>
-      <Field label="Chat text size"><input type="range" min="12" max="20" step="1" value={settings.chatSize} onChange={event => update('chatSize', Number(event.target.value))} /></Field><button onClick={() => setSettings(defaults)}>Reset settings</button>
-    </section>}
-    {media.audioBlocked && <button className="primary" onClick={() => void media.startAudio()}>Enable room audio</button>}
-    <footer className="room-footer"><span className="footer-identity">{connection.user.name} · {isHost ? 'Host' : canControl ? 'Can control' : 'Viewer'}</span><button className="icon-button danger" aria-label={isHost ? 'End party' : 'Leave party'} title={isHost ? 'End party' : 'Leave party'} disabled={busy} onClick={() => void act(room.leave)}><AnIcon name="power" size={18} /></button></footer>
+    <div className="panel-body">
+      {!optionsOpen ? <>
+        <div className="now-playing"><MediaCover videoId={session.externalMedia.videoId} /><div className="media-copy"><strong>{session.externalMedia.title || 'YouTube'}</strong><span>{mismatched ? 'Syncing shared page…' : player?.ad ? 'Waiting for ad…' : !session.externalMedia.videoId ? 'Browsing together' : session.schedule.phase === 'stalled' ? 'Waiting for a viewer…' : Math.abs(room.drift) < .3 ? 'In sync' : `${Math.abs(room.drift).toFixed(1)}s ${room.drift > 0 ? 'behind' : 'ahead'}`}</span></div></div>
+        <section className="people-list" aria-label={`People (${members.length})`}>{members.map(member => <details className="member-menu" key={member.userId}>
+          <summary aria-label={`${member.name} actions`}><Avatar userId={member.userId} name={member.name} config={member.avatar} size={30} circle /><span className="member-copy"><strong>{member.userId === connection.user.userId ? `${member.name} (you)` : member.name}</strong><small>{member.userId === session.hostId ? 'Host' : session.controllers.includes(member.userId) ? 'Playback control' : 'Watching'}</small></span><AnIcon name="back" size={14} /></summary>
+          <div className="member-actions">{isHost && member.userId !== connection.user.userId ? <><button disabled={busy} aria-pressed={session.controllers.includes(member.userId)} onClick={() => void act(() => room.request('party:setController', { userId: member.userId, enabled: !session.controllers.includes(member.userId) }))}>{session.controllers.includes(member.userId) ? 'Revoke control' : 'Give control'}</button><button disabled={busy} onClick={() => void act(() => room.request('party:transferHost', { userId: member.userId }))}>Make host</button><button className="danger" disabled={busy} onClick={() => void act(() => room.request('party:kick', { userId: member.userId }))}>Remove</button></> : <p className="hint">{member.userId === session.hostId ? 'The host manages this party.' : 'Watching with you.'}</p>}</div>
+        </details>)}</section>
+        <Field label="Sync mode"><select disabled={!isHost || busy} value={session.syncMode} onChange={event => void act(() => room.request('party:setSyncMode', { mode: event.target.value }))}><option value="hopping">Keep playing</option><option value="dragging">Wait for everyone</option></select></Field>
+        <div className="invite-strip"><div><span>Invite a friend</span><strong>{formatInvite(session.inviteCode)}</strong></div><button title="Copy invite code" aria-label="Copy invite code" className="icon-button" onClick={() => void act(async () => { await navigator.clipboard.writeText(formatInvite(session.inviteCode)); setCopied(true) })}><AnIcon name={copied ? 'check' : 'copy'} size={17} /></button><span className="sr-only" role="status">{copied ? 'Invite code copied' : ''}</span></div>
+        {isHost && session.waiting.map(member => <div className="waiting-person" key={member.userId}><span>{member.name} wants to join</span><button disabled={busy} onClick={() => void act(() => room.request('party:approve', { userId: member.userId }))}>Allow</button><button disabled={busy} onClick={() => void act(() => room.request('party:reject', { userId: member.userId }))}>Decline</button></div>)}
+      </> : <section className="party-options" aria-label="Party settings">
+        <details className="settings-group" open><summary>Camera & sound</summary>
+          {([['cameraId', 'videoinput', 'Camera'], ['micId', 'audioinput', 'Microphone'], ['speakerId', 'audiooutput', 'Speakers']] as const).map(([key, kind, name]) => <Field key={key} label={name}><select value={settings[key]} onChange={event => update(key, event.target.value)}><option value="">System default</option>{devices.filter(device => device.kind === kind).map((device, index) => <option key={device.deviceId || index} value={device.deviceId}>{device.label || `${name} ${index + 1}`}</option>)}</select></Field>)}
+          <Field label="Voice volume"><input type="range" min="0" max="1" step=".05" value={settings.voiceVolume} onChange={event => { update('voiceVolume', Number(event.target.value)); setVolumes({}) }} /></Field>
+          <Toggle label="Show my feed" value={settings.showSelf} onChange={value => update('showSelf', value)} /><Toggle label="Hide all feeds" value={settings.hideCameras} onChange={value => update('hideCameras', value)} />
+          <div className="settings-actions"><button onClick={() => void refreshDevices()}>Refresh devices</button><button onClick={media.reconnect}>Reconnect audio</button></div>
+        </details>
+        <details className="settings-group"><summary>Playback</summary>
+          <Field label="Speed"><select disabled={!canControl} value={session.externalMedia.playbackRate} onChange={event => void room.command('rate', undefined, Number(event.target.value))}>{[.25, .5, .75, 1, 1.25, 1.5, 1.75, 2].map(rate => <option key={rate} value={rate}>{rate}×</option>)}</select></Field>
+          {isHost && <Toggle label="Everyone can control playback" value={session.collaborativeControl} onChange={value => void act(() => room.request('party:setCollaborative', { enabled: value }))} />}
+          <Toggle label="Gentle sync correction" value={settings.gentle} onChange={value => update('gentle', value)} /><Field label={`Sync tolerance · ${settings.tolerance.toFixed(2)}s`}><input type="range" min=".1" max="1" step=".05" value={settings.tolerance} onChange={event => update('tolerance', Number(event.target.value))} /></Field>
+          <Field label="YouTube volume"><input type="range" min="0" max="1" step=".05" value={player?.volume ?? 1} onChange={event => bridge({ type: 'volume', videoId: player?.videoId, volume: Number(event.target.value) })} /></Field>
+        </details>
+        <details className="settings-group"><summary>Display</summary>
+          <Field label="Dock"><select value={settings.dock} onChange={event => update('dock', event.target.value as Settings['dock'])}><option value="right">Right</option><option value="left">Left</option></select></Field>
+          <Field label="Opacity"><input type="range" min=".5" max="1" step=".05" value={settings.opacity} onChange={event => update('opacity', Number(event.target.value))} /></Field>
+          <Field label="Feed size"><input type="range" min="112" max="480" step="8" value={settings.tileSize} onChange={event => update('tileSize', Number(event.target.value))} /></Field>
+          <Field label="Chat text size"><input type="range" min="12" max="20" step="1" value={settings.chatSize} onChange={event => update('chatSize', Number(event.target.value))} /></Field>
+        </details>
+        <div className="settings-actions"><button onClick={openSettings}>Connection settings</button><button onClick={() => setSettings(defaults)}>Reset</button></div>
+      </section>}
+      {media.audioBlocked && <button className="primary wide" onClick={() => void media.startAudio()}>Enable room audio</button>}
+    </div>
+    <footer className="room-footer"><span className={`connection-status${room.connected ? ' online' : ''}`}><i className="connection-dot" />{room.connected ? 'Connected' : 'Reconnecting…'}</span><button className="leave-button" disabled={busy} onClick={() => void act(room.leave)}><AnIcon name="power" size={14} />{isHost ? 'End party' : 'Leave party'}</button></footer>
   </main>
 }
