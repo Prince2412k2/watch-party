@@ -151,6 +151,17 @@ test('YouTube extension pairing, scoped rooms, timeline, chat, LiveKit, and revo
   const message = once(guest, 'chat:message')
   assert.equal((await ack(host, 'chat:message', { text: 'YouTube together' })).ok, true)
   assert.equal((await message)[0].text, 'YouTube together')
+  const richMessage = once(guest, 'chat:message')
+  const richContent = { text: 'GIF', gif: 'https://media.giphy.com/example.gif', reply: { name: 'Host', text: 'YouTube together' } }
+  assert.equal((await ack(host, 'chat:message', richContent)).ok, true)
+  const rich = (await richMessage)[0]
+  assert.equal(rich.gif, richContent.gif)
+  assert.deepEqual(rich.reply, richContent.reply)
+  assert.ok((await ack(host, 'chat:message', { gif: 'javascript:alert(1)' })).error)
+  const avatar = { colors: { hair: '4A3728' } }
+  const profile = await fetch(`${base}/api/profile`, { method: 'PUT', headers: { Cookie: hostAccount.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: null, avatar }) })
+  assert.equal(profile.status, 200)
+  assert.deepEqual((await ack(host, 'party:resume')).session.hostAvatar, avatar)
   assert.ok((await ack(guest, 'sync:seek', { positionTicks: 40 * TICKS, mediaGeneration: generation })).error)
   assert.ok((await ack(guest, 'party:setController', { userId: guestAccount.user.userId, enabled: true })).error)
   await ack(host, 'party:setController', { userId: guestAccount.user.userId, enabled: true })

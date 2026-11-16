@@ -1,4 +1,4 @@
-# Watch Party for YouTube (v0.4)
+# Watch Party for YouTube (v0.5)
 
 Uses the existing Watch Party timeline, chat, SQLite session store, and LiveKit
 server. Each person watches YouTube directly; Jellyfin media import is not needed.
@@ -64,7 +64,7 @@ end-to-end pass remains necessary.
   playback speed, and page/video selection. Grants survive reloads; explicit
   departure/removal revokes them. A controller's navigation follows for everyone.
 
-## Native player design and independent panels
+## Minimal player chrome and independent panels
 
 The extension mirrors `flutter_app/lib/ui/palette.dart`, `tokens.dart`, and
 `party/party_controls.dart`: charcoal `#101113` / `#17181b` surfaces, off-white
@@ -72,12 +72,25 @@ The extension mirrors `flutter_app/lib/ui/palette.dart`, `tokens.dart`, and
 and compact monochrome icon trays. Red is reserved for the brand and semantic
 danger/off-device states. Participant avatars replace the old roster/tab layout.
 
-Party, Chat, and Camera & mic are separate draggable/resizable windows. Hide and
-reopen Chat/Camera & mic from the Party tray. Their extension-origin frames use
-React portals into the owner's existing tree: they create no extra Socket.IO
-or LiveKit connections. Chat messages align like the native chat panel, with
-your messages on the right. Device selection is behind **Devices** in the A/V
-panel. The collapsed 44px launcher is draggable; dragging does not open it.
+Chat opens on the right, a two-button camera/mic dock sits on the left, and a
+small connection/count indicator sits at the top left. A persistent bottom-right
+launcher toggles the compact party controls, beside chat on wide viewports and
+above it on small ones. Chat closes independently and has its own reopen button.
+The launcher is draggable; dragging does not open it. Chat and camera windows
+remain draggable/resizable. Device selection lives in Party settings.
+
+The extension-origin frames use React portals into the owner's existing tree:
+they create no extra Socket.IO or LiveKit connections. Chat has an expanding
+composer, Enter to send, Shift+Enter for newlines, quoted replies, an emoji
+picker, a small searchable reaction-GIF collection, and HTTPS GIF links. Replies
+and GIFs require the v0.5 backend chat-content support. Older clients still see
+the text fallback. Motion is limited to short opening/feedback transitions and
+respects reduced-motion preferences. Surfaces follow the system light/dark mode.
+
+Avatars reuse the web app's Humation assets and shared derivation. Guest identities
+get a stable generated face, while signed-in accounts use their saved profile
+configuration. The same face appears in chat, the participant roster, camera-off
+tiles, and collapsed camera bubbles. Avatar rendering needs no image API requests.
 
 ### Floating cameras
 

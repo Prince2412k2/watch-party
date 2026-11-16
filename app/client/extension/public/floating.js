@@ -70,6 +70,9 @@ globalThis.WatchPartyCameraLayer = class {
         bar.append(label, collapse); node.append(frame, bar, resize, ball); this.root.append(node); this.tiles.set(person.id, tile)
       }
       tile.label.textContent = person.name; tile.speaking = person.speaking
+      if (typeof person.avatar === 'string' && person.avatar.startsWith('data:image/svg+xml,')) {
+        tile.ball.style.backgroundImage = `url("${person.avatar}")`; tile.ball.style.backgroundSize = 'cover'; tile.ball.textContent = ''; tile.ball.setAttribute('aria-label', `Expand ${person.name}`)
+      }
       if (!tile.customized) tile.width = defaultWidth
       this.place(tile)
     })

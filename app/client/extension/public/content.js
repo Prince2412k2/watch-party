@@ -59,11 +59,17 @@
   for (const root of [shadow, camerasShadow]) {
     const nativeStyle = document.createElement('link'); nativeStyle.rel = 'stylesheet'; nativeStyle.href = chrome.runtime.getURL('overlay.css'); root.append(nativeStyle)
   }
-  const panels = new globalThis.WatchPartyPanelLayer(camerasShadow, camerasHost, chrome.runtime.getURL('panel.html'), data => send(data))
+  const panels = new globalThis.WatchPartyPanelLayer(camerasShadow, camerasHost, chrome.runtime.getURL('panel.html'), data => {
+    if (data.type === 'panel-visibility' && data.id === 'chat') {
+      panel.style.right = data.visible && innerWidth >= 760 ? '346px' : '0px'
+    }
+    send(data)
+  })
 
   let launcherMoved = false
-  launcher.onclick = () => { if (launcherMoved) { launcherMoved = false; return }; panel.hidden = false; launcher.hidden = true; clampHost(); snapshot() }
-  hide.onclick = () => { panel.hidden = true; launcher.hidden = false }
+  let partyActive = false
+  launcher.onclick = () => { if (launcherMoved) { launcherMoved = false; return }; panel.hidden = partyActive ? !panel.hidden : false; launcher.hidden = !partyActive; launcher.setAttribute('aria-expanded', String(!panel.hidden)); if (!partyActive) clampHost(); snapshot() }
+  hide.onclick = () => { panel.hidden = true; launcher.hidden = false; launcher.setAttribute('aria-expanded', 'false'); launcher.focus?.() }
   async function toggleFullscreen() {
     try {
       if (document.fullscreenElement) await document.exitFullscreen()
@@ -83,6 +89,7 @@
     clampHost()
   })
   function clampHost() {
+    if (partyActive) panel.style.right = !panels.panels.get('chat')?.node.hidden && innerWidth >= 760 ? '346px' : '0px'
     const rect = host.getBoundingClientRect()
     host.style.left = `${Math.max(0, Math.min(Math.max(0, innerWidth - rect.width), rect.left))}px`
     host.style.top = `${Math.max(0, Math.min(Math.max(0, innerHeight - rect.height), rect.top))}px`
@@ -176,12 +183,21 @@
     const command = event.data
     if (command.type === 'hello') { snapshot(); return }
     if (command.type === 'panel-mode') {
-      panel.style.width = command.active ? '360px' : '344px'
-      panel.style.height = command.active ? 'min(440px, calc(100vh - 32px))' : '290px'
-      if (command.active) { host.style.top = '16px'; host.style.bottom = 'auto' }
+      partyActive = !!command.active
+      panel.className = partyActive ? 'panel party-controls' : 'panel'
+      panel.style.width = partyActive ? '292px' : '344px'
+      panel.style.height = partyActive ? 'min(420px, calc(100vh - 100px))' : '290px'
+      if (partyActive) {
+        host.style.left = 'auto'; host.style.top = 'auto'; host.style.right = '20px'; host.style.bottom = '20px'
+        panel.hidden = true; launcher.hidden = false; launcher.title = 'Party controls'; launcher.setAttribute('aria-label', 'Party controls'); launcher.setAttribute('aria-expanded', 'false')
+      } else {
+        launcher.title = 'Watch Party'; launcher.setAttribute('aria-label', 'Watch Party')
+      }
       return
     }
-    if (command.type === 'open') { panel.hidden = false; launcher.hidden = true; return }
+    if (command.type === 'open') { if (!partyActive) { panel.hidden = false; launcher.hidden = true }; return }
+    if (command.type === 'open-controls') { panel.hidden = false; launcher.hidden = false; launcher.setAttribute('aria-expanded', 'true'); return }
+    if (command.type === 'close-controls') { hide.onclick(); return }
     if (command.type === 'cameras' && typeof command.owner === 'string' && Array.isArray(command.people)) { cameras.update(command); return }
     if (command.type === 'panels' && typeof command.owner === 'string') { panels.update(command); return }
     if (command.type === 'toggle-panel' && ['chat', 'av'].includes(command.id)) { panels.toggle(command.id); return }

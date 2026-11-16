@@ -65,6 +65,7 @@ import { registerConverterRoutes } from './converter.js'
 import { registerOfflineRoutes } from './offline.js'
 import { extensionIdentity, registerExtensionRoutes, parseExternalMedia, EXTERNAL_RATES } from './extension.js'
 import { randomBytes } from 'node:crypto'
+import { chatContent } from '../shared/chat-content.js'
 import { resolveMediaSourceId, getItemDetail } from './jellyfin.js'
 
 // Fail fast: never run in production with a missing or default session secret.
@@ -1105,22 +1106,21 @@ io.on('connection', (socket) => {
   })
 
   // chat:message ────────────────────────────────────────────────────────────
-  const CHAT_MAX_LEN = 2000
   const CHAT_RATE_WINDOW_MS = 3000
   const CHAT_RATE_MAX = 5
-  socket.on('chat:message', ({ text } = {}, ack) => {
+  socket.on('chat:message', (payload = {}, ack) => {
     const sess = findSessionForMember(userId)
-    if (!sess || !text?.trim()) return
+    if (!sess) return ack?.({ error: 'not in a party' })
+    const content = chatContent(payload)
+    if (!content) return ack?.({ error: 'Enter a message or a valid HTTPS GIF URL' })
     // Light per-socket rate limit
     const now = Date.now()
     socket._chatTimes = (socket._chatTimes || []).filter(t => now - t < CHAT_RATE_WINDOW_MS)
     if (socket._chatTimes.length >= CHAT_RATE_MAX) return ack?.({ error: 'rate limited' })
     socket._chatTimes.push(now)
-    // Server-side length cap (truncate) so a client can't flood the room log
-    const clean = text.trim().slice(0, CHAT_MAX_LEN)
     // Stamped with the display name in force when the message was sent —
     // already-sent messages are never rewritten by a later profile edit.
-    const msg = { userId, name: effectiveName(userId, name), text: clean, timestamp: now }
+    const msg = { userId, name: effectiveName(userId, name), ...content, timestamp: now }
     pushMessage(sess, msg)
     io.to(sess.id).emit('chat:message', msg)
     ack?.({ ok: true })

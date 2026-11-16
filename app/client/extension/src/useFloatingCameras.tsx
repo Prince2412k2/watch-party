@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { bridge } from './core.ts'
 import { localGet, localSet } from './platform.ts'
 
-interface Person { id: string; name: string; speaking: boolean }
+interface Person { id: string; name: string; speaking: boolean; avatar?: string }
 interface Layout { x: number; y: number; width: number; collapsed: boolean; customized: boolean }
 
 export function useFloatingCameras(people: Person[], defaultWidth: number, render: (id: string) => ReactNode) {

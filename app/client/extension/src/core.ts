@@ -1,9 +1,10 @@
 import type { SyncSchedule } from '../../src/sync/syncCore.ts'
+import type { AvatarConfig } from '../../src/lib/avatar.ts'
 
 export interface ExternalMedia { provider: 'youtube'; videoId: string | null; url: string; title: string; playbackRate: number }
-export interface Member { userId: string; name: string; isAdmin?: boolean }
+export interface Member { userId: string; name: string; isAdmin?: boolean; avatar?: AvatarConfig | null }
 export interface Session {
-  id: string; hostId: string; hostName: string; guests: Member[]; waiting: Member[]
+  id: string; hostId: string; hostName: string; hostAvatar?: AvatarConfig | null; guests: Member[]; waiting: Member[]
   collaborativeControl: boolean; syncMode: 'hopping' | 'dragging'; externalMedia: ExternalMedia
   schedule: SyncSchedule
   inviteCode: string; controllers: string[]
@@ -16,7 +17,7 @@ export interface PlayerState {
   volume: number
   url: string
 }
-export interface Message { userId: string; name: string; text: string; timestamp: number }
+export interface Message { userId: string; name: string; text: string; timestamp: number; gif?: string; reply?: { name: string; text: string } }
 export interface Connection { server: string; token: string; user: Member; expiresAt: number }
 export interface Setup { server: string; name: string; username?: string }
 export const TICKS = 10_000_000

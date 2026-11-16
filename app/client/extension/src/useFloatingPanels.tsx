@@ -19,7 +19,7 @@ export function useFloatingPanels(active: boolean, render: (id: string) => React
         visibility.current(data.id, data.visible === true)
         return
       }
-      if (event.origin !== location.origin || data.source !== 'watchparty-panel-ready' || !['chat', 'av'].includes(data.id)) return
+      if (event.origin !== location.origin || data.source !== 'watchparty-panel-ready' || !['chat', 'av', 'status'].includes(data.id)) return
       try {
         const view = event.source as Window
         const url = new URL(view.location.href)
