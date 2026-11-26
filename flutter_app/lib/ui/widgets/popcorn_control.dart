@@ -66,13 +66,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   bool _busy = false;
   bool _copied = false;
 
-  /// A failure has nowhere to print now that the panel's error line is gone, so
-  /// it rides on the tooltip of the action that caused it and tints that button
-  /// red. The server's wording still reaches the user, just on demand.
-  ///
-  /// Only "start a party" can fail on this tray today; the rest are local or
-  /// already have their own surface. Without this, a refused create would leave
-  /// the button doing visibly nothing.
+  /// The last failed party action, shown beside the tray controls.
   String? _error;
 
   bool get _open => _tray.value > 0;

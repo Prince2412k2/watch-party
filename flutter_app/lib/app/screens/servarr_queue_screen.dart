@@ -136,8 +136,9 @@ class _NeedsAttentionState extends ConsumerState<_NeedsAttention> {
                       await ref
                           .read(servarrQueueActionsProvider)
                           .removeQueueItem(q, blocklist: blocklist);
-                      if (mounted)
+                      if (mounted) {
                         setState(() => _removed.add((q.service, q.id)));
+                      }
                     },
                   ),
               ],
@@ -171,10 +172,11 @@ class _FailingCardState extends State<_FailingCard> {
     try {
       await widget.onRemove(blocklist);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _error = 'Could not remove from the server queue. Try again.',
         );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -285,25 +287,24 @@ class _FailingCardState extends State<_FailingCard> {
                   const SizedBox(width: AppSpacing.sm),
                   _PillBtn(
                     label: 'Cancel',
-                    onTap: () {
-                      if (!_busy)
-                        setState(() {
-                          _confirm = false;
-                          _error = null;
-                        });
-                    },
+                    onTap: _busy
+                        ? null
+                        : () => setState(() {
+                            _confirm = false;
+                            _error = null;
+                          }),
                   ),
                   _PillBtn(
                     label: 'Remove',
                     icon: Icons.delete_outline,
                     danger: true,
-                    onTap: () => _remove(false),
+                    onTap: _busy ? null : () => _remove(false),
                   ),
                   _PillBtn(
-                    label: 'Remove & block',
+                    label: 'Remove & block release',
                     icon: Icons.block,
                     danger: true,
-                    onTap: () => _remove(true),
+                    onTap: _busy ? null : () => _remove(true),
                   ),
                 ],
               ),
@@ -323,7 +324,7 @@ class _PillBtn extends StatelessWidget {
     this.danger = false,
   });
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final IconData? icon;
   final bool danger;
 
@@ -460,7 +461,10 @@ class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
             ),
           ),
         if (list.isEmpty)
-          _Unavailable(text: 'No downloads', icon: Icons.download_outlined)
+          _Unavailable(
+            text: snap.loadError ? 'Server queue unavailable' : 'No downloads',
+            icon: Icons.download_outlined,
+          )
         else
           Wrap(
             spacing: 18,
@@ -521,8 +525,9 @@ class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
     try {
       await action();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() => _errors[hash] = 'Could not $verb. Try again.');
+      }
     } finally {
       if (mounted) setState(() => _busy.remove(hash));
     }

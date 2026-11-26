@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:watchparty/analog/chrome/chrome.dart';
@@ -9,6 +10,7 @@ import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/models.dart';
 import 'package:watchparty/state/state.dart';
 import 'package:watchparty/ui/ui.dart';
+import 'package:watchparty/ui/widgets/bottom_nav.dart';
 
 /// Counts browse-catalog fetches, which is the only thing the launch warm does.
 class _CountingApi extends MockApiClient {
@@ -59,6 +61,41 @@ Widget _shell({
 );
 
 void main() {
+  testWidgets('bottom navigation is keyboard operable', (tester) async {
+    final selections = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: BottomNav(
+            currentRoute: '/movies',
+            destinations: const [
+              NavDestination(
+                route: '/movies',
+                icon: Icons.movie,
+                label: 'Movies',
+              ),
+              NavDestination(
+                route: '/downloads',
+                icon: Icons.download,
+                label: 'Downloads',
+              ),
+            ],
+            onSelect: selections.add,
+          ),
+        ),
+      ),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(selections, ['/downloads']);
+  });
+
   testWidgets('AppShell shows the four web nav tabs to an admin', (
     tester,
   ) async {
@@ -96,9 +133,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     // Anywhere but `/movies`: there the page IS the login form, and the shell
     // stands down (below).
-    await tester.pumpWidget(
-      _shell(overrides: const [], location: '/offline'),
-    );
+    await tester.pumpWidget(_shell(overrides: const [], location: '/offline'));
     await tester.pump();
 
     // Guest nav is just browse + downloaded; no Shows/Discover tabs.

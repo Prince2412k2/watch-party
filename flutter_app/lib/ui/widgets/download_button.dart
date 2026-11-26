@@ -2,28 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analog/chrome/analog_button.dart';
-import '../../analog/chrome/analog_progress.dart';
 import '../../models/models.dart';
 import '../../state/downloads_provider.dart';
 import '../../state/offline_provider.dart';
 import '../../state/providers.dart';
-import '../analog_tokens.dart';
 import 'download_actions.dart';
 
-/// Download affordance for a title (PLAN §4 E8.2) — this is what E3's detail
-/// screen mounts next to Play. Driven entirely by [downloadsProvider] (the
-/// in-flight task, if any) and [offlineProvider] (the completed manifest):
-///
-///   nothing yet          → "Download" button.
-///   enqueued/running      → progress bar + pause/cancel.
-///   paused                → progress bar (dimmed) + resume/cancel.
-///   failed                → error text + "Retry".
-///   in the offline manifest → menu with the device removal action.
-///
-/// Starting a download fills the same on-device media cache playback streams
-/// through (`CacheFillController.start`, Phase 3b-wiring) — a "download" is
-/// just a fully-cached title, watchable while downloading and playable
-/// offline once complete. Callers only need the item's id/title/metadata.
+enum _DownloadAction { remove, pause, resume, retry, cancel }
+
+/// A stable title action for starting and managing the device copy.
 class DownloadButton extends ConsumerWidget {
   const DownloadButton({
     super.key,
@@ -48,9 +35,13 @@ class DownloadButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    return SizedBox.square(dimension: 44, child: _buildAction(context, ref));
+  }
+
+  Widget _buildAction(BuildContext context, WidgetRef ref) {
     final offline = _findOffline(ref.watch(offlineProvider), itemId);
     if (offline != null) {
-      return PopupMenuButton<bool>(
+      return PopupMenuButton<_DownloadAction>(
         tooltip: 'Downloaded · Manage device copy',
         padding: EdgeInsets.zero,
         icon: const Icon(Icons.download_done, size: 18),
@@ -58,7 +49,7 @@ class DownloadButton extends ConsumerWidget {
             removeLocalDownload(context, ref, itemId: itemId, title: title),
         itemBuilder: (_) => const [
           PopupMenuItem(
-            value: true,
+            value: _DownloadAction.remove,
             child: Text('Remove download from this device…'),
           ),
         ],
@@ -69,63 +60,85 @@ class DownloadButton extends ConsumerWidget {
     if (download == null ||
         download.status == DownloadStatus.canceled ||
         download.status == DownloadStatus.complete) {
-      // `complete` briefly races the offline-manifest write (E8.3 wiring) —
-      // treat it the same as "not started" rather than flash a dead-end state.
-      // Icon-only. A downward arrow into a tray is one of maybe five glyphs
-      // that need no gloss anywhere on earth, and the word next to it was
-      // costing 90px on a surface whose whole argument is that the artwork is
-      // the interface. The tooltip is not a consolation prize — it is the
-      // control's accessible name, and [AnalogIconButton] will not compile
-      // without one.
       return AnalogIconButton(
         icon: Icons.download_outlined,
         tooltip: 'Download',
         tone: AnalogIconButtonTone.solid,
+        size: 44,
         onPressed: () => _start(ref),
       );
     }
 
-    if (download.status == DownloadStatus.failed) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(
-              download.error ?? 'Download failed',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontFamily: AnalogType.sansFamily,
-                color: AnalogColor.statusDanger,
-                fontSize: 12.5,
-              ),
-            ),
-          ),
-          const SizedBox(width: AnalogSpace.smPx),
-          // The failure message beside it is already carrying the words. A
-          // "Retry" label here would be the second sentence about one event.
-          AnalogIconButton(
-            icon: Icons.refresh,
-            tooltip: 'Retry the download',
-            onPressed: () => _start(ref),
-          ),
-        ],
-      );
-    }
+    final failed = download.status == DownloadStatus.failed;
+    final paused = download.status == DownloadStatus.paused;
+    final progress = download.progress.clamp(0.0, 1.0).toDouble();
+    final percent = '${(progress * 100).round()}%';
+    final status = switch (download.status) {
+      DownloadStatus.enqueued => 'Download queued',
+      DownloadStatus.failed => 'Download failed',
+      DownloadStatus.paused => 'Download paused · $percent',
+      _ => 'Downloading · $percent',
+    };
 
-    return _ProgressRow(
-      record: download,
-      onPause: () =>
-          ref.read(downloadsProvider.notifier).pause(download.taskId),
-      onResume: () => ref
-          .read(downloadsProvider.notifier)
-          .resume(download.taskId, api: ref.read(apiClientProvider)),
-      onCancel: () => cancelLocalDownload(
-        context,
-        ref,
-        taskId: download.taskId,
-        title: title,
-      ),
+    return PopupMenuButton<_DownloadAction>(
+      tooltip: status,
+      padding: EdgeInsets.zero,
+      icon: failed
+          ? const Icon(Icons.error_outline, size: 18)
+          : Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox.square(
+                  dimension: 26,
+                  child: CircularProgressIndicator(
+                    value: progress,
+                    strokeWidth: 2,
+                    backgroundColor: Theme.of(context).dividerColor,
+                  ),
+                ),
+                Icon(paused ? Icons.pause : Icons.download, size: 14),
+              ],
+            ),
+      itemBuilder: (_) => [
+        PopupMenuItem(enabled: false, child: Text(download.error ?? status)),
+        if (failed)
+          const PopupMenuItem(
+            value: _DownloadAction.retry,
+            child: Text('Retry download'),
+          )
+        else
+          PopupMenuItem(
+            value: paused ? _DownloadAction.resume : _DownloadAction.pause,
+            child: Text(paused ? 'Resume download' : 'Pause download'),
+          ),
+        const PopupMenuItem(
+          value: _DownloadAction.cancel,
+          child: Text('Cancel download…'),
+        ),
+      ],
+      onSelected: (action) async {
+        final notifier = ref.read(downloadsProvider.notifier);
+        switch (action) {
+          case _DownloadAction.pause:
+            await notifier.pause(download.taskId);
+          case _DownloadAction.resume:
+            await notifier.resume(
+              download.taskId,
+              api: ref.read(apiClientProvider),
+            );
+          case _DownloadAction.retry:
+            await _start(ref);
+          case _DownloadAction.cancel:
+            await cancelLocalDownload(
+              context,
+              ref,
+              taskId: download.taskId,
+              title: title,
+            );
+          case _DownloadAction.remove:
+            break;
+        }
+      },
     );
   }
 
@@ -161,73 +174,5 @@ class DownloadButton extends ConsumerWidget {
       if (r.itemId == itemId) return r;
     }
     return null;
-  }
-}
-
-class _ProgressRow extends StatelessWidget {
-  const _ProgressRow({
-    required this.record,
-    required this.onPause,
-    required this.onResume,
-    required this.onCancel,
-  });
-
-  final DownloadRecord record;
-  final VoidCallback onPause;
-  final VoidCallback onResume;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final paused = record.status == DownloadStatus.paused;
-    return SizedBox(
-      width: 220,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: AnalogProgress(
-                  value: record.progress > 0
-                      ? record.progress.clamp(0.0, 1.0)
-                      : null,
-                  semanticLabel: 'Download progress',
-                  // Paused is carried by the icon swapping to Play as well as
-                  // by the line dimming, so it survives without the colour.
-                  ink: paused ? AnalogColor.inkFaint : AnalogColor.ink,
-                ),
-              ),
-              const SizedBox(width: AnalogSpace.smPx),
-              Text(
-                '${(record.progress * 100).round()}%',
-                style: const TextStyle(
-                  fontFamily: AnalogType.monoFamily,
-                  fontSize: 11.5,
-                  color: AnalogColor.inkDim,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AnalogSpace.smPx),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AnalogIconButton(
-                icon: paused ? Icons.play_arrow : Icons.pause,
-                tooltip: paused ? 'Resume' : 'Pause',
-                onPressed: paused ? onResume : onPause,
-              ),
-              AnalogIconButton(
-                icon: Icons.close,
-                tooltip: 'Cancel download…',
-                onPressed: onCancel,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 }

@@ -1,8 +1,6 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-
-import '../../ui/widgets/glass_back_button.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_client.dart';
@@ -38,6 +36,7 @@ class DownloadDetailScreen extends ConsumerStatefulWidget {
 class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
   bool _busy = false;
   ServarrDownload? _lastTorrent;
+  bool _removed = false;
 
   void _close() {
     if (!mounted) return;
@@ -60,19 +59,24 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
     );
 
     if (torrent != null) _lastTorrent = torrent;
-    if (torrent == null) {
-      final unavailable = poll.hasError || (snap?.loadError ?? false);
+    if (torrent == null || _removed) {
+      final unavailable =
+          !_removed && (poll.hasError || (snap?.loadError ?? false));
       final previous = _lastTorrent;
-      if (unavailable || snap?.loaded == true || previous != null) {
+      if (_removed || unavailable || snap?.loaded == true) {
         return Scaffold(
           backgroundColor: wp.bg,
           body: EmptyState(
-            title: unavailable
+            title: _removed
+                ? 'Removed from the server queue'
+                : unavailable
                 ? 'Unable to refresh the server queue'
                 : previous != null && previous.percent >= 100
                 ? 'Download left the queue after reaching 100%'
                 : 'Download is no longer in the server queue',
-            message: unavailable
+            message: _removed
+                ? previous?.name
+                : unavailable
                 ? 'The server did not return the current download status.'
                 : 'The server no longer lists this download.',
             icon: Icons.download_done_outlined,
@@ -321,9 +325,9 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
       await ref
           .read(servarrQueueActionsProvider)
           .deleteTorrent(widget.hash, deleteFiles: deleteFiles);
-      _close();
+      if (mounted) setState(() => _removed = true);
     } catch (error) {
-      _report('Could not delete', error);
+      _report('Could not remove from the server queue', error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -93,8 +93,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (_savingUrl) return;
     final url = _url.text.trim();
     final config = ref.read(serverConfigProvider.notifier);
-    if (ServerConfigNotifier.normalize(url) == ref.read(serverConfigProvider))
+    if (ServerConfigNotifier.normalize(url) == ref.read(serverConfigProvider)) {
       return;
+    }
     setState(() {
       _savingUrl = true;
       _serverError = null;
@@ -112,12 +113,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await config.setUrl(url);
       _say('Server updated');
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _serverError = error is FormatException
               ? error.message
               : 'Could not switch servers. Try again.',
         );
+      }
     } finally {
       if (mounted) setState(() => _savingUrl = false);
     }

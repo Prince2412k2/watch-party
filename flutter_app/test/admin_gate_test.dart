@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,9 +9,13 @@ import 'package:watchparty/analog/chrome/chrome.dart';
 import 'package:watchparty/app/router.dart';
 import 'package:watchparty/app/screens/detail_screen.dart';
 import 'package:watchparty/app/screens/downloads_screen.dart';
+import 'package:watchparty/app/screens/download_detail_screen.dart';
 import 'package:watchparty/data/mock_api_client.dart';
 import 'package:watchparty/models/models.dart';
+import 'package:watchparty/state/offline_provider.dart';
+import 'package:watchparty/state/servarr_provider.dart';
 import 'package:watchparty/state/state.dart';
+import 'package:watchparty/ui/widgets/download_button.dart';
 
 /// Putting a title on the server's disk — or taking it off — belongs to the
 /// administrator. These cover the client half of that: what a member is shown,
@@ -152,6 +158,44 @@ void main() {
       expect(find.text('Delete from server…'), findsOneWidget);
     });
 
+    testWidgets(
+      'the device and server actions stay separate after a download completes',
+      (tester) async {
+        _window(tester, const Size(1280, 800));
+        final api = _RadarrApi();
+        await tester.pumpWidget(_detail(api, isAdmin: true));
+        await tester.pumpAndSettle();
+
+        final download = find.byType(DownloadButton);
+        final previousSize = tester.getSize(download);
+        final previousPlay = tester.getRect(find.text('Watch now'));
+        final scope = ProviderScope.containerOf(
+          tester.element(find.byType(DetailScreen)),
+        );
+        scope
+            .read(offlineProvider.notifier)
+            .upsert(
+              const OfflineRecord(
+                itemId: 'movie-1',
+                title: 'Fight Club',
+                filePath: '/offline/fight-club.mp4',
+                downloadedAt: 1,
+              ),
+            );
+        await tester.pumpAndSettle();
+
+        final device = find.byTooltip('Downloaded · Manage device copy');
+        expect(tester.getSize(download), previousSize);
+        expect(tester.getRect(find.text('Watch now')), previousPlay);
+        await tester.tap(device);
+        await _settle(tester);
+
+        expect(find.text('Remove download from this device…'), findsOneWidget);
+        expect(find.text('Delete from server…'), findsNothing);
+        expect(api.deletes, isEmpty);
+      },
+    );
+
     testWidgets('a member never sees it', (tester) async {
       _window(tester, const Size(1280, 800));
 
@@ -228,6 +272,67 @@ Widget _downloads(MockApiClient api, {required bool isAdmin}) => ProviderScope(
 );
 
 void downloadsAndPaletteTests() {
+  testWidgets(
+    'narrow server download detail distinguishes poll failure from removal',
+    (tester) async {
+      _window(tester, const Size(440, 740));
+      final updates = StreamController<ServarrDownloadsSnapshot>.broadcast();
+      addTearDown(updates.close);
+      var closed = false;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            apiClientProvider.overrideWithValue(MockApiClient()),
+            servarrDownloadsPollProvider.overrideWith((ref) => updates.stream),
+          ],
+          child: MaterialApp(
+            home: DownloadDetailScreen(
+              hash: 'torrent',
+              onClose: () => closed = true,
+            ),
+          ),
+        ),
+      );
+      updates.add(
+        const ServarrDownloadsSnapshot(loadError: true, loaded: true),
+      );
+      await _settle(tester);
+
+      expect(find.text('Unable to refresh the server queue'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(closed, isFalse);
+
+      updates.add(
+        ServarrDownloadsSnapshot(
+          loaded: true,
+          list: [
+            ServarrDownload({
+              'hash': 'torrent',
+              'name': 'A long movie title for a narrow window',
+              'state': 'downloading',
+              'progress': 0.4,
+            }),
+          ],
+        ),
+      );
+      await _settle(tester);
+      expect(
+        find.text('A long movie title for a narrow window'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      updates.add(const ServarrDownloadsSnapshot(loaded: true));
+      await _settle(tester);
+      expect(
+        find.text('Download is no longer in the server queue'),
+        findsOneWidget,
+      );
+      expect(closed, isFalse);
+    },
+  );
+
   group('the Downloads tabs', () {
     testWidgets('an admin chooses between this device and the server', (
       tester,

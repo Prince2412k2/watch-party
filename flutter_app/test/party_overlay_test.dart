@@ -312,6 +312,9 @@ void main() {
     tester,
   ) async {
     await pumpOverlay(tester);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(560, 720);
+    addTearDown(tester.view.reset);
     await tester.binding.setSurfaceSize(const Size(560, 720));
     joinRoom(
       waiting: const [Participant(userId: 'gate', name: 'Nadia')],

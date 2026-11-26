@@ -1517,7 +1517,11 @@ class _PlayerChromeState extends State<PlayerChrome>
                       : _retryPlayback,
                 )
               else if (_buffering && !_completed)
-                const _BufferingSpinner(),
+                _BufferingSpinner(
+                  onRetry: widget.onRetryPlayback == null
+                      ? null
+                      : _retryPlayback,
+                ),
 
               if (_completed && !_buffering) const SizedBox.shrink(),
 
@@ -2714,7 +2718,9 @@ class _ChromeIconButton extends StatelessWidget {
 }
 
 class _BufferingSpinner extends StatefulWidget {
-  const _BufferingSpinner();
+  const _BufferingSpinner({this.onRetry});
+
+  final VoidCallback? onRetry;
 
   @override
   State<_BufferingSpinner> createState() => _BufferingSpinnerState();
@@ -2762,6 +2768,11 @@ class _BufferingSpinnerState extends State<_BufferingSpinner> {
                 style: AppTheme.dim,
               ),
             ),
+            if (_takingLonger && widget.onRetry != null)
+              TextButton(
+                onPressed: widget.onRetry,
+                child: const Text('Retry playback'),
+              ),
           ],
         ),
       ),
