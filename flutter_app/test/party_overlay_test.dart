@@ -308,6 +308,24 @@ void main() {
     expect(find.text('wants to join'), findsOneWidget);
   });
 
+  testWidgets('chat and a join response stay reachable in a narrow window', (
+    tester,
+  ) async {
+    await pumpOverlay(tester);
+    await tester.binding.setSurfaceSize(const Size(560, 720));
+    joinRoom(
+      waiting: const [Participant(userId: 'gate', name: 'Nadia')],
+    );
+    container.read(chatDrawerOpenProvider.notifier).state = true;
+    await tester.pumpAndSettle();
+
+    final approve = find.byTooltip('Approve Nadia');
+    final chat = find.byKey(const Key('chatSidebarCard'));
+    expect(approve.hitTestable(), findsOneWidget);
+    expect(chat, findsOneWidget);
+    expect(tester.getRect(approve).overlaps(tester.getRect(chat)), isFalse);
+  });
+
   testWidgets('a guest is never shown the join queue', (tester) async {
     await pumpOverlay(tester);
     joinRoom(

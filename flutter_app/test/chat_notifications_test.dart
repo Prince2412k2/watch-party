@@ -98,4 +98,30 @@ void main() {
 
     expect(find.textContaining('said before you got here'), findsNothing);
   });
+
+  testWidgets('chat history arriving after mount stays out of the toast rail', (
+    tester,
+  ) async {
+    build();
+    await tester.pumpWidget(harness());
+
+    socket.inject('chat:history', [
+      {
+        'userId': 'ada',
+        'name': 'Ada',
+        'text': 'historic message',
+        'timestamp': 1,
+      },
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(container.read(chatProvider).single.text, 'historic message');
+    expect(find.text('historic message'), findsNothing);
+
+    inject(text: 'new live message');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('new live message'), findsOneWidget);
+  });
 }

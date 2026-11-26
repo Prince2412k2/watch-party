@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,7 @@ import '../../state/providers.dart';
 import '../../ui/palette.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/avatar_view.dart';
+import '../../ui/widgets/app_dialog.dart';
 import '../router.dart';
 
 /// Profile editor — the native counterpart of the web's `/profile` page.
@@ -56,6 +58,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _saving = false;
   int _focusedRow = 0;
   String? _status;
+  bool _confirmingExit = false;
+  bool _previewUnavailable = false;
+  AvatarConfig _savedConfig = const AvatarConfig();
+  String _savedName = '';
+
+  bool get _dirty =>
+      _name.text.trim() != _savedName ||
+      _config.background != _savedConfig.background ||
+      !mapEquals(_config.selections, _savedConfig.selections) ||
+      !mapEquals(_config.colors, _savedConfig.colors);
   bool _statusIsError = false;
 
   // One counter per independent request family. Every one of these can be
@@ -116,6 +128,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       setState(() {
         _accountName = profile.accountName;
         _config = profile.avatar ?? const AvatarConfig();
+        _savedConfig = _config;
+        _savedName = _name.text.trim();
       });
     } catch (error) {
       if (!_isCurrent(generation)) return;
@@ -160,9 +174,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     try {
       final svg = await ref.read(apiClientProvider).avatarPreviewSvg(config);
       if (!mounted || generation != _previewGeneration) return;
-      setState(() => _previewSvg = svg.isEmpty ? null : svg);
+      setState(() {
+        _previewSvg = svg.isEmpty ? null : svg;
+        _previewUnavailable = false;
+      });
     } catch (_) {
-      // Keep whatever is on screen; the preview is not worth an error banner.
+      if (mounted && generation == _previewGeneration) {
+        setState(() => _previewUnavailable = true);
+      }
     }
   }
 
@@ -206,21 +225,27 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     setState(() {
       _saving = true;
       _status = null;
     });
     final trimmed = _name.text.trim();
+    final config = _config;
     final error = await ref
         .read(profileProvider.notifier)
         .save(
           displayName: trimmed.isEmpty ? null : trimmed,
-          avatar: _config.isEmpty ? null : _config,
+          avatar: config.isEmpty ? null : config,
         );
     if (!mounted) return;
     setState(() {
       _saving = false;
-      _status = error ?? 'Saved';
+      if (error == null) {
+        _savedConfig = config;
+        _savedName = trimmed;
+      }
+      _status = error ?? (_dirty ? 'Unsaved changes' : 'Saved');
       _statusIsError = error != null;
     });
   }
@@ -242,7 +267,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     _bootstrap();
   }
 
-  void _back() {
+  Future<void> _back() async {
+    if (_saving || _confirmingExit) return;
+    if (_dirty) {
+      _confirmingExit = true;
+      final discard = await showConfirm(
+        context,
+        title: 'Discard profile changes?',
+        body: 'Your unsaved avatar changes will be lost.',
+        confirmLabel: 'Discard changes',
+      );
+      _confirmingExit = false;
+      if (!discard || !mounted) return;
+    }
     if (context.canPop()) {
       context.pop();
     } else {
@@ -253,93 +290,111 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
-    return Scaffold(
-      backgroundColor: wp.bg,
-      body: Stack(
-        children: [
-          const Positioned.fill(child: _ProfileBackground()),
-          SafeArea(
-            child: Column(
-              children: [
-                SizedBox(
-                  height: profileHeaderHeight,
-                  child: _Header(
-                    saving: _saving,
-                    onBack: _back,
-                    onSave: _loading ? null : _save,
+    return PopScope(
+      canPop: !_dirty && !_saving,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _back();
+      },
+      child: Scaffold(
+        backgroundColor: wp.bg,
+        body: Stack(
+          children: [
+            const Positioned.fill(child: _ProfileBackground()),
+            SafeArea(
+              child: Column(
+                children: [
+                  SizedBox(
+                    height: profileHeaderHeight,
+                    child: _Header(
+                      saving: _saving,
+                      onBack: _back,
+                      onSave: _loading ? null : _save,
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : LayoutBuilder(
-                          builder: (context, constraints) {
-                            final wide = constraints.maxWidth >= _wideWidth;
-                            final previewSize = wide
-                                ? (constraints.maxWidth * 0.25).clamp(
-                                    300.0,
-                                    420.0,
-                                  )
-                                : (constraints.maxWidth - 64).clamp(
-                                    180.0,
-                                    260.0,
-                                  );
-                            final preview = _Preview(
-                              svg: _previewSvg,
-                              name: _shownName,
-                              size: previewSize,
-                            );
-
-                            if (!wide) {
-                              return ListView(
-                                padding: const EdgeInsets.fromLTRB(
-                                  24,
-                                  16,
-                                  24,
-                                  48,
-                                ),
+                  Expanded(
+                    child: _loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : LayoutBuilder(
+                            builder: (context, constraints) {
+                              final wide = constraints.maxWidth >= _wideWidth;
+                              final previewSize = wide
+                                  ? (constraints.maxWidth * 0.25).clamp(
+                                      300.0,
+                                      420.0,
+                                    )
+                                  : (constraints.maxWidth - 64).clamp(
+                                      180.0,
+                                      260.0,
+                                    );
+                              final preview = Column(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Center(child: preview),
-                                  const SizedBox(height: AppSpacing.xl),
-                                  SizedBox(
-                                    height: 560,
-                                    child: _editor(compact: true),
+                                  _Preview(
+                                    svg: _previewSvg,
+                                    name: _shownName,
+                                    size: previewSize,
                                   ),
+                                  if (_previewUnavailable)
+                                    TextButton(
+                                      onPressed: _refreshPreview,
+                                      child: const Text(
+                                        'Preview unavailable · Retry',
+                                      ),
+                                    ),
                                 ],
                               );
-                            }
 
-                            return Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                44,
-                                12,
-                                52,
-                                36,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    flex: 4,
-                                    child: Align(
-                                      alignment: const Alignment(0, -0.18),
-                                      child: preview,
+                              if (!wide) {
+                                return ListView(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    24,
+                                    16,
+                                    24,
+                                    48,
+                                  ),
+                                  children: [
+                                    Center(child: preview),
+                                    const SizedBox(height: AppSpacing.xl),
+                                    SizedBox(
+                                      height: 560,
+                                      child: _editor(compact: true),
                                     ),
-                                  ),
-                                  const SizedBox(width: 48),
-                                  Expanded(
-                                    flex: 6,
-                                    child: _editor(compact: false),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
+                                  ],
+                                );
+                              }
+
+                              return Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  44,
+                                  12,
+                                  52,
+                                  36,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 4,
+                                      child: Align(
+                                        alignment: const Alignment(0, -0.18),
+                                        child: preview,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 48),
+                                    Expanded(
+                                      flex: 6,
+                                      child: _editor(compact: false),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -384,7 +439,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
         ),
         _EditorFooter(
-          status: _status,
+          status: _status ?? (_dirty ? 'Unsaved changes' : null),
           statusIsError: _statusIsError,
           onReset: _reset,
         ),

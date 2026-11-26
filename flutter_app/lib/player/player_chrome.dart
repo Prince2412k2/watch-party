@@ -2713,18 +2713,40 @@ class _ChromeIconButton extends StatelessWidget {
   }
 }
 
-class _BufferingSpinner extends StatelessWidget {
+class _BufferingSpinner extends StatefulWidget {
   const _BufferingSpinner();
+
+  @override
+  State<_BufferingSpinner> createState() => _BufferingSpinnerState();
+}
+
+class _BufferingSpinnerState extends State<_BufferingSpinner> {
+  Timer? _timer;
+  bool _takingLonger = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(seconds: 8), () {
+      setState(() => _takingLonger = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: _kBufferingScrim,
-      child: const Center(
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
+            const SizedBox(
               width: 32,
               height: 32,
               child: CircularProgressIndicator(
@@ -2732,8 +2754,14 @@ class _BufferingSpinner extends StatelessWidget {
                 color: AppColors.text,
               ),
             ),
-            SizedBox(height: AppSpacing.md),
-            Text('Buffering…', style: AppTheme.dim),
+            const SizedBox(height: AppSpacing.md),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _takingLonger ? 'Still buffering video…' : 'Buffering…',
+                style: AppTheme.dim,
+              ),
+            ),
           ],
         ),
       ),

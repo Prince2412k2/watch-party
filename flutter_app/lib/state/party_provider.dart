@@ -123,7 +123,6 @@ class PartyNotifier extends StateNotifier<PartyState?> {
         _ref
             .read(partyWaitingProvider.notifier)
             .add(Participant(userId: userId, name: name));
-        _toast('$name wants to join', level: 'warning');
       }),
     );
     _unsubs.add(
@@ -965,6 +964,13 @@ final partyWaitingProvider =
     StateNotifierProvider<PartyWaitingNotifier, List<Participant>>(
       (ref) => PartyWaitingNotifier(),
     );
+
+final hostHasWaitingRequestsProvider = Provider<bool>((ref) {
+  final hostId = ref.watch(partyProvider.select((party) => party?.hostId));
+  return hostId != null &&
+      hostId == ref.watch(currentUserIdProvider) &&
+      ref.watch(partyWaitingProvider.select((waiting) => waiting.isNotEmpty));
+});
 
 /// The room this client has asked to join and is waiting for approval on, or
 /// null. Distinct from [partyProvider], which stays null until you are actually

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analog/chrome/chrome.dart';
@@ -9,6 +10,7 @@ import '../../models/models.dart';
 import '../../state/offline_provider.dart';
 import '../../state/state.dart';
 import '../../ui/ui.dart';
+import '../../ui/widgets/bottom_nav.dart';
 import '../../ui/widgets/download_poster.dart';
 import '../../ui/widgets/download_actions.dart';
 import 'media_row.dart';
@@ -147,6 +149,9 @@ class _DownloadsScreenState extends ConsumerState<DownloadsScreen> {
                     message: 'Start a download from a title\'s detail page.',
                   ),
                   DownloadsScope.device => ListView.separated(
+                    padding: const EdgeInsets.only(
+                      bottom: kBottomNavReservedPx + 10,
+                    ),
                     itemCount: rows.length,
                     separatorBuilder: (_, _) =>
                         const SizedBox(height: AppSpacing.md),
@@ -284,9 +289,14 @@ class _DownloadRow extends ConsumerWidget {
                 ),
                 MediaRowIconButton(
                   icon: Icons.close,
-                  tooltip: 'Cancel',
+                  tooltip: 'Cancel download…',
                   color: AppColors.faint,
-                  onPressed: () => notifier.cancel(record.taskId),
+                  onPressed: () => cancelLocalDownload(
+                    context,
+                    ref,
+                    taskId: record.taskId,
+                    title: record.title,
+                  ),
                 ),
               ],
             ),

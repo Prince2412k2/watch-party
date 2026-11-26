@@ -12,6 +12,7 @@ import '../party/party_reconnect_screen.dart';
 import '../player/player_host.dart';
 import '../state/state.dart';
 import '../ui/ui.dart';
+import '../ui/analog_tokens.dart' show AnalogSpace;
 import 'router.dart';
 
 /// Root widget. Wires the mode-based theme + router. State DI lives at the
@@ -69,6 +70,7 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
     // much of the tree reads the dark-only AppColors/AnalogColor constants, so
     // a light stage produced dark cards on white and unreadable text.
     final theme = AppTheme.dark;
+    final hasRequests = ref.watch(hostHasWaitingRequestsProvider);
 
     return MaterialApp.router(
       title: 'Watchparty',
@@ -97,12 +99,23 @@ class _WatchpartyAppState extends ConsumerState<WatchpartyApp> {
         // ChatNotifications sits INSIDE the host (it needs an ancestor to raise
         // a notice on) and outside the router (a per-screen listener would miss
         // exactly the messages that arrive while you are on another screen).
+        final size = MediaQuery.sizeOf(context);
+        final captionInset = widget.enableWindowFrame
+            ? integratedDesktopChromeHeight
+            : 0.0;
+        final toastLane =
+            size.width -
+            joinRequestsLeft(size.width) -
+            kJoinRequestsMaxWidth -
+            2 * AnalogSpace.lgPx;
+        final toastFitsBesideRequests = toastLane >= 220;
         final content = AnalogToastHost(
-          // Clear of the caption strip, which is the one layer that outranks
-          // the rail (DesktopWindowChrome wraps it).
-          topInsetPx: widget.enableWindowFrame
-              ? integratedDesktopChromeHeight
-              : 0,
+          topInsetPx: hasRequests && !toastFitsBesideRequests
+              ? kJoinRequestsTop + joinRequestsHeight(size.height)
+              : captionInset,
+          maxWidth: hasRequests && toastFitsBesideRequests
+              ? toastLane.clamp(220.0, 420.0).toDouble()
+              : 420,
           child: ChatNotifications(
             child: Material(
               type: MaterialType.transparency,
@@ -204,8 +217,8 @@ class _PopcornLayer extends ConsumerWidget {
     return AnimatedPositioned(
       duration: AppMotion.snap,
       curve: AppMotion.emphasized,
-      right: floating ? (MediaQuery.sizeOf(context).width - 69) / 2 : 22,
-      bottom: expanded ? _overFilmBottom : _restingBottom,
+      right: 22,
+      bottom: expanded || floating ? _overFilmBottom : _restingBottom,
       child: IgnorePointer(
         ignoring: !shown,
         child: AnimatedOpacity(

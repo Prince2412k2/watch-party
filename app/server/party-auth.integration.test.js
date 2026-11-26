@@ -169,6 +169,21 @@ test('party rooms and LiveKit upgrades enforce authenticated membership boundari
     assert.ok(firstParty.partyId)
     assert.ok(secondParty.partyId)
     assert.equal((await emitAck(hostBackup, 'party:resume')).session.id, firstParty.partyId)
+    const waitingNotices = [host, hostBackup].map(client => nextMatching(client, 'party:waiting'))
+    const pendingSnapshots = [host, hostBackup].map(client =>
+      nextMatching(client, 'party:state', state => state.waiting.length === 1))
+    assert.equal((await emitAck(rejected, 'party:join', { partyId: firstParty.partyId })).status, 'waiting')
+    const notices = await Promise.all(waitingNotices)
+    const snapshots = await Promise.all(pendingSnapshots)
+    assert.equal(notices[0].userId, notices[1].userId)
+    assert.equal(snapshots[0].waiting[0].userId, notices[0].userId)
+    assert.equal(snapshots[1].waiting[0].userId, notices[0].userId)
+
+    const clearedSnapshots = [host, hostBackup].map(client =>
+      nextMatching(client, 'party:state', state => state.waiting.length === 0))
+    assert.equal((await emitAck(host, 'party:reject', { userId: notices[0].userId })).ok, true)
+    await Promise.all(clearedSnapshots)
+
     host.disconnect()
     assert.equal((await emitAck(hostBackup, 'party:resume')).session.id, firstParty.partyId)
 

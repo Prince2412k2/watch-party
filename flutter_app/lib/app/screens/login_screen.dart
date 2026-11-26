@@ -48,23 +48,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _configureServer() async {
     final current = ref.read(serverConfigProvider) ?? '';
-    // The dialog owns its controller and returns the TEXT, rather than the
-    // caller owning a controller and reading it back after the await.
-    //
-    // That older shape crashed: showAnalogDialog resolves the instant pop() is
-    // called, but the route is still animating out and its TextField keeps
-    // rebuilding for the length of that transition. Disposing the controller
-    // on the line after the await meant the next frame rebuilt a TextField
-    // around a dead one — "A TextEditingController was used after being
-    // disposed", thrown from deep inside the framework's own animation update
-    // with nothing in the trace pointing back here.
-    final url = await showAnalogDialog<String>(
+    final config = ref.read(serverConfigProvider.notifier);
+    await showAnalogDialog<void>(
       context: context,
-      builder: (_) => _ServerUrlDialog(initial: current),
+      barrierDismissible: false,
+      builder: (_) => _ServerUrlDialog(
+        initial: current,
+        onSave: (url) async {
+          await config.verifyUrl(url);
+          await config.setUrl(url);
+        },
+      ),
     );
-    if (url != null && url.trim().isNotEmpty) {
-      await ref.read(serverConfigProvider.notifier).setUrl(url);
-    }
   }
 
   @override
@@ -246,10 +241,7 @@ class _LoginForm extends StatelessWidget {
           Reveal(
             key: ValueKey(error),
             child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 10,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: const Color(0x1FE0655E),
                 borderRadius: BorderRadius.circular(8),
@@ -344,9 +336,10 @@ class _ServerConfigButton extends StatelessWidget {
 /// length of the exit transition, and anything the caller disposes in that
 /// window is still being rebuilt.
 class _ServerUrlDialog extends StatefulWidget {
-  const _ServerUrlDialog({required this.initial});
+  const _ServerUrlDialog({required this.initial, required this.onSave});
 
   final String initial;
+  final Future<void> Function(String) onSave;
 
   @override
   State<_ServerUrlDialog> createState() => _ServerUrlDialogState();
@@ -363,30 +356,55 @@ class _ServerUrlDialogState extends State<_ServerUrlDialog> {
     super.dispose();
   }
 
-  void _save() => Navigator.of(context).pop(_controller.text);
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _save() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onSave(_controller.text);
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.of(context).pop();
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = error is FormatException
+              ? error.message
+              : 'Could not save the server address. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return AppDialog(
       title: 'Server URL',
-      body: 'Where your Watchparty backend lives. https:// is assumed.',
+      body: _error ?? 'Where your Watch Party backend lives. HTTPS is assumed.',
       actions: [
         AppButton(
           label: 'Cancel',
           variant: AppButtonVariant.ghost,
-          // Null rather than the current text: the caller distinguishes
-          // "cancelled" from "saved an empty box" on this alone.
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
         ),
         AppButton(
-          label: 'Save',
+          label: _busy ? 'Checking…' : 'Save',
           variant: AppButtonVariant.primary,
-          onPressed: _save,
+          busy: _busy,
+          onPressed: _busy ? null : _save,
         ),
       ],
       child: AppTextField(
         controller: _controller,
-        hint: 'e.g. dsk-4161.tail0a3558.ts.net',
+        hint: 'e.g. watch.example.com',
+        enabled: !_busy,
         autofocus: true,
         onSubmitted: (_) => _save(),
       ),

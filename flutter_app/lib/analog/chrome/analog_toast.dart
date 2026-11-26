@@ -131,7 +131,12 @@ class AnalogToast {
 /// them, and they expire on their own clock rather than waiting to be
 /// dismissed.
 class AnalogToastHost extends StatefulWidget {
-  const AnalogToastHost({super.key, required this.child, this.topInsetPx = 0});
+  const AnalogToastHost({
+    super.key,
+    required this.child,
+    this.topInsetPx = 0,
+    this.maxWidth = 420,
+  });
 
   final Widget child;
 
@@ -143,6 +148,7 @@ class AnalogToastHost extends StatefulWidget {
   /// a notice tucked under the caption buttons would be the one thing on screen
   /// the rail cannot outrank.
   final double topInsetPx;
+  final double maxWidth;
 
   /// The nearest host, or null when none is mounted — a widget test that pumps
   /// a screen in isolation should not crash because it left the rail out.
@@ -250,7 +256,7 @@ class AnalogToastHostState extends State<AnalogToastHost> {
                       right: AnalogSpace.lgPx,
                     ),
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 420),
+                      constraints: BoxConstraints(maxWidth: widget.maxWidth),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.end,

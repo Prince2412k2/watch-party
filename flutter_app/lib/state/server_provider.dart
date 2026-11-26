@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,6 +45,43 @@ class ServerConfigNotifier extends StateNotifier<String?> {
   /// A change of origin drops the old origin's session first — see
   /// [_dropOriginSession].
   Future<void> setUrl(String raw) => _serialize(() => _setUrl(raw));
+
+  /// Check the candidate without sending the existing session to it.
+  Future<void> verifyUrl(String raw) async {
+    final uri = Uri.tryParse(normalize(raw));
+    if (uri == null ||
+        !const {'http', 'https'}.contains(uri.scheme) ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      throw const FormatException('Enter a valid Watch Party server URL.');
+    }
+    final client = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 5),
+        followRedirects: false,
+      ),
+    );
+    try {
+      final response = await client.get<dynamic>(
+        '${uri.toString()}/api/health',
+      );
+      final data = response.data;
+      if (data is! Map || data['ok'] != true) {
+        throw const FormatException(
+          'This address did not return a Watch Party health response.',
+        );
+      }
+    } on DioException {
+      throw const FormatException(
+        'Could not reach the Watch Party server at this address.',
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
 
   Future<void> _setUrl(String raw) async {
     final url = normalize(raw);

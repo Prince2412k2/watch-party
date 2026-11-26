@@ -34,6 +34,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     this._socket, {
     this.ackTimeout = chatAckTimeout,
     this.ensureReady,
+    this.onLiveMessage,
   }) : super(const []) {
     _unsubscribes = [
       _socket.on(ServerEvent.chatMessage, _onIncoming),
@@ -47,6 +48,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   /// have to wait out the real [chatAckTimeout].
   final Duration ackTimeout;
   final Future<void> Function()? ensureReady;
+  final void Function(ChatMessage)? onLiveMessage;
 
   late final List<void Function()> _unsubscribes;
   String? _partyId;
@@ -70,6 +72,7 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
           DateTime.now().millisecondsSinceEpoch,
     );
     state = [...state, message];
+    onLiveMessage?.call(message);
   }
 
   void _onHistory(dynamic data) {
@@ -196,9 +199,13 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   }
 }
 
+final liveChatMessageProvider = StateProvider<ChatMessage?>((ref) => null);
+
 final chatProvider = StateNotifierProvider<ChatNotifier, List<ChatMessage>>(
   (ref) => ChatNotifier(
     ref.watch(socketClientProvider),
+    onLiveMessage: (message) =>
+        ref.read(liveChatMessageProvider.notifier).state = message,
     ensureReady: () async {
       if (ref.read(partyProvider) != null) {
         await ref.read(partyProvider.notifier).ensureChatReady();

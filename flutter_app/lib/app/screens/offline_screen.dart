@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../ui/widgets/bottom_nav.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -60,6 +62,9 @@ class OfflineScreen extends ConsumerWidget {
                             'Download a title from its detail page to watch it here with no network.',
                       )
                     : GridView.builder(
+                        padding: const EdgeInsets.only(
+                          bottom: kBottomNavReservedPx + 10,
+                        ),
                         // A fixed cell height (poster + caption) instead of an
                         // aspect ratio, so a cell can never clip its content at
                         // narrow column widths.

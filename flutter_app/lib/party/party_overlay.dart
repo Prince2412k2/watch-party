@@ -18,6 +18,7 @@
 // draggable, snappable tiles, the same treatment the movie tile gets.
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -34,6 +35,12 @@ import '../ui/widgets/floating_camera_tile.dart';
 /// The chat drawer's width. It overlays whatever is underneath rather than
 /// narrowing it, so this is only ever an inset for things that must stay clear.
 const double kChatDrawerWidth = 360;
+const double kJoinRequestsTop = 112;
+const double kJoinRequestsMaxWidth = 292;
+
+double joinRequestsLeft(double screenWidth) => screenWidth < 440 ? 12 : 64;
+double joinRequestsHeight(double screenHeight) =>
+    math.min(180.0, screenHeight * 0.25);
 
 /// Everything a room puts on screen that is not the player itself.
 ///
@@ -53,6 +60,23 @@ class PartyOverlay extends ConsumerWidget {
     final showDeviceRail =
         !playerExpanded || ref.watch(playerChromeVisibleProvider);
 
+    final size = MediaQuery.sizeOf(context);
+    final chatWidth = math.min(
+      kChatDrawerWidth,
+      math.max(180.0, size.width - 128),
+    );
+    final hasRequests = ref.watch(hostHasWaitingRequestsProvider);
+    final requestLeft = joinRequestsLeft(size.width);
+    final requestWidth = math.min(
+      kJoinRequestsMaxWidth,
+      math.max(0.0, size.width - requestLeft - 12),
+    );
+    final stacked =
+        hasRequests &&
+        chatOpen &&
+        requestLeft + requestWidth + chatWidth + 24 > size.width;
+    final requestHeight = joinRequestsHeight(size.height);
+
     return Stack(
       children: [
         if (party != null) ...[
@@ -65,7 +89,7 @@ class PartyOverlay extends ConsumerWidget {
             left: 0,
             top: 0,
             bottom: 0,
-            right: chatOpen ? kChatDrawerWidth : 0.0,
+            right: chatOpen ? chatWidth + 12 : 0.0,
             child: const FloatingCameraLayer(),
           ),
           // Your own mic, camera and hide-self, down the left edge.
@@ -90,7 +114,14 @@ class PartyOverlay extends ConsumerWidget {
               ),
             ),
           ),
-          const Positioned(top: 64, right: 12, child: JoinRequestsLayer()),
+          if (hasRequests)
+            Positioned(
+              top: kJoinRequestsTop,
+              left: requestLeft,
+              width: requestWidth,
+              height: requestHeight,
+              child: const JoinRequestsLayer(),
+            ),
           const Positioned(
             bottom: 110,
             left: 56,
@@ -105,7 +136,8 @@ class PartyOverlay extends ConsumerWidget {
           ),
           ChatSlideOver(
             open: chatOpen,
-            width: kChatDrawerWidth,
+            width: chatWidth,
+            topInset: stacked ? kJoinRequestsTop + requestHeight + 12 : 0,
             onClose: () =>
                 ref.read(chatDrawerOpenProvider.notifier).state = false,
           ),
@@ -169,7 +201,19 @@ class JoinRequestsLayer extends ConsumerWidget {
     final isHost = party != null && me != null && party.hostId == me;
     final waiting = ref.watch(partyWaitingProvider);
     if (!isHost || waiting.isEmpty) return const SizedBox.shrink();
-    return SafeArea(child: _JoinRequests(waiting: waiting));
+    return SafeArea(
+      child: Semantics(
+        container: true,
+        liveRegion: true,
+        label: waiting.length == 1
+            ? '1 join request'
+            : '${waiting.length} join requests',
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: _JoinRequests(waiting: waiting),
+        ),
+      ),
+    );
   }
 }
 
@@ -261,11 +305,13 @@ class _JoinRequests extends ConsumerWidget {
           ],
           child: Padding(
             padding: const EdgeInsets.all(AppSpacing.sm + 2),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: ListView(
+              primary: false,
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
               children: [
-                for (final w in waiting) _JoinRequestRow(participant: w),
+                for (final w in waiting)
+                  _JoinRequestRow(key: ValueKey(w.userId), participant: w),
               ],
             ),
           ),
@@ -276,14 +322,39 @@ class _JoinRequests extends ConsumerWidget {
 }
 
 /// One person at the door: their face, their name, and the two answers.
-class _JoinRequestRow extends ConsumerWidget {
-  const _JoinRequestRow({required this.participant});
+class _JoinRequestRow extends ConsumerStatefulWidget {
+  const _JoinRequestRow({super.key, required this.participant});
 
   final Participant participant;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final notifier = ref.read(partyProvider.notifier);
+  ConsumerState<_JoinRequestRow> createState() => _JoinRequestRowState();
+}
+
+class _JoinRequestRowState extends ConsumerState<_JoinRequestRow> {
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _decide(bool approve) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final notifier = ref.read(partyProvider.notifier);
+      final id = widget.participant.userId;
+      await (approve ? notifier.approve(id) : notifier.reject(id));
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Could not respond. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final participant = widget.participant;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -312,9 +383,9 @@ class _JoinRequestRow extends ConsumerWidget {
                 const SizedBox(height: 1),
                 // Under the name, not as a panel heading: it describes this
                 // person, and there is no longer a list for a heading to head.
-                const Text(
-                  'wants to join',
-                  style: TextStyle(
+                Text(
+                  _error ?? (_busy ? 'Sending response…' : 'wants to join'),
+                  style: const TextStyle(
                     color: AppColors.faint,
                     fontSize: 11.5,
                     fontWeight: FontWeight.w500,
@@ -327,13 +398,13 @@ class _JoinRequestRow extends ConsumerWidget {
             icon: Icons.close,
             tooltip: 'Reject ${participant.name}',
             color: AppColors.red,
-            onPressed: () => notifier.reject(participant.userId),
+            onPressed: _busy ? null : () => _decide(false),
           ),
           AnalogIconButton(
             icon: Icons.check,
             tooltip: 'Approve ${participant.name}',
             color: AppColors.green,
-            onPressed: () => notifier.approve(participant.userId),
+            onPressed: _busy ? null : () => _decide(true),
           ),
         ],
       ),
@@ -349,11 +420,13 @@ class ChatSlideOver extends StatefulWidget {
     super.key,
     required this.open,
     required this.width,
+    this.topInset = 0,
     required this.onClose,
   });
 
   final bool open;
   final double width;
+  final double topInset;
   final VoidCallback onClose;
 
   @override
@@ -512,7 +585,10 @@ class _ChatSlideOverState extends State<ChatSlideOver>
           // drawer's own header inside the strip macOS uses for dragging the
           // window, so the top-right of the title bar stopped responding
           // whenever chat was open.
-          top: (Platform.isMacOS ? integratedDesktopChromeHeight : 0) + 12,
+          top: math.max(
+            widget.topInset,
+            (Platform.isMacOS ? integratedDesktopChromeHeight : 0) + 12,
+          ),
           bottom: 12,
           right: 12,
           width: width,

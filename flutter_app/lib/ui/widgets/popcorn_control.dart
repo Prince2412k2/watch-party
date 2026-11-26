@@ -7,10 +7,10 @@ import '../../party/party_controls.dart';
 import '../../state/state.dart';
 import '../analog_tokens.dart';
 import '../tokens.dart';
+import '../theme.dart';
 import 'wave_dots.dart';
 import '../palette.dart';
 import 'app_dialog.dart';
-import 'avatar_view.dart';
 import 'icon_tray.dart';
 import 'join_code_dialog.dart';
 
@@ -21,8 +21,7 @@ import 'join_code_dialog.dart';
 /// nav; up is the only direction with clear air in it.
 ///
 /// It carries a green live dot while a session is active and a red badge
-/// counting guests awaiting approval; the tray auto-opens for a host the moment
-/// someone is waiting, and a tap outside closes it via [TapRegion].
+/// counting guests awaiting approval. A tap outside closes it via [TapRegion].
 ///
 /// The popcorn glyph is intentionally always dark (`#202126`) regardless of
 /// theme — it is a fixed brand mark, not a theme surface.
@@ -37,12 +36,7 @@ import 'join_code_dialog.dart';
 /// | Host | end · copy invite ¦ return |
 /// | Guest | leave ¦ return |
 ///
-/// The three actions after the divider are not decoration and are not padding:
-/// **join** is the only way a guest ever gets into a room, **return** is the
-/// only way back after the party screen's Back minimises it, and the **approve
-/// / reject** chips that appear while someone is waiting are the only way a
-/// host lets anybody in. Removing them would not simplify the control, it would
-/// break the feature.
+/// Pending approvals are shown as a count here and handled by the request card.
 ///
 /// What the 320px panel had and this does not: the QR code, the printed room
 /// code, the roster, and the "watch together" blurb. Copy-invite carries the
@@ -102,6 +96,7 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
   }
 
   void _close() {
+    if (_error != null) setState(() => _error = null);
     if (_open) _tray.reverse();
   }
 
@@ -113,8 +108,11 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     });
     try {
       await action();
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Party action failed. Try again.');
+        if (!_open) _tray.forward();
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -160,10 +158,6 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(partyWaitingProvider, (_, next) {
-      if (next.isNotEmpty && !_open && _party.isHost) _tray.forward();
-    });
-
     final session = ref.watch(partyProvider);
     final waiting = ref.watch(partyWaitingProvider);
     final isHost = session != null && _party.isHost;
@@ -182,35 +176,28 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
           IconTray(
             animation: _tray,
             axis: Axis.vertical,
-            children: [
-              ..._actions(session, isHost, pending),
-              // Guests waiting on the door. Transient, host-only, and the whole
-              // reason the tray auto-opens.
-              if (isHost && waiting.isNotEmpty) ...[
-                const TrayDivider(),
-                for (final p in waiting.take(2)) ...[
-                  _WaitingFace(userId: p.userId, name: p.name),
-                  TrayButton(
-                    icon: Icons.close,
-                    tooltip: 'Reject ${p.name}',
-                    tint: kSemanticRed,
-                    onTap: () => _party.reject(p.userId),
-                  ),
-                  TrayButton(
-                    icon: Icons.check,
-                    tooltip: 'Approve ${p.name}',
-                    tint: kPartyLive,
-                    onTap: () => _party.approve(p.userId),
-                  ),
-                ],
-              ],
-            ],
+            children: [..._actions(session, isHost, pending)],
           ),
+          if (_error != null)
+            Semantics(
+              liveRegion: true,
+              child: Material(
+                color: context.wp.surface,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 210),
+                    child: Text(_error!, style: AppTheme.dim),
+                  ),
+                ),
+              ),
+            ),
           _PopcornButton(
             live: session != null,
             pending: pending,
-            waiting: waiting.length,
-            onTap: () => _open ? _tray.reverse() : _tray.forward(),
+            waiting: isHost ? waiting.length : 0,
+            onTap: () => _open ? _close() : _tray.forward(),
           ),
         ],
       ),
@@ -256,9 +243,8 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
     if (session == null) {
       return [
         TrayButton(
-          icon: _error != null ? Icons.error_outline : Icons.add,
-          tooltip: _error ?? 'Start a watch party',
-          tint: _error != null ? kSemanticRed : null,
+          icon: Icons.add,
+          tooltip: 'Start a watch party',
           busy: _busy,
           onTap: _start,
         ),
@@ -312,24 +298,6 @@ class _PopcornControlState extends ConsumerState<PopcornControl>
       ...panelAction,
     ];
   }
-}
-
-/// A face in the tray, so approving somebody is approving a person rather than
-/// a tick next to nothing.
-class _WaitingFace extends StatelessWidget {
-  const _WaitingFace({required this.userId, required this.name});
-
-  final String userId;
-  final String name;
-
-  @override
-  Widget build(BuildContext context) => Tooltip(
-    message: '$name wants to join',
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: AvatarView(userId: userId, name: name, size: 36),
-    ),
-  );
 }
 
 class _PopcornButton extends StatefulWidget {

@@ -472,6 +472,13 @@ io.on('connection', (socket) => {
   // State-changing decisions only; never log tokens, names, URLs or per-frame
   // telemetry. Production logs can then distinguish user pauses from buffering
   // and identify which member actually held authority after a reconnect.
+  const notifyHostState = sess => {
+    const snapshot = publicSession(sess)
+    for (const hostSocket of partySocketsForUser(sess.hostId, sess.id)) {
+      hostSocket.emit('party:state', snapshot)
+    }
+  }
+
   const logSync = (event, sess, detail = {}) => console.info('[party-sync]', JSON.stringify({
     event, partyId: sess.id, userId, hostId: sess.hostId,
     mediaGeneration: sess.mediaGeneration, version: sess.schedule.version,
@@ -647,10 +654,15 @@ io.on('connection', (socket) => {
     setSocketParticipation(socket, { waitingPartyId: sess.id })
     ack?.({ status: 'waiting' })
     // Only notify the host on a genuinely new request (avoids duplicate prompts)
-    if (added) io.to(sess.hostSocketId).emit('party:waiting', publicMember({ userId, name }))
+    if (added) {
+      const requester = publicMember({ userId, name })
+      for (const hostSocket of partySocketsForUser(sess.hostId, sess.id)) {
+        hostSocket.emit('party:waiting', requester)
+      }
+    }
     // A repeated join may be recovering from a dropped notification. Re-send
     // the canonical waiting list without producing another toast.
-    io.to(sess.hostSocketId).emit('party:state', publicSession(sess))
+    notifyHostState(sess)
   })
 
   // party:approve ───────────────────────────────────────────────────────────
@@ -674,6 +686,7 @@ io.on('connection', (socket) => {
     }
     io.to(sess.id).emit('user:joined', publicMember(guest))
     persistSession(sess)
+    notifyHostState(sess)
     // Position sync is handled by the per-second drift heartbeat + buffer-ahead
     // rendezvous on the client (no immediate Unpause that would stall the guest).
     ack?.({ ok: true })
@@ -691,6 +704,7 @@ io.on('connection', (socket) => {
       rejectedSocket.emit('party:rejected', {})
     }
     persistSession(sess)
+    notifyHostState(sess)
     ack?.({ ok: true })
   })
 
@@ -747,7 +761,7 @@ io.on('connection', (socket) => {
     if (changed) reconcile(sess)
     persistSession(sess)
     if (guest) io.to(sess.id).emit('user:left', { userId, name: effectiveName(userId, guest.name) })
-    io.to(sess.hostSocketId).emit('party:state', publicSession(sess))
+    notifyHostState(sess)
     ack?.({ ok: true })
   })
 
@@ -1146,7 +1160,7 @@ io.on('connection', (socket) => {
       if (remainingSockets.length === 0) {
         rejectGuest(sess, userId)
         persistSession(sess)
-        io.to(sess.hostSocketId).emit('party:state', publicSession(sess))
+        notifyHostState(sess)
       } else {
         const entry = sess.waiting.find(candidate => candidate.userId === userId)
         entry.socketId = remainingSockets[0].id

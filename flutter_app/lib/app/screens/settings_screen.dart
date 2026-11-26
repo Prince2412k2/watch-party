@@ -87,14 +87,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  String? _serverError;
+
   Future<void> _saveUrl() async {
+    if (_savingUrl) return;
     final url = _url.text.trim();
-    if (url.isEmpty || _savingUrl) return;
-    setState(() => _savingUrl = true);
-    await ref.read(serverConfigProvider.notifier).setUrl(url);
-    if (!mounted) return;
-    setState(() => _savingUrl = false);
-    _say('Server updated');
+    final config = ref.read(serverConfigProvider.notifier);
+    if (ServerConfigNotifier.normalize(url) == ref.read(serverConfigProvider))
+      return;
+    setState(() {
+      _savingUrl = true;
+      _serverError = null;
+    });
+    try {
+      await config.verifyUrl(url);
+      if (!mounted) return;
+      final confirmed = await showConfirm(
+        context,
+        title: 'Switch Watch Party server?',
+        body: 'You will be signed out and active transfers will stop.',
+        confirmLabel: 'Switch server',
+      );
+      if (!mounted || !confirmed) return;
+      await config.setUrl(url);
+      _say('Server updated');
+    } catch (error) {
+      if (mounted)
+        setState(
+          () => _serverError = error is FormatException
+              ? error.message
+              : 'Could not switch servers. Try again.',
+        );
+    } finally {
+      if (mounted) setState(() => _savingUrl = false);
+    }
   }
 
   Future<void> _savePassword() async {
@@ -210,6 +236,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         next: _next,
                         username: auth.user?.name ?? '',
                         savingUrl: _savingUrl,
+                        serverError: _serverError,
                         savingPassword: _savingPassword,
                         clearing: _clearing,
                         onSaveUrl: _saveUrl,
@@ -412,6 +439,7 @@ class _Connection extends StatelessWidget {
     required this.next,
     required this.username,
     required this.savingUrl,
+    required this.serverError,
     required this.savingPassword,
     required this.clearing,
     required this.onSaveUrl,
@@ -424,6 +452,7 @@ class _Connection extends StatelessWidget {
   final TextEditingController next;
   final String username;
   final bool savingUrl;
+  final String? serverError;
   final bool savingPassword;
   final bool clearing;
   final VoidCallback onSaveUrl;
@@ -447,12 +476,13 @@ class _Connection extends StatelessWidget {
           AppTextField(
             controller: url,
             enabled: !savingUrl,
+            errorText: serverError,
             hint: 'e.g. watch.example.tech',
             onSubmitted: (_) => onSaveUrl(),
           ),
           const SizedBox(height: AppSpacing.md),
           AppButton(
-            label: savingUrl ? 'Saving…' : 'Save server',
+            label: savingUrl ? 'Checking…' : 'Switch server',
             variant: AppButtonVariant.secondary,
             busy: savingUrl,
             onPressed: savingUrl ? null : onSaveUrl,

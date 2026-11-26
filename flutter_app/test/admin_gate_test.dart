@@ -145,7 +145,11 @@ void main() {
       await tester.pumpWidget(_detail(_RadarrApi(), isAdmin: true));
       await _settle(tester);
 
-      expect(find.text('Delete'), findsOneWidget);
+      expect(find.byTooltip('Manage server title'), findsOneWidget);
+      expect(find.text('Delete from server…'), findsNothing);
+      await tester.tap(find.byTooltip('Manage server title'));
+      await _settle(tester);
+      expect(find.text('Delete from server…'), findsOneWidget);
     });
 
     testWidgets('a member never sees it', (tester) async {
@@ -154,7 +158,7 @@ void main() {
       await tester.pumpWidget(_detail(_RadarrApi(), isAdmin: false));
       await _settle(tester);
 
-      expect(find.text('Delete'), findsNothing);
+      expect(find.byTooltip('Manage server title'), findsNothing);
       // The device-local download button is untouched: that is theirs.
       expect(find.text('Watch now'), findsOneWidget);
     });
@@ -165,14 +169,16 @@ void main() {
       _window(tester, const Size(1280, 800));
 
       // Jellyfin has the film; Radarr never added it (hand-copied, imported by
-      // something else). A delete here has no record to act on, so there is no
-      // button — not a disabled one.
+      // something else). The menu explains why removal is unavailable.
       await tester.pumpWidget(
         _detail(_RadarrApi(inRadarr: false), isAdmin: true),
       );
       await _settle(tester);
 
-      expect(find.text('Delete'), findsNothing);
+      await tester.tap(find.byTooltip('Manage server title'));
+      await _settle(tester);
+      expect(find.text('Delete from server…'), findsNothing);
+      expect(find.text('No matching server title'), findsOneWidget);
     });
 
     testWidgets('confirming deletes the matched record, with its files', (
@@ -184,12 +190,14 @@ void main() {
       await tester.pumpWidget(_detail(api, isAdmin: true));
       await _settle(tester);
 
-      await tester.tap(find.text('Delete'));
+      await tester.tap(find.byTooltip('Manage server title'));
+      await _settle(tester);
+      await tester.tap(find.text('Delete from server…'));
       await _settle(tester);
       // Nothing has gone yet — the dialog is a real gate, not a formality.
       expect(api.deletes, isEmpty);
 
-      await tester.tap(find.text('Delete').last);
+      await tester.tap(find.text('Delete from server'));
       await _settle(tester);
 
       // Id 77 is the Radarr record whose tmdbId matched the Jellyfin item —
@@ -256,10 +264,7 @@ void downloadsAndPaletteTests() {
   });
 
   group('the fuzzy finder', () {
-    Future<void> open(
-      WidgetTester tester, {
-      required bool previewPane,
-    }) async {
+    Future<void> open(WidgetTester tester, {required bool previewPane}) async {
       await tester.pumpWidget(
         MaterialApp(
           // The palette opens on the root navigator, ABOVE any route's own
@@ -272,28 +277,28 @@ void downloadsAndPaletteTests() {
           home: Scaffold(
             body: Builder(
               builder: (context) => TextButton(
-              onPressed: () => showAnalogCommandPalette(
-                context: context,
-                previewPane: previewPane,
-                debounce: Duration.zero,
-                results: (_) => Stream.value([
-                  AnalogCommandCategory(
-                    title: 'Library',
-                    items: [
-                      AnalogCommandItem(
-                        label: 'Fight Club',
-                        onSelected: () {},
-                        preview: (_) => const Text('POSTER: Fight Club'),
-                      ),
-                      AnalogCommandItem(
-                        label: 'Shrek',
-                        onSelected: () {},
-                        preview: (_) => const Text('POSTER: Shrek'),
-                      ),
-                    ],
-                  ),
-                ]),
-              ),
+                onPressed: () => showAnalogCommandPalette(
+                  context: context,
+                  previewPane: previewPane,
+                  debounce: Duration.zero,
+                  results: (_) => Stream.value([
+                    AnalogCommandCategory(
+                      title: 'Library',
+                      items: [
+                        AnalogCommandItem(
+                          label: 'Fight Club',
+                          onSelected: () {},
+                          preview: (_) => const Text('POSTER: Fight Club'),
+                        ),
+                        AnalogCommandItem(
+                          label: 'Shrek',
+                          onSelected: () {},
+                          preview: (_) => const Text('POSTER: Shrek'),
+                        ),
+                      ],
+                    ),
+                  ]),
+                ),
                 child: const Text('open'),
               ),
             ),

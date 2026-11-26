@@ -8,7 +8,6 @@ import '../../state/downloads_provider.dart';
 import '../../state/offline_provider.dart';
 import '../../state/providers.dart';
 import '../analog_tokens.dart';
-import 'chip.dart';
 import 'download_actions.dart';
 
 /// Download affordance for a title (PLAN §4 E8.2) — this is what E3's detail
@@ -19,7 +18,7 @@ import 'download_actions.dart';
 ///   enqueued/running      → progress bar + pause/cancel.
 ///   paused                → progress bar (dimmed) + resume/cancel.
 ///   failed                → error text + "Retry".
-///   in the offline manifest → "Downloaded" chip + remove.
+///   in the offline manifest → menu with the device removal action.
 ///
 /// Starting a download fills the same on-device media cache playback streams
 /// through (`CacheFillController.start`, Phase 3b-wiring) — a "download" is
@@ -51,20 +50,16 @@ class DownloadButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final offline = _findOffline(ref.watch(offlineProvider), itemId);
     if (offline != null) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const AppChip(
-            label: 'Downloaded',
-            tone: AppChipTone.success,
-            icon: Icons.check,
-          ),
-          const SizedBox(width: AnalogSpace.smPx),
-          AnalogIconButton(
-            icon: Icons.delete_outline,
-            tooltip: 'Remove download',
-            onPressed: () =>
-                removeLocalDownload(context, ref, itemId: itemId, title: title),
+      return PopupMenuButton<bool>(
+        tooltip: 'Downloaded · Manage device copy',
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.download_done, size: 18),
+        onSelected: (_) =>
+            removeLocalDownload(context, ref, itemId: itemId, title: title),
+        itemBuilder: (_) => const [
+          PopupMenuItem(
+            value: true,
+            child: Text('Remove download from this device…'),
           ),
         ],
       );
@@ -125,8 +120,12 @@ class DownloadButton extends ConsumerWidget {
       onResume: () => ref
           .read(downloadsProvider.notifier)
           .resume(download.taskId, api: ref.read(apiClientProvider)),
-      onCancel: () =>
-          ref.read(downloadsProvider.notifier).cancel(download.taskId),
+      onCancel: () => cancelLocalDownload(
+        context,
+        ref,
+        taskId: download.taskId,
+        title: title,
+      ),
     );
   }
 
@@ -222,7 +221,7 @@ class _ProgressRow extends StatelessWidget {
               ),
               AnalogIconButton(
                 icon: Icons.close,
-                tooltip: 'Cancel',
+                tooltip: 'Cancel download…',
                 onPressed: onCancel,
               ),
             ],

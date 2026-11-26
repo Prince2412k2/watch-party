@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../analog/chrome/analog_toast.dart';
 import '../../state/offline_provider.dart';
+import '../../state/downloads_provider.dart';
 import 'app_dialog.dart';
 
 /// Use the same confirmation and failure behavior from every download surface.
@@ -14,9 +15,9 @@ Future<void> removeLocalDownload(
 }) async {
   final confirmed = await showConfirm(
     context,
-    title: 'Remove download?',
+    title: 'Remove download from this device?',
     body: '$title will be deleted from this device.',
-    confirmLabel: 'Remove',
+    confirmLabel: 'Remove download',
     danger: true,
   );
   if (!confirmed || !context.mounted) return;
@@ -31,5 +32,31 @@ Future<void> removeLocalDownload(
         tone: AnalogToastTone.danger,
       );
     }
+  }
+}
+
+Future<void> cancelLocalDownload(
+  BuildContext context,
+  WidgetRef ref, {
+  required String taskId,
+  required String title,
+}) async {
+  final confirmed = await showConfirm(
+    context,
+    title: 'Cancel this download?',
+    body: 'Partial progress for $title will be discarded.',
+    confirmLabel: 'Cancel download',
+    danger: true,
+  );
+  if (!confirmed || !context.mounted) return;
+  try {
+    await ref.read(downloadsProvider.notifier).cancel(taskId);
+  } catch (_) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not cancel the download. Try again.'),
+      ),
+    );
   }
 }

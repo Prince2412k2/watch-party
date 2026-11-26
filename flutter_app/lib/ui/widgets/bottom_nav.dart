@@ -49,10 +49,13 @@ class BottomNav extends StatelessWidget {
     }
     return SizedBox(
       height: 62,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: children,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: children,
+        ),
       ),
     );
   }
@@ -75,77 +78,81 @@ class _NavTab extends StatefulWidget {
 
 class _NavTabState extends State<_NavTab> {
   bool _hover = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
     final active = widget.active;
-    final color = active || _hover ? wp.text : wp.dim;
+    final color = active || _hover || _focused ? wp.text : wp.dim;
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 88),
-          child: SizedBox(
-            height: 62,
-            child: Stack(
-              children: [
-                Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(widget.dest.icon, size: 18, color: color),
-                      const SizedBox(width: 8),
-                      AnimatedDefaultTextStyle(
-                        duration: AppMotion.hover,
-                        style: TextStyle(
-                          fontFamily: AppFonts.sans,
-                          fontSize: 14,
-                          fontWeight: active
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: color,
-                        ),
-                        child: Text(widget.dest.label),
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  left: 18,
-                  right: 18,
-                  bottom: 0,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      return TweenAnimationBuilder<double>(
-                        tween: Tween(end: active ? 1.0 : 0.0),
-                        duration: AppMotion.hover,
-                        curve: AppMotion.standard,
-                        builder: (context, factor, child) => Center(
-                          child: SizedBox(
-                            width: constraints.maxWidth * factor,
-                            child: child,
+    return Semantics(
+      selected: active,
+      button: true,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onHover: (value) => setState(() => _hover = value),
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 88),
+            child: SizedBox(
+              height: 62,
+              child: Stack(
+                children: [
+                  Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(widget.dest.icon, size: 18, color: color),
+                        const SizedBox(width: 8),
+                        AnimatedDefaultTextStyle(
+                          duration: AppMotion.hover,
+                          style: TextStyle(
+                            fontFamily: AppFonts.sans,
+                            fontSize: 14,
+                            fontWeight: active
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: color,
                           ),
+                          child: Text(widget.dest.label),
                         ),
-                        child: Container(
-                          height: 3,
-                          decoration: const BoxDecoration(
-                            color: kBrandRed,
-                            borderRadius: BorderRadius.vertical(
-                              top: Radius.circular(2),
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    left: 18,
+                    right: 18,
+                    bottom: 0,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(end: active ? 1.0 : 0.0),
+                          duration: AppMotion.hover,
+                          curve: AppMotion.standard,
+                          builder: (context, factor, child) => Center(
+                            child: SizedBox(
+                              width: constraints.maxWidth * factor,
+                              child: child,
                             ),
                           ),
-                        ),
-                      );
-                    },
+                          child: Container(
+                            height: 3,
+                            decoration: const BoxDecoration(
+                              color: kBrandRed,
+                              borderRadius: BorderRadius.vertical(
+                                top: Radius.circular(2),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

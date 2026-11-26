@@ -970,28 +970,25 @@ class _CopyColumn extends StatelessWidget {
                       container: active.container,
                     ),
                   ],
-                  // Deleting a SHOW is deleting all of it, so the target is the
-                  // series root whatever the episode cursor is sitting on — an
-                  // episode is not separately removable here, and the dialog
-                  // names the show so that is never in doubt.
-                  if (rootIsSeries)
-                    _DeleteFromServerButton(
-                      item: detailSeries!,
-                      kind: ServarrKind.series,
-                      onDeleted: state.widget.onBack,
-                    )
-                  else if (active.type == 'Movie')
-                    _DeleteFromServerButton(
-                      item: active,
-                      kind: ServarrKind.movie,
-                      onDeleted: state.widget.onBack,
-                    ),
                 ],
               ),
             ),
-            // The menu is an OVERLAY now, opened by the button itself — it used
-            // to be an inline child right here, which is why it pushed the copy
-            // around when it opened and got clipped by this column.
+            // Deleting a SHOW is deleting all of it, so the target is the
+            // series root whatever the episode cursor is sitting on — an
+            // episode is not separately removable here, and the dialog
+            // names the show so that is never in doubt.
+            if (rootIsSeries)
+              _DeleteFromServerButton(
+                item: detailSeries!,
+                kind: ServarrKind.series,
+                onDeleted: state.widget.onBack,
+              )
+            else if (active.type == 'Movie')
+              _DeleteFromServerButton(
+                item: active,
+                kind: ServarrKind.movie,
+                onDeleted: state.widget.onBack,
+              ),
           ],
         ],
       ),
@@ -1030,20 +1027,30 @@ class _DeleteFromServerButton extends ConsumerWidget {
     if (!ref.watch(isAdminProvider)) return const SizedBox.shrink();
     final providerId = servarrProviderId(item.providerIds, kind);
     if (providerId == null) return const SizedBox.shrink();
-    // Unresolved (still loading, or no match) reads the same as "nothing to
-    // delete" — the button simply arrives a moment later if there is one.
-    final record = ref
-        .watch(
-          libraryServarrRecordProvider((kind: kind, providerId: providerId)),
-        )
-        .valueOrNull;
-    if (record == null) return const SizedBox.shrink();
+    final result = ref.watch(
+      libraryServarrRecordProvider((kind: kind, providerId: providerId)),
+    );
+    final record = result.valueOrNull;
 
-    return AppButton(
-      label: 'Delete',
-      icon: Icons.delete_outline,
-      variant: AppButtonVariant.danger,
-      onPressed: () => _confirmAndDelete(context, ref, record),
+    return PopupMenuButton<ServarrLibraryRecord>(
+      tooltip: 'Manage server title',
+      icon: const Icon(Icons.more_horiz),
+      onSelected: (selected) => _confirmAndDelete(context, ref, selected),
+      itemBuilder: (_) => [
+        if (record != null)
+          PopupMenuItem(value: record, child: const Text('Delete from server…'))
+        else
+          PopupMenuItem(
+            enabled: false,
+            child: Text(
+              result.isLoading
+                  ? 'Checking server library…'
+                  : result.hasError
+                  ? 'Server library unavailable'
+                  : 'No matching server title',
+            ),
+          ),
+      ],
     );
   }
 
@@ -1060,10 +1067,10 @@ class _DeleteFromServerButton extends ConsumerWidget {
           '${record.title} and its files are deleted from the server, and the '
           '$what is excluded so nothing re-downloads it. This is everyone\'s '
           'copy, not just yours, and it can\'t be undone.',
-      confirmLabel: 'Delete',
+      confirmLabel: 'Delete from server',
       danger: true,
     );
-    if (!confirmed) return;
+    if (!confirmed || !context.mounted) return;
 
     try {
       await ref

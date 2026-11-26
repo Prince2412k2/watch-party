@@ -1,6 +1,8 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
+import '../../ui/widgets/glass_back_button.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_client.dart';
@@ -35,7 +37,7 @@ class DownloadDetailScreen extends ConsumerStatefulWidget {
 
 class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
   bool _busy = false;
-  bool _sawTorrent = false;
+  ServarrDownload? _lastTorrent;
 
   void _close() {
     if (!mounted) return;
@@ -53,51 +55,51 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
     final poll = ref.watch(servarrDownloadsPollProvider);
     final snap = poll.valueOrNull;
     final torrent = snap?.list.cast<ServarrDownload?>().firstWhere(
-          (t) => t?.hash == widget.hash,
-          orElse: () => null,
-        );
+      (t) => t?.hash == widget.hash,
+      orElse: () => null,
+    );
 
+    if (torrent != null) _lastTorrent = torrent;
     if (torrent == null) {
-      // The download finished + left the queue (or was removed) → close.
-      if (_sawTorrent) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _close();
-        });
-      } else if (snap != null || poll.hasError) {
-        // Never seen, and the queue has now answered: this hash is not in it.
-        // Reached by a deep link to a download that has already finished or
-        // was removed — which used to sit on the spinner below forever.
+      final unavailable = poll.hasError || (snap?.loadError ?? false);
+      final previous = _lastTorrent;
+      if (unavailable || snap?.loaded == true || previous != null) {
         return Scaffold(
           backgroundColor: wp.bg,
           body: EmptyState(
-            title: 'That download is not in the queue',
-            message: 'It may have finished or been removed.',
+            title: unavailable
+                ? 'Unable to refresh the server queue'
+                : previous != null && previous.percent >= 100
+                ? 'Download left the queue after reaching 100%'
+                : 'Download is no longer in the server queue',
+            message: unavailable
+                ? 'The server did not return the current download status.'
+                : 'The server no longer lists this download.',
             icon: Icons.download_done_outlined,
-            actionLabel: 'Back to downloads',
-            onAction: _close,
+            actionLabel: unavailable ? 'Retry' : 'Back to downloads',
+            onAction: unavailable
+                ? () => ref.invalidate(servarrDownloadsPollProvider)
+                : _close,
           ),
         );
       }
       return Scaffold(
         backgroundColor: wp.bg,
-        body: const Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
-    _sawTorrent = true;
 
-    final detail = ref.watch(servarrDownloadDetailProvider(widget.hash)).valueOrNull;
+    final detail = ref
+        .watch(servarrDownloadDetailProvider(widget.hash))
+        .valueOrNull;
     final pct = torrent.percent;
     final paused = torrent.isPaused;
     final done = pct >= 100;
 
     final kind = detail?.kind ?? torrent.kind;
-    final title = (detail?.title?.isNotEmpty == true ? detail!.title! : torrent.name);
+    final title = (detail?.title?.isNotEmpty == true
+        ? detail!.title!
+        : torrent.name);
     final subtitle = detail?.subtitle ?? torrent.subtitle;
     final posterUrl = detail?.posterUrl ?? torrent.posterUrl;
     final overview = detail?.overview;
@@ -109,7 +111,8 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
       ?runtime,
       if (detail?.certification != null && detail!.certification!.isNotEmpty)
         detail.certification!,
-      if (detail?.network != null && detail!.network!.isNotEmpty) detail.network!,
+      if (detail?.network != null && detail!.network!.isNotEmpty)
+        detail.network!,
       if (detail?.status != null && detail!.status!.isNotEmpty) detail.status!,
     ];
 
@@ -126,14 +129,14 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                     Positioned.fill(child: _Hero(posterUrl: posterUrl)),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(40, 90, 40, 40),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Container(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final poster = Container(
                             width: 200,
                             decoration: BoxDecoration(
-                              borderRadius:
-                                  BorderRadius.circular(AppSpacing.radiusLg),
+                              borderRadius: BorderRadius.circular(
+                                AppSpacing.radiusLg,
+                              ),
                               boxShadow: wp.cardShadow,
                             ),
                             child: DownloadPoster(
@@ -144,78 +147,111 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                               width: 200,
                               radius: AppSpacing.radiusLg,
                             ),
-                          ),
-                          const SizedBox(width: 28),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _StatusPill(
-                                  label: done
-                                      ? 'FINISHING UP'
-                                      : paused
-                                          ? 'PAUSED'
-                                          : 'DOWNLOADING',
-                                  paused: paused,
+                          );
+                          final info = Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _StatusPill(
+                                label: done
+                                    ? 'FINISHING UP'
+                                    : paused
+                                    ? 'PAUSED'
+                                    : 'DOWNLOADING',
+                                paused: paused,
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTheme.headlineLarge.copyWith(
+                                  color: wp.text,
                                 ),
-                                const SizedBox(height: 10),
+                              ),
+                              if (subtitle != null && subtitle.isNotEmpty) ...[
+                                const SizedBox(height: 8),
                                 Text(
-                                  title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: AppTheme.headlineLarge
-                                      .copyWith(color: wp.text),
-                                ),
-                                if (subtitle != null && subtitle.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(subtitle,
-                                      style: AppTheme.mono.copyWith(
-                                          fontSize: 13.5, color: wp.dim)),
-                                ],
-                                if (rating != null || genres.isNotEmpty) ...[
-                                  const SizedBox(height: 14),
-                                  _RatingGenres(rating: rating, genres: genres),
-                                ],
-                                if (infoLine.isNotEmpty) ...[
-                                  const SizedBox(height: 10),
-                                  Wrap(
-                                    spacing: 12,
-                                    runSpacing: 4,
-                                    children: [
-                                      for (final v in infoLine)
-                                        Text(v,
-                                            style: AppTheme.mono.copyWith(
-                                                fontSize: 13, color: wp.dim)),
-                                    ],
+                                  subtitle,
+                                  style: AppTheme.mono.copyWith(
+                                    fontSize: 13.5,
+                                    color: wp.dim,
                                   ),
-                                ],
-                                const SizedBox(height: 22),
-                                _StatsRow(torrent: torrent, done: done, paused: paused),
-                                const SizedBox(height: 22),
-                                Row(
+                                ),
+                              ],
+                              if (rating != null || genres.isNotEmpty) ...[
+                                const SizedBox(height: 14),
+                                _RatingGenres(rating: rating, genres: genres),
+                              ],
+                              if (infoLine.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 4,
                                   children: [
-                                    AppButton(
-                                      label: paused ? 'Resume' : 'Pause',
-                                      icon: paused ? Icons.play_arrow : Icons.pause,
-                                      variant: AppButtonVariant.primary,
-                                      onPressed: (_busy || done)
-                                          ? null
-                                          : _pauseResume,
-                                    ),
-                                    const SizedBox(width: AppSpacing.md),
-                                    AppButton(
-                                      label: 'Delete',
-                                      icon: Icons.delete_outline,
-                                      variant: AppButtonVariant.danger,
-                                      onPressed: _busy ? null : () => _delete(title),
-                                    ),
+                                    for (final v in infoLine)
+                                      Text(
+                                        v,
+                                        style: AppTheme.mono.copyWith(
+                                          fontSize: 13,
+                                          color: wp.dim,
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ],
-                            ),
-                          ),
-                        ],
+                              const SizedBox(height: 22),
+                              _StatsRow(
+                                torrent: torrent,
+                                done: done,
+                                paused: paused,
+                              ),
+                              const SizedBox(height: 22),
+                              Wrap(
+                                spacing: AppSpacing.md,
+                                runSpacing: AppSpacing.sm,
+                                children: [
+                                  AppButton(
+                                    label: paused ? 'Resume' : 'Pause',
+                                    icon: paused
+                                        ? Icons.play_arrow
+                                        : Icons.pause,
+                                    variant: AppButtonVariant.primary,
+                                    onPressed: (_busy || done)
+                                        ? null
+                                        : _pauseResume,
+                                  ),
+                                  AppButton(
+                                    label: 'Remove from server queue…',
+                                    icon: Icons.delete_outline,
+                                    variant: AppButtonVariant.secondary,
+                                    onPressed: _busy
+                                        ? null
+                                        : () => _delete(title),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                          if (constraints.maxWidth < 580) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                poster,
+                                const SizedBox(height: 24),
+                                info,
+                              ],
+                            );
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              poster,
+                              const SizedBox(width: 28),
+                              Expanded(child: info),
+                            ],
+                          );
+                        },
                       ),
                     ),
                   ],
@@ -227,7 +263,11 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
                       constraints: const BoxConstraints(maxWidth: 760),
                       child: Text(
                         overview,
-                        style: TextStyle(fontSize: 15, height: 1.65, color: wp.dim),
+                        style: TextStyle(
+                          fontSize: 15,
+                          height: 1.65,
+                          color: wp.dim,
+                        ),
                       ),
                     ),
                   )
@@ -236,11 +276,7 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
               ],
             ),
           ),
-          Positioned(
-            top: 18,
-            left: 18,
-            child: _BackChevron(onTap: _close),
-          ),
+          StageBackButton(onTap: _close),
         ],
       ),
     );
@@ -303,7 +339,11 @@ class _DownloadDetailScreenState extends ConsumerState<DownloadDetailScreen> {
 }
 
 class _StatsRow extends StatelessWidget {
-  const _StatsRow({required this.torrent, required this.done, required this.paused});
+  const _StatsRow({
+    required this.torrent,
+    required this.done,
+    required this.paused,
+  });
   final ServarrDownload torrent;
   final bool done;
   final bool paused;
@@ -312,14 +352,16 @@ class _StatsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final wp = context.wp;
     Widget stat(String text, {bool faint = false}) => Text(
-          text,
-          style: AppTheme.mono.copyWith(
-            fontSize: 13,
-            color: faint ? wp.faint : wp.dim,
-          ),
-        );
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      text,
+      style: AppTheme.mono.copyWith(
+        fontSize: 13,
+        color: faint ? wp.faint : wp.dim,
+      ),
+    );
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 24,
+      runSpacing: 12,
       children: [
         DownloadRing(
           pct: torrent.percent.toDouble(),
@@ -327,7 +369,6 @@ class _StatsRow extends StatelessWidget {
           stroke: 8,
           color: paused ? wp.dim : wp.text,
         ),
-        const SizedBox(width: 24),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -365,8 +406,10 @@ class _StatusPill extends StatelessWidget {
             ? Container(
                 width: 7,
                 height: 7,
-                decoration:
-                    BoxDecoration(color: wp.faint, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: wp.faint,
+                  shape: BoxShape.circle,
+                ),
               )
             : const PulseDot(color: AppColors.live, size: 7),
         const SizedBox(width: 8),
@@ -403,15 +446,25 @@ class _RatingGenres extends StatelessWidget {
             children: [
               Icon(Icons.star, size: 16, color: wp.text),
               const SizedBox(width: 5),
-              Text(rating!.toStringAsFixed(1),
-                  style: TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w600, color: wp.text)),
+              Text(
+                rating!.toStringAsFixed(1),
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: wp.text,
+                ),
+              ),
             ],
           ),
         for (final g in genres.take(3))
-          Text(g,
-              style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600, color: wp.dim)),
+          Text(
+            g,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: wp.dim,
+            ),
+          ),
       ],
     );
   }
@@ -473,31 +526,6 @@ class _Hero extends StatelessWidget {
   }
 }
 
-class _BackChevron extends StatelessWidget {
-  const _BackChevron({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFF141416),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusPill),
-        onTap: onTap,
-        child: const SizedBox(
-          width: 40,
-          height: 40,
-          child: Icon(Icons.chevron_left, size: 18, color: Colors.white),
-        ),
-      ),
-    );
-  }
-}
-
 /// Delete-confirm modal with an "Also delete downloaded files" toggle (default
 /// OFF, matching the web). Returns the toggle value on confirm, or null on
 /// cancel/dismiss. Mirrors `Downloads.tsx`'s `DeleteDialog` /
@@ -550,32 +578,47 @@ class _DeleteDialogState extends State<_DeleteDialog> {
                           color: AppColors.red.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                              color: AppColors.red.withValues(alpha: 0.35)),
+                            color: AppColors.red.withValues(alpha: 0.35),
+                          ),
                         ),
-                        child: const Icon(Icons.delete_outline,
-                            size: 20, color: AppColors.red),
+                        child: const Icon(
+                          Icons.delete_outline,
+                          size: 20,
+                          color: AppColors.red,
+                        ),
                       ),
                       const SizedBox(width: AppSpacing.md),
-                      Text('Remove download?',
+                      Flexible(
+                        child: Text(
+                          'Remove from server queue?',
                           style: TextStyle(
                             fontSize: 19,
                             fontWeight: FontWeight.w700,
                             color: wp.text,
-                          )),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 14),
                   Text.rich(
                     TextSpan(
-                      style: TextStyle(fontSize: 14, height: 1.55, color: wp.dim),
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.55,
+                        color: wp.dim,
+                      ),
                       children: [
                         TextSpan(
                           text: widget.name,
                           style: TextStyle(
-                              color: wp.text, fontWeight: FontWeight.w600),
+                            color: wp.text,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                         const TextSpan(
-                            text: ' will stop downloading and be removed.'),
+                          text: ' will stop downloading and be removed.',
+                        ),
                       ],
                     ),
                   ),
@@ -585,7 +628,9 @@ class _DeleteDialogState extends State<_DeleteDialog> {
                     onTap: () => setState(() => _deleteFiles = !_deleteFiles),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.md, vertical: AppSpacing.md),
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.md,
+                      ),
                       decoration: BoxDecoration(
                         color: wp.text.withValues(alpha: 0.03),
                         borderRadius: BorderRadius.circular(AppSpacing.radius),
@@ -598,16 +643,22 @@ class _DeleteDialogState extends State<_DeleteDialog> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text('Also delete downloaded files',
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                        color: wp.text)),
+                                Text(
+                                  'Also delete downloaded files',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: wp.text,
+                                  ),
+                                ),
                                 const SizedBox(height: 2),
                                 Text(
-                                    'Erase the data on disk, not just the download',
-                                    style: TextStyle(
-                                        fontSize: 12, color: wp.faint)),
+                                  'Erase the data on disk, not just the download',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: wp.faint,
+                                  ),
+                                ),
                               ],
                             ),
                           ),

@@ -41,9 +41,10 @@ class ServarrQueueScreen extends ConsumerWidget {
         final qbitReady = servarrServiceReady(h, 'qbittorrent');
         final qbitConfigured =
             (h['services'] as Map?)?['qbittorrent'] is Map &&
-                ((h['services'] as Map)['qbittorrent'] as Map)['configured'] ==
-                    true;
-        final arrReady = servarrServiceReady(h, 'radarr') ||
+            ((h['services'] as Map)['qbittorrent'] as Map)['configured'] ==
+                true;
+        final arrReady =
+            servarrServiceReady(h, 'radarr') ||
             servarrServiceReady(h, 'sonarr');
         return ListView(
           padding: padding ?? const EdgeInsets.fromLTRB(44, 56, 44, 100),
@@ -67,7 +68,7 @@ class _NeedsAttention extends ConsumerStatefulWidget {
 }
 
 class _NeedsAttentionState extends ConsumerState<_NeedsAttention> {
-  final _removed = <int>{};
+  final _removed = <(String, int)>{};
 
   @override
   Widget build(BuildContext context) {
@@ -75,7 +76,9 @@ class _NeedsAttentionState extends ConsumerState<_NeedsAttention> {
     final snap = ref.watch(servarrFailingQueueProvider).valueOrNull;
     if (snap == null || !snap.loaded) return const SizedBox.shrink();
 
-    final items = snap.items.where((q) => !_removed.contains(q.id)).toList();
+    final items = snap.items
+        .where((q) => !_removed.contains((q.service, q.id)))
+        .toList();
     if (items.isEmpty && !snap.loadError) return const SizedBox.shrink();
 
     return Padding(
@@ -98,8 +101,10 @@ class _NeedsAttentionState extends ConsumerState<_NeedsAttention> {
               ),
               if (items.isNotEmpty) ...[
                 const SizedBox(width: 10),
-                Text('${items.length} stuck',
-                    style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim)),
+                Text(
+                  '${items.length} stuck',
+                  style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim),
+                ),
               ],
               if (snap.loadError) ...[
                 const SizedBox(width: 10),
@@ -113,8 +118,10 @@ class _NeedsAttentionState extends ConsumerState<_NeedsAttention> {
               children: [
                 Icon(Icons.check, size: 15, color: wp.faint),
                 const SizedBox(width: 8),
-                Text('Queue unavailable',
-                    style: TextStyle(fontSize: 13, color: wp.faint)),
+                Text(
+                  'Queue unavailable',
+                  style: TextStyle(fontSize: 13, color: wp.faint),
+                ),
               ],
             )
           else
@@ -125,11 +132,12 @@ class _NeedsAttentionState extends ConsumerState<_NeedsAttention> {
                   _FailingCard(
                     key: ValueKey('attn-${q.service}-${q.id}'),
                     item: q,
-                    onRemove: (blocklist) {
-                      setState(() => _removed.add(q.id));
-                      ref
+                    onRemove: (blocklist) async {
+                      await ref
                           .read(servarrQueueActionsProvider)
                           .removeQueueItem(q, blocklist: blocklist);
+                      if (mounted)
+                        setState(() => _removed.add((q.service, q.id)));
                     },
                   ),
               ],
@@ -143,7 +151,7 @@ class _NeedsAttentionState extends ConsumerState<_NeedsAttention> {
 class _FailingCard extends StatefulWidget {
   const _FailingCard({super.key, required this.item, required this.onRemove});
   final ServarrArrQueueItem item;
-  final void Function(bool blocklist) onRemove;
+  final Future<void> Function(bool blocklist) onRemove;
 
   @override
   State<_FailingCard> createState() => _FailingCardState();
@@ -151,13 +159,35 @@ class _FailingCard extends StatefulWidget {
 
 class _FailingCardState extends State<_FailingCard> {
   bool _confirm = false;
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _remove(bool blocklist) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onRemove(blocklist);
+    } catch (_) {
+      if (mounted)
+        setState(
+          () => _error = 'Could not remove from the server queue. Try again.',
+        );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final wp = context.wp;
     final q = widget.item;
-    final metaLine =
-        [q.indexer, fmtSize(q.size)].where((e) => e != null && e != '—').join(' · ');
+    final metaLine = [
+      q.indexer,
+      fmtSize(q.size),
+    ].where((e) => e != null && e != '—').join(' · ');
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
@@ -178,10 +208,15 @@ class _FailingCardState extends State<_FailingCard> {
                 decoration: BoxDecoration(
                   color: AppColors.red.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.red.withValues(alpha: 0.35)),
+                  border: Border.all(
+                    color: AppColors.red.withValues(alpha: 0.35),
+                  ),
                 ),
-                child: const Icon(Icons.error_outline,
-                    size: 17, color: AppColors.red),
+                child: const Icon(
+                  Icons.error_outline,
+                  size: 17,
+                  color: AppColors.red,
+                ),
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
@@ -201,13 +236,20 @@ class _FailingCardState extends State<_FailingCard> {
                     for (final r in q.reasons)
                       Text(
                         r,
-                        style: const TextStyle(fontSize: 12.5, color: AppColors.red),
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.red,
+                        ),
                       ),
                     if (metaLine.isNotEmpty) ...[
                       const SizedBox(height: 6),
-                      Text(metaLine,
-                          style: AppTheme.mono.copyWith(
-                              fontSize: 11.5, color: wp.faint)),
+                      Text(
+                        metaLine,
+                        style: AppTheme.mono.copyWith(
+                          fontSize: 11.5,
+                          color: wp.faint,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -233,24 +275,35 @@ class _FailingCardState extends State<_FailingCard> {
                 runSpacing: AppSpacing.sm,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Text('Remove this download?',
-                      style: TextStyle(fontSize: 12.5, color: wp.dim)),
+                  Text(
+                    _error ??
+                        (_busy
+                            ? 'Removing…'
+                            : 'Remove from the server queue? Blocking also prevents this release from being grabbed again.'),
+                    style: TextStyle(fontSize: 12.5, color: wp.dim),
+                  ),
                   const SizedBox(width: AppSpacing.sm),
                   _PillBtn(
                     label: 'Cancel',
-                    onTap: () => setState(() => _confirm = false),
+                    onTap: () {
+                      if (!_busy)
+                        setState(() {
+                          _confirm = false;
+                          _error = null;
+                        });
+                    },
                   ),
                   _PillBtn(
                     label: 'Remove',
                     icon: Icons.delete_outline,
                     danger: true,
-                    onTap: () => widget.onRemove(false),
+                    onTap: () => _remove(false),
                   ),
                   _PillBtn(
                     label: 'Remove & block',
                     icon: Icons.block,
                     danger: true,
-                    onTap: () => widget.onRemove(true),
+                    onTap: () => _remove(true),
                   ),
                 ],
               ),
@@ -317,7 +370,10 @@ class _PillBtn extends StatelessWidget {
 }
 
 class _ActiveDownloads extends ConsumerStatefulWidget {
-  const _ActiveDownloads({required this.qbitReady, required this.qbitConfigured});
+  const _ActiveDownloads({
+    required this.qbitReady,
+    required this.qbitConfigured,
+  });
   final bool qbitReady;
   final bool qbitConfigured;
 
@@ -366,18 +422,23 @@ class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
               children: [
-                Text('Active',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.4,
-                      color: wp.text,
-                    )),
+                Text(
+                  'Active',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                    color: wp.text,
+                  ),
+                ),
                 if (list.isNotEmpty) ...[
                   const SizedBox(width: 10),
                   Text.rich(
                     TextSpan(
-                      style: AppTheme.mono.copyWith(fontSize: 12.5, color: wp.dim),
+                      style: AppTheme.mono.copyWith(
+                        fontSize: 12.5,
+                        color: wp.dim,
+                      ),
                       children: [
                         TextSpan(
                           text:
@@ -411,13 +472,14 @@ class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
                   item: t,
                   busy: _busy.contains(t.hash),
                   onOpen: () => _openDetail(t),
-                  onPauseResume: () {
-                    if (t.isPaused) {
-                      actions.resume(t.hash);
-                    } else {
-                      actions.pause(t.hash);
-                    }
-                  },
+                  onPauseResume: () => _runAction(
+                    t.hash,
+                    t.isPaused ? 'resume' : 'pause',
+                    () => t.isPaused
+                        ? actions.resume(t.hash)
+                        : actions.pause(t.hash),
+                  ),
+                  error: _errors[t.hash],
                   onDelete: () => _confirmDelete(t, actions),
                 ),
             ],
@@ -435,12 +497,35 @@ class _ActiveDownloadsState extends ConsumerState<_ActiveDownloads> {
   }
 
   Future<void> _confirmDelete(
-      ServarrDownload t, ServarrQueueActions actions) async {
+    ServarrDownload t,
+    ServarrQueueActions actions,
+  ) async {
     final deleteFiles = await showDownloadDeleteDialog(context, name: t.name);
     if (deleteFiles == null || !mounted) return;
-    setState(() => _busy.add(t.hash));
-    await actions.deleteTorrent(t.hash, deleteFiles: deleteFiles);
-    if (mounted) setState(() => _busy.remove(t.hash));
+    await _runAction(
+      t.hash,
+      'remove',
+      () => actions.deleteTorrent(t.hash, deleteFiles: deleteFiles),
+    );
+  }
+
+  final _errors = <String, String>{};
+
+  Future<void> _runAction(
+    String hash,
+    String verb,
+    Future<void> Function() action,
+  ) async {
+    if (!_busy.add(hash)) return;
+    setState(() => _errors.remove(hash));
+    try {
+      await action();
+    } catch (_) {
+      if (mounted)
+        setState(() => _errors[hash] = 'Could not $verb. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy.remove(hash));
+    }
   }
 }
 
@@ -455,12 +540,14 @@ class _TorrentCard extends StatelessWidget {
     required this.onOpen,
     required this.onPauseResume,
     required this.onDelete,
+    required this.error,
   });
   final ServarrDownload item;
   final bool busy;
   final VoidCallback onOpen;
   final VoidCallback onPauseResume;
   final VoidCallback onDelete;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
@@ -528,6 +615,8 @@ class _TorrentCard extends StatelessWidget {
               ),
             ],
           ),
+          if (error != null)
+            Text(error!, style: const TextStyle(color: AppColors.red)),
           const SizedBox(height: 6),
           Row(
             children: [
@@ -540,7 +629,7 @@ class _TorrentCard extends StatelessWidget {
               const SizedBox(width: 6),
               MediaRowIconButtonLike(
                 icon: Icons.delete_outline,
-                tooltip: 'Remove',
+                tooltip: 'Remove from server queue',
                 danger: true,
                 disabled: busy,
                 onTap: onDelete,
@@ -601,8 +690,8 @@ class _MediaRowIconButtonLikeState extends State<MediaRowIconButtonLike> {
               decoration: BoxDecoration(
                 color: _hover
                     ? (widget.danger
-                        ? AppColors.red.withValues(alpha: 0.12)
-                        : wp.text.withValues(alpha: 0.07))
+                          ? AppColors.red.withValues(alpha: 0.12)
+                          : wp.text.withValues(alpha: 0.07))
                     : wp.text.withValues(alpha: 0.03),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: wp.line),
@@ -630,8 +719,10 @@ class _Reconnecting extends StatelessWidget {
           child: CircularProgressIndicator(strokeWidth: 1.6),
         ),
         const SizedBox(width: 6),
-        Text('reconnecting…',
-            style: AppTheme.mono.copyWith(fontSize: 12, color: wp.faint)),
+        Text(
+          'reconnecting…',
+          style: AppTheme.mono.copyWith(fontSize: 12, color: wp.faint),
+        ),
       ],
     );
   }
